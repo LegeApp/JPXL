@@ -42,7 +42,9 @@
 //! input is always an error, never a panic.
 
 pub mod error;
+pub mod frame;
 pub mod headers;
+pub mod modular;
 pub mod signature;
 
 #[cfg(test)]

@@ -15,6 +15,7 @@ trace = ["jpxl-bitstream/trace"]
 [dependencies]
 jpxl-bitstream.workspace = true
 jpxl-core.workspace = true
+jpxl-entropy.workspace = true
 
 [lints]
 workspace = true

@@ -47,11 +47,8 @@ pub const DEFAULT_OPSIN_BIAS: [f32; 3] = [-0.003_793_073_3; 3];
 /// collapsed the leading `1 -` into an ambiguous glyph. The stored values are
 /// the evaluated results (≈ 0.9453, 0.9299, 0.9501), consistent with L.2.3's
 /// `quant *= oim.quant_bias[channel]` slightly shrinking small coefficients.
-pub const DEFAULT_QUANT_BIAS: [f32; 3] = [
-    1.0 - 0.054_650_073,
-    1.0 - 0.070_054_499,
-    1.0 - 0.049_935_103,
-];
+pub const DEFAULT_QUANT_BIAS: [f32; 3] =
+    [1.0 - 0.054_650_073, 1.0 - 0.070_054_5, 1.0 - 0.049_935_103];
 
 /// Table L.1 default `quant_bias_numerator`.
 pub const DEFAULT_QUANT_BIAS_NUMERATOR: f32 = 0.145;

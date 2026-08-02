@@ -106,6 +106,15 @@ impl BitWriter {
         self
     }
 
+    /// Writes `ZeroPadToByte()` (18181-1 B.2.7): zero bits up to the next
+    /// byte boundary. A no-op when already aligned.
+    pub fn pad_to_byte(&mut self) -> &mut Self {
+        while !self.bit_len.is_multiple_of(8) {
+            self.bit(false);
+        }
+        self
+    }
+
     /// Number of bits written so far.
     ///
     /// Returns `u64` to match `BitReader::total_bits_read`, so tests can

@@ -13,6 +13,31 @@ Keep this file small. Entries whose content has landed in `PLAN.md`,
 
 ---
 
+## 2026-08-02 — slice 6 (FrameHeader/TOC/groups, Annexes F/G/J.1) complete
+
+**State:** `jpxl-decode::frame` parses FrameHeader with its full conditional
+forest, passes, blending, RestorationFilter (J.1), TOC with entropy-coded
+Lehmer permutation, and group/section geometry. 102 new tests.
+
+**Spec gotchas encoded as tests:** `HfGlobal` section exists (zero-length) in
+Modular mode — `num_sections` is always `2 + num_lf_groups + num_groups ×
+num_passes` regardless of encoding (F.3.1 NOTE 1); F.3.3 permutes *offsets*
+computed from as-read order, not sizes; F.3.2 `GetContext` uses `min(7, …)` —
+the LaTeX corrupted the 7 (second confirmed markdown-beats-LaTeX case; the
+LaTeX fails specifically on numeric constants inside prose).
+
+**Open for slice 7 (oracle experiments, one-bit differences):**
+- J.1 `gab_custom` guard: implemented as `!all_default && gab` (the literal
+  bare `gab` guard would cost a bit even under `all_default`, violating the
+  invariant every other bundle obeys). Constant
+  `GAB_CUSTOM_REQUIRES_NOT_ALL_DEFAULT` flips it in one place. Highest-value
+  oracle check — differs on nearly every real frame.
+- F.2 `resets_canvas`: computed once from colour blending_info and shared
+  with every ec_blending_info (vs per-bundle evaluation; 2 bits per extra
+  channel).
+
+---
+
 ## 2026-08-02 — Part 2 clause map re-audited, no longer provisional
 
 **State:** `STANDARDS_INDEX.md`'s Part 2 section replaced the arXiv-derived
