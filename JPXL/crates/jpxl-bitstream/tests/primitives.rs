@@ -124,7 +124,7 @@ fn u32_bits_offset_selector_three() {
 }
 
 #[test]
-fn u32_offset_plus_payload_overflow() {
+fn u32_offset_plus_payload_wraps_mod_2_pow_32() {
     const NEAR_MAX: U32Spec = U32Spec::new([
         U32Dist::Val(0),
         U32Dist::BitsOffset {
@@ -142,10 +142,11 @@ fn u32_offset_plus_payload_overflow() {
     assert_eq!(read_u32(&mut r, &NEAR_MAX), Ok(u32::MAX));
 
     // Same, with payload u(8) = 5 -> b2 = 1, b4 = 1
-    // byte0 = 1 + 4 + 16 = 21 ; (u32::MAX - 1) + 5 does not fit in a u32.
-    let overflow = [0b0001_0101u8, 0x00];
-    let mut r = BitReader::new(&overflow);
-    assert_eq!(read_u32(&mut r, &NEAR_MAX), Err(BitstreamError::Overflow));
+    // byte0 = 1 + 4 + 16 = 21 ; (u32::MAX - 1) + 5 = 2^32 + 3, and per
+    // 18181-1 B.2.2 the result is (offset + v) Umod (1 << 32) = 3.
+    let wrapping = [0b0001_0101u8, 0x00];
+    let mut r = BitReader::new(&wrapping);
+    assert_eq!(read_u32(&mut r, &NEAR_MAX), Ok(3));
 }
 
 #[test]

@@ -22,11 +22,16 @@
 //! # Constant provenance
 //!
 //! The bias and the forward mixing matrix are taken verbatim from the JPEG XL
-//! paper (arXiv:2506.05987, "RGB to XYB conversion"). The inverse matrix is
-//! not published there; it was computed here by exact rational inversion of
-//! the forward matrix and rounded to `f32`. All of these are **`[provisional]`
-//! until re-verified against ISO/IEC 18181-1** — bit-exact conformance depends
-//! on the standard's own constants, not on a paper's typesetting of them.
+//! paper (arXiv:2506.05987, "RGB to XYB conversion"). The inverse matrix was
+//! computed here by exact rational inversion of the forward matrix, rounded
+//! to `f32`, and subsequently **verified digit-for-digit against the
+//! normative defaults in 18181-1 L.2.1 Table L.1** (`inv_mat00..inv_mat22`).
+//!
+//! Sign convention: 18181-1 signals the per-channel `opsin_bias0..2` defaults
+//! as `-0.0037930732552754493` (applied on the decoder's inverse path); this
+//! module applies the same magnitude with a positive sign on the forward
+//! path. The conventions are equivalent; align with the decoder's form when
+//! the L.2 inverse pipeline is implemented.
 //!
 //! Everything here is software-defined `f32` arithmetic: no FMA contraction is
 //! relied on, no platform intrinsics, no fast-math. Results are reproducible
@@ -46,7 +51,10 @@ pub const OPSIN_ABSORBANCE_MATRIX: [[f32; 3]; 3] = [
     [0.243_422_7, 0.204_767_4, 0.551_809_9],
 ];
 
-/// `[provisional]` Exact inverse of [`OPSIN_ABSORBANCE_MATRIX`], row-major.
+/// Exact inverse of [`OPSIN_ABSORBANCE_MATRIX`], row-major.
+///
+/// Matches the normative defaults of 18181-1 L.2.1 Table L.1 at `f32`
+/// precision (`inv_mat00 = 11.031566901960783`, ...).
 pub const OPSIN_ABSORBANCE_INVERSE_MATRIX: [[f32; 3]; 3] = [
     [11.031_567, -9.866_944, -0.164_622_98],
     [-3.254_147_4, 4.418_770_3, -0.164_622_98],

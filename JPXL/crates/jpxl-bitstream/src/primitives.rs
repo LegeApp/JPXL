@@ -57,10 +57,10 @@ pub fn read_bool(reader: &mut BitReader<'_>) -> Result<bool> {
 
 /// Reads a `U32(d0, d1, d2, d3)` field.
 ///
-/// The 2-bit selector chooses the distribution; a `BitsOffset` alternative then
-/// reads its payload and adds the offset. If `offset + payload` does not fit in
-/// a `u32`, [`BitstreamError::Overflow`] is returned; likewise for a payload
-/// width above 32 bits.
+/// The 2-bit selector chooses the distribution; a `BitsOffset` alternative
+/// then reads its payload and adds the offset. Per 18181-1 B.2.2 the result
+/// is `(offset + v) Umod (1 << 32)`, i.e. the addition **wraps**. A payload
+/// width above 32 bits is rejected with [`BitstreamError::Overflow`].
 pub fn read_u32(reader: &mut BitReader<'_>, spec: &U32Spec) -> Result<u32> {
     let selector = usize::try_from(reader.read_bits(2)?).map_err(|_| BitstreamError::Overflow)?;
     let dist = spec
@@ -75,7 +75,7 @@ pub fn read_u32(reader: &mut BitReader<'_>, spec: &U32Spec) -> Result<u32> {
                 return Err(BitstreamError::Overflow);
             }
             let payload = reader.read_bits(u32::from(bits))?;
-            offset.checked_add(payload).ok_or(BitstreamError::Overflow)
+            Ok(offset.wrapping_add(payload))
         }
     }
 }
