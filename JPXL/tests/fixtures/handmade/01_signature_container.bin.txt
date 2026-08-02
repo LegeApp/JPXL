@@ -1,0 +1,27 @@
+Fixture: 01_signature_container.bin
+Provenance: hand-authored, signature only, not a decodable stream.
+Size: 20 bytes.
+
+Exact bytes:
+
+    00 00 00 0c 4a 58 4c 20 0d 0a 87 0a 00 00 00 14 66 74 79 70
+
+  00 00 00 0c  Box length: 12, big-endian u32 (ISOBMFF box header).
+  4a 58 4c 20  Box type "JXL " (note the trailing space).
+  0d 0a 87 0a  Signature box payload: CR LF 0x87 LF. The same corruption
+               canary PNG uses -- a transfer that mangles CRLF or strips the
+               high bit shows up here immediately.
+
+  Together those 12 bytes are the normative JPEG XL container signature box
+  (ISO/IEC 18181-2). A container file begins with exactly this.
+
+  00 00 00 14  Arbitrary filler shaped like a following box header (length 20)
+  66 74 79 70  and the type "ftyp". The declared length is a lie -- the file
+               ends here -- which is fine, because sniffing looks only at the
+               leading 12 bytes and never walks the box chain.
+
+Expected classification: StreamKind::Container.
+
+Do NOT feed this to a decoder and expect success: it is deliberately not a
+decodable stream. Written by hand with printf(1); no third-party file was
+copied, converted, or consulted to produce it.

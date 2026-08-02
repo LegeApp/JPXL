@@ -1,0 +1,21 @@
+Fixture: 02_not_jxl.bin
+Provenance: hand-authored, signature only, not a decodable stream.
+Size: 16 bytes.
+
+Exact bytes:
+
+    89 50 4e 47 0d 0a 1a 0a 00 00 00 0d 49 48 44 52
+
+  89 50 4e 47 0d 0a 1a 0a
+         The PNG signature (\x89 "PNG" CR LF SUB LF). Chosen as the negative
+         case because it shares the "binary magic with a CRLF canary" shape
+         with the JPEG XL container signature without matching it.
+  00 00 00 0d 49 48 44 52
+         An IHDR chunk header (length 13, type "IHDR") with no chunk body.
+         Filler only -- this is not a valid PNG either.
+
+Expected classification: StreamKind::Unknown, and `jpxl info` must exit 2.
+
+Written by hand with printf(1); no third-party file was copied, converted, or
+consulted to produce it. The PNG signature is a published constant from the
+PNG specification, not content taken from any particular file.

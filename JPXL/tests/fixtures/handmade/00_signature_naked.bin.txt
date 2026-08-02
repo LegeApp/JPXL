@@ -1,0 +1,20 @@
+Fixture: 00_signature_naked.bin
+Provenance: hand-authored, signature only, not a decodable stream.
+Size: 6 bytes.
+
+Exact bytes:
+
+    ff 0a 00 11 22 33
+
+  ff 0a  JPEG XL naked-codestream marker (ISO/IEC 18181-1). Every bare
+         codestream begins with these two bytes and nothing else precedes them.
+  00 11 22 33
+         Arbitrary filler. These bytes are NOT a valid image header; they exist
+         only so the fixture is longer than its signature, which exercises the
+         "signature plus trailing data" path in `jpxl_conformance::sniff`.
+
+Expected classification: StreamKind::NakedCodestream.
+
+Do NOT feed this to a decoder and expect success: it is deliberately not a
+decodable stream. Written by hand with printf(1); no third-party file was
+copied, converted, or consulted to produce it.
