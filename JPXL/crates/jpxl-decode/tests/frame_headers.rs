@@ -359,14 +359,89 @@ fn truncated_frame_headers_error_without_panicking() {
     }
 }
 
-/// TODO(slice 7): cross-check frame headers against real cjxl output.
+// ---------------------------------------------------------------------------
+// Real cjxl-produced streams (slice 7)
+// ---------------------------------------------------------------------------
+
+/// `JPXL/tests/fixtures/handmade`.
+fn handmade_dir() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("manifest dir has two ancestors")
+        .join("tests")
+        .join("fixtures")
+        .join("handmade")
+}
+
+/// Reads a fixture and positions a reader at its first frame.
 ///
-/// `jxlinfo` reports frame type, dimensions and the animation fields for each
-/// frame; once the header/frame boundary can be crossed this should parse the
-/// fixture codestreams and compare field by field, with the trace giving the
-/// bit offset of any divergence.
+/// A.1 puts the frames after `Headers`, and F.1 byte-aligns each frame with
+/// `ZeroPadToByte()`, so the frame starts at the next byte boundary.
+fn first_frame_of(name: &str) -> (Vec<u8>, usize, jpxl_decode::ImageHeaders) {
+    let bytes =
+        std::fs::read(handmade_dir().join(name)).unwrap_or_else(|e| panic!("reading {name}: {e}"));
+    let limits = Limits::default();
+    let mut guard = AllocGuard::new(&limits);
+    let mut r = BitReader::new(&bytes);
+    let headers = jpxl_decode::headers::decode_image_headers_metered(&mut r, &limits, &mut guard)
+        .unwrap_or_else(|e| panic!("{name}: image headers: {e}"));
+    r.zero_pad_to_byte().expect("frames are byte-aligned");
+    let offset = (r.total_bits_read() / 8) as usize;
+    (bytes, offset, headers)
+}
+
+/// Parses the frame header of every lossless fixture and checks it against
+/// what the file is known to be.
+///
+/// `jxlinfo` is not built in this checkout, so the cross-check is against the
+/// fixtures' own provenance sidecars plus the one thing the bitstream itself
+/// proves: `tests/e2e_lossless.rs` decodes these same frames to samples that
+/// are byte-identical to `djxl`'s output, which cannot happen unless every
+/// field read here is right.
 #[test]
-#[ignore = "TODO(slice 7): needs the real-stream harness"]
-fn real_stream_frame_header_matches_the_oracle() {
-    unimplemented!("slice 7 oracle cross-check");
+fn real_stream_frame_headers_parse() {
+    for (name, w, h, encoding) in [
+        (
+            "03_gradient_8x8_lossless.jxl",
+            8u32,
+            8u32,
+            Encoding::Modular,
+        ),
+        ("07_modular_gray_8x8_lossless.jxl", 8, 8, Encoding::Modular),
+        (
+            "11_modular_gradient_256x256_lossless.jxl",
+            256,
+            256,
+            Encoding::Modular,
+        ),
+        (
+            "12_modular_gray_300x200_lossless.jxl",
+            300,
+            200,
+            Encoding::Modular,
+        ),
+        (
+            "13_modular_rgb_16x16_lossless.jxl",
+            16,
+            16,
+            Encoding::Modular,
+        ),
+        ("04_gradient_8x8_lossy.jxl", 8, 8, Encoding::VarDct),
+        ("06_gradient_300x200_lossy.jxl", 300, 200, Encoding::VarDct),
+    ] {
+        let (bytes, offset, headers) = first_frame_of(name);
+        assert_eq!((headers.width(), headers.height()), (w, h), "{name}: size");
+
+        let header = parse(&bytes[offset..], &headers.metadata, w, h);
+        assert_eq!(header.encoding, encoding, "{name}: encoding");
+        assert_eq!(header.frame_type, FrameType::RegularFrame, "{name}: type");
+        assert!(header.is_last, "{name}: single-frame fixtures end here");
+        assert!(!header.have_crop, "{name}: no crop expected");
+        assert_eq!(header.upsampling, 1, "{name}: no upsampling expected");
+
+        let g = geometry(&header, w, h);
+        assert_eq!((g.width(), g.height()), (w, h), "{name}: geometry");
+        assert!(g.num_groups() >= 1 && g.num_lf_groups() >= 1, "{name}");
+    }
 }

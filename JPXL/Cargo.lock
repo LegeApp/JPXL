@@ -34,6 +34,7 @@ name = "jpxl-decode"
 version = "0.1.0"
 dependencies = [
  "jpxl-bitstream",
+ "jpxl-conformance",
  "jpxl-core",
  "jpxl-entropy",
 ]

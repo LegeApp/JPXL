@@ -153,12 +153,48 @@ pub enum TreeSource<'a> {
     /// `use_global_tree` must be false; the tree is read from this stream per
     /// H.4.2.
     Local,
-    /// `use_global_tree` must be true; the caller supplies the tree decoded
-    /// from the GlobalModular section (G.1.3).
+    /// `use_global_tree` must be true; the caller supplies the tree and
+    /// distributions decoded from the GlobalModular section (G.1.3).
     ///
-    /// See ambiguity 1 in the module documentation for what this implies about
+    /// See [`GLOBAL_TREE_SHARES_DISTRIBUTIONS`] for what this implies about
     /// the data stream's distributions.
-    Global(&'a MaTree),
+    Global {
+        /// The tree and its distribution bundle.
+        global: &'a GlobalTree,
+        /// Whether to re-seed the per-stream entropy state before decoding.
+        ///
+        /// H.4.2 reads the `D` bundle "as specified in C.1", and C.1's
+        /// initialization ends with the ANS seed of C.3.2. That seed therefore
+        /// belongs to the sub-bitstream that immediately follows the bundle —
+        /// the `GlobalModular` one — which passes `false`. Every later section
+        /// starts a new entropy-coded stream over the same distributions and
+        /// passes `true`.
+        restart: bool,
+    },
+}
+
+/// Reads the global MA tree of G.1.3: the tree of H.4.2 plus the `D` bundle.
+///
+/// The caller has already read G.1.3's leading `Bool()` and found it set.
+///
+/// # Errors
+///
+/// Any [`ModularError`] the tree decode reports.
+pub fn read_global_tree(
+    reader: &mut BitReader<'_>,
+    options: &ModularOptions,
+    guard: &mut AllocGuard,
+) -> Result<GlobalTree> {
+    let mut tree_decoder = SymbolDecoder::open(reader, tree::TREE_NUM_CONTEXTS, guard)?;
+    let tree = MaTree::decode(reader, &mut tree_decoder, options.tree_limits, guard)?;
+    tree_decoder.finish()?;
+    // The histograms only: H.2 starts the entropy-coded stream after the
+    // ModularHeader of whichever sub-bitstream uses this tree.
+    let distributions = SymbolDecoder::open_deferred(reader, tree.num_leaves(), guard)?;
+    Ok(GlobalTree {
+        tree,
+        distributions,
+    })
 }
 
 /// Caller-supplied bounds and context for a modular sub-bitstream.
@@ -224,6 +260,19 @@ pub struct ModularHeader {
 }
 
 impl ModularHeader {
+    /// The header of a sub-bitstream with no channels, which H.1 says is not
+    /// read at all.
+    #[must_use]
+    pub fn empty() -> Self {
+        Self {
+            use_global_tree: false,
+            wp_header: WpHeader::default_wp(),
+            transforms: Vec::new(),
+            meta_snapshots: Vec::new(),
+            layout: ChannelLayout::new(Vec::new()),
+        }
+    }
+
     /// Reads Table H.1 and derives the transformed channel list.
     ///
     /// # Errors
@@ -297,6 +346,133 @@ impl ModularHeader {
     pub const fn layout(&self) -> &ChannelLayout {
         &self.layout
     }
+
+    /// Allocates every channel of the transformed list, zero-filled.
+    ///
+    /// # Errors
+    ///
+    /// [`ModularError::Core`](ModularError::Core) if the channels exceed the
+    /// guard's budget.
+    pub fn allocate_channels(&self, guard: &mut AllocGuard) -> Result<Vec<Channel>> {
+        let mut channels = Vec::with_capacity(self.layout.specs.len());
+        for spec in &self.layout.specs {
+            channels.push(Channel::new(*spec, guard)?);
+        }
+        Ok(channels)
+    }
+}
+
+/// The global MA tree of G.1.3 together with the distributions H.4.2 reads
+/// after it.
+///
+/// G.1.3's `GlobalModular` opens with a `Bool()`; when it is set, "an MA tree
+/// is decoded as described in H.4.2", and H.4.2's last step is "the decoder
+/// reads `(tree.size() + 1) / 2` pre-clustered distributions D". Both halves
+/// therefore belong to the global section, which is why they travel together.
+#[derive(Debug, Clone)]
+pub struct GlobalTree {
+    /// The decoded tree.
+    pub tree: MaTree,
+    /// The `D` bundle read at the end of H.4.2, ready to be
+    /// [`restart`](SymbolDecoder::restart)ed for each group.
+    pub distributions: SymbolDecoder,
+}
+
+/// Whether a `use_global_tree` sub-bitstream reuses the global distributions.
+///
+/// **Resolved by experiment, slice 7.** H.2 says both that the global tree
+/// "and its clustered distributions are used as decoded from the GlobalModular
+/// section" and that the decoder then "starts an entropy-coded stream (C.1)".
+/// Under `true` (the reading in force) the two are reconciled as: the
+/// distribution bundle is shared and only the *per-stream* state of C.1 — the
+/// ANS seed and the LZ77 window — is re-initialized, via
+/// [`SymbolDecoder::restart`]. Under `false` each sub-bitstream reads a
+/// complete fresh bundle.
+///
+/// Flipping this constant selects the other reading in one place; see the
+/// slice-7 report for the evidence.
+pub const GLOBAL_TREE_SHARES_DISTRIBUTIONS: bool = true;
+
+/// Which channels a sub-bitstream decodes (18181-1 H.2 and G.1.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChannelStop {
+    /// Every channel of the transformed list, as a group sub-bitstream does.
+    All,
+    /// G.1.3: the first `nb_meta_channels` channels, then any further channel
+    /// whose width *and* height are at most `group_dim`, stopping at the first
+    /// one that is not.
+    GlobalModular {
+        /// `group_dim` of the frame.
+        group_dim: u32,
+    },
+}
+
+/// A modular sub-bitstream whose samples are decoded but whose inverse
+/// transforms have not run yet.
+///
+/// G.1.3 needs exactly this shape: the `GlobalModular` section decodes only a
+/// prefix of the channels and explicitly applies "no inverse transforms yet",
+/// because the remaining channels arrive later from the LF-group and
+/// pass-group sections (G.2.3, G.4.2) and only then does H.6 run over the
+/// completed image.
+#[derive(Debug, Clone)]
+pub struct PartialModular {
+    header: ModularHeader,
+    channels: Vec<Channel>,
+    first_undecoded: usize,
+}
+
+impl PartialModular {
+    /// The parsed header, including the resolved transform chain.
+    #[must_use]
+    pub const fn header(&self) -> &ModularHeader {
+        &self.header
+    }
+
+    /// The full transformed channel list. Channels at or after
+    /// [`first_undecoded`](Self::first_undecoded) are still zero-filled.
+    #[must_use]
+    pub fn channels(&self) -> &[Channel] {
+        &self.channels
+    }
+
+    /// Mutable access, so G.2.3 and G.4.2 can copy group rectangles in.
+    pub fn channels_mut(&mut self) -> &mut [Channel] {
+        &mut self.channels
+    }
+
+    /// Index of the first channel this sub-bitstream did *not* decode.
+    #[must_use]
+    pub const fn first_undecoded(&self) -> usize {
+        self.first_undecoded
+    }
+
+    /// Applies the inverse transforms of H.6, last to first.
+    ///
+    /// # Errors
+    ///
+    /// Any [`ModularError`] an inverse transform reports.
+    pub fn into_image(
+        mut self,
+        options: &ModularOptions,
+        guard: &mut AllocGuard,
+    ) -> Result<ModularImage> {
+        let ctx = PaletteContext {
+            bits_per_sample: options.bits_per_sample,
+            wp_header: self.header.wp_header,
+        };
+        let mut nb_meta_channels = self.header.layout.nb_meta_channels;
+        for (index, transform) in self.header.transforms.iter().enumerate().rev() {
+            transform::apply_inverse(&mut self.channels, transform, &ctx, guard)?;
+            nb_meta_channels = self
+                .header
+                .meta_snapshots
+                .get(index)
+                .copied()
+                .unwrap_or(nb_meta_channels);
+        }
+        Ok(ModularImage::new(self.channels, nb_meta_channels))
+    }
 }
 
 /// Decodes a complete modular sub-bitstream (18181-1 Annex H).
@@ -341,7 +517,41 @@ pub fn decode_sub_bitstream_with(
     if initial.is_empty() {
         return Ok(ModularImage::new(Vec::new(), 0));
     }
+    let partial = decode_sub_bitstream_partial(
+        reader,
+        initial,
+        options,
+        tree_source,
+        ChannelStop::All,
+        guard,
+    )?;
+    partial.into_image(options, guard)
+}
 
+/// Decodes a modular sub-bitstream up to `stop`, without inverse transforms.
+///
+/// This is the shape G.1.3 needs; [`decode_sub_bitstream_with`] is this plus
+/// [`PartialModular::into_image`].
+///
+/// # Errors
+///
+/// As [`decode_sub_bitstream`].
+pub fn decode_sub_bitstream_partial(
+    reader: &mut BitReader<'_>,
+    initial: &[ChannelSpec],
+    options: &ModularOptions,
+    tree_source: TreeSource<'_>,
+    stop: ChannelStop,
+    guard: &mut AllocGuard,
+) -> Result<PartialModular> {
+    // H.1: "In the trivial case where N is zero, the decoder takes no action."
+    if initial.is_empty() {
+        return Ok(PartialModular {
+            header: ModularHeader::empty(),
+            channels: Vec::new(),
+            first_undecoded: 0,
+        });
+    }
     let header = ModularHeader::read(reader, initial, options, guard)?;
 
     // H.2 / H.4.2: the tree, and then the data stream's own distributions.
@@ -353,49 +563,62 @@ pub fn decode_sub_bitstream_with(
             let data_decoder = SymbolDecoder::open(reader, tree.num_leaves(), guard)?;
             (tree, data_decoder)
         }
-        (true, TreeSource::Global(tree)) => {
-            // See ambiguity 1 in the module documentation.
-            let data_decoder = SymbolDecoder::open(reader, tree.num_leaves(), guard)?;
-            (tree.clone(), data_decoder)
+        (true, TreeSource::Global { global, restart }) => {
+            // See `GLOBAL_TREE_SHARES_DISTRIBUTIONS`.
+            let decoder = if GLOBAL_TREE_SHARES_DISTRIBUTIONS {
+                let mut shared = global.distributions.clone();
+                if restart {
+                    shared.restart(reader)?;
+                }
+                shared
+            } else {
+                SymbolDecoder::open(reader, global.tree.num_leaves(), guard)?
+            };
+            (global.tree.clone(), decoder)
         }
         (true, TreeSource::Local) => {
             return Err(malformed!(
                 "H.2: use_global_tree is set but no global MA tree was supplied"
             ));
         }
-        (false, TreeSource::Global(_)) => {
-            return Err(malformed!(
-                "H.2: a global MA tree was supplied but use_global_tree is clear"
-            ));
+        // A sub-bitstream may signal its own tree even when a global one
+        // exists: H.2 gates the choice on `use_global_tree` alone, and G.1.3's
+        // global tree is optional for the sections that follow it.
+        (false, TreeSource::Global { .. }) => {
+            let mut tree_decoder = SymbolDecoder::open(reader, tree::TREE_NUM_CONTEXTS, guard)?;
+            let tree = MaTree::decode(reader, &mut tree_decoder, options.tree_limits, guard)?;
+            tree_decoder.finish()?;
+            let data_decoder = SymbolDecoder::open(reader, tree.num_leaves(), guard)?;
+            (tree, data_decoder)
         }
     };
 
-    let mut channels = decode_channels(reader, &mut decoder, &tree, &header, options, guard)?;
+    let mut channels = header.allocate_channels(guard)?;
+    let first_undecoded = decode_channels(
+        reader,
+        &mut decoder,
+        &tree,
+        &header,
+        options,
+        &mut channels,
+        stop,
+        guard,
+    )?;
     decoder.finish()?;
 
-    // H.2: "Finally, the inverse transformations are applied (from last to
-    // first)."
-    let ctx = PaletteContext {
-        bits_per_sample: options.bits_per_sample,
-        wp_header: header.wp_header,
-    };
-    let mut nb_meta_channels = header.layout.nb_meta_channels;
-    for (index, transform) in header.transforms.iter().enumerate().rev() {
-        transform::apply_inverse(&mut channels, transform, &ctx, guard)?;
-        nb_meta_channels = header
-            .meta_snapshots
-            .get(index)
-            .copied()
-            .unwrap_or(nb_meta_channels);
-    }
-
-    Ok(ModularImage::new(channels, nb_meta_channels))
+    Ok(PartialModular {
+        header,
+        channels,
+        first_undecoded,
+    })
 }
 
-/// Decodes every channel's samples per H.3, before the inverse transforms.
+/// Decodes channel samples per H.3, into an already-allocated channel list.
 ///
-/// Exposed so slice 7 can supply its own [`SymbolDecoder`] once the
-/// global-distribution question in ambiguity 1 is settled.
+/// Returns the index of the first channel that was *not* decoded, which for
+/// [`ChannelStop::All`] is `channels.len()`.
+///
+/// Exposed so slice 7's group wiring can supply its own [`SymbolDecoder`].
 ///
 /// # Errors
 ///
@@ -403,32 +626,52 @@ pub fn decode_sub_bitstream_with(
 /// decoded, [`ModularError::Malformed`](ModularError::Malformed) if the MA tree
 /// selects a context the stream does not have, or
 /// [`ModularError::Core`](ModularError::Core) on a limit rejection.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "every argument is a distinct piece of decoder state that H.2 \
+              names separately; bundling them would only hide the coupling"
+)]
 pub fn decode_channels(
     reader: &mut BitReader<'_>,
     decoder: &mut SymbolDecoder,
     tree: &MaTree,
     header: &ModularHeader,
     options: &ModularOptions,
+    channels: &mut [Channel],
+    stop: ChannelStop,
     guard: &mut AllocGuard,
-) -> Result<Vec<Channel>> {
-    let specs = &header.layout.specs;
+) -> Result<usize> {
+    // G.1.3: work out how far this sub-bitstream decodes before computing
+    // `dist_multiplier`, which is defined over "all channels that are to be
+    // decoded".
+    let limit = match stop {
+        ChannelStop::All => channels.len(),
+        ChannelStop::GlobalModular { group_dim } => {
+            let meta = header.layout.nb_meta_channels.min(channels.len());
+            let mut end = meta;
+            while let Some(c) = channels.get(end) {
+                if c.width() > group_dim || c.height() > group_dim {
+                    break;
+                }
+                end += 1;
+            }
+            end
+        }
+    };
 
     // H.3: dist_multiplier is the largest width amongst the channels that are
     // actually decoded, i.e. excluding the zero-sized ones H.2 skips.
-    let dist_multiplier = specs
+    let dist_multiplier = channels
+        .get(..limit)
+        .unwrap_or(&[])
         .iter()
-        .filter(|s| !s.is_empty())
-        .map(|s| s.width)
+        .filter(|c| !c.spec().is_empty())
+        .map(Channel::width)
         .max()
         .unwrap_or(0);
     decoder.set_dist_multiplier(dist_multiplier);
 
-    let mut channels = Vec::with_capacity(specs.len());
-    for spec in specs {
-        channels.push(Channel::new(*spec, guard)?);
-    }
-
-    for i in 0..channels.len() {
+    for i in 0..limit {
         let spec = channels
             .get(i)
             .map(Channel::spec)
@@ -437,7 +680,7 @@ pub fn decode_channels(
         if spec.is_empty() {
             continue;
         }
-        let mut properties = PropertyBuilder::new(&channels, i, options.stream_index, guard)?;
+        let mut properties = PropertyBuilder::new(channels, i, options.stream_index, guard)?;
         let mut wp = WeightedState::new(spec.width, guard)?;
 
         let (earlier, from_here) = channels.split_at_mut(i);
@@ -469,7 +712,7 @@ pub fn decode_channels(
             wp.advance_row();
         }
     }
-    Ok(channels)
+    Ok(limit)
 }
 
 #[cfg(test)]

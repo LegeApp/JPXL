@@ -17,5 +17,8 @@ jpxl-bitstream.workspace = true
 jpxl-core.workspace = true
 jpxl-entropy.workspace = true
 
+[dev-dependencies]
+jpxl-conformance.workspace = true
+
 [lints]
 workspace = true

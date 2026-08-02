@@ -62,6 +62,59 @@ use jpxl_core::limits::AllocGuard;
 use super::error::Result;
 use super::predictor::Neighbours;
 
+/// Whether `true_err` is derived from the clamped prediction.
+///
+/// H.5.1 says `true_err = NarrowToI32(prediction - (true value << 3))`, and
+/// H.5.2 computes `prediction`, then conditionally clamps it. Whether "the
+/// prediction" means the clamped value is the question.
+///
+/// **RESOLVED (slice 7): clamped.** Setting this to `false` breaks fixtures
+/// 08, 11, 12 and 13, which are otherwise bit-exact against `djxl`.
+pub const EXPERIMENT_TRUE_ERR_USES_CLAMPED: bool = true;
+
+/// Which comparison H.5.2's `max_error` walk uses.
+/// 0 = `abs(x) > abs(max)` (the clause as transcribed), 1 = `x < max`
+/// (minimum), 2 = `x > max` (maximum), 3 = `abs(x) >= abs(max)`.
+///
+/// **PARTIALLY RESOLVED (slice 7): 0, with a known contradiction.** Rule 0 is
+/// what H.5.2 states and it decodes fixtures 03, 07, 08, 11, 12 and 13
+/// bit-exactly — fixture 12 alone is 60 000 samples whose contexts all hinge
+/// on property 15. Rules 1, 2 and 3 each break at least one of those.
+///
+/// Fixture 10 nonetheless *requires* rule 1. Its palette meta-channel is
+/// 4x3 with alternating extreme values, so row 0 leaves
+/// `true_err = [-2040, +2040, -1896, +1896]`. Recovering the encoder's context
+/// sequence by branching the ANS decoder at every symbol (the sequence
+/// `[0,1,0,1,1,1,1,1,0,0,1]` is the only one reproducing the four known
+/// palette colours) shows that at `(2, 1)` the encoder's `max_error` is
+/// `-1896` even though `+2040` is present and larger in magnitude. No
+/// magnitude-based rule can produce that, and no tie-break or walk order fixes
+/// it either. Since rule 0 is both the written clause and the one supported by
+/// far more evidence, it stays; fixtures 05, 09 and 10 are left as documented
+/// divergences rather than fitting the rule to one file. See
+/// `tests/e2e_lossless.rs` for the per-fixture divergence reports.
+pub const EXPERIMENT_MAX_ERROR_RULE: u32 = 0;
+
+/// How H.5.2's "not all the same sign" clamp guard is parsed.
+///
+/// Both transcriptions render it as
+/// `if (((true_err_N * true_err_W) | (true_err_N * true_err_NW)) <= 0)`.
+/// Read literally (`true`) the `<= 0` applies to the bitwise OR of the two
+/// products. Read as a collapsed pair of comparisons (`false`) it is
+/// `(p1 <= 0) or (p2 <= 0)`. The two differ in exactly one case — one product
+/// zero and the other positive, i.e. one neighbouring error is zero — which is
+/// precisely the case the prose ("don't have the same sign") says must clamp.
+pub const EXPERIMENT_CLAMP_BITWISE_OR: bool = false;
+
+/// Which extra term H.5.2 adds to `err_sum` on the last column.
+/// 0 = none, 1 = `err[i]_W` (the LaTeX reading), 2 = `err[i]_N`.
+///
+/// **NOT EXERCISED (slice 7).** All three values decode the same six fixtures
+/// bit-exactly and leave the same three failing; only the bit position at
+/// which fixture 05 gives up moves (3205 / 3205 / 3201). The LaTeX reading is
+/// kept because `part1.md` is unreadable here and the LaTeX is canonical.
+pub const EXPERIMENT_ERR_SUM_LAST_COLUMN: u32 = 1;
+
 /// Number of sub-predictors (H.5.1: `subpred[i]` with `i` in `[0, 4)`).
 pub const NUM_SUBPREDICTORS: usize = 4;
 
@@ -137,6 +190,9 @@ impl Default for WpHeader {
 /// One sample's worth of self-correcting predictor output (H.5.2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct WeightedPrediction {
+    /// The prediction before H.5.2's sign-disagreement clamp, kept so the
+    /// slice-7 experiment can ask which one `true_err` is derived from.
+    pub unclamped: i64,
     /// The `prediction` value, in the `<< 3` domain. Table H.3 row 6 turns it
     /// into a sample estimate with `(prediction + 3) >> 3`.
     pub prediction: i64,
@@ -313,6 +369,31 @@ impl WeightedState {
         }
     }
 
+    /// Scratch accessor for slice-7 oracle experiments: the four neighbouring
+    /// `true_err` values and the four `err_sum` values at `x`.
+    #[must_use]
+    pub fn debug_state(&self, x: u32) -> ([i64; 4], [u64; 4]) {
+        let te = [
+            self.true_err_w(x),
+            self.true_err_n(x),
+            self.true_err_nw(x),
+            self.true_err_ne(x),
+        ];
+        let mut sums = [0u64; 4];
+        for (i, slot) in sums.iter_mut().enumerate() {
+            let mut sum = self.err_n(x, i)
+                + self.err_w(x, i)
+                + self.err_nw(x, i)
+                + self.err_ww(x, i)
+                + self.err_ne(x, i);
+            if x + 1 == self.width {
+                sum += self.err_w(x, i);
+            }
+            *slot = sum;
+        }
+        (te, sums)
+    }
+
     /// Computes `prediction`, `max_error` and `subpred[0..4)` for `(x, y)`.
     ///
     /// `nb` must be the H.3 neighbourhood of the same sample in the same
@@ -349,9 +430,14 @@ impl WeightedState {
                 .wrapping_add(self.err_nw(x, i))
                 .wrapping_add(self.err_ww(x, i))
                 .wrapping_add(self.err_ne(x, i));
-            // H.5.2: on the last column the west error is counted twice.
+            // H.5.2: on the last column an extra term is added. Which one is
+            // EXPERIMENT_ERR_SUM_LAST_COLUMN.
             let sum = if x + 1 == self.width {
-                sum.wrapping_add(self.err_w(x, i))
+                match EXPERIMENT_ERR_SUM_LAST_COLUMN {
+                    0 => sum,
+                    1 => sum.wrapping_add(self.err_w(x, i)),
+                    _ => sum.wrapping_add(self.err_n(x, i)),
+                }
             } else {
                 sum
             };
@@ -389,7 +475,13 @@ impl WeightedState {
         // share a sign. The products are taken in i64 so two i32 errors cannot
         // overflow, and `a | b <= 0` is true exactly when either product is
         // negative or both are zero.
-        let prediction = if ((te_n * te_w) | (te_n * te_nw)) <= 0 {
+        let clamp_fires = if EXPERIMENT_CLAMP_BITWISE_OR {
+            ((te_n * te_w) | (te_n * te_nw)) <= 0
+        } else {
+            (te_n * te_w) <= 0 || (te_n * te_nw) <= 0
+        };
+        let unclamped = prediction;
+        let prediction = if clamp_fires {
             prediction.clamp(w3.min(n3).min(ne3), w3.max(n3).max(ne3))
         } else {
             prediction
@@ -399,12 +491,19 @@ impl WeightedState {
         // the order W, N, NW, NE with strict `>` so ties keep the earlier one.
         let mut max_error = te_w;
         for candidate in [te_n, te_nw, te_ne] {
-            if candidate.abs() > max_error.abs() {
+            let beats = match EXPERIMENT_MAX_ERROR_RULE {
+                0 => candidate.abs() > max_error.abs(),
+                1 => candidate < max_error,
+                2 => candidate > max_error,
+                _ => candidate.abs() >= max_error.abs(),
+            };
+            if beats {
                 max_error = candidate;
             }
         }
 
         WeightedPrediction {
+            unclamped,
             prediction,
             max_error: narrow_to_i32(max_error),
             subpred,
@@ -417,8 +516,13 @@ impl WeightedState {
     /// known and before advancing `x`.
     pub fn update(&mut self, x: u32, wp: &WeightedPrediction, true_value: i32) {
         let shifted = i64::from(true_value) << 3;
+        let source = if EXPERIMENT_TRUE_ERR_USES_CLAMPED {
+            wp.prediction
+        } else {
+            wp.unclamped
+        };
         let mut entry = ErrorEntry {
-            true_err: narrow_to_i32(wp.prediction - shifted),
+            true_err: narrow_to_i32(source - shifted),
             err: [0; NUM_SUBPREDICTORS],
         };
         for (slot, sp) in entry.err.iter_mut().zip(wp.subpred.iter()) {

@@ -111,7 +111,8 @@ pub fn read_cluster_map(
         }
         // The nested decoder carries a single distribution. C.2.2 additionally
         // requires that LZ77 be absent from it when num_dist == 2.
-        let mut nested = SymbolDecoder::open_nested(reader, 1, depth + 1, num_dist == 2, guard)?;
+        let mut nested =
+            SymbolDecoder::open_nested(reader, 1, depth + 1, num_dist == 2, true, guard)?;
         for slot in &mut clusters {
             let value = nested.read_uint(reader, 0)?;
             *slot = u8::try_from(value)

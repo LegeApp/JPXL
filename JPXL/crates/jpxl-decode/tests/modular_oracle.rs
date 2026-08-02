@@ -16,17 +16,19 @@
 //! 4. H.6.4's `index & 1 == 0` operator precedence.
 //! 5. Table H.3's `Idiv 16` in `AvgAll`.
 //!
-//! TODO(slice 7): feed this harness with modular sub-bitstreams extracted from
-//! `cjxl`-produced streams. Locating a sub-bitstream inside a codestream needs
-//! the frame header, TOC and group geometry of slice 6, which is why the
-//! fixtures cannot exist yet. `tools/make-modular-fixtures.sh` already produces
-//! the `.jxl` files; what is missing is the offset of each modular section
-//! within them and the reference sample values from `djxl`.
+//! Fixtures are carved from `cjxl`-produced streams by
+//! `tools/make-modular-fixtures.sh` plus the byte ranges recorded in each
+//! `.txt` sidecar. A fixture is one whole **`LfGlobal` section** (18181-1 G.1)
+//! rather than a bare modular sub-bitstream, because a real sub-bitstream
+//! generally sets `use_global_tree` and so is not decodable without the tree
+//! that precedes it in the same section. The harness therefore drives the
+//! short G.1 preamble — `LfChannelDequantization` (G.1.2) and the
+//! `GlobalModular` tree flag (G.1.3) — before handing over to Annex H.
 //!
 //! Fixture format, one pair per case in [`fixture_dir`]:
 //!
-//! * `<name>.bin` — the raw bytes of the sub-bitstream, starting at the first
-//!   bit of the `ModularHeader`.
+//! * `<name>.bin` — the raw bytes of the `LfGlobal` section, from its first
+//!   byte (the section boundary is byte-aligned by F.3.3).
 //! * `<name>.expected` — a text sidecar:
 //!   - line 1: the initial channel list, as `width,height,hshift,vshift`
 //!     groups separated by whitespace;
@@ -46,8 +48,11 @@ mod modular_common;
 use std::path::{Path, PathBuf};
 
 use jpxl_bitstream::BitReader;
-use jpxl_core::limits::Limits;
-use jpxl_decode::modular::{ChannelSpec, ModularOptions, TreeSource, decode_sub_bitstream};
+use jpxl_core::limits::{AllocGuard, Limits};
+use jpxl_decode::modular::{
+    ChannelSpec, ChannelStop, ModularOptions, TreeSource, decode_sub_bitstream_partial,
+    read_global_tree,
+};
 
 /// Directory the slice 7 fixtures will live in.
 fn fixture_dir() -> PathBuf {
@@ -72,19 +77,55 @@ struct OracleCase {
 /// [`harness_accepts_a_known_good_case_and_rejects_a_wrong_one`] even while no
 /// fixtures exist.
 fn check_case(case: &OracleCase) -> Result<(), String> {
+    let limits = Limits::default();
+    let mut guard = AllocGuard::new(&limits);
     let mut reader = BitReader::new(&case.payload);
     let options = ModularOptions {
         stream_index: case.stream_index,
         bits_per_sample: case.bits_per_sample,
         ..ModularOptions::default()
     };
-    let image = decode_sub_bitstream(
+
+    // G.1.2: LfChannelDequantization is present for every encoding. Modular
+    // mode never uses the weights, but the bits are still there.
+    let all_default = reader
+        .read_bool()
+        .map_err(|e| format!("{}: LfChannelDequantization: {e}", case.name))?;
+    if !all_default {
+        for _ in 0..3 {
+            jpxl_bitstream::read_f16_as_f32(&mut reader)
+                .map_err(|e| format!("{}: LfChannelDequantization: {e}", case.name))?;
+        }
+    }
+
+    // G.1.3: the optional global MA tree, then the modular sub-bitstream.
+    let have_global_tree = reader
+        .read_bool()
+        .map_err(|e| format!("{}: global tree flag: {e}", case.name))?;
+    let global = if have_global_tree {
+        Some(
+            read_global_tree(&mut reader, &options, &mut guard)
+                .map_err(|e| format!("{}: global tree: {e}", case.name))?,
+        )
+    } else {
+        None
+    };
+    let source = match global.as_ref() {
+        Some(global) => TreeSource::Global {
+            global,
+            restart: true,
+        },
+        None => TreeSource::Local,
+    };
+    let image = decode_sub_bitstream_partial(
         &mut reader,
         &case.initial,
         &options,
-        TreeSource::Local,
-        &Limits::default(),
+        source,
+        ChannelStop::All,
+        &mut guard,
     )
+    .and_then(|partial| partial.into_image(&options, &mut guard))
     .map_err(|e| format!("{}: decode failed: {e}", case.name))?;
 
     let decoded: Vec<Vec<i32>> = image
@@ -116,6 +157,10 @@ fn harness_accepts_a_known_good_case_and_rejects_a_wrong_one() {
 
     const ALPHABET: usize = 4;
     let mut w = BitWriter::new();
+    // The G.1 preamble the harness now expects: all-default LF dequantization
+    // and no global tree.
+    w.bit(true);
+    w.bit(false);
     write_modular_header_no_transforms(&mut w, false);
     write_prefix_bundle(&mut w, 6, ALPHABET, 4);
     for token in [0u32, 0, 0, 0, 0] {
@@ -147,10 +192,7 @@ fn harness_accepts_a_known_good_case_and_rejects_a_wrong_one() {
 }
 
 /// Decodes every fixture in [`fixture_dir`].
-///
-/// Ignored until slice 7 produces the fixtures; see the module documentation.
 #[test]
-#[ignore = "TODO(slice 7): needs modular sub-bitstreams extracted from oracle files"]
 fn decodes_oracle_fixtures() {
     let dir = fixture_dir();
     let entries = std::fs::read_dir(&dir)

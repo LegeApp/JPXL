@@ -269,15 +269,78 @@ fn oversized_lehmer_value_is_rejected() {
     assert!(read_toc(&mut r, 3, &limits, &mut guard).is_err());
 }
 
-/// TODO(slice 7): cross-check against a real cjxl-produced codestream.
+/// Decodes the TOC of real cjxl-produced frames and checks it is consistent.
 ///
-/// The fixtures under `JPXL/tests/fixtures` include a 300x200 multi-group
-/// image whose frame is byte-aligned after the image headers. Once slice 7
-/// wires `FrameError` into `DecodeError` and the header/frame boundary can be
-/// crossed with `?`, this should decode that frame's TOC and check the section
-/// offsets against `jxlinfo`'s reported layout.
+/// Two invariants that a mis-read TOC would break: the entry count matches the
+/// geometry's `num_sections`, and the sections exactly tile the bytes that
+/// remain in the file after the TOC. The latter is the strong one — it pins
+/// both the entry values and the byte position `P` of F.3.3.
 #[test]
-#[ignore = "TODO(slice 7): needs the real-stream harness"]
-fn real_stream_toc_matches_the_oracle() {
-    unimplemented!("slice 7 oracle cross-check");
+fn real_stream_toc_tiles_the_frame() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("manifest dir has two ancestors")
+        .join("tests")
+        .join("fixtures")
+        .join("handmade");
+
+    for name in [
+        "03_gradient_8x8_lossless.jxl",
+        "07_modular_gray_8x8_lossless.jxl",
+        "11_modular_gradient_256x256_lossless.jxl",
+        "12_modular_gray_300x200_lossless.jxl",
+        "13_modular_rgb_16x16_lossless.jxl",
+        "06_gradient_300x200_lossy.jxl",
+    ] {
+        let bytes = std::fs::read(dir.join(name)).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let limits = Limits::default();
+        let mut guard = AllocGuard::new(&limits);
+        let mut r = BitReader::new(&bytes);
+        let headers =
+            jpxl_decode::headers::decode_image_headers_metered(&mut r, &limits, &mut guard)
+                .unwrap_or_else(|e| panic!("{name}: headers: {e}"));
+        r.zero_pad_to_byte().expect("frames are byte-aligned");
+        let frame_start = (r.total_bits_read() / 8) as usize;
+
+        let mut fr = BitReader::new(&bytes[frame_start..]);
+        let header = jpxl_decode::frame::read_frame_header(
+            &mut fr,
+            &headers.metadata,
+            headers.width(),
+            headers.height(),
+            &limits,
+            &mut guard,
+        )
+        .unwrap_or_else(|e| panic!("{name}: frame header: {e}"));
+        let geometry = jpxl_decode::frame::FrameGeometry::from_header(
+            &header,
+            headers.width(),
+            headers.height(),
+            &limits,
+            &mut guard,
+        )
+        .unwrap_or_else(|e| panic!("{name}: geometry: {e}"));
+
+        let toc = read_toc(&mut fr, geometry.num_sections(), &limits, &mut guard)
+            .unwrap_or_else(|e| panic!("{name}: TOC: {e}"));
+        assert_eq!(
+            toc.len() as u64,
+            geometry.num_sections(),
+            "{name}: TOC entry count"
+        );
+
+        let base = frame_start + (fr.total_bits_read() / 8) as usize;
+        assert_eq!(
+            base as u64 + toc.total_size(),
+            bytes.len() as u64,
+            "{name}: the sections must tile exactly to the end of the file"
+        );
+        for i in 0..toc.len() {
+            assert!(
+                toc.offset_of(i).is_some_and(|o| o <= toc.total_size()),
+                "{name}: section {i} offset is outside the frame"
+            );
+        }
+    }
 }

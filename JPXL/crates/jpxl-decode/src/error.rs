@@ -12,6 +12,10 @@ use core::fmt;
 
 use jpxl_bitstream::BitstreamError;
 use jpxl_core::JpxlError;
+use jpxl_entropy::EntropyError;
+
+use crate::frame::FrameError;
+use crate::modular::ModularError;
 
 /// Anything that can go wrong while decoding a codestream.
 #[derive(Debug)]
@@ -21,6 +25,16 @@ pub enum DecodeError {
     Bitstream(BitstreamError),
     /// A shared primitive rejected a value (geometry, limits).
     Core(JpxlError),
+    /// The entropy layer (Annex C) rejected the stream.
+    Entropy(EntropyError),
+    /// Frame header, TOC or geometry parsing failed (Annexes F and G).
+    ///
+    /// Boxed because `FrameError` nests a `DecodeError` in turn (a frame
+    /// header can contain an `Extensions` bundle), and the two types would
+    /// otherwise be mutually recursive without indirection.
+    Frame(Box<FrameError>),
+    /// A modular sub-bitstream failed (Annex H).
+    Modular(ModularError),
     /// 18181-1 D.1: the 16-bit signature was not `0x0AFF`.
     InvalidSignature {
         /// The value actually read.
@@ -48,7 +62,8 @@ pub enum DecodeError {
     Unsupported {
         /// What was encountered.
         feature: &'static str,
-        /// Clause specifying it.
+        /// Fully-qualified clause specifying it, e.g. `"18181-1 Annex I"` —
+        /// including the part number, since container boxes live in Part 2.
         clause: &'static str,
     },
 }
@@ -70,6 +85,9 @@ impl fmt::Display for DecodeError {
         match self {
             Self::Bitstream(e) => write!(f, "bitstream error: {e}"),
             Self::Core(e) => write!(f, "{e}"),
+            Self::Entropy(e) => write!(f, "{e}"),
+            Self::Frame(e) => write!(f, "{e}"),
+            Self::Modular(e) => write!(f, "{e}"),
             Self::InvalidSignature { found } => write!(
                 f,
                 "18181-1 D.1: codestream signature is {found:#06x}, expected 0x0aff (bytes ff 0a)"
@@ -91,7 +109,10 @@ impl fmt::Display for DecodeError {
                 "18181-1 {clause}: value {value} has no row in enumerated type {table}"
             ),
             Self::Unsupported { feature, clause } => {
-                write!(f, "18181-1 {clause}: {feature} is not implemented")
+                // The clause carries its own part number: this is the one
+                // variant that can name Part 2 (container boxes) as well as
+                // Part 1.
+                write!(f, "{clause}: {feature} is not implemented")
             }
         }
     }
@@ -102,6 +123,9 @@ impl std::error::Error for DecodeError {
         match self {
             Self::Bitstream(e) => Some(e),
             Self::Core(e) => Some(e),
+            Self::Entropy(e) => Some(e),
+            Self::Frame(e) => Some(e),
+            Self::Modular(e) => Some(e),
             Self::InvalidSignature { .. }
             | Self::FieldOutOfRange { .. }
             | Self::UnknownEnumValue { .. }
@@ -119,6 +143,28 @@ impl From<BitstreamError> for DecodeError {
 impl From<JpxlError> for DecodeError {
     fn from(e: JpxlError) -> Self {
         Self::Core(e)
+    }
+}
+
+impl From<EntropyError> for DecodeError {
+    fn from(e: EntropyError) -> Self {
+        Self::Entropy(e)
+    }
+}
+
+/// Slice 7 wiring: see `crate::frame::error` for why `FrameError` is its own
+/// type rather than a set of `DecodeError` variants.
+impl From<FrameError> for DecodeError {
+    fn from(e: FrameError) -> Self {
+        Self::Frame(Box::new(e))
+    }
+}
+
+/// Slice 7 wiring: see `crate::modular::error` for why `ModularError` is its
+/// own type rather than a set of `DecodeError` variants.
+impl From<ModularError> for DecodeError {
+    fn from(e: ModularError) -> Self {
+        Self::Modular(e)
     }
 }
 

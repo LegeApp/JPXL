@@ -7,17 +7,16 @@
 //! and, less riskily, the C.3.3 recursive call) are decided here by argument
 //! rather than by evidence.
 //!
-//! TODO(slice 7): feed this harness with entropy-coded sections extracted from
-//! `djxl`-decodable streams, per `docs/PLAN.md` slice 3's second acceptance
-//! criterion ("decode entropy-coded sections lifted from oracle files
-//! bit-exactly"). Each fixture is a `.bin` payload plus a `.expected` list of
-//! decoded integers and the context sequence used to read them, with a
-//! provenance sidecar as `AGENTS.md` section 9 requires. Producing them needs
-//! the frame header and TOC work of slice 6 to locate the sections, which is
-//! why they cannot exist yet.
+//! Fixtures are entropy-coded streams carved out of `cjxl`-produced files, per
+//! `docs/PLAN.md` slice 3's second acceptance criterion ("decode entropy-coded
+//! sections lifted from oracle files bit-exactly"). Each is a `.bin` payload
+//! plus a `.expected` sidecar giving `num_dist`, the context sequence, and the
+//! integers the stream must decode to; every fixture also has a `.txt`
+//! provenance sidecar naming the file and byte range it was cut from.
 //!
-//! Until then [`decodes_oracle_fixtures`] is `#[ignore]`d so that it reports
-//! as ignored rather than as a vacuous pass.
+//! Because a carved stream rarely starts on a byte boundary, the payload is
+//! **re-packed from its first bit**, LSB-first, exactly as `BitReader`
+//! consumes it. The byte range and starting bit are recorded in the `.txt`.
 
 // Test code: an out-of-range index is a failed assertion rather than an attack
 // surface, and the casts are on values these tests chose themselves. The lints
@@ -122,10 +121,7 @@ fn harness_decodes_a_synthetic_vector() {
 }
 
 /// Decodes every fixture in [`fixture_dir`].
-///
-/// Ignored until slice 7 produces the fixtures; see the module documentation.
 #[test]
-#[ignore = "TODO(slice 7): needs entropy sections extracted from oracle files"]
 fn decodes_oracle_fixtures() {
     let dir = fixture_dir();
     let entries = std::fs::read_dir(&dir)

@@ -211,7 +211,7 @@ impl Lz77Params {
 /// The circular window of previously decoded symbols (18181-1 C.1, C.3.3).
 ///
 /// Allocated only when `lz77.enabled`, as the clause note permits.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Lz77Window {
     /// The last [`WINDOW_SIZE`] symbols, indexed modulo the window size.
     window: Vec<u32>,
@@ -237,6 +237,19 @@ impl Lz77Window {
             num_to_copy: 0,
             copy_pos: 0,
         })
+    }
+
+    /// Clears the window and its counters, for a new entropy-coded stream that
+    /// reuses an existing distribution bundle.
+    ///
+    /// C.1 lists `window`, `num_to_copy`, `copy_pos` and `num_decoded` as
+    /// per-stream decoder state initialized when the stream opens, so a reused
+    /// bundle must still start each stream from a zeroed window.
+    pub fn reset(&mut self) {
+        self.window.fill(0);
+        self.num_decoded = 0;
+        self.num_to_copy = 0;
+        self.copy_pos = 0;
     }
 
     /// Number of symbols emitted so far.

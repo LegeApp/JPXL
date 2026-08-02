@@ -13,6 +13,40 @@ Keep this file small. Entries whose content has landed in `PLAN.md`,
 
 ---
 
+## 2026-08-02 — slice 7 (end-to-end lossless decode) — 6 of 9 fixtures bit-exact vs djxl
+
+**State:** `jpxl_decode::decode()` works end to end for lossless modular:
+signature → headers → frame/TOC → sections (G.1.3/G.2.3/G.4.2) → modular →
+inverse transforms → pixels, plus ~90-line jxlc/jxlp container extraction and
+a `jpxl decode` CLI subcommand (hand-rolled P5/P6). Bit-exact against djxl:
+fixtures 03, 07, 08 (container + 16-bit), 11 (256×256 -e7), 12 (300×200), 13.
+Caveat: all current fixtures are single-section (cjxl chose group_dim 512);
+multi-section decode is implemented per spec but unproven.
+
+**Experiments resolved by oracle evidence:**
+- H.2 global tree: distributions are SHARED from LfGlobal; each sub-bitstream
+  re-initialises only per-stream state (ANS seed, LZ77 window) after its
+  ModularHeader (`SymbolDecoder::open_deferred`/`restart`;
+  `GLOBAL_TREE_SHARES_DISTRIBUTIONS`). Evidence: fixture 12, 32-bit desync.
+- **H.5.2 clamp guard is a defect in the standard itself**: both sources print
+  `(p1 | p2) <= 0`; the operationally-correct reading (matching the prose) is
+  `(p1 <= 0) or (p2 <= 0)`, differing exactly when one neighbour error is
+  zero. `EXPERIMENT_CLAMP_BITWISE_OR = false`. Fixed fixtures 11 and 12.
+- H.5.2 true_err is used CLAMPED; max_error tie-break is strict `>`.
+
+**Not exercised by these fixtures** (flip-points unchanged, still open):
+err_sum last column, AvgAll Idiv-vs-shift, nested-LZ77, gab_custom,
+resets_canvas.
+
+**Unresolved — do not paper over:** fixtures 05, 09, 10 diverge identically in
+H.5.2 `max_error` selection (fixture 10 needs `-1896` chosen over `+2040` at
+(2,1), which no magnitude rule produces; a plain minimum fixes 10 but breaks
+11/12). Kept the normative `abs(x) > abs(max)`; three `#[ignore]`d tests carry
+first-wrong-sample/bit forensics. Suspects: Table H.4 property numbering,
+H.5 state for shift `-1` channels.
+
+---
+
 ## 2026-08-02 — slice 5 (Modular mode, Annex H) complete
 
 **State:** `jpxl-decode::modular` decodes modular sub-bitstreams end to end:

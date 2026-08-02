@@ -1,0 +1,34 @@
+Fixture: 07_ma_tree.bin
+The MA tree entropy-coded stream of 07_modular_gray_8x8_lossless.jxl
+
+Provenance
+----------
+  Carved from: JPXL/tests/fixtures/handmade/07_modular_gray_8x8_lossless.jxl
+               (see that file's .txt sidecar for the cjxl invocation, the
+               libjxl revision and the source-image formula).
+  Byte range:  the frame's single TOC section starts at file byte 13 and is
+               215 bytes long. Within that section, bit 0 is
+               LfChannelDequantization.all_default (G.1.2) and bit 1 is
+               GlobalModular's have_global_tree flag (G.1.3), so the MA tree
+               stream of H.4.2 begins at bit 2.
+  Re-packing:  bits [2, 93) of the section, re-packed LSB-first from bit 0.
+               91 bits is what the tree decode consumes; the payload is
+               12 bytes with the final 5 bits zero-padded.
+
+Contents
+--------
+  num_dist 6 (H.4.2 reads six pre-clustered distributions), 26 symbols,
+  decoding to a 7-node tree: three decision nodes on property 0 and four
+  leaves, every one selecting predictor 5 (Gradient) with offset 0 and
+  multiplier 1.
+
+Expected values
+---------------
+  The `.expected` sidecar records the context sequence and the decoded
+  integers. They are not an oracle output — djxl exposes no intermediate
+  symbols — but the stream they come from is: the parent fixture decodes
+  bit-exactly to a PGM byte-identical to djxl's, which is what makes this a
+  regression vector rather than a self-fulfilling one.
+
+cjxl is used strictly as a BLACK BOX (AGENTS.md section 2); no libjxl source
+was read to produce this fixture.

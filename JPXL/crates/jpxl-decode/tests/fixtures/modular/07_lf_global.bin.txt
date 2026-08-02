@@ -1,0 +1,27 @@
+Fixture: 07_lf_global.bin
+The whole LfGlobal section of 07_modular_gray_8x8_lossless.jxl
+
+Provenance
+----------
+  Carved from: JPXL/tests/fixtures/handmade/07_modular_gray_8x8_lossless.jxl
+               (see that file's .txt sidecar for the cjxl invocation, the
+               libjxl revision and the source-image formula).
+  Byte range:  file bytes [13, 228) — the frame's single TOC section, copied
+               verbatim. The section boundary is byte-aligned by F.3.3, so no
+               re-packing was needed.
+
+Contents
+--------
+  18181-1 G.1: LfChannelDequantization (all_default), then GlobalModular with
+  a global MA tree (7 nodes, 4 leaves) and a modular sub-bitstream whose
+  ModularHeader signals one kPalette transform with 15 colours over the single
+  8x8 grey channel.
+
+Expected values
+---------------
+  The 64 samples of the reconstructed channel, which are the diagonal ramp
+  (x + y) * 255 / 14 of the source image. Verified byte-for-byte against djxl
+  by jpxl-decode/tests/e2e_lossless.rs.
+
+cjxl is used strictly as a BLACK BOX (AGENTS.md section 2); no libjxl source
+was read to produce this fixture.

@@ -32,7 +32,7 @@ const PREFIX_LOG_ALPHABET_SIZE: u32 = 15;
 const LZ_LENGTH_LOG_ALPHABET_SIZE: u32 = 8;
 
 /// The per-cluster entropy codes of a stream.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum ClusterCodes {
     /// Canonical prefix codes, one per cluster (18181-1 C.2.4).
     Prefix(Vec<PrefixCode>),
@@ -48,7 +48,7 @@ enum ClusterCodes {
 /// Holds everything C.1 lists as entropy decoder state except the bit reader
 /// itself, which the caller owns and passes to each read so that raw bits and
 /// entropy-coded symbols interleave in the one stream, as C.3.1 requires.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SymbolDecoder {
     lz77: Lz77Params,
     /// Context reserved for LZ77 distances; valid only when `lz77.enabled`.
@@ -80,7 +80,33 @@ impl SymbolDecoder {
         num_dist: usize,
         guard: &mut AllocGuard,
     ) -> Result<Self> {
-        Self::open_nested(reader, num_dist, 0, false, guard)
+        Self::open_nested(reader, num_dist, 0, false, true, guard)
+    }
+
+    /// Opens a bundle's *distributions* without starting an entropy-coded
+    /// stream (18181-1 C.2 without the final step of C.3.2).
+    ///
+    /// 18181-1 H.2 separates the two: a modular sub-bitstream reads "a MA tree
+    /// and corresponding clustered distributions as described in H.4.2", and
+    /// only afterwards "starts an entropy-coded stream (C.1)". When the tree is
+    /// global (G.1.3) those two moments are far apart — the distributions are
+    /// read in `LfGlobal` before the `ModularHeader`, and the stream starts
+    /// after it — so the ANS seed of C.3.2 cannot be read with the histograms.
+    /// This opens the histograms; [`restart`](Self::restart) reads the seed.
+    ///
+    /// A prefix-coded bundle has no per-stream state, so for it this is
+    /// identical to [`open`](Self::open) and `restart` is a no-op. That is why
+    /// a prefix-coded fixture cannot tell the two readings apart.
+    ///
+    /// # Errors
+    ///
+    /// As [`open`](Self::open).
+    pub fn open_deferred(
+        reader: &mut BitReader<'_>,
+        num_dist: usize,
+        guard: &mut AllocGuard,
+    ) -> Result<Self> {
+        Self::open_nested(reader, num_dist, 0, false, false, guard)
     }
 
     /// Opens a bundle at a given recursion depth.
@@ -93,6 +119,7 @@ impl SymbolDecoder {
         num_dist: usize,
         depth: u32,
         forbid_lz77: bool,
+        seed_state: bool,
         guard: &mut AllocGuard,
     ) -> Result<Self> {
         if depth > MAX_NESTING_DEPTH {
@@ -165,9 +192,14 @@ impl SymbolDecoder {
             for _ in 0..num_clusters {
                 distributions.push(AnsDistribution::read(reader, log_alphabet_size, guard)?);
             }
-            // C.3.2: the shared state is seeded once the distributions are in
-            // place, at the start of the entropy-coded stream proper.
-            let state = AnsState::init(reader)?;
+            // C.3.2: the shared state is seeded at the start of the
+            // entropy-coded stream proper, which is not always where the
+            // histograms are — see `open_deferred`.
+            let state = if seed_state {
+                AnsState::init(reader)?
+            } else {
+                AnsState::from_raw(0)
+            };
             ClusterCodes::Ans {
                 distributions,
                 state,
@@ -192,6 +224,39 @@ impl SymbolDecoder {
         })
     }
 
+    /// Restarts this bundle as a *new* entropy-coded stream (18181-1 C.1).
+    ///
+    /// A codestream may signal one distribution bundle and then use it for
+    /// several independently-addressable entropy-coded streams: 18181-1 H.2
+    /// says a modular sub-bitstream with `use_global_tree` uses "the global MA
+    /// tree **and its clustered distributions** as decoded from the
+    /// GlobalModular section", and then that the decoder "starts an
+    /// entropy-coded stream (C.1)". Everything C.1 lists as *per-stream* state
+    /// — the ANS state and the LZ77 window and its counters — is re-initialized
+    /// here; everything it lists as *distribution* state — the cluster map,
+    /// the hybrid-uint configs, the prefix codes or ANS histograms — is kept.
+    ///
+    /// For a prefix-coded bundle nothing is read: C.2.4 codes carry no stream
+    /// state. For an ANS bundle the 32-bit seed of C.3.2 is read from `reader`.
+    ///
+    /// Resolved by experiment against `cjxl`-produced streams; see
+    /// `JPXL/docs/experiments/` and the slice-7 report. The alternative reading
+    /// — that each group re-reads a complete bundle — is selected by
+    /// `jpxl_decode::modular::GLOBAL_TREE_SHARES_DISTRIBUTIONS`.
+    ///
+    /// # Errors
+    ///
+    /// A bitstream error if fewer than 32 bits remain for an ANS seed.
+    pub fn restart(&mut self, reader: &mut BitReader<'_>) -> Result<()> {
+        if let ClusterCodes::Ans { state, .. } = &mut self.codes {
+            *state = AnsState::init(reader)?;
+        }
+        if let Some(window) = self.window.as_mut() {
+            window.reset();
+        }
+        Ok(())
+    }
+
     /// Sets the row stride used by the two-dimensional distance shorthand of
     /// C.3.3.
     ///
@@ -206,6 +271,12 @@ impl SymbolDecoder {
     #[must_use]
     pub const fn clusters(&self) -> &ClusterMap {
         &self.clusters
+    }
+
+    /// The LZ77 settings this bundle was opened with (Table C.1).
+    #[must_use]
+    pub const fn lz77(&self) -> Lz77Params {
+        self.lz77
     }
 
     /// Whether this stream uses canonical prefix codes rather than ANS.
