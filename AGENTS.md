@@ -52,16 +52,21 @@ reading. Therefore:
 **Ambiguity resolution order.** When the bitstream semantics are unclear, work
 down this list and stop at the first that answers:
 
-1. `markdowns/standard-markdowns/part1.md` … `part4.md` — the OCR of the
-   standard itself. Primary normative source.
-2. `latex/` — the user's LaTeX conversion of Part 1, once it exists. Highest
-   fidelity for formulas and tables; prefer it over `part1.md` where present.
-3. `markdowns/2506.05987v2.md` — the open-access JPEG XL paper. Design
+1. `latex/part1.tex` — the LaTeX transcription of Part 1. **Highest-fidelity
+   Part 1 source**: it carries the pseudocode bodies and syntax tables that
+   `part1.md` truncates or garbles. Use it for anything normative in Part 1.
+2. `markdowns/standard-markdowns/part1.md` … `part4.md` — the OCR. `part1.md`
+   is the quick-scan source (grep for clause structure, then read the clause in
+   `part1.tex`); `part2.md`–`part4.md` are the primary source for their parts.
+3. `original-pdfs-do-not-read-first-if-markdown-exists/ISO_IEC_18181-1_2024_transcription.pdf`
+   — text-only transcription of Part 1, text-searchable and cheap relative to
+   the image scans. Use it when 1 and 2 disagree.
+4. `markdowns/2506.05987v2.md` — the open-access JPEG XL paper. Design
    rationale and cross-checking, not normative.
-4. Page-ranged read of the original scan in
-   `original-pdfs-do-not-read-first-if-markdown-exists/original/`, when the OCR
-   looks garbled — expensive, see section 3.
-5. A documented behavioral experiment against the oracle, written up in
+5. Page-ranged read of the original image scan in
+   `original-pdfs-do-not-read-first-if-markdown-exists/original/` — last resort,
+   expensive, see section 3.
+6. A documented behavioral experiment against the oracle, written up in
    `JPXL/docs/experiments/`. This is evidence about one implementation, not
    about the standard; label conclusions accordingly.
 
@@ -71,20 +76,22 @@ PDFs in this repo are image-only scans. Reading one costs a rendered page image
 per page — orders of magnitude more tokens than the equivalent markdown. So:
 
 - **Always check `STANDARDS_INDEX.md` first** for where each source lives and
-  its status. Conversions are COMPLETE for all four parts
-  (`markdowns/standard-markdowns/part1.md` … `part4.md`).
-- **Always read the markdown conversion.** It is the working normative text.
-- Caveat: dense syntax-table and formula pages should be spot-checked against
-  the original scan page before being relied on as sole normative source —
-  OCR of tables and formulas can scramble.
-- Open a PDF only when the markdown looks garbled, and then only with an
-  explicit page range against
-  `original-pdfs-do-not-read-first-if-markdown-exists/original/`, derived from
-  `STANDARDS_INDEX.md` or the PDF's own table of contents. Never read a
+  its status. All four parts are converted; Part 1 additionally has
+  `latex/part1.tex`.
+- **For Part 1, read `latex/part1.tex`.** Grep `part1.md` to find the clause
+  fast, then read the clause body from the LaTeX — the OCR truncates pseudocode
+  bodies and misreads digits in tables and examples.
+- For Parts 2–4, the markdown is the working normative text.
+- Caveat: dense syntax-table and formula pages can still scramble. Where a
+  value looks implausible, cross-check against `latex/part1.tex`, then the
+  text-only transcription PDF, before spending an image-scan page read.
+- Open an image-scan PDF only as a last resort, and then only with an explicit
+  page range against
+  `original-pdfs-do-not-read-first-if-markdown-exists/original/`. Never read a
   standards PDF end to end.
 - `markdowns/`, `original-pdfs-do-not-read-first-if-markdown-exists/`,
-  `libjxl/`, and `test-set/` are gitignored; `latex/` must be too once it
-  appears. ISO text is copyrighted and must never enter git history.
+  `latex/`, `libjxl/`, and `test-set/` are gitignored. ISO text is copyrighted
+  and must never enter git history.
 
 ## 4. Doc map
 

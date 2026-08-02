@@ -1,16 +1,16 @@
 # STANDARDS_INDEX.md
 
 Where the normative documents are, what state they are in, and what each one
-answers. **Read the markdown; open a PDF only when the OCR looks garbled** —
-see `AGENTS.md` §3 (scanned PDFs cost a page image per page).
+answers. **For Part 1 read `latex/part1.tex`; for Parts 2–4 read the markdown.
+Open an image-scan PDF only as a last resort** — see `AGENTS.md` §3 (scanned
+PDFs cost a page image per page).
 
 Identities below were verified by reading the title pages; the on-disk
 filenames are Anna's Archive mangled and do not state the part number. The
 original scans now sit in an `original/` subfolder.
 
 Directories `markdowns/`, `original-pdfs-do-not-read-first-if-markdown-exists/`
-and (once it appears) `latex/` are gitignored. ISO text never enters git
-history.
+and `latex/` are gitignored. ISO text never enters git history.
 
 Last reviewed: 2026-08-02.
 
@@ -19,7 +19,10 @@ Last reviewed: 2026-08-02.
 Markdown paths are relative to `markdowns/standard-markdowns/`; PDF scans to
 `original-pdfs-do-not-read-first-if-markdown-exists/original/` (identify by the
 edition date in the mangled filename: Part 1 = `… 2024 jul …`, Part 2 =
-`… 2024 jun …`, Parts 3 and 4 name themselves).
+`… 2024 jun …`, Parts 3 and 4 name themselves). One text-only transcription
+sits outside `original/`, at
+`original-pdfs-do-not-read-first-if-markdown-exists/ISO_IEC_18181-1_2024_transcription.pdf`
+— Part 1, text-searchable, and the fallback to consult before any image scan.
 
 | Part | Title | Edition | Pages | Markdown | Status | Covers | Needed when |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -36,9 +39,19 @@ Part 2 A.11). The rejected `*_processed_*.pdf` artifacts have been deleted.
 spot-check them against the original scan page before treating the markdown as
 sole normative source.
 
-| Upcoming | Path | Status | Use |
+### Part 1 LaTeX transcription — present
+
+| Source | Path | Status | Use |
 | --- | --- | --- | --- |
-| Part 1 LaTeX conversion (from the original scan, by the user) | `latex/` (repo root, does not exist yet) | pending | Highest-fidelity Part 1 source once it lands — supersedes `part1.md` for formulas and tables. Until then `part1.md` is the working normative source. |
+| Part 1 LaTeX transcription | `latex/part1.tex` | **present** — 6236 lines, one TeX page per source page, all 96 pages | **Highest-fidelity Part 1 source.** Supersedes `part1.md` for pseudocode, formulas, and syntax tables. |
+| Part 1 text-only transcription PDF | `original-pdfs-do-not-read-first-if-markdown-exists/ISO_IEC_18181-1_2024_transcription.pdf` | present | Text-searchable fallback; consult before any image-scan page read. |
+
+Verified 2026-08-02: the LaTeX restores pseudocode bodies the OCR truncated
+(B.2.3 `U64()` continuation loop, B.2.4 `F16()`) and corrects OCR digit noise —
+e.g. the B.2.2 example is `U32(8, 16, 32, u(7))` with bits `10` → 32, and for
+`U32(u(2), u(4), u(6), u(8))` bits `010111` → 7; `part1.md` misreads the
+constants. Workflow: grep `part1.md` for structure, read the clause body from
+`part1.tex`.
 
 ## Companion sources
 
@@ -48,32 +61,37 @@ sole normative source.
 | Mandeel et al. 2021 (comparative study) | `markdowns/mandeel2021.md` | converted | Minor. Comparative compression numbers only; no syntax. |
 | libjxl checkout | `libjxl/` | — | **Black-box oracle only.** Run binaries, diff outputs. Never read for architecture. See `AGENTS.md` §2. |
 
-## Provisional Part 1 topic map
+## Part 1 clause map
 
-**The real Part 1 text is now available (`part1.md`); every entry below awaits
-re-audit against it and the map has not been rewritten.** Real clause numbers
-can be pulled from `part1.md` as the re-audit proceeds.
+**Verified against `part1.md` and `latex/part1.tex`, 2026-08-02.** No longer
+provisional: annex letters, titles, and subclause numbers below are the
+standard's own. Page numbers are from the Part 1 table of contents.
 
-Derived from the arXiv paper, not from the standard. Every entry stays
-`[provisional]` until confirmed against `part1.md`, at which point the paper's
-section numbers here get replaced by clause numbers. Section numbers in the
-"paper §" column refer to `markdowns/2506.05987v2.md`.
+Front matter: clauses 1–2 scope and normative references; 3 terms and
+definitions (3.2 inputs, 3.3 processes, 3.4 image and codestream organization,
+3.5 abbreviated terms); 4 conventions (4.1 mathematical symbols, 4.2 functions,
+4.3 operators with the precedence table, 4.4 pseudocode); 5 functional concepts
+(5.1 image organization, 5.2 mirroring, 5.3 group splitting, 5.4 codestream
+organization); 6 encoder requirements; 7 decoder requirements. Annexes A–N are
+normative; O is informative.
 
-| Topic | Paper § | What it contains `[provisional]` |
-| --- | --- | --- |
-| Signature and image header | 3, 3.1 | Codestream starts `FF 0A`. `SizeHeader` (small/divisible-by-8 form, aspect-ratio codes, full form up to 2^30 per dimension), `ImageMetadata` (bit depth, `all_default` shortcut, orientation, intensity target, preview/animation flags), extra-channel list (up to 4096; alpha, depth, spot color, selection mask, CMYK black, generic), animation (tps numerator/denominator, loop count). |
-| Primitive encodings | 3.1 | `u(n)` little-endian; `Bool()` = `u(1)`; `F16()` binary16; `U32(a0,a1,a2,a3)` = 2-bit selector then the chosen distribution; `Enum()` = `U32(0, 1, 2+u(4), 18+u(6))`; `U64()` = `U32(0, 1+u(4), 17+u(8), longU64())` with `longU64()` = 12 bits then 8-bit continuation chunks (4 bits at shift 60); `ZeroPadToByte`. |
-| Color encoding and XYB | 4, 4.1, 4.2 | Color space signaling (enumerated primaries/white point/transfer function vs. embedded ICC), the XYB absolute color space, the three levels at which color transforms apply, `do_YCbCr`, extra-channel semantics (4.3). |
-| Entropy coding | 8 | Two backends: prefix (Huffman-style) codes and rANS with signaled static histograms. Hybrid-uint token/extra-bits split. Optional LZ77 layer over the symbol stream. Context modeling and histogram clustering into post-clustering contexts (8.2), compact histogram signaling. |
-| Modular mode | 5 | Channel structure and group sizes (128/256/512/1024). Transforms (5.1): reversible color transforms (RCT), palette and delta palette (including the implicit palette), and Squeeze (modified nonlinear Haar with a tendency term). Channel coding (5.2): local properties, MA (meta-adaptive) decision trees over those properties, and predictors — Zero, West, North, AvgW+NW, AvgN+NE, AvgAll, Select, Gradient, and the self-correcting Weighted predictor. |
-| VarDCT | 6 | Frame-level lossy mode. Block sizes and varblock types (6.1), the DCT families including rectangular shapes. LF image (6.2): the 1:8 downscaled plane carrying DCT8x8 DC and the low-frequency coefficients of larger transforms, itself coded as a modular sub-bitstream, optionally as a separate hidden LF frame (recursive pyramid). Default quantization tables per component. Adaptive quantization weights (modular sub-bitstream). Chroma-from-luma / LF-and-HF color correlation. HF metadata plane carrying the block-type row. |
-| Frame header | 3 (Fig. 8) | `all_default`, `frame_type` (regular / LF / reference-only / skip-progressive), `encoding` (0 = VarDCT, 1 = Modular), flags, `do_YCbCr`, `jpeg_upsampling[3]`, `upsampling`, `ec_upsampling[]`, `group_size_shift`, `b_qm_scale`, passes (`num_ds`, `shift[]`, `downsample[]`, `last_pass[]`), `lf_level`, crop/origin, `blending_info` and per-extra-channel blending (`alpha_channel`, `clamp`, `source`), `duration`/`timecode`, `is_last`, `save_as_reference`, `save_before_ct`, frame `name`, restoration filter block, extensions. |
-| Image features | 7.1 | Patches (rectangles blended from a previously decoded reference frame), splines (centripetal Catmull–Rom with varying color and thickness), photon noise. |
-| Restoration filters | 7.2 | Gaborish — 3×3 gabor-like blur applied across block and group boundaries; `gab_custom` weights. EPF — edge-preserving bilateral-like filter, up to 3 iterations, `epf_sharp_custom`/`epf_weight_custom`/`epf_sigma_custom`, `epf_channel_scale`, `epf_quant_mul`, per-pass sigma scales, `epf_border_sad_mul`, `epf_sigma_for_modular`. |
-| Upsampling | 7.3 | 2×/4×/8× upsampling; JPEG XL's non-separable method with signalable custom weight sets (210 distinct weights for 8×); LF upsampling. |
-| TOC, groups, ordering | 9, 9.1, 9.2 | Frame data as a sequence of groups with a TOC of bitstream offsets. VarDCT groups are 256×256; LF groups cover 2048×2048 pixels. Global / LF / HF group partitioning (with Squeeze, three-way split). Default scanline group order with an arbitrary signaled permutation (center-first, saliency-first). Multiple passes whose coefficients sum. Progressive decoding (9.2); frames and layers (9.3). |
-| JPEG bitstream reconstruction | 2.4 | The codestream carries the original DCT coefficients and image-relevant APP data; the `jbrd` box (Part 2) carries what is needed for bit-exact JPEG file reconstruction — Huffman tables actually used, restart markers, sequential/progressive layout, padding-bit contents. |
-| Levels and profiles | 2.4 | Main profile, Level 5 assumed when not signaled (notably for naked codestreams); Level 10 raises limits to 2^40 per dimension and 256 extra channels. Signaled by the `jxll` box. Limits exist so decoders can sanity-check hostile input. |
+| Annex | Title | Page | Key subclauses | Covers |
+| --- | --- | --- | --- | --- |
+| **A** | Codestream overview | 10 | — (single table) | Table A.1: the whole codestream as `Headers` (D, N), optional ICC (E.4), optional preview `Frame`, then `frames[i]` until `is_last` (F). The map from which every other annex hangs. |
+| **B** | Header syntax | 11 | B.1 general (B.1.1 reading a field, B.1.2 initializing a field), **B.2 field types** (B.2.1 `u(n)`, B.2.2 `U32(d0,d1,d2,d3)`, B.2.3 `U64()`, B.2.4 `F16()`, B.2.5 `Bool()`, B.2.6 `Enum(EnumTable)`, B.2.7 `ZeroPadToByte()`), B.3 extensions | Bundle-table notation and every primitive field type. LSB-first bit order; `U32` 2-bit distribution selector; `U64` 4-bit/8-bit/12-bit-plus-continuation form; `F16` with `biased_exp != 31` (no NaN/Inf). |
+| **C** | Entropy decoding | 14 | C.1 overview, **C.2 distribution decoding** (C.2.1 general, C.2.2 distribution clustering, C.2.3 hybrid integer configuration, C.2.4 histogram and prefix code, C.2.5 ANS distribution decoding, C.2.6 alias mapping), **C.3 symbol decoding** (C.3.1 general, C.3.2 ANS symbol decoding, C.3.3 hybrid integer decoding) | LZ77 settings, context-map clustering, prefix-code and rANS backends, the alias table construction, `DecodeHybridVarLenUint` with its LZ77 window and `kSpecialDistances`. ANS state is a single 32-bit value shared across contexts; final state `0x130000`. |
+| **D** | Image header | 20 | D.1 general (the `Headers` bundle), **D.2 image dimensions** (`SizeHeader`), **D.3 image metadata** (D.3.1 `ImageMetadata`, D.3.2 orientation, D.3.3 `PreviewHeader`, D.3.4 `AnimationHeader`, D.3.5 `BitDepth`, D.3.6 `ExtraChannelInfo`) | Size forms (`div8`/aspect-ratio/full), `all_default`, `modular_16bit_buffers`, intrinsic size, orientation values matching Exif 2.3, bit depth (integer and float with `exp_bits`/`mantissa_bits`), extra-channel types and `dim_shift`. |
+| **E** | Colour encoding | 25 | E.1 general, **E.2 `ColourEncoding`** (`ColourSpace`, `WhitePoint`, `Primaries`, `TransferFunction`/`CustomTransferFunction`, `RenderingIntent`, `Customxy`), E.3 `ToneMapping`, **E.4 ICC profile** (E.4.1 data stream, E.4.2 encoded ICC stream, E.4.3 ICC header, E.4.4 ICC tag list, E.4.5 main content) | Enumerated colour signalling vs. embedded ICC; `kRGB`/`kGrey`/`kXYB`; HDR tone mapping (`relative_to_max_display`, `linear_below`). ICC is entropy-coded with 41 pre-clustered distributions read per C.1 and `IccContext`-selected contexts. |
+| **F** | Frame header | 34 | F.1 general (Table F.1 frame bundle), **F.2 `FrameHeader`**, **F.3 TOC** (F.3.1 general, F.3.2 decoding permutations, F.3.3 decoding TOC) | Each frame is byte-aligned via `ZeroPadToByte()`. Frame bundle = `FrameHeader` (F.2) + `TOC` (F.3) + `LfGlobal` (G.1) + `LfGroup[num_lf_groups]` (G.2) + `HfGlobal` if `encoding == kVarDCT` (G.3) + `PassGroup[num_groups * num_passes]` (G.4). Group-order permutation lives in F.3.2. |
+| **G** | Frame data sections | 41 | **G.1 `LfGlobal`** (G.1.1 general, G.1.2 LF dequantization weights, G.1.3 `GlobalModular`), **G.2 `LfGroup`** (G.2.1 general, G.2.2 LF coefficients, G.2.3 `ModularLfGroup`, G.2.4 HF metadata), **G.3 `HfGlobal`**, **G.4 `PassGroup`** (G.4.1 general, G.4.2 modular group data) | The four section types the TOC indexes. `LfQuant` (three channels) is decoded as a modular sub-bitstream per H; HF metadata carries the varblock-type plane. |
+| **H** | Modular | 45 | H.1 general, **H.2 image decoding**, **H.3 channel decoding**, **H.4 meta-adaptive (MA) context modeling** (H.4.1 model, H.4.2 MA tree decoding), **H.5 self-correcting predictor** (H.5.1 general, H.5.2 prediction), **H.6 transformations** (H.6.1 general + `TransformId`/`TransformInfo`, H.6.2 Squeeze incl. H.6.2.1 parameters, H.6.3 RCT, H.6.4 Palette) | The `kModular` frame encoding and every Modular sub-bitstream. Exactly three transforms: `kRCT` = 0, `kPalette` = 1 (also delta-palette), `kSqueeze` = 2 (modified Haar). Predictors and local properties are H.3–H.5; the self-correcting/weighted predictor has its own clause. |
+| **I** | VarDCT | 55 | **I.1 transform types**, **I.2 quantization and decorrelation parameters** (I.2.1 quantizer, I.2.2 HF block context decoding, I.2.3 LF channel correlation factors, I.2.4 dequantization matrices, I.2.5 default values per matrix, I.2.6 number of HF decoding presets), **I.3 `HfPass`** (I.3.1 HF coefficient order, I.3.2 natural ordering of DCT coefficients, I.3.3 HF coefficient histograms), **I.4 decoding of quantized HF coefficients**, **I.5 adaptive quantization** (I.5.1 general, I.5.2 LF dequantization), **I.6 chroma from luma**, **I.7 forward and inverse DCT**, **I.8 LLF coefficients from downsampled image**, **I.9 coefficients to samples** (I.9.2 `DCTRxC` for R,C ≥ 8, I.9.3 DCT2x2, I.9.4 DCT4x4, I.9.5 Hornuss, I.9.6 DCT8x4, I.9.7 DCT4x8, I.9.8 AFV0–AFV3) | The `kVarDCT` frame encoding. I.9 is the per-varblock-type reconstruction — the clause set where coefficient storage order and LLF/DC extraction must be tested per shape. |
+| **J** | Restoration filters | 70 | J.1 general, J.2 simple upsampling, **J.3 Gabor-like transform**, **J.4 edge-preserving filter** (J.4.1 general, J.4.2 distances, J.4.3 weights, J.4.4 weighted average) | Gaborish and EPF. Note J.2 holds *simple* upsampling; the non-separable method is K.2. |
+| **K** | Image features | 74 | K.1 general, **K.2 non-separable upsampling**, **K.3 patches** (K.3.1 decoding, K.3.2 rendering), **K.4 splines** (K.4.1 decoding, K.4.2 rendering), **K.5 noise** (K.5.1 synthesis parameters, K.5.2 rendering) | Rendered after restoration filters (J). Patches, splines, photon noise, and the non-separable upsampling weight sets. |
+| **L** | Colour transforms | 82 | L.1 general, **L.2 XYB** (L.2.1 `OpsinInverseMatrix`, L.2.2 inverse XYB transform), **L.3 YCbCr**, **L.4 extra channel rendering** | The final pipeline stage. L.2 converts to linear sRGB as an intermediate representation. L.4 is excluded from the "colour transforms applied" precondition used elsewhere. |
+| **M** | Profiles and levels | 85 | Table M.1 | One "Main" profile, levels 5 and 10; level 5 assumed unless signalled. Level N implies support for all lower levels. The limits exist so decoders can sanity-check hostile input. |
+| **N** | Extensions | 87 | — | The `extensions` field mechanism from B.3. No extensions are currently defined for `ImageMetadata`, `FrameHeader`, or `RestorationFilter`: the decoder reads and ignores those bits. |
+| **O** | Encoder overview (informative) | 88 | O.1 overview | Informative only. No encoding process is specified; any codestream-valid encoder conforms. Useful orientation for slice 10, not a requirement. |
 
 ## Provisional Part 2 topic map
 
@@ -85,19 +103,24 @@ section numbers here get replaced by clause numbers. Section numbers in the
 
 ## Clause → implementation crosswalk
 
-Filled in as slices land. Clause column still holds paper section numbers and
-stays `[provisional]`; real clause numbers are now obtainable from `part1.md`
-and get substituted during the pending re-audit.
+Real clause numbers, verified 2026-08-02. Filled in as slices land.
 
-| Spec clause `[provisional]` | JPXL crate / module | Status |
+| Spec clause | JPXL crate / module | Status |
 | --- | --- | --- |
-| Bitstream primitives (`u(n)`, `Bool`, `U32`, `U64`, `F16`, `ZeroPadToByte`) — paper §3.1 | `jpxl-bitstream` | in progress |
-| Signature sniffing (`FF 0A`, JXL box) — paper §2.1, Part 2 | `jpxl-conformance::sniff` | in progress |
-| DCT / XYB math — paper §4.2, §6 | `jpxl-core::dct` | in progress |
-| `SizeHeader`, `ImageMetadata` — paper §3.1 | TBD | not started |
-| Entropy: prefix codes, rANS, hybrid-uint, LZ77, clustering — paper §8 | TBD (`jpxl-entropy` deferred) | not started |
-| Modular: MA trees, predictors, RCT / palette / Squeeze — paper §5 | TBD | not started |
-| Frame header, TOC, groups — paper §3, §9 | TBD | not started |
-| VarDCT inverse path — paper §6 | TBD | not started |
-| Restoration filters, upsampling — paper §7 | TBD | not started |
-| Container boxes — Part 2 | TBD (`jpxl-container` deferred) | not started |
+| B.2.1–B.2.7 field types (`u(n)`, `U32`, `U64`, `F16`, `Bool`, `Enum`, `ZeroPadToByte`) | `jpxl-bitstream::primitives`, `::reader` | in progress |
+| B.1 bundle reading / field initialization | `jpxl-bitstream` (notation only; no bundle machinery yet) | not started |
+| Part 2 signature box + `FF 0A` codestream marker | `jpxl-conformance::sniff` | in progress |
+| I.7 forward and inverse DCT; I.9 coefficients to samples | `jpxl-core::dct` | in progress |
+| L.2 XYB (L.2.1 `OpsinInverseMatrix`, L.2.2 inverse transform); L.3 YCbCr | `jpxl-core::color` | in progress |
+| 5.1 image organization, 5.3 group splitting | `jpxl-core::geometry` | in progress |
+| M profiles and levels (Table M.1 limits) | `jpxl-core::limits` | in progress |
+| D.2 `SizeHeader`; D.3 `ImageMetadata` and sub-bundles | `jpxl-decode` | not started |
+| C.2 distribution decoding; C.3 symbol decoding | TBD (`jpxl-entropy` deferred) | not started |
+| E.4 ICC profile decoding | TBD | not started |
+| H modular (H.2–H.6) | TBD | not started |
+| F frame header and TOC; G frame data sections | TBD | not started |
+| I VarDCT (I.1–I.6, I.8) | TBD | not started |
+| J restoration filters; J.2 + K.2 upsampling | TBD | not started |
+| K image features (patches, splines, noise) | TBD | not started |
+| N extensions | TBD | not started |
+| Part 2 container boxes | TBD (`jpxl-container` deferred) | not started |

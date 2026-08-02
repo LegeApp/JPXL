@@ -13,6 +13,41 @@ Keep this file small. Entries whose content has landed in `PLAN.md`,
 
 ---
 
+## 2026-08-02 — Part 1 LaTeX landed; STANDARDS_INDEX re-audited
+
+**State:** `latex/part1.tex` (6236 lines, one TeX page per source page, all 96
+pages) is present, alongside a text-only transcription PDF at
+`original-pdfs-do-not-read-first-if-markdown-exists/ISO_IEC_18181-1_2024_transcription.pdf`.
+The LaTeX is now the highest-fidelity Part 1 source: it restores pseudocode
+bodies that `part1.md` truncated (B.2.3 `U64()` continuation loop, B.2.4
+`F16()`) and corrects OCR digit noise in tables and examples.
+
+**Worked example of that noise:** B.2.2's example reads `U32(8, 16, 32, u(7))`,
+bits `10` → 32, and `U32(u(2), u(4), u(6), u(8))`, bits `010111` → 7. The
+markdown misreads the constants. Treat every numeric constant taken from
+`part1.md` as unverified until checked against `part1.tex` — a wrong
+distribution constant produces a plausible-looking parse that desynchronises
+every later field.
+
+**Done:** `STANDARDS_INDEX.md` re-audited. The `latex/` row moved from pending
+to present; the transcription PDF added to the locator note; the provisional
+arXiv-derived Part 1 topic map **replaced** by a real clause map (Annexes A–O
+with titles, ToC page numbers, and key subclauses, each letter verified against
+the text — note J is restoration filters, K image features, L colour
+transforms, and simple upsampling is J.2 while non-separable upsampling is
+K.2). The crosswalk now carries real clause numbers (B.2.x → `jpxl-bitstream`,
+I.7/I.9 → `jpxl-core::dct`, L.2/L.3 → `jpxl-core::color`, 5.1/5.3 →
+`jpxl-core::geometry`, M → `jpxl-core::limits`). `AGENTS.md` §2 and §3 updated:
+the resolution chain is now part1.tex → markdowns → transcription PDF → arXiv
+paper → image scans → oracle experiment; `latex/` is confirmed gitignored.
+
+**Still provisional:** the Part 2 topic map in `STANDARDS_INDEX.md` is still
+arXiv-derived; `part2.md` is complete and it should be re-audited the same way.
+
+**Next:** unchanged — slices 2 and 3, slice 3 the critical path.
+
+---
+
 ## 2026-08-02 — standard OCR landed and audited
 
 **State:** ISO/IEC 18181 Parts 1–4 are now complete OCR markdowns at
@@ -27,14 +62,11 @@ still scramble; spot-check them against the original scan (now in
 the markdown as sole normative source.
 
 `part1.md` is the primary normative source from now on; the arXiv paper drops
-to design rationale and cross-checking. A LaTeX conversion of Part 1 from the
-original scan is incoming and will land in a new repo-root `latex/` folder — it
-will supersede `part1.md` as the highest-fidelity source for formulas and
-tables.
+to design rationale and cross-checking. (Superseded by the entry above: the
+LaTeX conversion has since landed and outranks `part1.md`.)
 
-**Queued:** re-audit every `[provisional]` tag in `jpxl-bitstream`,
-`jpxl-core`, and `STANDARDS_INDEX.md` against `part1.md` — the topic map and
-crosswalk are marked pending verification but not yet rewritten.
+**Queued:** re-audit every `[provisional]` tag in `jpxl-bitstream` and
+`jpxl-core`. `STANDARDS_INDEX.md` is done — see the entry above.
 
 **Next:** slices 2 and 3 are unblocked; slice 3 remains the critical path.
 
