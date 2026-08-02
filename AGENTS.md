@@ -13,9 +13,10 @@ normative text into executable understanding and becomes the roundtrip oracle
 for the encoder that follows.
 
 **The standard is the source of truth.** Not libjxl, not any prior
-implementation, not habit. Where the standard is unavailable (Parts 1–3 are
-un-OCRed as of 2026-08-02), the fallback chain in section 2 applies and every
-resulting decision is tagged `[provisional]` until confirmed against the text.
+implementation, not habit. Where the standard does not answer, the fallback
+chain in section 2 applies and the decision is tagged `[provisional]`. Existing
+`[provisional]` tags predate the OCR and now require re-audit against
+`part1.md` — that re-audit is queued work, tracked in `JPXL/docs/HANDOFF.md`.
 
 **Slow is smooth, smooth is fast.** The goal for the first phase is a correct,
 readable reference pair — scalar, single-threaded, obvious. No SIMD, no rayon,
@@ -51,14 +52,16 @@ reading. Therefore:
 **Ambiguity resolution order.** When the bitstream semantics are unclear, work
 down this list and stop at the first that answers:
 
-1. `markdowns/2506.05987v2.md` — the open-access JPEG XL paper. Primary
-   readable source today; has syntax figures for image and frame headers.
-2. OCR markdown of the relevant part in `markdowns/standard-markdowns/`, once
-   it exists.
-3. Page-ranged read of the PDF in
-   `original-pdfs-do-not-read-first-if-markdown-exists/` — expensive, see
-   section 3.
-4. A documented behavioral experiment against the oracle, written up in
+1. `markdowns/standard-markdowns/part1.md` … `part4.md` — the OCR of the
+   standard itself. Primary normative source.
+2. `latex/` — the user's LaTeX conversion of Part 1, once it exists. Highest
+   fidelity for formulas and tables; prefer it over `part1.md` where present.
+3. `markdowns/2506.05987v2.md` — the open-access JPEG XL paper. Design
+   rationale and cross-checking, not normative.
+4. Page-ranged read of the original scan in
+   `original-pdfs-do-not-read-first-if-markdown-exists/original/`, when the OCR
+   looks garbled — expensive, see section 3.
+5. A documented behavioral experiment against the oracle, written up in
    `JPXL/docs/experiments/`. This is evidence about one implementation, not
    about the standard; label conclusions accordingly.
 
@@ -67,16 +70,21 @@ down this list and stop at the first that answers:
 PDFs in this repo are image-only scans. Reading one costs a rendered page image
 per page — orders of magnitude more tokens than the equivalent markdown. So:
 
-- **Always check `STANDARDS_INDEX.md` first** for the current conversion status
-  of each part. Do not assume; the status changes as the user completes OCR.
-- **Always read the markdown conversion if one exists and is not a stub.**
-- Open a PDF only when the markdown is missing (Parts 1–3 today) or visibly
-  garbled, and then only with an explicit page range derived from
+- **Always check `STANDARDS_INDEX.md` first** for where each source lives and
+  its status. Conversions are COMPLETE for all four parts
+  (`markdowns/standard-markdowns/part1.md` … `part4.md`).
+- **Always read the markdown conversion.** It is the working normative text.
+- Caveat: dense syntax-table and formula pages should be spot-checked against
+  the original scan page before being relied on as sole normative source —
+  OCR of tables and formulas can scramble.
+- Open a PDF only when the markdown looks garbled, and then only with an
+  explicit page range against
+  `original-pdfs-do-not-read-first-if-markdown-exists/original/`, derived from
   `STANDARDS_INDEX.md` or the PDF's own table of contents. Never read a
   standards PDF end to end.
 - `markdowns/`, `original-pdfs-do-not-read-first-if-markdown-exists/`,
-  `libjxl/`, and `test-set/` are gitignored. ISO text is copyrighted and must
-  never enter git history.
+  `libjxl/`, and `test-set/` are gitignored; `latex/` must be too once it
+  appears. ISO text is copyrighted and must never enter git history.
 
 ## 4. Doc map
 

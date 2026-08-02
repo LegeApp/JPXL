@@ -13,6 +13,33 @@ Keep this file small. Entries whose content has landed in `PLAN.md`,
 
 ---
 
+## 2026-08-02 — standard OCR landed and audited
+
+**State:** ISO/IEC 18181 Parts 1–4 are now complete OCR markdowns at
+`markdowns/standard-markdowns/part1.md` … `part4.md` (4230 / 735 / 325 / 163
+lines). A first OCR pass was **rejected**: it dropped comparison and shift
+operator glyphs (`<`, `<<`, `<=`, `>>`) — fatal for bitstream pseudocode — and
+lost whole pages. The accepted pass has 30–48 % more words, intact operators,
+text reflowed into paragraphs and code blocks, and the lost pages recovered
+(Part 1 Annex N, Part 2 A.11). Caveat: dense syntax-table and formula pages can
+still scramble; spot-check them against the original scan (now in
+`original-pdfs-do-not-read-first-if-markdown-exists/original/`) before treating
+the markdown as sole normative source.
+
+`part1.md` is the primary normative source from now on; the arXiv paper drops
+to design rationale and cross-checking. A LaTeX conversion of Part 1 from the
+original scan is incoming and will land in a new repo-root `latex/` folder — it
+will supersede `part1.md` as the highest-fidelity source for formulas and
+tables.
+
+**Queued:** re-audit every `[provisional]` tag in `jpxl-bitstream`,
+`jpxl-core`, and `STANDARDS_INDEX.md` against `part1.md` — the topic map and
+crosswalk are marked pending verification but not yet rewritten.
+
+**Next:** slices 2 and 3 are unblocked; slice 3 remains the critical path.
+
+---
+
 ## 2026-08-02 — scaffold wave complete
 
 **State:** the five-task scaffold wave has landed and the full gate is green:
@@ -50,13 +77,10 @@ tests passing. What exists and is proved:
   (`B′ = B − Y`) decorrelation step is NOT implemented — decide when the
   bitstream work reaches it.
 
-**Blocked on the user:** OCR of ISO/IEC 18181 Parts 1, 2, and 3. The markdown
-conversions in `markdowns/standard-markdowns/` are empty stubs because the
-PDFs are image-only scans. Until they land, the arXiv paper
-(`markdowns/2506.05987v2.md`) is the working source and every derived detail
-is tagged `[provisional]`. Do not freeze field order, table values, or
-conditional predicates against the paper. Refresh `STANDARDS_INDEX.md` status
-rows the moment OCR arrives.
+**Blocked on the user:** ~~OCR of ISO/IEC 18181 Parts 1, 2, and 3~~ —
+**resolved same day**, see the entry above. Everything derived here came from
+the arXiv paper and is tagged `[provisional]`; none of it has been checked
+against the real text yet.
 
 **Next:** `PLAN.md` slice 2 (signature + `SizeHeader`/`ImageMetadata`, with
 oracle header-dump cross-check) and slice 3 (entropy coding core: prefix
@@ -67,8 +91,17 @@ codes, rANS, hybrid-uint, LZ77, clustering). Slice 3 unblocks slices 4, 5, and
 
 ## Already fixed — do not redo
 
-Nothing yet. (Settled decisions and repaired bugs go here so the next session
-does not relitigate them.)
+- **`read_u32` wraps, it does not error** (2026-08-02). 18181-1 B.2.2:
+  `(offset + v) Umod (1 << 32)`. The scaffold version returned `Overflow` on
+  `offset + payload` overflow; fixed to `wrapping_add` with a clause citation
+  and the test `u32_offset_plus_payload_wraps_mod_2_pow_32`. Do not "harden"
+  this back into an error.
+- **XYB inverse matrix is verified normative** (2026-08-02). The rationally
+  derived `OPSIN_ABSORBANCE_INVERSE_MATRIX` matches 18181-1 L.2.1 Table L.1
+  defaults digit-for-digit at `f32`; no longer `[provisional]`. The spec
+  signals `opsin_bias0..2` as negative (decoder-side); our forward-side
+  positive bias is the same convention mirrored — documented in
+  `jpxl-core/src/color.rs`.
 
 ## Traps — do not fix these by loosening a check
 

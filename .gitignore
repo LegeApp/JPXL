@@ -5,6 +5,7 @@
 # Agents read these from disk; see AGENTS.md and STANDARDS_INDEX.md.
 /original-pdfs-do-not-read-first-if-markdown-exists/
 /markdowns/
+/latex/
 
 # Large local test corpora (fixtures used by tests live under JPXL/tests/fixtures)
 /test-set/

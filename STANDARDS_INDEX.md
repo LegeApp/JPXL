@@ -1,43 +1,63 @@
 # STANDARDS_INDEX.md
 
 Where the normative documents are, what state they are in, and what each one
-answers. **Check the conversion status here before opening any PDF** — see
-`AGENTS.md` §3 for why (scanned PDFs cost a page image per page).
+answers. **Read the markdown; open a PDF only when the OCR looks garbled** —
+see `AGENTS.md` §3 (scanned PDFs cost a page image per page).
 
 Identities below were verified by reading the title pages; the on-disk
-filenames are Anna's Archive mangled and do not state the part number.
+filenames are Anna's Archive mangled and do not state the part number. The
+original scans now sit in an `original/` subfolder.
 
-Directories `markdowns/` and `original-pdfs-do-not-read-first-if-markdown-exists/`
-are gitignored. ISO text never enters git history.
+Directories `markdowns/`, `original-pdfs-do-not-read-first-if-markdown-exists/`
+and (once it appears) `latex/` are gitignored. ISO text never enters git
+history.
 
 Last reviewed: 2026-08-02.
 
 ## The four parts
 
-| Part | Title | Edition | Pages | PDF filename (in `original-pdfs-do-not-read-first-if-markdown-exists/`) | Markdown (in `markdowns/standard-markdowns/`) | Status | Covers | Needed when |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| **18181-1** | Core coding system | 2nd ed., 2024-07 | 96 | `Information technology — JPEG XL image coding system — Part -- ISO_IEC -- ISO_IEC 18181, 2, 2024 jul -- ISO -- 3b89924a07729951fc66a64508f5d362 -- Anna's Archive.pdf` | same basename, `.md` | **STUB** — OCR pending (user) | The decoder: codestream syntax, entropy coding, modular mode, VarDCT, filters, headers. | Almost always. This is *the* spec. |
-| **18181-2** | File format | 2nd ed., 2024-06 | 22 | `… ISO_IEC 18181, 2, 2024 jun … 50abba36d0734cf13d40875f11a3696e … .pdf` | same basename, `.md` | **STUB** — OCR pending (user) | ISOBMFF container, boxes, signatures, metadata carriage. | Container parsing/writing, Exif/XMP, JPEG reconstruction plumbing. |
-| **18181-3** | Conformance testing | — | 14 | `Information technology JPEG XL Image Coding System Part 3_ -- 1 -- 3ba42f3cb9d5ad1e82bcc5ccc80ab60d -- Anna's Archive.pdf` | same basename, `.md` | **STUB** — OCR pending (user) | Conformance methodology, test streams, peak-error tolerance classes. | Defining pass/fail for lossy decode; writing `jpxl-conformance`. |
-| **18181-4** | Reference software | 2022 | 8 | `Information technology JPEG XL image coding system Part 4_ -- 1 -- 0eab0619776bd9f98fd257015bf85f8a -- Anna's Archive.pdf` | same basename, `.md` | **complete** | Points at the reference software; little normative content. | Rarely. Already readable in markdown. |
+Markdown paths are relative to `markdowns/standard-markdowns/`; PDF scans to
+`original-pdfs-do-not-read-first-if-markdown-exists/original/` (identify by the
+edition date in the mangled filename: Part 1 = `… 2024 jul …`, Part 2 =
+`… 2024 jun …`, Parts 3 and 4 name themselves).
 
-The two `*_processed_*.pdf` files alongside these are intermediate OCR
-artifacts from the user's pipeline. Ignore them.
+| Part | Title | Edition | Pages | Markdown | Status | Covers | Needed when |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| **18181-1** | Core coding system | 2nd ed., 2024-07 | 96 | `part1.md` | **COMPLETE** — 4230 lines / 36k words | The decoder: codestream syntax, entropy coding, modular mode, VarDCT, filters, headers. | Almost always. This is *the* spec. |
+| **18181-2** | File format | 2nd ed., 2024-06 | 22 | `part2.md` | **COMPLETE** — 735 lines / 6.3k words | ISOBMFF container, boxes, signatures, metadata carriage. | Container parsing/writing, Exif/XMP, JPEG reconstruction plumbing. |
+| **18181-3** | Conformance testing | — | 14 | `part3.md` | **COMPLETE** — 325 lines / 3.0k words | Conformance methodology, test streams, peak-error tolerance classes. | Defining pass/fail for lossy decode; writing `jpxl-conformance`. |
+| **18181-4** | Reference software | 2022 | 8 | `part4.md` | **COMPLETE** — 163 lines / 1.6k words | Points at the reference software; little normative content. | Rarely. |
+
+Audited 2026-08-02: 30–48 % more words than a rejected earlier OCR pass,
+comparison/shift operators (`<`, `<<`, `<=`, `>>`) intact, text reflowed into
+paragraphs and code blocks, previously-lost pages recovered (Part 1 Annex N,
+Part 2 A.11). The rejected `*_processed_*.pdf` artifacts have been deleted.
+**Caveat:** dense syntax-table and formula pages can still scramble under OCR —
+spot-check them against the original scan page before treating the markdown as
+sole normative source.
+
+| Upcoming | Path | Status | Use |
+| --- | --- | --- | --- |
+| Part 1 LaTeX conversion (from the original scan, by the user) | `latex/` (repo root, does not exist yet) | pending | Highest-fidelity Part 1 source once it lands — supersedes `part1.md` for formulas and tables. Until then `part1.md` is the working normative source. |
 
 ## Companion sources
 
 | Source | Path | Status | Use |
 | --- | --- | --- | --- |
-| "The JPEG XL Image Coding System: History, Features, Coding Tools, Design Rationale, and Future" (arXiv 2506.05987v2, 73 pp) | `markdowns/2506.05987v2.md` | fully converted | **Primary readable source until OCR lands.** Section structure, syntax figures for the image and frame headers, predictor/transform descriptions, entropy-coding overview. Descriptive, not normative — everything derived from it is `[provisional]`. |
+| "The JPEG XL Image Coding System: History, Features, Coding Tools, Design Rationale, and Future" (arXiv 2506.05987v2, 73 pp) | `markdowns/2506.05987v2.md` | fully converted | **Design rationale and cross-check, not normative** — the OCRed parts outrank it. Section structure, syntax figures for the image and frame headers, predictor/transform descriptions, entropy-coding overview. Descriptive, not normative — everything derived from it is `[provisional]`. |
 | Mandeel et al. 2021 (comparative study) | `markdowns/mandeel2021.md` | converted | Minor. Comparative compression numbers only; no syntax. |
 | libjxl checkout | `libjxl/` | — | **Black-box oracle only.** Run binaries, diff outputs. Never read for architecture. See `AGENTS.md` §2. |
 
 ## Provisional Part 1 topic map
 
-Derived from the arXiv paper, not from the standard. Every entry is
-`[provisional]` until confirmed against the OCRed Part 1, at which point the
-paper's section numbers here get replaced by clause numbers. Section numbers
-in the "paper §" column refer to `markdowns/2506.05987v2.md`.
+**The real Part 1 text is now available (`part1.md`); every entry below awaits
+re-audit against it and the map has not been rewritten.** Real clause numbers
+can be pulled from `part1.md` as the re-audit proceeds.
+
+Derived from the arXiv paper, not from the standard. Every entry stays
+`[provisional]` until confirmed against `part1.md`, at which point the paper's
+section numbers here get replaced by clause numbers. Section numbers in the
+"paper §" column refer to `markdowns/2506.05987v2.md`.
 
 | Topic | Paper § | What it contains `[provisional]` |
 | --- | --- | --- |
@@ -65,8 +85,9 @@ in the "paper §" column refer to `markdowns/2506.05987v2.md`.
 
 ## Clause → implementation crosswalk
 
-Filled in as slices land. Clause column stays `[provisional]` (paper section
-numbers) until Part 1 OCR replaces it with real clause numbers.
+Filled in as slices land. Clause column still holds paper section numbers and
+stays `[provisional]`; real clause numbers are now obtainable from `part1.md`
+and get substituted during the pending re-audit.
 
 | Spec clause `[provisional]` | JPXL crate / module | Status |
 | --- | --- | --- |
