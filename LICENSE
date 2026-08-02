@@ -1,0 +1,18 @@
+JPXL is dual-licensed under either of
+
+  * Apache License, Version 2.0 (JPXL/LICENSE-APACHE)
+  * MIT license (JPXL/LICENSE-MIT)
+
+at your option.
+
+SPDX-License-Identifier: MIT OR Apache-2.0
+
+Unless you explicitly state otherwise, any contribution intentionally
+submitted for inclusion in this work by you, as defined in the Apache-2.0
+license, shall be dual-licensed as above, without any additional terms or
+conditions.
+
+Note: this repository also contains gitignored working material that is NOT
+covered by these licenses and is not distributed with it — a third-party
+libjxl checkout (BSD-3-Clause, used only as a black-box oracle), copyrighted
+ISO/IEC standards documents, and local test images.

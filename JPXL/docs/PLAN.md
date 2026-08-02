@@ -1,0 +1,71 @@
+# PLAN.md — JPXL implementation plan
+
+Decoder-first, vertical slices. Each slice states a goal, its spec source, and
+an exit criterion that is a **test**, not an opinion. A slice is done when its
+test passes and `CONFORMANCE.md` records it.
+
+Blocking is real: Parts 1–3 are un-OCRed stubs as of 2026-08-02
+(see `STANDARDS_INDEX.md`). Slices marked blocked on OCR can be *designed* from
+the arXiv paper but must not be frozen against it — exact field order, table
+values, and conditional predicates need the normative text.
+
+Last reviewed: 2026-08-02.
+
+## Slice table
+
+| # | Slice | Scope | Spec source | Blocking | Exit criterion (test) |
+| --- | --- | --- | --- | --- | --- |
+| 1 | **BitReader + primitives** | Little-endian bit reader; `Bool`, `u(n)`, `U32` 4-distribution selector, `U64` extensible form, `F16` (reject NaN/Inf), `ZeroPadToByte`; bit-position tracing infrastructure. | arXiv §3.1 (syntax notation is fully stated there) | **unblocked** — IN PROGRESS this wave | Exhaustive/property roundtrip: every `U32` distribution index and `U64` continuation length encodes and decodes to the same value with the expected bit count; `F16` rejects non-finite; trace records the exact bit offset of each field. |
+| 2 | **Signature + `SizeHeader` / `ImageMetadata`** | `FF 0A` sniffing, small/aspect-ratio/full size forms, `all_default` metadata path, bit depth, orientation, extra-channel list. | arXiv §3.1 `[provisional]`; confirm against Part 1 when OCRed | mostly unblocked; oracle cross-check needed | Parse a corpus of `cjxl`-produced headers; every field matches `jxlinfo` output. Bit offsets from the trace line up with total header length. Handmade fixtures cover each size form. |
+| 3 | **Entropy coding** | Prefix codes, rANS decode, hybrid-uint token/extra-bits, LZ77 layer, context map + histogram clustering. | arXiv §8 for structure; **exact table layouts and histogram signaling need Part 1 OCR** | core mechanics buildable now; layouts blocked | Symbol-stream roundtrip against self across degenerate cases (single-symbol alphabet, uniform, ties in the ANS `omit_pos` selection, empty LZ77 window). Then: decode entropy-coded sections lifted from oracle files bit-exactly. |
+| 4 | **ICC decode** | The compressed-ICC representation carried in the codestream. | Part 1 `[provisional]` | blocked on 3 | Decoded ICC bytes are byte-identical to `djxl`-extracted profiles across the fixture set. |
+| 5 | **Modular mode** | MA trees over local properties, all predictors incl. Weighted/self-correcting, transforms: RCT, palette/delta palette, Squeeze. | arXiv §5; predicates and property indices need Part 1 OCR | blocked on 3 + OCR | Per-tool isolation tests first (each predictor against a hand-computed vector; each transform inverted exactly). Then a full modular group decodes bit-exactly vs. the oracle. |
+| 6 | **FrameHeader / TOC / groups** | Frame header incl. conditional blocks, group geometry, TOC offsets, group permutation, passes. | arXiv §3 Fig. 8, §9 — conditionals must come from Part 1 | blocked on OCR | Frame headers from a multi-frame, multi-group, permuted-order corpus parse to the exact byte offset of the first group; group rectangles match the oracle's reported geometry. |
+| 7 | **End-to-end lossless modular decode** | Wire the above into a working decode of modular-lossless files. | Parts 1 + 2 | blocked on 3, 5, 6 | Native-depth pixel equality against `djxl` output for the whole handmade + generated fixture set, **including ≥256×256 multi-group images**. Not "decodes without error" — exact samples. |
+| 8 | **VarDCT inverse** | XYB inverse, DCT families and varblock types, dequantization, chroma-from-luma, gaborish, EPF. | arXiv §4.2, §6, §7.2 | **DCT and XYB math proceedable now** — IN PROGRESS this wave; the rest blocked on 5, 6, OCR | Math layer: each DCT shape roundtrips, with separate assertions on coefficient storage order and LLF/DC extraction (the previous project's single largest failure class). Full path: decoded pixels within the Part 3 peak-error class vs. the oracle. |
+| 9 | **Container / Part 2 boxes** | JXL signature box, `ftyp`, `jxlc`, `jxlp` concatenation, `jxll`, `Exif`, `xml `, `brob`, `jbrd` passthrough. | Part 2 | unblocked once Part 2 OCR lands | Box tree of every container fixture matches the oracle's box listing; split `jxlp` reassembles to a codestream byte-identical to the equivalent `jxlc`. |
+| 10 | **Minimal encoder** | Modular lossless, one predictor, one entropy mode, single group then multi-group. | Part 1 (encoding is unconstrained; validity is what matters) | blocked on 5, 7 | Stage 1: JPXL encode → JPXL decode reproduces input samples exactly. Stage 2: `djxl` decodes the same file to the same samples. Both required; stage 1 alone proves nothing (paired bugs cancel). |
+
+## Bit-exactness contract
+
+Know which regime a path is in before writing its test.
+
+| Path | Contract | Rationale |
+| --- | --- | --- |
+| Entropy coding (prefix, rANS, hybrid-uint, LZ77) | **Bit-exact** | Integer, fully specified. Any divergence is a bug. |
+| Modular lossless roundtrip | **Bit-exact** (samples) | Integer arithmetic only, by construction of the mode. |
+| Header serialization | **Bit-exact** | Given identical field values, our bits equal the reference bits. Divergence means a wrong conditional or a wrong `U32` distribution. |
+| VarDCT lossy decode | **Tolerance-based** — Part 3 peak-error classes | Float pipeline; the standard defines conformance by bounded peak error, not identity. Record the class used with every result. |
+| XYB and other float color math | **Tolerance-based** | Same. |
+
+**Float policy:** all float conversions are software-defined. No reliance on
+platform rounding mode, x87 excess precision, FMA contraction, or fast-math.
+Conversions between float and integer are written explicitly with stated
+rounding. Two hosts must produce identical output for identical input.
+
+## Deliberately not in scope yet
+
+Do not add these without a decision recorded here first:
+
+- SIMD of any kind (scalar reference paths must be locked first)
+- rayon / threading
+- JPEG recompression and reconstruction (`jbrd` beyond passthrough)
+- Animation playback semantics
+- Progressive / partial decoding as a feature (the syntax must parse; the
+  streaming API does not exist yet)
+- GPU anything
+- Perceptual metrics, encoder rate/distortion search, effort levels
+- Splines and noise synthesis (patches likewise, until slice 8 is stable)
+
+## Deferred crate splits
+
+The workspace starts with `jpxl-bitstream`, `jpxl-core`, `jpxl-decode`,
+`jpxl-cli`, `jpxl-conformance`. These splits are anticipated but not made until
+the code justifies them:
+
+| Future crate | Split out of | Trigger |
+| --- | --- | --- |
+| `jpxl-entropy` | `jpxl-core` | When slice 3 exceeds a self-contained module and the encoder needs it independently. |
+| `jpxl-encode` | new peer of `jpxl-decode` | Slice 10. Peer tree, never nested under the decoder. |
+| `jpxl-encode-policy` | `jpxl-encode` | When any heuristic search appears. Policy never lives in the normative emitter. |
+| `jpxl-container` | `jpxl-decode` | Slice 9, if Part 2 handling outgrows a module. |
