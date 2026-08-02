@@ -4,12 +4,17 @@ Decoder-first, vertical slices. Each slice states a goal, its spec source, and
 an exit criterion that is a **test**, not an opinion. A slice is done when its
 test passes and `CONFORMANCE.md` records it.
 
-Blocking is real: Parts 1–3 are un-OCRed stubs as of 2026-08-02
-(see `STANDARDS_INDEX.md`). Slices marked blocked on OCR can be *designed* from
-the arXiv paper but must not be frozen against it — exact field order, table
-values, and conditional predicates need the normative text.
+Normative sources are available: `latex/part1.tex` (highest fidelity),
+`markdowns/standard-markdowns/part1-4.md` (see `STANDARDS_INDEX.md` for the
+access order). "Blocked on OCR" notes below are resolved; remaining blocking is
+inter-slice only.
 
-Last reviewed: 2026-08-02.
+The repo-root `RUST_JXL_ENCODER_ROADMAP.md` (original-implementation roadmap)
+is the strategic companion to this file: its phase order matches these slices,
+and its **first interoperable vertical slice** and **SectionStore** designs are
+adopted below.
+
+Last reviewed: 2026-08-02 (post-LaTeX).
 
 ## Slice table
 
@@ -22,9 +27,10 @@ Last reviewed: 2026-08-02.
 | 5 | **Modular mode** | MA trees over local properties, all predictors incl. Weighted/self-correcting, transforms: RCT, palette/delta palette, Squeeze. | arXiv §5; predicates and property indices need Part 1 OCR | blocked on 3 + OCR | Per-tool isolation tests first (each predictor against a hand-computed vector; each transform inverted exactly). Then a full modular group decodes bit-exactly vs. the oracle. |
 | 6 | **FrameHeader / TOC / groups** | Frame header incl. conditional blocks, group geometry, TOC offsets, group permutation, passes. | arXiv §3 Fig. 8, §9 — conditionals must come from Part 1 | blocked on OCR | Frame headers from a multi-frame, multi-group, permuted-order corpus parse to the exact byte offset of the first group; group rectangles match the oracle's reported geometry. |
 | 7 | **End-to-end lossless modular decode** | Wire the above into a working decode of modular-lossless files. | Parts 1 + 2 | blocked on 3, 5, 6 | Native-depth pixel equality against `djxl` output for the whole handmade + generated fixture set, **including ≥256×256 multi-group images**. Not "decodes without error" — exact samples. |
+| 7.5 | **First interoperable pair** | Deliberately tiny encoder+decoder subset: naked codestream, one frame, gray8, non-XYB, modular, single group, no transforms, one-leaf MA tree, one simple legal predictor, one context cluster, no LZ77, simplest legal entropy backend. | Part 1 (roadmap "Phase 4") | blocked on 3 + minimal 5/6 subset | JPXL encodes deterministic images; JPXL decodes them exactly; **`djxl` and `jxl-oxide` decode them exactly**; corrupt variants error, never panic. This is the first proof the whole syntax stack is real — do not start VarDCT before it passes. |
 | 8 | **VarDCT inverse** | XYB inverse, DCT families and varblock types, dequantization, chroma-from-luma, gaborish, EPF. | arXiv §4.2, §6, §7.2 | **DCT and XYB math proceedable now** — IN PROGRESS this wave; the rest blocked on 5, 6, OCR | Math layer: each DCT shape roundtrips, with separate assertions on coefficient storage order and LLF/DC extraction (the previous project's single largest failure class). Full path: decoded pixels within the Part 3 peak-error class vs. the oracle. |
 | 9 | **Container / Part 2 boxes** | JXL signature box, `ftyp`, `jxlc`, `jxlp` concatenation, `jxll`, `Exif`, `xml `, `brob`, `jbrd` passthrough. | Part 2 | unblocked once Part 2 OCR lands | Box tree of every container fixture matches the oracle's box listing; split `jxlp` reassembles to a codestream byte-identical to the equivalent `jxlc`. |
-| 10 | **Minimal encoder** | Modular lossless, one predictor, one entropy mode, single group then multi-group. | Part 1 (encoding is unconstrained; validity is what matters) | blocked on 5, 7 | Stage 1: JPXL encode → JPXL decode reproduces input samples exactly. Stage 2: `djxl` decodes the same file to the same samples. Both required; stage 1 alone proves nothing (paired bugs cancel). |
+| 10 | **Encoder breadth** | Grow the slice-7.5 encoder: 16-bit, gradient predictor, RGB + RCT, multi-group, minimal `jxlc` container. Encoder uses a **SectionStore** (encode each section once into bounded RAM/spill, then TOC, then stream — the TOC precedes sections on the wire, so lengths must exist before emission; never assemble a second complete codestream). | Part 1 (encoding is unconstrained; validity is what matters) | blocked on 7.5 | Stage 1: JPXL encode → JPXL decode reproduces input samples exactly. Stage 2: `djxl` decodes the same file to the same samples. Both required; stage 1 alone proves nothing (paired bugs cancel). |
 
 ## Bit-exactness contract
 
@@ -63,9 +69,13 @@ The workspace starts with `jpxl-bitstream`, `jpxl-core`, `jpxl-decode`,
 `jpxl-cli`, `jpxl-conformance`. These splits are anticipated but not made until
 the code justifies them:
 
+The roadmap's single-crate recommendation was considered and overridden: the
+workspace layout predates it, is approved, and its per-crate ownership is what
+makes parallel multi-agent work safe. Do not relitigate.
+
 | Future crate | Split out of | Trigger |
 | --- | --- | --- |
-| `jpxl-entropy` | `jpxl-core` | When slice 3 exceeds a self-contained module and the encoder needs it independently. |
+| `jpxl-entropy` | `jpxl-core` | **Done** — created directly in the slice-3 wave (2026-08-02); entropy was always going to exceed a module. |
 | `jpxl-encode` | new peer of `jpxl-decode` | Slice 10. Peer tree, never nested under the decoder. |
 | `jpxl-encode-policy` | `jpxl-encode` | When any heuristic search appears. Policy never lives in the normative emitter. |
 | `jpxl-container` | `jpxl-decode` | Slice 9, if Part 2 handling outgrows a module. |

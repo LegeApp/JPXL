@@ -1,669 +1,1048 @@
-# Rust JPEG XL Encoder: Function-by-Function Parity Roadmap
-
-Status: revised execution plan, 2026-07-31  
-Applies to: `jxl-encoder/`  
-Reference: `libjxl/` and its `cjxl` encoder  
-Primary objective: meet or exceed libjxl's compression quality and encoding
-speed by profiling, comparing, and optimizing equivalent functions one at a
-time.
-
-## 1. Corrected direction
-
-This is not primarily a perceptual-tuning project. The encoder already contains
-substantial perceptual work, content dispatch, experimental metrics, and a large
-body of parameter sweeps. More tuning may produce isolated wins, but prior work
-here and in `bpg-rs` shows that it is difficult, expensive to validate, and
-unlikely to close more than a modest final gap.
-
-The main program is therefore:
-
-1. Build matched Rust and libjxl reference binaries.
-2. Flamegraph the same encode in both binaries.
-3. Create a paired ledger of equivalent Rust and C++ functions.
-4. Separate excess call count from excess cost per call.
-5. Optimize the largest measured discrepancy while preserving decisions and
-   output whenever possible.
-6. Run interleaved A/B measurements and correctness gates.
-7. Promote a win or revert a miss.
-8. Re-profile and repeat.
-
-This is the method that brought `bpg-rs` from a large performance gap to roughly
-speed parity. It is also the method behind the largest already-documented JPEG
-XL speed corrections.
-
-Perceptual tuning is a bounded secondary workstream. It should consume no more
-than roughly 10% of optimization effort until speed parity and libjxl
-decision-path parity are established.
-
-## 2. What the existing documents actually establish
-
-The existing JPEG XL documents contain the right evidence, but their top-level
-direction is inconsistent.
-
-- `GOAL_BEAT_CJXL.md` correctly calls wall time the long pole and says to port
-  what cjxl does first.
-- `LIBJXL_DIVERGENCES.md` and `CODE-HISTORY.md` record decisive profile-driven
-  wins:
-  - a wrong tree-learning effort gate consumed 78.6% of CPU on one e5 cell;
-  - using 14 predictors where libjxl used 2 consumed about 47% of CPU on an e8
-    cell;
-  - correcting that predictor path reduced wall time from 5.46 s to 2.08 s;
-  - a proposed strip-stage optimization could save at most 3.3% even with
-    infinite local speedup, an Amdahl-bound reason not to prioritize it.
-- The same documents also contain a very large number of content gates,
-  parameter sweeps, metric experiments, speculative research branches, and
-  retained opt-in scaffolds. Those are not a substitute for a complete
-  Rust-versus-C++ cost ledger.
-- `JXL_ENCODER_LEARNINGS.md` is explicitly an open research addendum. Its
-  proposals should not drive the parity program unless a current profile first
-  identifies the relevant function as important.
-
-The BPG work provides the clearer governing lesson:
-
-- compare calls per unit of input and time per call;
-- do not assume fewer calls means faster;
-- do not cut search when the real gap is implementation cost;
-- verify assumptions against reference source;
-- prefer byte-identical changes;
-- interleave measurements because machine load can reverse an apparent result;
-- retain negative results in a concise ledger and revert their code;
-- optimize the dominant leaf function, then re-profile because the bottleneck
-  moves.
-
-## 3. Definition of success
-
-### 3.1 Core correctness
-
-Every promoted production change must:
-
-- produce valid JPEG XL decoded by `djxl`, jxl-rs, and jxl-oxide;
-- remain pixel-exact in lossless modes;
-- preserve JPEG reconstruction exactly where advertised;
-- remain deterministic for a fixed configuration and thread count;
-- pass all relevant hash locks, round-trip tests, and conformance tests;
-- reject unsupported input combinations without corrupt output;
-- account for alpha and extra-channel behavior in the tested cell.
-
-### 3.2 Speed targets
-
-Measure warm-process and cold-process results separately. The main optimization
-target is warm encoding wall time; startup and CLI overhead get a separate
-ledger.
-
-Staged targets at matched effort, threads, input, and build quality:
-
-| Stage | 1-thread geometric mean | 8-thread geometric mean | Worst core cell |
-|---|---:|---:|---:|
-| Floor | <= 1.30x libjxl | <= 1.75x | <= 2.00x |
-| Competitive | <= 1.10x | <= 1.25x | <= 1.35x |
-| Parity | <= 1.00x | <= 1.05x | <= 1.15x |
-| Exceed | <= 0.95x | <= 0.95x | <= 1.05x |
-
-Single-thread parity comes before a major parallel redesign. Parallel work can
-hide per-call inefficiency, complicate profiles, and increase memory use.
-
-### 3.3 Compression-quality targets
-
-At every production effort:
-
-- no core cell may lose both size and decoded quality outside declared noise
-  bands;
-- lossless is judged first by exact reconstruction and then by bytes;
-- lossy comparisons use matched decoded pixels and at least Butteraugli plus
-  SSIMULACRA2;
-- metric disagreement remains a mixed result, not a win;
-- comparisons are per cell and per quality band, not only corpus averages.
-
-Parity target:
-
-- zero calibrated `CJXL_DOMINATES` cells in the core matrix;
-- geometric-mean size at matched quality no worse than libjxl;
-- no content family with a material regression.
-
-Exceed target:
-
-- at least 60% of core cells are strict Pareto wins;
-- at least 2% lower geometric-mean bytes at matched quality;
-- no material speed regression used to purchase that size improvement.
-
-Quality parity is first pursued through function and decision parity with
-libjxl: the same inputs to a decision, the same candidates, the same cost terms,
-and the same selected result. New perceptual heuristics come later.
-
-## 4. Measurement contract
-
-No speed claim is accepted without the following.
-
-### 4.1 Matched builds
-
-Build both encoders with:
-
-- release optimization and LTO;
-- the same native CPU feature policy;
-- symbols sufficient for call-stack attribution;
-- assertions and diagnostic instrumentation either disabled in both timed
-  builds or accounted for;
-- recorded compiler, linker, allocator, source revision, and binary hash;
-- equivalent thread count and effort semantics.
-
-Do not compare a native, LTO Rust binary to a generic or debug-instrumented
-libjxl binary, or vice versa.
-
-### 4.2 Stable wall measurements
-
-- Use an idle host with the power and frequency policy recorded.
-- Pin the one-thread tests to an appropriate physical core.
-- Interleave A/B runs: Rust, C++, Rust, C++, rather than two separate batches.
-- Use at least five runs for short cells and three for long cells.
-- Report minimum, median, and dispersion.
-- Record temperature, load, worker count, peak RSS, output bytes, and output
-  hash.
-- Keep cold-start, warm-start, and library-only timings separate.
-
-### 4.3 Profile artifacts
-
-For every canonical cell, retain:
-
-- a Rust flamegraph;
-- a libjxl flamegraph;
-- folded stacks or raw `perf.data` needed to regenerate each graph;
-- inclusive and exclusive sample tables;
-- internal phase and function counters;
-- output hashes and correctness results;
-- benchmark metadata sufficient to repeat the run.
-
-Use `perf record --call-graph dwarf`, `samply`, or an equivalent sampling
-profiler. If system profiling is unavailable, use feature-gated internal timers,
-call counters, and hardware counters where accessible. Internal timing must be
-calibrated for its own overhead and disabled in normal releases.
-
-### 4.4 Canonical profile cells
-
-Start with a small set that represents distinct pipelines:
-
-1. 4 MP SDR photo, lossy, effort 5, 1 thread.
-2. 4 MP SDR photo, lossy, effort 7, 1 thread.
-3. Screenshot or line art, lossy, effort 8, 1 thread.
-4. 4 MP 8-bit photo, lossless, effort 5, 1 thread.
-5. Structured document, lossless, effort 7, 1 thread.
-6. 16-bit image, lossless, effort 5, 1 thread.
-7. HDR gradient/photo, lossy, effort 7, 1 thread.
-8. The same large lossy and lossless cells at 8 threads.
-9. A 64x64 and a 256x256 cell for fixed overhead.
-
-Do not begin with the full quality matrix. First obtain deep, repeatable profiles
-on representative cells; use the larger matrix to validate promoted changes.
-
-## 5. The paired function ledger
-
-The ledger is the central artifact of this project. Each row represents a Rust
-function or tightly coupled function group and its closest libjxl counterpart.
-
-Required columns:
-
-| Field | Meaning |
-|---|---|
-| Cell and effort | Exact benchmark where the row was measured |
-| Pipeline stage | Modular, VarDCT, shared, container, or scheduling |
-| Rust symbol | File and function |
-| libjxl symbol | File and function |
-| Inclusive time | Total cost including callees |
-| Exclusive time | Cost in the function body |
-| Calls | Invocations per image, group, block, token, or pixel |
-| Work units | Pixels, blocks, candidates, coefficients, or tokens processed |
-| ns/call and ns/unit | Implementation cost independent of call count |
-| Rust/C++ call ratio | Detects excess or missing work |
-| Rust/C++ unit-cost ratio | Detects implementation inefficiency |
-| Allocations and bytes | Allocation pressure and traffic |
-| Branch/cache/vector data | When hardware counters are available |
-| Decision class | Byte-identical, decision-neutral, or decision-affecting |
-| Output result | Hash, bytes, quality, decode status |
-| Status | Open, testing, promoted, ruled out, or superseded |
-
-Every hot row must be diagnosed as one or more of:
-
-1. **Call-count gap**: Rust performs more candidates, passes, or reconstructions.
-2. **Per-call gap**: equivalent work is more expensive in Rust.
-3. **Different algorithm or effort gate**: the functions are not actually
-   equivalent.
-4. **Parallel/scheduling gap**: equivalent single-thread work, poor scaling.
-5. **Fixed overhead**: setup, allocation, headers, or process cost dominates.
-
-Do not optimize until this classification is supported by measurements and
-reference-source inspection.
-
-## 6. Promotion classes
-
-### 6.1 Byte-identical optimization
-
-Preferred class. The encoded bytes match the baseline exactly.
-
-Examples:
-
-- eliminate duplicate calculation;
-- cache and reuse an already-final value;
-- fuse loops without changing arithmetic order where output depends on it;
-- specialize a common type or size;
-- remove allocation and copying;
-- improve lookup layout;
-- add bit-exact SIMD;
-- correct an effort gate to match libjxl.
-
-Promotion gate:
-
-- output hashes match on the focused cell and the full lock matrix;
-- at least 0.5% end-to-end wall improvement, or at least 3% in a stage that
-  accounts for 10% or more of wall time;
-- no measurable regression on another core cell;
-- code and maintenance cost are proportionate to the win.
-
-### 6.2 Decision-neutral optimization
-
-Output bytes may differ, but selected codec decisions and decoded pixels or
-quality are equivalent within a very tight declared band.
-
-Promotion requires the full rate/distortion matrix and an explanation for the
-byte difference.
-
-### 6.3 Decision-affecting change
-
-Changes search, quantization, predictor choice, entropy decisions, or perceptual
-allocation.
-
-This is quality work, not a free speed optimization. It requires:
-
-- decision-diff evidence showing what changed;
-- matched-quality size results;
-- full multi-content and multi-effort validation;
-- wall cost included in the result;
-- a separate commit and ledger entry from mechanical optimizations.
-
-Do not combine these three classes in one benchmark patch.
-
-## 7. The optimization loop
-
-Use this exact loop for each performance change.
-
-1. Select the hottest remaining ledger row by weighted end-to-end opportunity.
-2. Inspect the Rust and libjxl call paths and source side by side.
-3. Confirm that both functions receive comparable work.
-4. Measure calls, work units, and unit cost.
-5. State one falsifiable hypothesis.
-6. Build the smallest gated implementation that tests it.
-7. Verify local function output before timing.
-8. Run interleaved single-thread A/B.
-9. Run correctness and output-class gates.
-10. Validate on at least one cell from each affected content family.
-11. Promote or revert.
-12. Update the negative-results ledger.
-13. Re-profile the whole encode.
-
-A microbenchmark win is insufficient. The final promotion metric is end-to-end
-wall time because inlining, cache behavior, allocator effects, and call-site
-frequency can erase a kernel win.
-
-## 8. Phase 0: Minimal build and benchmark repair
-
-This phase is deliberately narrow. It exists only to make profiling trustworthy.
-
-Deliverables:
-
-- make `cargo metadata`, release build, test, clippy, and package work from this
-  project without undisclosed sibling repositories;
-- pin the exact libjxl revision and build recipe;
-- produce a one-command paired benchmark for one Rust and one cjxl encode;
-- record mandatory decoder paths and fail rather than silently skipping them;
-- correct only documentation claims that would invalidate benchmark selection;
-- fix the premultiplied-alpha `Auto` bug before alpha cells are measured.
-
-Exit criteria:
-
-- a clean clone can reproduce both binaries and one paired row;
-- the benchmark emits machine-readable timing, bytes, hash, RSS, and revisions;
-- the same output passes all required decoders.
-
-This phase must not expand into general API cleanup or feature completion.
-
-## 9. Phase 1: Flamegraphs and the first complete ledger
-
-### 9.1 Generate profiles before more optimization
-
-Produce Rust and libjxl flamegraphs for every canonical profile cell. Start at
-one thread. For the two large cells, also profile 8 threads with per-thread
-stacks and blocked/runnable time.
-
-### 9.2 Instrument work counts
-
-Sampling profiles show where time lands but not why. Add feature-gated counters
-for:
-
-- image, group, block, and transform visits;
-- candidate evaluations per search;
-- predictor trials;
-- tree split and cost evaluations;
-- reconstruction passes;
-- perceptual-loop iterations;
-- coefficients quantized and tokens emitted;
-- histogram and clustering operations;
-- ANS/prefix symbols encoded;
-- allocations, reallocations, and copied bytes;
-- task counts, queue waits, steals, and ordered-commit waits.
-
-Counters must use low-overhead thread-local accumulation and merge after the
-timed region.
-
-### 9.3 Pair equivalent functions
-
-Build the first ledger by tracing each major Rust stack into the corresponding
-libjxl source. Source inspection is mandatory; names alone do not establish
-equivalence.
-
-The first pass should cover at least 90% of sampled one-thread CPU time. Unknown
-samples remain explicit rows rather than being hidden in “other.”
-
-Exit criteria:
-
-- paired rows account for at least 90% of one-thread CPU on every canonical
-  cell;
-- the top ten Rust/C++ discrepancies have a call-count or unit-cost diagnosis;
-- each discrepancy has an Amdahl upper bound;
-- no speculative rewrite is scheduled ahead of a larger measured row.
-
-## 10. Phase 2: Single-thread function parity
-
-Work down the ledger in weighted order. The following are inspection domains,
-not a presumed priority order.
-
-### 10.1 VarDCT
-
-- color conversion and XYB/opsin transforms;
-- adaptive quantization setup;
-- AC strategy candidate generation and scoring;
-- CfL fitting and refinement;
-- forward transforms and coefficient layout;
-- quantization and encoder-side reconstruction;
-- perceptual refinement loop;
-- DC and AC token generation;
-- histogram building, clustering, and code selection;
-- ANS and prefix writing.
-
-For each search function, compare:
-
-- candidate count;
-- shortlist size;
-- reconstructions per candidate;
-- cost-function calls;
-- coefficients and tokens processed;
-- time per candidate.
-
-### 10.2 Modular/lossless
-
-- transform selection and application;
-- sample gathering;
-- predictor evaluation;
-- tree construction and split-cost estimation;
-- residual generation;
-- palette and patch search;
-- LZ77 matching;
-- tokenization;
-- histogram clustering;
-- entropy writing.
-
-The existing tree-learning incidents make effort-gate and predictor-set parity a
-first-class audit item. Do not assume the remaining tree path is correct merely
-because two large mistakes were already fixed.
-
-### 10.3 Shared runtime costs
-
-- repeated planar/interleaved conversion;
-- full-image copies;
-- temporary zeroing;
-- small-vector growth;
-- hash-map or tree-map use in inner loops;
-- bounds checks and iterator abstractions visible in exclusive samples;
-- missed inlining or code-size-driven de-optimization;
-- scalar fallbacks on hot target CPUs;
-- allocator and deallocator cost;
-- serialization and bit-buffer flushes.
-
-### 10.4 SIMD policy
-
-Do not perform a broad “SIMD completeness” project. SIMD work is admitted only
-when:
-
-- the function is a measured hot row;
-- the function has enough independent work to vectorize;
-- arithmetic and rounding requirements are pinned by tests;
-- generated assembly or counters show that auto-vectorization is insufficient;
-- the end-to-end result survives A/B measurement.
-
-Exit criteria:
-
-- one-thread geometric mean is at most 1.10x libjxl;
-- no one-thread core cell exceeds 1.35x;
-- the top remaining discrepancy is understood at function level;
-- promoted mechanical changes are byte-identical wherever technically possible.
-
-## 11. Phase 3: Parallel scaling
-
-Begin only after the comparable single-thread pipeline is near parity.
-
-### 11.1 Measure, do not infer
-
-For 1, 2, 4, 8, and all physical cores, record:
-
-- useful work per thread;
-- runnable versus blocked time;
-- queue wait;
-- task size distribution;
-- critical-path length;
-- ordered-commit wait;
-- synchronization and allocation contention;
-- memory bandwidth and peak RSS.
-
-Compare these values to libjxl's scaling on the same cells.
-
-### 11.2 Diagnose the scaling gap
-
-Classify it as:
-
-- insufficient independent groups;
-- tasks too coarse;
-- tasks too fine;
-- a serial phase on the critical path;
-- centralized queue or allocator contention;
-- excess cloning/copying between tasks;
-- deterministic ordering barrier;
-- full-image ownership preventing pipeline overlap;
-- memory-bandwidth saturation.
-
-Only then alter the work graph.
-
-### 11.3 Promotion rules
-
-- preserve deterministic output unless a separately documented mode opts out;
-- include RSS and bytes in every scaling result;
-- do not accept an 8-thread win that slows 1-thread or small images materially;
-- require at least a 2% end-to-end wall win for non-trivial scheduler
-  complexity;
-- delete abandoned scheduler scaffolding rather than leaving inactive paths.
-
-Exit criteria:
-
-- at least 4x speedup from 1 to 8 threads on large eligible images;
-- 8-thread geometric mean at most 1.05x libjxl;
-- small-image parallel overhead below 3%;
-- no unexplained serial plateau.
-
-## 12. Phase 4: Quality and size parity by decision diff
-
-Quality work uses the same fine-tooth-comb method.
-
-For each remaining `CJXL_DOMINATES` cell:
-
-1. Find the first bitstream section or decoded intermediate that diverges.
-2. Dump equivalent Rust and libjxl inputs and outputs at that boundary.
-3. Compare candidates, cost components, effort gates, and the winner.
-4. Trace the first differing decision to one function.
-5. Port or correct the smallest missing behavior.
-6. Validate the focused cell and the full affected matrix.
-
-Preferred order:
-
-1. wrong or missing libjxl behavior;
-2. extra fixed overhead;
-3. inaccurate cost estimate;
-4. duplicate or prematurely finalized work;
-5. an ours-only improvement with a provable keep-best rule;
-6. new heuristic or perceptual tuning.
-
-Useful decision-diff artifacts include:
-
-- AC strategy map and per-candidate costs;
-- quant fields and quantized coefficients;
-- CfL parameters and residual costs;
-- Modular tree samples, split candidates, selected predictors, and actual
-  clustered entropy cost;
-- token counts, histogram assignments, and section sizes;
-- perceptual-loop input, per-iteration score, and accepted quant field.
-
-Keep-best designs are favored when both alternatives can be scored by the real
-downstream cost and the cheaper result selected without a regression. Their wall
-cost must still be paid or eliminated through reuse.
-
-Exit criteria:
-
-- zero calibrated dominated cells in the core matrix;
-- no content family loses on geometric-mean size at matched quality;
-- one-thread and eight-thread speed targets remain green.
-
-## 13. Phase 5: Exceed libjxl
-
-Beating libjxl is the same loop continued past parity, not a separate speculative
-architecture program.
-
-Priority order:
-
-1. functions where Rust remains slower per work unit;
-2. duplicate work libjxl also performs and both implementations can avoid;
-3. better data layout or ownership proven by cache and allocation evidence;
-4. safe specialization for common bit depth, channel count, transform size, or
-   entropy case;
-5. keep-best decisions that improve bytes without reducing quality;
-6. higher-value search funded by measured speed savings;
-7. narrowly targeted perceptual tuning.
-
-Perceptual and content-aware work remains capped near 10% of engineering effort
-until:
-
-- speed parity is achieved;
-- function and decision ledgers cover the core pipelines;
-- the remaining quality loss cannot be explained by a libjxl divergence;
-- the expected win is large enough to survive a full-corpus gate.
-
-Alternative metric backends, broad content classifiers, and large parameter
-sweeps are not default roadmap items. They require a specific remaining cell
-cluster, a falsifiable mechanism, and a measured upper bound worth pursuing.
-
-Exit criteria:
-
-- geometric-mean wall time at most 0.95x libjxl at 1 and 8 threads;
-- at least 60% strict per-cell Pareto wins;
-- geometric-mean bytes at matched quality at least 2% below libjxl;
-- no content family or supported target with a material regression.
-
-## 14. Work deliberately deferred
-
-These must not displace the profiling loop unless a profile or correctness
-failure calls for them:
-
-- a new perceptual model or another metric fork;
-- more global parameter sweeps;
-- a new content-classification layer;
-- speculative GPU offload;
-- wholesale pipeline or scheduler rewrite;
-- generalized streaming architecture;
-- broad SIMD coverage for cold code;
-- decode-speed wire-format experiments;
-- feature-completeness work unrelated to the core encoder target;
-- papers-derived algorithms without a measured matching bottleneck.
-
-The two supplied PDFs remain useful reference material when an exact algorithm,
-numeric convention, or JPEG XL design detail is unclear. They are not evidence
-that a full port or research detour is required.
-
-## 15. First 24 tasks
-
-1. Make the crate independently resolve and build in release mode.
-2. Pin and build the exact libjxl reference with matched optimization.
-3. Create one paired, interleaved benchmark command.
-4. Select and freeze the canonical profile inputs.
-5. Capture 1-thread Rust flamegraphs for all canonical cells.
-6. Capture matching 1-thread libjxl flamegraphs.
-7. Add low-overhead phase, call, and work-unit counters.
-8. Pair symbols covering at least 90% of CPU time.
-9. Publish the initial calls-versus-cost-per-call ledger.
-10. Verify effort-gate and candidate-count parity for every top-ten row.
-11. Select the largest Amdahl opportunity.
-12. Implement one byte-identical function-level optimization.
-13. Run interleaved A/B and the focused correctness matrix.
-14. Promote or revert it and record the result.
-15. Re-profile; do not assume the old hotspot remains dominant.
-16. Repeat tasks 11-15 until 1-thread geometric mean is <= 1.10x.
-17. Capture 1/2/4/8-thread scheduler profiles for the two large cells.
-18. Build the scaling ledger and identify the critical path.
-19. Fix the largest measured scheduler or ownership cost.
-20. Reach the parallel competitive gate.
-21. Build decision-diff tooling for the worst remaining lossless cell.
-22. Build decision-diff tooling for the worst remaining VarDCT cell.
-23. Close quality/size wedges one decision function at a time.
-24. Continue the same loop past parity until the exceed gates hold.
-
-## 16. Required living documents
-
-Keep these small and operational:
-
-1. `PERF_BASELINE.md`
-   - revisions, build commands, machine, canonical cells, current walls.
-2. `FUNCTION_PARITY_LEDGER.tsv`
-   - the paired function data defined above.
-3. `OPTIMIZATION_RESULTS.md`
-   - promoted and reverted hypotheses with measured outcomes.
-4. `QUALITY_DECISION_LEDGER.tsv`
-   - first differing decision and status for every dominated cell.
-5. `CAPABILITIES.md`
-   - truthful supported-input and feature matrix.
-
-Large historical developer notes can move under the project's docs archive. The
-living ledgers should link to old evidence without inheriting its narrative
-sprawl.
-
-## 17. Stop rules
-
-Stop or revert an optimization when:
-
-- the end-to-end win disappears under interleaved measurement;
-- the optimized function is not material in the current whole-program profile;
-- a supposed reference mismatch is disproved by source inspection;
-- a byte-identical change alters bytes;
-- a decision-affecting speed win worsens matched-quality rate/distortion;
-- three attempts at one row fail without new profile evidence;
-- maintenance complexity is larger than the measured opportunity;
-- the work depends on an unverified content proxy when real downstream cost can
-  be measured instead.
-
-An honest negative result is progress. Retain the measurement and conclusion,
-revert the production code, and move to the next ledger row.
-
-## 18. Governing principle
-
-Do not try to outguess libjxl at the top of the pipeline while equivalent inner
-functions remain slower or make different decisions for accidental reasons.
-
-First make every important Rust function explainable against its libjxl
-counterpart: how often it runs, how much work it performs, how much each unit
-costs, and whether it chooses the same result. Then make the expensive functions
-cheaper, one at a time, and keep only measured wins.
-
-That fine-tooth-comb process is the credible path to both parity and a durable
-lead.
+# Recommended direction
+
+The `jp2lam` process is a good template, but its **engineering method** should be reused, not its codec decomposition.
+
+JPEG 2000 naturally decomposes around transforms, subbands, code-blocks, coding passes, packets, and tile-parts. JPEG XL has a different center of gravity:
+
+```text
+bit-level syntax and headers
+        ↓
+shared entropy coding
+        ↓
+Modular sub-bitstreams
+        ↓
+├── full Modular frames
+└── VarDCT LF/control information
+        ↓
+frame groups, sections, TOC, passes
+        ↓
+frame rendering and composition
+```
+
+The diagram on page 14 of the attached JPEG XL paper is the right mental model. Modular and VarDCT are not two isolated codecs: VarDCT uses Modular sub-bitstreams for the LF image, adaptive-quantization maps, block selection, chroma-from-luma data, filter controls, and extra channels. JPEG XL also uses the same HybridUint/prefix-or-ANS entropy system for almost everything.   
+
+The current published specifications to target are **ISO/IEC 18181-1:2024** for the core codec, **18181-2:2026** for the file format, and **18181-3:2025** for conformance. A fourth edition of Part 2 is under development, so the implementation should skip unknown boxes and extension fields safely rather than hard-coding the assumption that the current set is permanent. ([JPEG][1])
+
+There are already several Rust implementations: `jxl-oxide` is a pure-Rust conforming decoder, the official `libjxl/jxl-rs` decoder is under active development, `zune-jpegxl` implements a narrower Modular encoder, and a separate pure-Rust VarDCT/Modular encoder now exists. Therefore, a new project should have a clear identity beyond “JPEG XL in Rust”: **standard-first architecture, permissive licensing, bounded-memory streaming, conservative dependencies, and an integrated encoder/decoder whose structure does not imitate libjxl**. ([GitHub][2])
+
+## What to carry over from `jp2lam`
+
+The most successful parts of the JPEG 2000 work transfer directly:
+
+1. **Typed stage boundaries instead of a giant mutable codec state.** The attached Rust guidelines explicitly frame the codec as transformations between increasingly encoded representations. Apply exactly that principle here. 
+
+2. **Standard-first implementation.** Keep “what ISO/IEC 18181 says” separate from “what libjxl or another decoder does.” Existing codecs are interoperability oracles and diagnostic references, not the architecture. That is the same rule your `AGENTS.md` established for OpenJPEG. 
+
+3. **Borrowed input, validated plans, resource budgets, and streaming writers.** The final `jp2lam` architecture—borrowed image view, resource planner, bounded working set, encoded payload store, final plan, and direct writer—is highly applicable. 
+
+4. **Vertical slices with recorded evidence.** Your agent trace worked because every slice ended with tests, measurements, and a precise statement of what remained. That should become part of the new repository from the first session.
+
+What should **not** be carried over is the JPEG 2000 terminology and Tier-1/Tier-2 structure. JPEG XL’s closest rough mapping is frames → groups → sections → passes, but even that is only conceptual. 
+
+# High-level architecture
+
+A mature implementation should look approximately like this:
+
+```text
+ENCODER
+
+Borrowed ImageView
+        │
+        ▼
+Validated EncodeRequest
+  image metadata
+  color interpretation
+  frame intent
+  quality / lossless
+  resource limits
+        │
+        ▼
+Encoder Analysis
+  mode choice
+  transforms
+  predictor/context choices
+  block partition
+  quantization
+        │
+        ▼
+Validated CodestreamPlan
+  image header
+  frame headers
+  group/section topology
+  entropy configurations
+        │
+        ▼
+Section Encoders
+  Modular or VarDCT
+        │
+        ▼
+SectionStore
+  bounded RAM
+  optional temporary-file spill
+  exact section lengths
+        │
+        ▼
+TOC + Codestream Writer
+        │
+        ▼
+Optional Container Writer
+        │
+        ▼
+Write sink
+
+
+DECODER
+
+Input source
+        │
+        ▼
+Container / raw codestream reader
+        │
+        ▼
+Image and frame header parser
+        │
+        ▼
+SectionIndex from TOC
+        │
+        ▼
+Shared entropy decoder
+        │
+        ├── Modular decoder
+        └── VarDCT decoder
+        │
+        ▼
+Frame reconstruction
+  inverse transforms
+  filters
+  features
+  blending
+  orientation
+        │
+        ▼
+Normalized output image
+```
+
+The `SectionStore` is the JPEG XL counterpart to your encoded block store. JPEG XL places the TOC before the actual sections so that a decoder can locate groups early and decode them in parallel or by region. A streaming encoder therefore needs section lengths before final emission. The clean solution is to encode each section once into bounded RAM or temporary storage, generate the TOC, and then stream the stored sections without assembling a second complete codestream. This is an architectural inference from JPEG XL’s TOC ordering and your proven `jp2lam` ownership model.  
+
+## Suggested module organization
+
+Start with one library crate rather than a workspace of many tiny crates:
+
+```text
+src/
+    bitstream/
+        reader.rs
+        writer.rs
+        integers.rs
+        half.rs
+
+    container/
+        boxes.rs
+        reader.rs
+        writer.rs
+
+    headers/
+        image.rs
+        metadata.rs
+        color.rs
+        frame.rs
+        extensions.rs
+
+    entropy/
+        hybrid_uint.rs
+        prefix.rs
+        ans.rs
+        histogram.rs
+        context_map.rs
+        lz77.rs
+
+    modular/
+        channel.rs
+        transform.rs
+        rct.rs
+        palette.rs
+        squeeze.rs
+        properties.rs
+        predictor.rs
+        ma_tree.rs
+        codec.rs
+
+    vardct/
+        xyb.rs
+        lf.rs
+        block_grid.rs
+        transform.rs
+        quant.rs
+        hf_metadata.rs
+        coefficients.rs
+        filters.rs
+
+    frame/
+        groups.rs
+        sections.rs
+        toc.rs
+        passes.rs
+        blending.rs
+        render.rs
+
+    encode/
+        request.rs
+        plan.rs
+        analysis.rs
+        section_store.rs
+        pipeline.rs
+
+    decode/
+        request.rs
+        limits.rs
+        pipeline.rs
+
+    diagnostics/
+        dump.rs
+        counters.rs
+
+    image.rs
+    error.rs
+    lib.rs
+```
+
+The important dependency direction is:
+
+```text
+bitstream
+    ↓
+headers + entropy
+    ↓
+modular
+    ↓
+vardct
+    ↓
+frame
+    ↓
+encode / decode orchestration
+```
+
+`vardct` may depend on `modular`; `modular` must never depend on `vardct`.
+
+# Development plan
+
+## Phase 0 — Establish the project constitution
+
+Define the project as:
+
+> A native, standard-first, safe Rust implementation of JPEG XL with a broad decoder, a progressively improving encoder, bounded resource usage, no runtime dependency on libjxl, and no architectural port of libjxl.
+
+Create immediately:
+
+```text
+AGENTS.md
+docs/architecture.md
+docs/iso-18181-crosswalk.md
+docs/conformance-matrix.md
+docs/unsupported.md
+llm-docs/most-recent-agent-trace.md
+THIRD_PARTY_NOTICES.md
+```
+
+The crosswalk should map every implemented type and function to the relevant standard clause. The 2025 overview paper is useful for rationale, but it explicitly says that it is not a substitute for the standard. 
+
+The older 2021 comparison paper should be treated only as historical compression background. It used pre-final reference software and is not suitable as an implementation guide. 
+
+## Phase 1 — Build the validation system before the codec
+
+Set up three independent validation paths:
+
+* Current `djxl`/`cjxl` from libjxl 0.12 or newer.
+* `jxl-oxide`.
+* `jxl-rs` where it accepts the relevant feature set.
+
+The libjxl repository currently advises updating to version 0.12 because of security fixes, so older oracle binaries should not be used as the principal reference. ([GitHub][3])
+
+Clone or download the official conformance corpus and maintain a machine-readable support matrix. The current corpus covers Modular, VarDCT, alpha, animation, Palette, Squeeze, LZ77, patches, progressive passes, ICC, JPEG reconstruction, blending, and other features, so it can become the project roadmap rather than merely an end-stage test. ([GitHub][4])
+
+Tests should compare:
+
+```text
+parse success
+dimensions
+bit depth
+color interpretation
+frame count
+pixel hash for exact paths
+peak error and RMSE for conforming lossy paths
+```
+
+Do not use byte-for-byte parity with libjxl as a general target.
+
+## Phase 2 — Implement bitstream syntax and headers
+
+Implement and exhaustively test:
+
+* Bit reader and writer with JPEG XL bit ordering.
+* `Bool`, `U32`, `U64`, enum coding, signed packing, half-floats.
+* Size headers.
+* Extension-bit handling.
+* Image metadata.
+* Color encoding.
+* Extra-channel descriptors.
+* Image and frame headers.
+* Crop, passes, blend information, and restoration-filter signaling as typed models, even if initially unsupported by pixel decoding.
+
+Every parser operation must use checked arithmetic and resource limits. Invalid or unsupported syntax must return a typed error, never panic or silently substitute defaults.
+
+## Phase 3 — Implement shared entropy coding as an independent subsystem
+
+This is the foundation of the whole codec and deserves its own test corpus.
+
+Implement in this order:
+
+1. HybridUint tokenization and reconstruction.
+2. One legal entropy backend selected from the current standard—the simplest is likely prefix coding with one context cluster, but the implementation agent must confirm this against the normative syntax.
+3. Context-map representation.
+4. ANS distributions and coding.
+5. Histogram signaling.
+6. LZ77.
+7. Encoder-side context clustering and histogram optimization.
+
+The first encoder may deliberately use:
+
+```text
+one cluster
+one histogram
+no LZ77
+a conservative HybridUint configuration
+```
+
+The decoder must later handle the full legal range.
+
+## Phase 4 — Produce the first interoperable vertical slice
+
+The first real milestone should be:
+
+```text
+naked JPEG XL codestream
+single still image
+single frame
+8-bit unsigned grayscale
+non-XYB color interpretation
+Modular mode
+single group
+no extra channels
+no transforms
+one-leaf MA tree
+one simple predictor
+one entropy cluster
+no LZ77
+mathematically lossless
+```
+
+The exact predictor and entropy backend should be whichever legal combination produces the smallest correctly specified implementation. Compression efficiency is irrelevant at this milestone.
+
+Completion means:
+
+* The library encodes several deterministic images.
+* Its own decoder reconstructs them exactly.
+* `djxl` and `jxl-oxide` reconstruct them exactly.
+* Corruptions produce errors rather than panics.
+* The code already follows the final stage boundaries.
+
+After that, add in this order:
+
+```text
+16-bit grayscale
+Gradient predictor
+RGB with reversible color transform
+multiple groups
+minimal jxlc container
+```
+
+Do not begin VarDCT before this milestone is real.
+
+## Phase 5 — Complete Modular mode
+
+Expand the decoder before making the encoder clever:
+
+* All predictors.
+* Self-correcting predictor and its row state.
+* MA-tree parsing and traversal.
+* RCTs and channel permutations.
+* Palette and delta-palette.
+* Squeeze.
+* Global and local trees.
+* Multiple channels and extra channels.
+* Prefix and ANS streams.
+* LZ77.
+* Modular group partitioning and progressive Squeeze passes.
+
+Then improve encoder decisions independently:
+
+```text
+predictor evaluation
+MA-tree construction
+context clustering
+palette detection
+RCT selection
+Squeeze selection
+LZ77 matching
+```
+
+Keep encoder analysis separate from the syntax model. A decoder-visible `MaTree` is normative data; an encoder’s algorithm for discovering that tree is not.
+
+## Phase 6 — Implement group, section, and TOC orchestration
+
+Introduce:
+
+```text
+GroupGrid
+SectionKind
+SectionId
+SectionIndex
+SectionDependency
+SectionStore
+PassPlan
+```
+
+The decoder should be able to:
+
+* Parse the TOC.
+* Validate all ranges before launching workers.
+* Decode independent groups in parallel.
+* Enforce dependencies between global, LF, and HF data.
+* Skip unneeded groups for cropped or reduced decoding later.
+
+The encoder should:
+
+* Encode each section once.
+* Store it in bounded RAM or spill storage.
+* Determine exact section sizes.
+* Write the header and TOC.
+* Stream each section to the destination.
+
+This is where memory limits and thread limits become part of correctness rather than optional tuning.
+
+## Phase 7 — Implement the VarDCT decoder
+
+Do this in increasingly capable slices:
+
+1. XYB and inverse color conversion.
+2. LF image decoding.
+3. Fixed DCT8x8 only.
+4. Quantization tables.
+5. HF coefficient entropy decoding.
+6. Block grid and all transform sizes.
+7. HF metadata.
+8. Chroma from luma.
+9. Adaptive quantization.
+10. Gaborish.
+11. EPF.
+12. Upsampling.
+13. Progressive HF passes.
+
+VarDCT should not be designed as a separate top-level codec. It consumes the already working Modular and entropy layers.
+
+## Phase 8 — Build a baseline VarDCT encoder
+
+The first lossy encoder should be intentionally unsophisticated:
+
+```text
+XYB
+fixed DCT8x8
+fixed coefficient order
+simple global quantization
+single HF pass
+no patches, splines, or noise
+basic filter settings
+```
+
+Its target is a valid codestream with monotonic quality, not libjxl-level compression.
+
+Then add:
+
+* Variable block-size search.
+* Adaptive quantization.
+* Chroma-from-luma estimation.
+* Quantization-table choices.
+* Coefficient ordering.
+* Filter parameter selection.
+* Multiple progressive passes.
+* Target-byte and target-bpp rate control.
+
+Use external perceptual metrics for encoder development. Do not embed Butteraugli into the core decoder.
+
+## Phase 9 — Add full frame semantics and optional tools
+
+Only after both core modes work:
+
+* Layers and animation.
+* Frame references and blend modes.
+* Crop and orientation.
+* Alpha and other extra channels.
+* Patches.
+* Splines.
+* Noise.
+* ICC profile handling.
+* Exif, XMP, JUMBF, and compressed boxes.
+* Partial codestream boxes.
+* Frame index.
+* Profiles and levels.
+* Gain-map boxes.
+* JPEG recompression and `jbrd`.
+
+JPEG recompression should be one of the last major branches. It is not required to prove the general codec architecture.
+
+## Phase 10 — Hardening and optimization
+
+Correctness order:
+
+```text
+conformance
+resource safety
+memory ownership
+scalar performance
+parallelism
+SIMD
+encoder quality search
+```
+
+Use group-level parallelism with a resource planner. Avoid unconstrained nesting across frames, groups, channels, and transforms.
+
+Start with `#![forbid(unsafe_code)]`. Add unsafe SIMD only after profiles show a concrete bottleneck and the safety contract is local.
+
+The decoder must have explicit limits for:
+
+```text
+pixels
+frames
+channels
+extra channels
+section count
+section bytes
+ICC bytes
+MA-tree nodes
+histograms
+LZ77 window
+temporary memory
+worker count
+```
+
+# Correct scope for the one-session agent
+
+A complete Main Profile encoder and decoder is not the right one-session acceptance gate. The useful result from one long session is:
+
+> A clean repository, normative crosswalk, conformance harness, core bitstream machinery, and one standards-valid lossless Modular vertical slice that external decoders accept.
+
+That proves the difficult integration points:
+
+```text
+header syntax
+entropy coding
+Modular prediction
+group/section layout
+TOC
+codestream writing
+external interoperability
+```
+
+Once that works, additional codec features can be added in controlled slices. A broad repository containing unfinished VarDCT, animation, JPEG reconstruction, and ten empty abstractions would be less valuable.
+
+# Copyable `/goal` prompt
+
+```text
+/goal
+
+Build the first working vertical slice of a native Rust JPEG XL encoder/decoder library in the current repository.
+
+The project must be an original, standard-first Rust implementation. It must not be a mechanical port of libjxl, jxl-rs, jxl-oxide, zune-jpegxl, jxl-encoder, or any other codec. Existing implementations may be used as executable interoperability oracles and, only after a standard-derived implementation exists, as diagnostic references. Do not transpose their class structures, ownership models, module names, or giant codec contexts.
+
+Use Rust 1.95+ and edition 2024. Begin with safe Rust and add:
+
+#![forbid(unsafe_code)]
+
+unless the existing repository already has a documented alternative policy.
+
+Read these local documents before changing code:
+
+- rust-idiomatic-guidelines.md
+- AGENTS.md
+- jp2lam-hd-encode-plan.md
+- most-recent-agent-trace.md
+- 2506.05987v2.pdf
+
+Treat mandeel2021.pdf as historical benchmarking background only, not as a codec specification.
+
+Target the latest published standards:
+
+- ISO/IEC 18181-1:2024 — core coding system
+- ISO/IEC 18181-2:2026 — file format
+- ISO/IEC 18181-3:2025 — conformance
+
+Use the normative standard text as the primary source whenever it is available. The attached JPEG XL paper is a design-rationale companion, not a substitute for the standard. If exact normative text is unavailable for a field, consult official libjxl documentation or source only to resolve that specific syntax, record the uncertainty and evidence in docs/SPEC_GAPS.md, and do not invent behavior.
+
+PROJECT IDENTITY
+
+The long-term project is:
+
+- a native Rust JPEG XL encoder and decoder;
+- broad decoder support, initially targeting Main Profile Level 5;
+- a progressively improving encoder that may emit a narrower legal subset;
+- no runtime dependency on libjxl or another JPEG XL implementation;
+- bounded-memory encoding and decoding;
+- streaming writer support;
+- explicit resource limits for untrusted files;
+- typed stage boundaries rather than a giant mutable codec state;
+- clear separation between normative codestream structures and non-normative encoder search heuristics;
+- explicit unsupported-feature errors;
+- no false claims of full conformance.
+
+SOURCE-OF-TRUTH ORDER
+
+Use sources in this order:
+
+1. ISO/IEC 18181.
+2. Official conformance vectors and reference decoded output.
+3. The attached 2025 JPEG XL architecture paper.
+4. Official libjxl format documentation.
+5. libjxl, jxl-oxide, and jxl-rs as interoperability and diagnostic oracles.
+
+Keep “what the standard requires” separate from “what another implementation happens to do” in comments, tests, and documentation.
+
+Do not pursue whole-file byte parity with libjxl. Success is standards-valid syntax, exact lossless pixels, conformance bounds for lossy data, and acceptance by independent decoders.
+
+REPOSITORY SETUP
+
+If the directory is empty, initialize one library crate with an optional CLI binary. Do not create a workspace containing many tiny crates yet.
+
+Create or update:
+
+- Cargo.toml
+- README.md
+- AGENTS.md
+- docs/architecture.md
+- docs/iso-18181-crosswalk.md
+- docs/conformance-matrix.md
+- docs/unsupported.md
+- docs/SPEC_GAPS.md
+- llm-docs/most-recent-agent-trace.md
+- THIRD_PARTY_NOTICES.md
+
+Use MIT OR Apache-2.0 licensing only if all implementation code is compatible with that choice. Do not copy code from AGPL or other incompatible projects. If any BSD implementation material is adapted rather than independently derived, preserve required notices and document the exact source in THIRD_PARTY_NOTICES.md.
+
+ARCHITECTURAL RULES
+
+Use this conceptual encoder pipeline:
+
+Borrowed ImageView
+    -> validated EncodeRequest
+    -> encoder analysis
+    -> validated CodestreamPlan
+    -> independently encoded sections
+    -> bounded SectionStore
+    -> TOC construction
+    -> codestream writer
+    -> optional container writer
+    -> output sink
+
+Use this conceptual decoder pipeline:
+
+input
+    -> raw/container reader
+    -> image and frame headers
+    -> SectionIndex from TOC
+    -> shared entropy decoder
+    -> Modular or VarDCT decoder
+    -> inverse transforms and frame rendering
+    -> normalized output image
+
+The foundational dependency direction is:
+
+bitstream
+    -> headers and entropy
+    -> Modular
+    -> VarDCT
+    -> frame rendering
+    -> encode/decode orchestration
+
+VarDCT may depend on Modular. Modular must not depend on VarDCT.
+
+Do not create a giant EncoderState or DecoderState that owns unrelated data for the entire operation. Use immutable validated configuration, narrow mutable scratch, and typed outputs passed between stages.
+
+Keep encoder analysis separate from syntax serialization. For example:
+
+- MaTree is a normative codestream model.
+- MaTreeBuilder is an encoder heuristic.
+- FrameHeader is normative.
+- FrameAnalysis is not.
+- EntropyDistribution is normative.
+- HistogramClusterer is encoder-side analysis.
+
+The writer must serialize already validated structures. It must not also decide codec semantics.
+
+PUBLIC API FOUNDATION
+
+Create practical initial types similar to:
+
+- ImageView<'a>
+- ComponentView<'a>
+- SampleStorage<'a> for borrowed u8 and u16
+- BitDepth
+- ColorEncoding
+- EncodeOptions
+- EncodeLimits
+- DecodeRequest
+- DecodeLimits
+- DecodedImage
+- DecoderInfo
+- Error
+- UnsupportedFeature
+
+Provide:
+
+- encode(...)
+- encode_to_writer(...)
+- decode(...)
+- inspect(...)
+
+encode may return Vec<u8> as a convenience wrapper. encode_to_writer must be shaped so it can later use a bounded RAM/spill SectionStore without constructing a second complete output buffer.
+
+The first implemented pixel type may be gray8, but the image model must not hard-code 8-bit or grayscale assumptions into all internal APIs.
+
+MODULE LAYOUT
+
+Use a layout close to:
+
+src/
+    bitstream/
+        reader.rs
+        writer.rs
+        integers.rs
+        half.rs
+    container/
+        boxes.rs
+        reader.rs
+        writer.rs
+    headers/
+        image.rs
+        metadata.rs
+        color.rs
+        frame.rs
+        extensions.rs
+    entropy/
+        hybrid_uint.rs
+        prefix.rs
+        ans.rs
+        histogram.rs
+        context_map.rs
+    modular/
+        channel.rs
+        transform.rs
+        rct.rs
+        palette.rs
+        squeeze.rs
+        properties.rs
+        predictor.rs
+        ma_tree.rs
+        codec.rs
+    frame/
+        groups.rs
+        sections.rs
+        toc.rs
+        passes.rs
+    encode/
+        request.rs
+        plan.rs
+        analysis.rs
+        section_store.rs
+        pipeline.rs
+    decode/
+        request.rs
+        limits.rs
+        pipeline.rs
+    diagnostics/
+        dump.rs
+        counters.rs
+    image.rs
+    error.rs
+    lib.rs
+    bin/jxltool.rs
+
+Adapt this only where a clearer one-way dependency structure results. Do not create hollow VarDCT modules merely to make the tree look complete.
+
+MANDATORY ONE-SESSION IMPLEMENTATION TARGET
+
+Implement one real standards-valid vertical slice:
+
+- naked JPEG XL codestream;
+- one still image;
+- one frame;
+- unsigned 8-bit grayscale;
+- non-XYB color interpretation;
+- Modular mode;
+- no animation;
+- no crop;
+- no extra channels;
+- no upsampling;
+- no patches, splines, noise, or restoration filters;
+- no Modular transforms initially;
+- a single group;
+- a one-leaf MA tree;
+- one simple legal predictor;
+- one context cluster;
+- no LZ77;
+- the simplest fully conforming entropy backend confirmed from the current standard;
+- mathematically lossless reconstruction.
+
+Do not optimize compression at this stage. A Zero predictor and simple entropy model are acceptable if legal. A poor but conforming file is better than a sophisticated invalid file.
+
+Implement both the encoder and decoder for this subset. The decoder must reject unsupported features explicitly rather than silently interpreting them as the supported subset.
+
+CORE BITSTREAM WORK
+
+Implement and test all primitive encodings required by the vertical slice, including:
+
+- bit-level reading and writing;
+- conditional fields;
+- U32 forms;
+- U64 forms if reached by the subset;
+- enum forms;
+- signed integer packing;
+- size header;
+- image metadata fields;
+- color encoding fields needed for grayscale;
+- frame header fields needed to select Modular mode;
+- extension handling needed by the subset;
+- TOC and section sizes needed by the subset.
+
+Use checked arithmetic for every dimension, offset, length, and allocation. Do not cast untrusted u64 values directly to usize without validation.
+
+ENTROPY WORK
+
+Implement HybridUint encode/decode and the simplest legal entropy stream needed for the first file.
+
+Prefer a deliberately restricted encoder configuration such as:
+
+- one context;
+- one context cluster;
+- no LZ77;
+- one histogram;
+- fixed or conservatively selected HybridUint configuration.
+
+The decoder may initially accept only that entropy configuration, but the limitation must be explicit in docs/unsupported.md and represented by typed errors.
+
+Add unit and property tests proving entropy roundtrips for:
+
+- zero;
+- small integers;
+- boundary tokens;
+- large supported values;
+- deterministic random sequences;
+- malformed and truncated streams.
+
+MODULAR WORK
+
+Implement:
+
+- channel geometry for the supported group;
+- neighbor handling at image edges;
+- the chosen predictor;
+- signed residual mapping;
+- one-leaf MA-tree serialization and parsing;
+- Modular sample encode/decode;
+- exact reconstruction.
+
+Use explicit row scratch for predictor state. Do not make each sample a heap object.
+
+SECTION STORAGE AND WRITING
+
+Even though the first file has only a small number of sections, introduce a SectionStore abstraction now.
+
+The initial implementation may keep sections in memory, but its API must support:
+
+- append section;
+- stable SectionId;
+- retrieve length;
+- stream section to a Write sink;
+- future RAM threshold and temporary-file spill.
+
+The final writer should:
+
+1. encode section payloads;
+2. obtain exact lengths;
+3. write image and frame headers;
+4. write the TOC;
+5. stream the stored section payloads.
+
+Do not concatenate multiple copies of the final codestream.
+
+CLI
+
+Add a small diagnostic CLI, preferably using PGM initially to avoid making the codec core depend on a general image library:
+
+- jxltool encode input.pgm output.jxl
+- jxltool decode input.jxl output.pgm
+- jxltool inspect input.jxl
+
+inspect should print at least:
+
+- raw codestream versus container;
+- dimensions;
+- bit depth;
+- color encoding;
+- frame count encountered;
+- frame mode;
+- group and section counts;
+- supported versus unsupported feature flags.
+
+VALIDATION
+
+Install or locate current oracle tools where possible:
+
+- djxl/cjxl from libjxl 0.12 or newer;
+- jxl-oxide CLI;
+- optionally jxl-rs tooling.
+
+Create a script under scripts/verify_external.sh that:
+
+1. creates deterministic supported input images;
+2. encodes them with this crate;
+3. decodes with this crate;
+4. decodes with djxl;
+5. decodes with jxl-oxide;
+6. compares exact grayscale samples;
+7. records tool versions and commands.
+
+External tests may skip gracefully when a tool is unavailable, but the agent should make a serious attempt to install or build the tools in this environment and actually run them.
+
+Test images must include:
+
+- 2x2 all zero;
+- 2x2 all 255;
+- 3x5 ramp;
+- 17x9 checkerboard;
+- odd-dimension gradient;
+- deterministic random samples;
+- long constant runs;
+- abrupt edges.
+
+Add malformed-input tests for:
+
+- truncated signature;
+- truncated image header;
+- impossible dimensions;
+- section length beyond input;
+- invalid enum;
+- invalid entropy data;
+- allocation-limit violation.
+
+No malformed input may panic.
+
+Add a fuzz target or at minimum a decoder fuzz harness that can be used by cargo-fuzz later.
+
+TEST COMMANDS
+
+Keep these green:
+
+cargo fmt --check
+cargo check --all-targets --all-features
+cargo test
+cargo test --all-features
+cargo clippy --all-targets --all-features
+
+Use property tests where useful for bitstream and entropy primitives.
+
+DOCUMENTATION AND TRACE
+
+Maintain docs/iso-18181-crosswalk.md while implementing. For every implemented field or algorithm, record:
+
+- standard part and clause;
+- local module/type/function;
+- tests exercising it;
+- any implementation latitude;
+- oracle used for interoperability.
+
+After every meaningful slice, append to llm-docs/most-recent-agent-trace.md:
+
+- work completed;
+- files changed;
+- exact validation commands;
+- pass/fail result;
+- interoperability result;
+- measured output where useful;
+- known remaining gaps;
+- next recommended slice.
+
+Do not wait until the end to reconstruct the trace from memory.
+
+NON-GOALS FOR THE MANDATORY SLICE
+
+Do not spend mandatory-scope time on:
+
+- VarDCT;
+- animation;
+- layers;
+- JPEG recompression;
+- JPEG reconstruction data;
+- Palette;
+- Squeeze;
+- self-correcting prediction;
+- LZ77;
+- patches;
+- splines;
+- noise;
+- ICC compression;
+- gain maps;
+- SIMD;
+- encoder quality optimization;
+- byte parity with libjxl.
+
+Do not add fake support flags or empty implementations for these. Leave a precise roadmap and explicit UnsupportedFeature variants.
+
+STRETCH GOALS, ONLY AFTER THE MANDATORY GATE PASSES
+
+Proceed in this order:
+
+1. 9–16-bit grayscale using u16 storage with meaningful precision distinct from storage width.
+2. Gradient predictor.
+3. RGB8 and RGB16 with a reversible color transform.
+4. Multiple Modular groups.
+5. Minimal ISOBMFF-style container with jxlc.
+6. Prefix and ANS support if only one was needed initially.
+7. Decode a deliberately simple external Modular file produced by cjxl or another encoder.
+8. Palette transform.
+9. Squeeze transform.
+10. Start the VarDCT decoder only if all earlier work remains green.
+
+DEFINITION OF DONE FOR THIS SESSION
+
+The mandatory goal is complete only when:
+
+- the crate builds cleanly;
+- the architecture and standard crosswalk documents exist;
+- a deterministic gray8 image is encoded as a real JPEG XL codestream;
+- the crate decodes it exactly;
+- at least djxl or jxl-oxide independently decodes it exactly;
+- preferably both independent decoders accept it;
+- unsupported syntax returns explicit errors;
+- malformed test cases do not panic;
+- encode_to_writer does not require a second complete final output buffer;
+- all mandatory tests and clippy commands have been run;
+- most-recent-agent-trace.md accurately records the result;
+- README.md states the exact supported subset without exaggeration.
+
+Do not stop after producing a plan or repository skeleton. Implement the vertical slice and validate it externally. If blocked on one exact syntax issue, isolate it, document the evidence in SPEC_GAPS.md, continue all independent work, and return to the blocker. Do not replace the target with a toy non-JPEG-XL format.
+
+At the end, provide a concise implementation report containing:
+
+- files and modules added;
+- supported subset;
+- external decoder results;
+- commands run;
+- known failures;
+- next highest-leverage milestone.
+```
+
+This scope gives the agent a real interoperability result and a durable architecture, rather than a large repository whose individual parts have never formed a valid JPEG XL file.
+
+[1]: https://jpeg.org/jpegxl/workplan.html?utm_source=chatgpt.com "Workplan & Specs of JPEG XL"
+[2]: https://github.com/tirr-c/jxl-oxide "GitHub - tirr-c/jxl-oxide: Pure Rust implementation of JPEG XL decoder · GitHub"
+[3]: https://github.com/libjxl/libjxl "GitHub - libjxl/libjxl: JPEG XL image format reference implementation · GitHub"
+[4]: https://github.com/libjxl/conformance "GitHub - libjxl/conformance: Test bitstreams and reference decoded images for conformance testing · GitHub"
