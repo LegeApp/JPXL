@@ -81,10 +81,12 @@ Public API: `jpxl_decode::headers::decode_image_headers(&mut BitReader,
 - `latex/part1.tex` is NOT uniformly better than `part1.md`: AspectRatio
   ratio 5 reads `16 Idiv 39` in the LaTeX (wrong); the markdown's `16 Idiv 9`
   is right (16:9). Cross-check numeric constants in BOTH sources.
-- `quant_bias0..2` (Table L.1) sign is ambiguous in both sources (`|1-0.05…`);
-  taken **positive** because L.2.3 multiplies small coefficients by it and a
-  negative would invert them. **Needs a check against a clean scan** — flagged
-  to the user.
+- `quant_bias0..2` (Table L.1): ~~sign ambiguous, taken positive~~ —
+  **resolved 2026-08-02 by a clean-scan screenshot**: the printed defaults are
+  the expressions `1 − 0.05465…`, `1 − 0.07005…`, `1 − 0.049935…`, i.e.
+  ≈ 0.9453 / 0.9299 / 0.9501. Both OCRs had collapsed the leading `1 −`. The
+  original "positive 0.05465" reading was **wrong** and is fixed in
+  `headers/opsin.rs` (see Already fixed).
 
 **Spec gotchas encoded as tests (do not relearn):** `default_m` is NOT under
 `all_default` (minimal metadata is two bits, not one); `BitSet(cw_mask, b)`
@@ -215,6 +217,12 @@ codes, rANS, hybrid-uint, LZ77, clustering). Slice 3 unblocks slices 4, 5, and
   signals `opsin_bias0..2` as negative (decoder-side); our forward-side
   positive bias is the same convention mirrored — documented in
   `jpxl-core/src/color.rs`.
+
+- **`quant_bias` defaults are `1 − x`, not `x`** (2026-08-02). Table L.1
+  prints the defaults as literal expressions (`1 - 0.05465007330715401`, …);
+  verified against a clean scan after both OCRs collapsed the `1 −` prefix.
+  `DEFAULT_QUANT_BIAS` ≈ [0.9453, 0.9299, 0.9501] in `headers/opsin.rs`. Do
+  not "simplify" these back to the small constants.
 
 ## Traps — do not fix these by loosening a check
 

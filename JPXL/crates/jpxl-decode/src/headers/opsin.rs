@@ -41,13 +41,17 @@ pub const DEFAULT_OPSIN_BIAS: [f32; 3] = [-0.003_793_073_3; 3];
 
 /// Table L.1 default `quant_bias` values.
 ///
-/// The OCR of Table L.1 renders these with a leading glyph that could be a
-/// column rule or a minus sign. They are taken as **positive** here: L.2.3
-/// applies them as `if (abs(quant) <= 1) quant *= oim.quant_bias[channel]`,
-/// and a negative multiplier would invert the sign of every small coefficient,
-/// which no dequantization step can intend. Re-verify against a clean copy of
-/// Table L.1.
-pub const DEFAULT_QUANT_BIAS: [f32; 3] = [0.054_650_073, 0.070_054_5, 0.049_935_103];
+/// The printed defaults are the expressions `1 - 0.05465007330715401`,
+/// `1 - 0.07005449891748593`, and `1 - 0.049935103337343655` — verified
+/// against a clean scan of Table L.1 (2026-08-02); both OCR conversions had
+/// collapsed the leading `1 -` into an ambiguous glyph. The stored values are
+/// the evaluated results (≈ 0.9453, 0.9299, 0.9501), consistent with L.2.3's
+/// `quant *= oim.quant_bias[channel]` slightly shrinking small coefficients.
+pub const DEFAULT_QUANT_BIAS: [f32; 3] = [
+    1.0 - 0.054_650_073,
+    1.0 - 0.070_054_499,
+    1.0 - 0.049_935_103,
+];
 
 /// Table L.1 default `quant_bias_numerator`.
 pub const DEFAULT_QUANT_BIAS_NUMERATOR: f32 = 0.145;
