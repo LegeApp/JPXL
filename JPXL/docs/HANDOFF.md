@@ -13,6 +13,41 @@ Keep this file small. Entries whose content has landed in `PLAN.md`,
 
 ---
 
+## 2026-08-02 — Part 2 clause map re-audited, no longer provisional
+
+**State:** `STANDARDS_INDEX.md`'s Part 2 section replaced the arXiv-derived
+provisional topic map with a real clause map verified against `part2.md`
+(735 lines, full 22-page OCR, read in full). Real structure: clauses 1–9 are
+the main body (1 scope, 2 normative references, 3 terms, 4 general, 5 file
+organization, 6 data types, 7 graphical descriptions, 8 binary box format,
+9 box types 9.1–9.11), and there are exactly two annexes, **both normative**
+— A (JPEG Bitstream Reconstruction procedure, A.1–A.11) and B (JPEG XL Media
+Type registration, B.1–B.2). No informative annex, unlike Part 1.
+
+Confirmed the box set from clause 9: signature box (9.1, the 12 fixed bytes),
+`ftyp` (9.2), `jxll` level box (9.3, at most one, third box if present,
+default level 5), `jumb` (9.4, delegates to 19566-5), `Exif` (9.5, codestream
+wins on overlap), `xml ` (9.6), `brob` Brotli-wrapper (9.7), `jxli` frame
+index (9.8), `jxlc` full codestream (9.9), `jxlp` partial codestream (9.10,
+index-ordered concatenation semantics), `jbrd` JPEG reconstruction data (9.11,
+Tables 11–18). **`jhgm` (HDR gain map) is not in this 2nd-edition text at
+all** — the old provisional entry listing it was wrong for this edition;
+dropped rather than carried forward unverified.
+
+Crosswalk gained two Part 2 rows: clause 9.1 signature box → `jpxl-conformance::sniff`
+(exists) and clauses 8–9 box parsing → `jpxl-decode` (slice 9, not started).
+
+**OCR quality note:** Table 11 (the `jbrd` `JPEGBitstream` bundle, pages
+12–14) is badly garbled — subscripted field names collapse into glyph noise
+(`Tyyw`, `Tpey`, `OFse`, etc.) and the marker-array loop condition reads as
+nonsense. Flagged in the clause map; do not implement slice 9's `jbrd`
+parsing from this table without a scan cross-check. Everything else in
+`part2.md` reads cleanly, including Annex A's segment-reconstruction rules.
+
+**Next:** unchanged — slices 2 and 3 remain ahead of slice 9 in the plan.
+
+---
+
 ## 2026-08-02 — slice 3 (entropy, Annex C) complete; oracles live
 
 **State:** `jpxl-entropy` covers all of Annex C with nothing stubbed: C.2.1
@@ -86,8 +121,9 @@ I.7/I.9 → `jpxl-core::dct`, L.2/L.3 → `jpxl-core::color`, 5.1/5.3 →
 the resolution chain is now part1.tex → markdowns → transcription PDF → arXiv
 paper → image scans → oracle experiment; `latex/` is confirmed gitignored.
 
-**Still provisional:** the Part 2 topic map in `STANDARDS_INDEX.md` is still
-arXiv-derived; `part2.md` is complete and it should be re-audited the same way.
+**Still provisional:** ~~the Part 2 topic map in `STANDARDS_INDEX.md` is still
+arXiv-derived; `part2.md` is complete and it should be re-audited the same
+way.~~ Done, see the 2026-08-02 "Part 2 clause map re-audited" entry above.
 
 **Next:** unchanged — slices 2 and 3, slice 3 the critical path.
 

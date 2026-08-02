@@ -93,13 +93,50 @@ normative; O is informative.
 | **N** | Extensions | 87 | — | The `extensions` field mechanism from B.3. No extensions are currently defined for `ImageMetadata`, `FrameHeader`, or `RestorationFilter`: the decoder reads and ignores those bits. |
 | **O** | Encoder overview (informative) | 88 | O.1 overview | Informative only. No encoding process is specified; any codestream-valid encoder conforms. Useful orientation for slice 10, not a requirement. |
 
-## Provisional Part 2 topic map
+## Part 2 clause map
 
-| Topic | What it contains `[provisional]` |
-| --- | --- |
-| File forms | Naked codestream: starts with `FF 0A`. Container: ISOBMFF-style, starts with the 12-byte JXL signature box `00 00 00 0C 4A 58 4C 20 0D 0A 87 0A`. |
-| Boxes | `ftyp` (brand), `jxlc` (whole codestream), `jxlp` (partial codestream; concatenation is semantically one `jxlc`, enabling preview-then-metadata-then-rest layouts), `jxll` (profile/level), `Exif`, `xml ` (XMP), `jumb` (JUMBF), `brob` (Brotli-compressed box; first four content bytes give the wrapped box type), `jbrd` (JPEG bitstream reconstruction data), `jxli` (animation keyframe index), `jhgm` (HDR gain map, ISO 21496-1; added in the 3rd edition). |
-| Precedence | Codestream metadata wins over container metadata. Exif orientation in the container must be ignored; the codestream orientation is authoritative and already applied by the decoder. |
+**Verified against `part2.md`, 2026-08-02.** No longer provisional. Clauses
+1–9 are the main body; Annexes A and B are both normative (there is no
+informative annex in Part 2).
+
+Main body: clause 1 scope; 2 normative references (18181-1, 10918-1 JPEG,
+19566-5 JUMBF, RFC 7932 Brotli); 3 terms and definitions (3.1 box, 3.4 file
+format, 3.6 superbox — a box that carries other boxes as payload); 4 general
+(a JPEG XL file is either a box structure or a direct codestream without box
+structure; media-type registration is Annex B); 5 file organization (a file
+using the box structure is a series of boxes; Table 1 shows a conceptual
+full-codestream layout, Table 2 a partial-codestream layout — both
+illustrative only, no ordering/counting requirement on boxes after the first
+two except where a box's own subclause states one); 6 data types (`u32`/`u64`
+big-endian; `Varint()` per 18181-1 E.4.2; `U32()`/`u(n)`/`Bool` per 18181-1
+B.2); 7 graphical descriptions (the box-definition table notation used in
+clause 9); 8 binary format of a box (Table 4: `LBox`/`TBox`/`XLBox`/`DBox`);
+9 box types 9.1–9.11, mapped below.
+
+| Clause | Title | Page | Covers |
+| --- | --- | --- | --- |
+| 8 | Binary format of a box | 8 | Table 4: `LBox` (`u32` size — `0` = box extends to end of file, `1` = size is instead given by `XLBox`, any other value must be ≥ 8), `TBox` (4-byte FourCC box type), `XLBox` (`u64`, present only when `LBox` == 1, value ≥ 16), `DBox` (remaining bytes = box content, meaning defined per box type). |
+| 9.1 | JPEG XL Signature box | 8–9 | Exactly the 12 fixed bytes `00 00 00 0C 4A 58 4C 20 0D 0A 87 0A`. Exactly one per file; must be the first box. |
+| 9.2 | File Type box (`ftyp`) | 9 | Exactly 20 fixed bytes (brand `jxl `, minor version 0, one compatible brand `jxl `). Exactly one per file; must be the second box; declares the codestream's profile as Main. |
+| 9.3 | Level box (`jxll`) | 9 | Table 5: single `u8` level field. At most one per file; if present, must be the third box, immediately after `ftyp`. Absent ⇒ level 5 (18181-1 Annex M). |
+| 9.4 | JUMBF box (`jumb`) | 9 | Delegates entirely to ISO/IEC 19566-5 (JPEG universal metadata box format). |
+| 9.5 | Exif box (`Exif`) | 9–10 | Table 6: `tiff_header_offset` (`u32`, byte offset from start of Exif payload to the first TIFF header) + Exif payload (JEITA CP-3451E / CP-3461B; equals `ExifDataBlock` of ISO/IEC 23008-12:2022 A.2). Where an Exif field has a codestream equivalent (e.g. orientation, pixel dimensions), the codestream value is authoritative. |
+| 9.6 | XML box (`xml `) | 10 | Table 7: raw XML bytes, well-formed per W3C REC-xml-20081126. A file may contain multiple XML boxes. |
+| 9.7 | Brotli-compressed box (`brob`) | 10 | Table 8: 4-byte wrapped payload box type + Brotli-compressed payload (RFC 7932). Decompressed content is treated as a box of the wrapped type. Wrapped type must not be `brob` itself, must not start with `jxl`, and must not be `jbrd`. |
+| 9.8 | Frame Index box (`jxli`) | 10–11 | Table 9: frame count + tick-unit numerator/denominator (`u32`/`u32`) + per-listed-frame `Varint()` offset/duration/frame-count fields. Zero or one per file. Only lists "keyframes" (frames independent of blend/patch/spline state from earlier frames); the first frame is always listed. May appear before or after the partial codestream boxes. |
+| 9.9 | JPEG XL Codestream box (`jxlc`) | 11 | Contents = one complete codestream per ISO/IEC 18181-1. A file carries either exactly one `jxlc` box or a series of `jxlp` boxes — never both. |
+| 9.10 | JPEG XL Partial Codestream box (`jxlp`) | 11–12 | Table 10: `index` (`u32`) + partial codestream payload. The full codestream is the concatenation of all `jxlp` payloads in increasing-index order. Index mod 2³¹ must be 0 for the first box and increment by 1 per subsequent box; the final box's index must be ≥ 2³¹ (high bit marks "last"); boxes must appear in the file in increasing-index order. |
+| 9.11 | JPEG Bitstream Reconstruction Data box (`jbrd`) | 12–14 | Table 11 `JPEGBitstream` bundle (with sub-bundles Tables 12–18: `AppMarker`, `QuantTable`, `HuffmanCode`, `ScanInfo`, `ScanComponentInfo`, `ScanMoreInfo`, `ExtraZeroRun`), read with 18181-1 bundle notation, followed by one Brotli stream carrying concatenated `app_data`/`com_data`/`intermarker_data`/`tail_data`. Feeds Annex A. **OCR warning:** Table 11's field names and its marker-array loop condition are badly garbled (subscripted names collapsed into glyph noise, e.g. `Tyyw`/`Tpey`/`OFse`) — do not trust a field name here without a scan cross-check before implementing. |
+
+| Annex | Title | Page | Key subclauses | Covers |
+| --- | --- | --- | --- | --- |
+| **A** | JPEG Bitstream Reconstruction procedure | 15 | A.1 general, A.2 SOF, A.3 DHT, A.4 RSTn, A.5 EOI, A.6 SOS, A.7 DQT, A.8 DRI, A.9 APPn, A.10 COM, A.11 unrecognized data segment | Normative — confirmed the whole annex, not just A.11. Reconstructs the original JPEG bitstream (implicit SOI + a segment sequence) from the `jbrd` box fields plus the codestream and other boxes (Exif/XML feed APPn payloads). Each segment type consumes the next matching element of the `jbrd` `marker` array, once and in order. A.6 (SOS) carries the entropy-coding reconciliation rules (`has_padding`, `extra_zero_run`, `reset_point`) needed for bit-exact JPEG round-trip. |
+| **B** | JPEG XL Media Type registration | 19 | B.1 general, B.2 registration | Normative but non-bitstream: RFC 6838 media-type registration for `image/jxl`. States the two magic-number forms: 2-byte `FF 0A` (naked codestream) or the 12-byte signature-box sequence `00 00 00 0C 4A 58 4C 20 0D 0A 87 0A`. |
+
+**Note on `jhgm` (HDR gain map):** not present anywhere in this 2nd-edition
+(2024-06) text — it does not appear in the box list of clause 9 or in Tables
+1/2. The prior provisional entry listing it was wrong for this edition;
+drop it unless a later edition/amendment is confirmed to add it.
 
 ## Clause → implementation crosswalk
 
@@ -109,7 +146,7 @@ Real clause numbers, verified 2026-08-02. Filled in as slices land.
 | --- | --- | --- |
 | B.2.1–B.2.7 field types (`u(n)`, `U32`, `U64`, `F16`, `Bool`, `Enum`, `ZeroPadToByte`) | `jpxl-bitstream::primitives`, `::reader` | in progress |
 | B.1 bundle reading / field initialization | `jpxl-bitstream` (notation only; no bundle machinery yet) | not started |
-| Part 2 signature box + `FF 0A` codestream marker | `jpxl-conformance::sniff` | in progress |
+| Part 2 clause 9.1 signature box + `FF 0A` naked-codestream marker | `jpxl-conformance::sniff` | exists |
 | I.7 forward and inverse DCT; I.9 coefficients to samples | `jpxl-core::dct` | in progress |
 | L.2 XYB (L.2.1 `OpsinInverseMatrix`, L.2.2 inverse transform); L.3 YCbCr | `jpxl-core::color` | in progress |
 | 5.1 image organization, 5.3 group splitting | `jpxl-core::geometry` | in progress |
@@ -123,4 +160,5 @@ Real clause numbers, verified 2026-08-02. Filled in as slices land.
 | J restoration filters; J.2 + K.2 upsampling | TBD | not started |
 | K image features (patches, splines, noise) | TBD | not started |
 | N extensions | TBD | not started |
-| Part 2 container boxes | TBD (`jpxl-container` deferred) | not started |
+| Part 2 clauses 8–9 box parsing (`ftyp`, `jxlc`/`jxlp`, `jxll`, `Exif`, `xml `, `brob`, `jxli`, `jbrd` passthrough) | `jpxl-decode` (slice 9; promotes to `jpxl-container` only if it outgrows a module) | not started |
+| Part 2 Annex A JPEG reconstruction procedure | TBD | not started |
