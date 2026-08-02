@@ -1,0 +1,64 @@
+Fixture: 11_modular_gradient_256x256_lossless.jxl
+256x256 smooth RGB gradient, mathematically lossless, effort 7 -- may engage
+squeeze/other higher-effort modular transforms
+
+Purpose
+-------
+Targets slices 5/6/7 (modular decoding, frame headers, end-to-end lossless).
+Same smooth gradient formula as 09 (RCT candidate) but larger and at full
+effort (-e 7, libjxl's default), which is when the modular encoder has
+budget to consider the squeeze transform (progressive Haar-like downsampling
+used by modular for large smooth images) and other higher-effort choices
+that -e 1/-e 3 would not bother evaluating.
+
+256x256 exactly matches the default group size, so this is exactly one full
+group -- it stresses transform selection at scale without also stressing
+multi-group tiling. See 12_modular_gray_300x200_lossless.jxl for the
+multi-group case.
+
+Provenance
+----------
+  Encoder:      cjxl v0.13.0 196a43d9 [_AVX2_,SSE4,SSE2] {GNU 15.2.0}
+  libjxl rev:   196a43d996aa6ed33ebf98812a7c6d43b2b6d01b (v0.12-snapshot-2-g196a43d9)
+  cjxl flags:   -d 0 -e 7
+  Built by:     tools/setup-oracles.sh (flags recorded in
+                tools/oracle-bin/PINNED_REVISIONS.txt)
+  Regenerate:   tools/make-modular-fixtures.sh
+                That script IS the recipe; it rewrites the source and re-encodes.
+
+  Source image: tests/fixtures/generated/src_gradient_256x256.ppm  (196623 bytes)
+                sha256 746e74c5e9ea016f93f42f1496896f4f4c44d8efee73ad5359b7daa4a9175636
+                Synthetic, written by the Python snippet inside
+                tools/make-modular-fixtures.sh -- no third-party image was
+                used, converted, or consulted. 256x256 8-bit RGB (PPM P6):
+                  R = x * 255 / 255    ramp along x (== x, since w-1 = 255)
+                  G = y * 255 / 255    ramp along y (== y)
+                  B = (x + y) mod 256  diagonal sawtooth
+                Same gradient shape as 05_gradient_300x200 and 09, at the
+                group-size boundary.
+
+  Fixture:      144 bytes
+                sha256 4c2431b6de20c3a3343fb4719bddc79485330c5c1bb5ed1920626e4fde84b140
+
+Verification
+------------
+djxl decodes it to a PPM byte-identical to the source (checked on every run
+of tools/make-modular-fixtures.sh). Classified by `jpxl info` (jpxl-cli) as
+a recognized "naked codestream". 144 bytes for a 196623-byte source is a
+very high compression ratio, consistent with a smooth, highly-predictable
+gradient regardless of which specific transform fired.
+
+Modular features engaged
+-------------------------
+Not independently confirmed by name -- cjxl printed "Modular, lossless" at
+encode time and nothing more specific; jxlinfo is not built in this
+checkout; djxl -v / -v -v print no per-feature detail for this stream. The
+fixture is *designed* to give squeeze (or another higher-effort transform)
+something to find, but whether it actually fired is not verifiable with the
+tools available here. See 07_modular_gray_8x8_lossless.jxl.txt for the
+general caveat.
+
+cjxl is used strictly as a BLACK BOX: it emits conformant streams for JPXL to
+parse. libjxl's source is never read. If a rebuild at a different libjxl
+revision changes these digests, that is the point of recording them -- do not
+silently update them; note the revision change.

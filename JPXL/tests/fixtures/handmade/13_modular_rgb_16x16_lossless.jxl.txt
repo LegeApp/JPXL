@@ -1,0 +1,73 @@
+Fixture: 13_modular_rgb_16x16_lossless.jxl
+16x16 RGB, mathematically lossless, modular mode forced -- predictor-probe
+fixture
+
+Purpose
+-------
+Targets slices 5/6/7 (modular decoding, frame headers, end-to-end lossless).
+Originally intended as a fixture built with an explicit modular-predictor
+selection flag (per the task brief: "if a weighted-predictor flag exists,
+use it; otherwise skip and note it"). That flag does not exist in this
+oracle build:
+
+  tools/oracle-bin/cjxl -v -v --help
+
+was run (maximum verbosity, per its own text: "-v, --verbose ... can be
+repeated and also applies to help (!)") and the full ~126-line option list
+contains no `--modular_predictor`, `--modular_nb_prev_channels`,
+`--modular_group_size`, `--weighted` or similar per-predictor knob -- only
+the top-level `-m 0|1, --modular=0|1` mode switch. So this fixture instead
+just forces modular mode explicitly with `-m 1` (rather than letting the
+lossless default pick modular implicitly, as 07-12 do) at the smallest
+multi-channel size in the batch, as the closest available proxy: a minimal,
+unambiguous "modular mode, chosen deliberately not by lossless-default
+inference" fixture. If a future oracle rebuild exposes a predictor flag,
+this fixture is the natural one to extend or replace.
+
+Uses the same gradient formula as 09/11 (R ramps x, G ramps y, B diagonal
+sawtooth) at 16x16 -- small enough to be a fast smoke test, multi-channel so
+it is not degenerate like 07/08/12.
+
+Provenance
+----------
+  Encoder:      cjxl v0.13.0 196a43d9 [_AVX2_,SSE4,SSE2] {GNU 15.2.0}
+  libjxl rev:   196a43d996aa6ed33ebf98812a7c6d43b2b6d01b (v0.12-snapshot-2-g196a43d9)
+  cjxl flags:   -d 0 -m 1 -e 7
+                (-m 1 forces modular mode explicitly; no predictor-selection
+                flag exists in this build -- see Purpose above)
+  Built by:     tools/setup-oracles.sh (flags recorded in
+                tools/oracle-bin/PINNED_REVISIONS.txt)
+  Regenerate:   tools/make-modular-fixtures.sh
+                That script IS the recipe; it rewrites the source and re-encodes.
+
+  Source image: tests/fixtures/generated/src_rgb_16x16.ppm  (781 bytes)
+                sha256 f0ea66f85d98d2fd4c64155e9a581eff666c2ba4bc810431366084cf32cc988d
+                Synthetic, written by the Python snippet inside
+                tools/make-modular-fixtures.sh -- no third-party image was
+                used, converted, or consulted. 16x16 8-bit RGB (PPM P6):
+                  R = x * 255 / 15     ramp along x
+                  G = y * 255 / 15     ramp along y
+                  B = (x + y) mod 256  diagonal sawtooth
+
+  Fixture:      80 bytes
+                sha256 e165703895529b0fa8d767192064016f791a2736f7813dbf5558315a72280aa6
+
+Verification
+------------
+djxl decodes it to a PPM byte-identical to the source (checked on every run
+of tools/make-modular-fixtures.sh). Classified by `jpxl info` (jpxl-cli) as
+a recognized "naked codestream".
+
+Modular features engaged
+-------------------------
+Modular mode is confirmed by the explicit `-m 1` flag (not inferred). Which
+predictor the encoder chose internally is not exposed by this oracle build
+-- no predictor-selection CLI flag, no jxlinfo in this checkout, and djxl -v
+/ -v -v print no per-feature detail for this stream. See
+07_modular_gray_8x8_lossless.jxl.txt for the general caveat on
+feature-introspection limits.
+
+cjxl is used strictly as a BLACK BOX: it emits conformant streams for JPXL to
+parse. libjxl's source is never read. If a rebuild at a different libjxl
+revision changes these digests, that is the point of recording them -- do not
+silently update them; note the revision change.

@@ -1,0 +1,66 @@
+Fixture: 10_modular_palette_128x128_lossless.jxl
+128x128 RGB, mathematically lossless, effort 7 -- aims to trigger the
+modular palette transform
+
+Purpose
+-------
+Targets slices 5/6/7 (modular decoding, frame headers, end-to-end lossless).
+Exactly 4 distinct RGB colours (black, white, red, blue) laid out as four
+64x64 solid quadrants -- a shape deliberately chosen because the modular
+palette transform activates when an image has few distinct colours, and a
+low colour count is exactly what a real "flat cartoon/UI" source looks like.
+-e 7 gives the encoder its default full effort budget to consider the
+transform (compare 09, which uses -e 3 for the RCT case).
+
+128x128 is single-group. It targets palette-transform correctness, not
+tiling.
+
+Provenance
+----------
+  Encoder:      cjxl v0.13.0 196a43d9 [_AVX2_,SSE4,SSE2] {GNU 15.2.0}
+  libjxl rev:   196a43d996aa6ed33ebf98812a7c6d43b2b6d01b (v0.12-snapshot-2-g196a43d9)
+  cjxl flags:   -d 0 -e 7
+  Built by:     tools/setup-oracles.sh (flags recorded in
+                tools/oracle-bin/PINNED_REVISIONS.txt)
+  Regenerate:   tools/make-modular-fixtures.sh
+                That script IS the recipe; it rewrites the source and re-encodes.
+
+  Source image: tests/fixtures/generated/src_palette_128x128.ppm  (49167 bytes)
+                sha256 21105db1d9c0fa649fce9349ac08e26947f375783f0d403c92e0931dba82f06b
+                Synthetic, written by the Python snippet inside
+                tools/make-modular-fixtures.sh -- no third-party image was
+                used, converted, or consulted. 128x128 8-bit RGB (PPM P6),
+                a 2x2 grid of solid 64x64 blocks, top-left to bottom-right:
+                  (0,0)=black (0,0,0)     (255,0)=white (255,255,255)
+                  (0,255)=red (237,28,36) (255,255)=blue (0,114,255)
+                Only 4 distinct RGB triplets across the whole 16384-pixel
+                image -- deliberately low colour cardinality to give the
+                palette transform something to find.
+
+  Fixture:      67 bytes
+                sha256 0ec547c7e942bf5f7460799d405b2c1b8968e0f861f7b4f948110b1d8203f0b2
+
+Verification
+------------
+djxl decodes it to a PPM byte-identical to the source (checked on every run
+of tools/make-modular-fixtures.sh). Classified by `jpxl info` (jpxl-cli) as
+a recognized "naked codestream". 67 bytes for a 128x128x3 (49152-sample)
+image -- circumstantial evidence that *some* aggressive redundancy-removal
+transform fired (a naive per-pixel modular encode of 4 flat blocks would
+still cost far more than 67 bytes without one), consistent with the palette
+transform being engaged, but not confirmed by name.
+
+Modular features engaged
+-------------------------
+Not independently confirmed by name -- cjxl printed "Modular, lossless" at
+encode time and nothing more specific; jxlinfo is not built in this
+checkout; djxl -v / -v -v print no per-feature detail for this stream. The
+extreme compression ratio (67 bytes / 49167-byte source) is suggestive of
+the palette transform given the source's 4-colour design, but that is an
+inference from the fixture's own construction, not a tool-confirmed fact.
+See 07_modular_gray_8x8_lossless.jxl.txt for the general caveat.
+
+cjxl is used strictly as a BLACK BOX: it emits conformant streams for JPXL to
+parse. libjxl's source is never read. If a rebuild at a different libjxl
+revision changes these digests, that is the point of recording them -- do not
+silently update them; note the revision change.

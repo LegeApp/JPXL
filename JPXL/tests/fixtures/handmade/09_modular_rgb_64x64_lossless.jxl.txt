@@ -1,0 +1,65 @@
+Fixture: 09_modular_rgb_64x64_lossless.jxl
+64x64 RGB, mathematically lossless, effort 3 -- aims to engage the RCT
+
+Purpose
+-------
+Targets slices 5/6/7 (modular decoding, frame headers, end-to-end lossless).
+Three correlated channels (R ramps along x, G ramps along y, B is a diagonal
+sawtooth) give the modular encoder's reversible colour transform (RCT) real
+cross-channel structure to exploit -- unlike the single-channel 07/08
+fixtures, this one can actually distinguish "decoder applies the inverse RCT
+correctly" from "decoder gets lucky because there was only one channel."
+-e 3 (above the -e 1 used for 07) gives the encoder enough effort budget to
+consider transform selection rather than falling back to the cheapest path.
+
+64x64 is comfortably single-group; it targets transform correctness, not
+group/tiling behavior -- see 12_modular_gray_300x200_lossless.jxl for
+multi-group coverage.
+
+Provenance
+----------
+  Encoder:      cjxl v0.13.0 196a43d9 [_AVX2_,SSE4,SSE2] {GNU 15.2.0}
+  libjxl rev:   196a43d996aa6ed33ebf98812a7c6d43b2b6d01b (v0.12-snapshot-2-g196a43d9)
+  cjxl flags:   -d 0 -e 3
+  Built by:     tools/setup-oracles.sh (flags recorded in
+                tools/oracle-bin/PINNED_REVISIONS.txt)
+  Regenerate:   tools/make-modular-fixtures.sh
+                That script IS the recipe; it rewrites the source and re-encodes.
+
+  Source image: tests/fixtures/generated/src_rgb_64x64.ppm  (12301 bytes)
+                sha256 8b6d88b2e2da743e0d9638df96f0ec9458d39f4455ccef0f1f33aaa907bf3b65
+                Synthetic, written by the Python snippet inside
+                tools/make-modular-fixtures.sh -- no third-party image was
+                used, converted, or consulted. Same formula shape as the
+                gradient sources in tools/make-handmade-fixtures.sh, 64x64
+                8-bit RGB (PPM P6):
+                  R = x * 255 / 63      ramp along x
+                  G = y * 255 / 63      ramp along y
+                  B = (x + y) mod 256   diagonal sawtooth
+                Smooth and cross-correlated between channels, so the RCT has
+                real redundancy to remove.
+
+  Fixture:      699 bytes
+                sha256 2dcb8438abaa73cb63bdecc3f8221fc3f9866ae97a46f4892fcf7f480a72a355
+
+Verification
+------------
+djxl decodes it to a PPM byte-identical to the source (checked on every run
+of tools/make-modular-fixtures.sh). Classified by `jpxl info` (jpxl-cli) as
+a recognized "naked codestream".
+
+Modular features engaged
+-------------------------
+Not independently confirmed which specific transform (RCT vs. something
+else) was chosen -- cjxl printed "Modular, lossless" at encode time and
+nothing more specific. jxlinfo is not built in this checkout; djxl -v / -v -v
+print no per-feature detail for this stream. The fixture is *designed* to
+give the RCT something to find (see Purpose above); whether the encoder
+actually reached for it is not independently verifiable with the tools
+available here. See 07_modular_gray_8x8_lossless.jxl.txt for the general
+caveat.
+
+cjxl is used strictly as a BLACK BOX: it emits conformant streams for JPXL to
+parse. libjxl's source is never read. If a rebuild at a different libjxl
+revision changes these digests, that is the point of recording them -- do not
+silently update them; note the revision change.

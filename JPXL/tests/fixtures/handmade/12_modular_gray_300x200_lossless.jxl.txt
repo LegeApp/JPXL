@@ -1,0 +1,61 @@
+Fixture: 12_modular_gray_300x200_lossless.jxl
+300x200 grayscale, mathematically lossless -- multi-group modular with
+partial edges
+
+Purpose
+-------
+Targets slices 5/6/7 (modular decoding, frame headers, end-to-end lossless).
+The multi-group counterpart to 07_modular_gray_8x8_lossless.jxl: same
+diagonal-ramp shape, single channel (no RCT/palette distraction), but
+300x200 exceeds one 256x256 group in x, and neither 300 nor 200 is a
+multiple of 256, so BOTH the right-hand and bottom group edges are partial.
+This isolates group/TOC/per-group-entropy-state handling in the modular
+path from transform selection -- 09/10/11 test the transforms on
+single-group images, this tests tiling on a transform-minimal image.
+Mirrors 05_gradient_300x200_lossless.jxl for VarDCT; this is that fixture
+for modular grayscale. See tests/fixtures/README.md, "Multi-group coverage
+is mandatory".
+
+Provenance
+----------
+  Encoder:      cjxl v0.13.0 196a43d9 [_AVX2_,SSE4,SSE2] {GNU 15.2.0}
+  libjxl rev:   196a43d996aa6ed33ebf98812a7c6d43b2b6d01b (v0.12-snapshot-2-g196a43d9)
+  cjxl flags:   -d 0 -e 7
+  Built by:     tools/setup-oracles.sh (flags recorded in
+                tools/oracle-bin/PINNED_REVISIONS.txt)
+  Regenerate:   tools/make-modular-fixtures.sh
+                That script IS the recipe; it rewrites the source and re-encodes.
+
+  Source image: tests/fixtures/generated/src_gray_300x200.pgm  (60015 bytes)
+                sha256 dfea0688a094d64ff985528fe8704abe75f46db53933087a31c6b9112a5f39ba
+                Synthetic, written by the Python snippet inside
+                tools/make-modular-fixtures.sh -- no third-party image was
+                used, converted, or consulted. 300x200 8-bit grayscale (PGM
+                P5):
+                  v(x, y) = (x + y) * 255 / 498     diagonal ramp, 0..255
+                Same diagonal-ramp family as 07/08, sized to force partial
+                edge groups in both axes.
+
+  Fixture:      83 bytes
+                sha256 f90da6e0cb10a6cfe55349fed9dde96766f537ce91929a79905c1de4a7b1753e
+
+Verification
+------------
+djxl decodes it to a PGM byte-identical to the source (checked on every run
+of tools/make-modular-fixtures.sh). Classified by `jpxl info` (jpxl-cli) as
+a recognized "naked codestream".
+
+Modular features engaged
+-------------------------
+Multi-group tiling is structurally forced by the 300x200 dimensions (2
+group columns x 1 group row, both partial at the right/bottom edge) -- this
+is geometry, not something that needs oracle introspection to confirm.
+Beyond that, cjxl printed "Modular, lossless" at encode time and nothing
+transform-specific; jxlinfo is not built in this checkout; djxl -v / -v -v
+print no per-feature detail for this stream. See
+07_modular_gray_8x8_lossless.jxl.txt for the general caveat.
+
+cjxl is used strictly as a BLACK BOX: it emits conformant streams for JPXL to
+parse. libjxl's source is never read. If a rebuild at a different libjxl
+revision changes these digests, that is the point of recording them -- do not
+silently update them; note the revision change.

@@ -1,0 +1,66 @@
+Fixture: 07_modular_gray_8x8_lossless.jxl
+8x8 grayscale, mathematically lossless, effort 1 -- the minimal modular stream
+
+Purpose
+-------
+Targets slices 5/6/7 (modular decoding, frame headers, end-to-end lossless).
+This is the smallest genuinely decodable modular fixture in the set: one
+8x8 single-channel image, encoded at effort 1 so the encoder has the least
+incentive to reach for anything beyond the baseline modular path (no RCT --
+there is only one channel -- and minimal predictor/context tuning). Use this
+as the "does modular decode at all" smoke fixture before reaching for the
+bigger ones below.
+
+Single-group (8x8 is far inside one 256x256 group); it proves nothing about
+group ordering or edge handling -- see 12_modular_gray_300x200_lossless.jxl
+for that.
+
+Provenance
+----------
+  Encoder:      cjxl v0.13.0 196a43d9 [_AVX2_,SSE4,SSE2] {GNU 15.2.0}
+  libjxl rev:   196a43d996aa6ed33ebf98812a7c6d43b2b6d01b (v0.12-snapshot-2-g196a43d9)
+  cjxl flags:   -d 0 -e 1
+  Built by:     tools/setup-oracles.sh (flags recorded in
+                tools/oracle-bin/PINNED_REVISIONS.txt)
+  Regenerate:   tools/make-modular-fixtures.sh
+                That script IS the recipe; it rewrites the source and re-encodes.
+
+  Source image: tests/fixtures/generated/src_gray_8x8.pgm  (75 bytes)
+                sha256 95a92707336bf551abb701fd3610953d4d50ed2b5890902aeab166cffed6ccb7
+                Synthetic, written by the Python snippet inside
+                tools/make-modular-fixtures.sh -- no third-party image was
+                used, converted, or consulted. 8x8 8-bit grayscale (PGM P5):
+                  v(x, y) = (x + y) * 255 / 14      diagonal ramp, 0..255
+                Smooth diagonal ramp gives the modular predictor real
+                structure without any cross-channel correlation to lean on
+                (single channel), which is the point: the RCT and palette
+                transforms have nothing to engage here.
+
+  Fixture:      228 bytes
+                sha256 b3eabde1695ac1745637f8b6643daef42b94002582bac3306c2b6ca0eb197b02
+
+Verification
+------------
+djxl decodes it to a PGM byte-identical to the source (checked on every run
+of tools/make-modular-fixtures.sh). Classified by `jpxl info` (jpxl-cli,
+`cargo build -p jpxl-cli`) as a recognized "naked codestream" (no box
+container -- the FF 0A signature is the first two bytes, confirmed by
+inspection).
+
+Modular features engaged
+-------------------------
+Not independently confirmed beyond "Modular, lossless, effort: 1" as printed
+by cjxl at encode time (stderr, not captured in the stream itself). jxlinfo
+is not built in this checkout (only cjxl/djxl live in tools/oracle-bin; see
+tools/PINNED_REVISIONS.txt) and djxl -v / -v -v print no per-feature detail
+in this build (no transform names, no predictor id, no bits-per-pixel
+breakdown) -- confirmed by running both against this fixture. Absent a
+feature-introspection tool, "which predictor/transform got used" is not
+independently verifiable from the oracle for this or any other fixture in
+this batch; the .jxl bytes themselves are the ground truth a JPXL decoder
+must eventually explain.
+
+cjxl is used strictly as a BLACK BOX: it emits conformant streams for JPXL to
+parse. libjxl's source is never read. If a rebuild at a different libjxl
+revision changes these digests, that is the point of recording them -- do not
+silently update them; note the revision change.

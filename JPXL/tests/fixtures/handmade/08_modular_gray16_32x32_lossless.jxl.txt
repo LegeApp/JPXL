@@ -1,0 +1,67 @@
+Fixture: 08_modular_gray16_32x32_lossless.jxl
+32x32 grayscale, 16-bit samples, mathematically lossless
+
+Purpose
+-------
+Targets slices 5/6/7 (modular decoding, frame headers, end-to-end lossless).
+Exercises the >8-bit sample path through modular: source is a PGM with
+maxval 65535 (two big-endian bytes per sample per the PNM spec), so the
+bitstream must carry a bit_depth signaling 16, and the modular buffer/tree
+predictor arithmetic must operate correctly at full 16-bit range rather than
+assuming 8-bit samples clamp everything.
+
+Interesting side effect: unlike every other fixture in this batch, cjxl
+wrapped this stream in the ISOBMFF-style box container (00 00 00 0c 4a 58 4c
+20 ... `ftyp` ... `jxll` ... `jxlc`) rather than emitting a naked FF 0A
+codestream. This looks like it is driven by the >8-bit depth, not by size or
+any flag we passed -- worth a decoder test on its own once box parsing is
+exercised, since 01_signature_container.bin only covers the *signature*, not
+a real decodable container stream. Confirmed by hex inspection, not by
+reading libjxl source.
+
+Provenance
+----------
+  Encoder:      cjxl v0.13.0 196a43d9 [_AVX2_,SSE4,SSE2] {GNU 15.2.0}
+  libjxl rev:   196a43d996aa6ed33ebf98812a7c6d43b2b6d01b (v0.12-snapshot-2-g196a43d9)
+  cjxl flags:   -d 0 -e 3
+  Built by:     tools/setup-oracles.sh (flags recorded in
+                tools/oracle-bin/PINNED_REVISIONS.txt)
+  Regenerate:   tools/make-modular-fixtures.sh
+                That script IS the recipe; it rewrites the source and re-encodes.
+
+  Source image: tests/fixtures/generated/src_gray16_32x32.pgm  (2063 bytes)
+                sha256 ccea9d8f796f91585994a804d36f72e5ca57af048e4105cc7eef0f56d5b7b32d
+                Synthetic, written by the Python snippet inside
+                tools/make-modular-fixtures.sh -- no third-party image was
+                used, converted, or consulted. 32x32 16-bit grayscale (PGM
+                P5, maxval 65535):
+                  v(x, y) = (x + y) * 65535 / 62      diagonal ramp, 0..65535
+                Same diagonal-ramp shape as 07, scaled to the full 16-bit
+                range so the fixture actually needs 16 bits (a ramp that
+                tops out under 256 would be indistinguishable from an 8-bit
+                stream at the sample-value level).
+
+  Fixture:      242 bytes
+                sha256 8cbf9e10108971326d3b090e478ab2bf26e7e0019682a46361226c831b38f3e1
+
+Verification
+------------
+djxl decodes it to a PGM byte-identical to the source, including both bytes
+of every 16-bit sample (checked on every run of
+tools/make-modular-fixtures.sh -- a `cmp -s` over the full PGM, so a
+byte-order or truncation bug would fail this). Classified by `jpxl info`
+(jpxl-cli) as a recognized "container" stream.
+
+Modular features engaged
+-------------------------
+Not independently confirmed beyond ">8-bit signaling forces the box
+container" (observed, not read from source) and "Modular, lossless" as
+printed by cjxl at encode time. jxlinfo is not built in this checkout; djxl
+-v / -v -v print no per-feature detail for this stream either. See
+07_modular_gray_8x8_lossless.jxl.txt for the general caveat on
+feature-introspection limits with this oracle.
+
+cjxl is used strictly as a BLACK BOX: it emits conformant streams for JPXL to
+parse. libjxl's source is never read. If a rebuild at a different libjxl
+revision changes these digests, that is the point of recording them -- do not
+silently update them; note the revision change.
