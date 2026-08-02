@@ -52,12 +52,17 @@ reading. Therefore:
 **Ambiguity resolution order.** When the bitstream semantics are unclear, work
 down this list and stop at the first that answers:
 
-1. `latex/part1.tex` — the LaTeX transcription of Part 1. **Highest-fidelity
-   Part 1 source**: it carries the pseudocode bodies and syntax tables that
-   `part1.md` truncates or garbles. Use it for anything normative in Part 1.
-2. `markdowns/standard-markdowns/part1.md` … `part4.md` — the OCR. `part1.md`
-   is the quick-scan source (grep for clause structure, then read the clause in
-   `part1.tex`); `part2.md`–`part4.md` are the primary source for their parts.
+1. `latex/part1.tex` — the LaTeX transcription of Part 1. **Canonical for
+   Part 1.** It was produced by a high-capability agent reading the scan page
+   by page (not machine OCR) and carries the pseudocode bodies and syntax
+   tables that `part1.md` truncates or garbles.
+2. `markdowns/standard-markdowns/part1.md` … `part4.md`. `part1.md` is
+   SECONDARY for Part 1: a grep/structure-search aid, not an authority.
+   `part2.md`–`part4.md` are the primary source for their parts.
+   One safeguard survives the ranking: if the two Part 1 sources disagree on a
+   **numeric constant**, treat the disagreement itself as a signal and settle
+   it via step 3 or 5 — a handful of digit slips exist in both directions
+   (see HANDOFF traps), and a wrong constant parses plausibly.
 3. `original-pdfs-do-not-read-first-if-markdown-exists/ISO_IEC_18181-1_2024_transcription.pdf`
    — text-only transcription of Part 1, text-searchable and cheap relative to
    the image scans. Use it when 1 and 2 disagree.
