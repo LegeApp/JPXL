@@ -1,0 +1,19 @@
+[package]
+name = "jpxl-cli"
+description = "Command-line front end for the JPXL codec"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "jpxl"
+path = "src/main.rs"
+
+[dependencies]
+jpxl-core.workspace = true
+jpxl-decode.workspace = true
+jpxl-conformance.workspace = true
+
+[lints]
+workspace = true

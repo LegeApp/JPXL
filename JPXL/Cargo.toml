@@ -1,0 +1,36 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/jpxl-bitstream",
+    "crates/jpxl-core",
+    "crates/jpxl-decode",
+    "crates/jpxl-cli",
+    "crates/jpxl-conformance",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+license = "MIT OR Apache-2.0"
+
+# JPXL has zero external dependencies: every entry here is an in-workspace crate.
+[workspace.dependencies]
+jpxl-bitstream = { path = "crates/jpxl-bitstream", version = "0.1.0" }
+jpxl-core = { path = "crates/jpxl-core", version = "0.1.0" }
+jpxl-decode = { path = "crates/jpxl-decode", version = "0.1.0" }
+jpxl-conformance = { path = "crates/jpxl-conformance", version = "0.1.0" }
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+undocumented_unsafe_blocks = "deny"
+unwrap_used = "warn"
+indexing_slicing = "warn"
+cast_possible_truncation = "warn"
+
+[profile.release]
+debug = true
+lto = "thin"
+codegen-units = 1

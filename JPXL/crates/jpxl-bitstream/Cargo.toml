@@ -1,0 +1,18 @@
+[package]
+name = "jpxl-bitstream"
+description = "Bit-level reader primitives for the JPEG XL codestream"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[features]
+default = []
+# Records the bit interval consumed by each named field (see `trace_field!`).
+# Compiles away entirely when disabled.
+trace = []
+
+[dependencies]
+
+[lints]
+workspace = true

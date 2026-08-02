@@ -1,0 +1,13 @@
+[package]
+name = "jpxl-core"
+description = "Shared JPEG XL primitives: errors, limits, geometry, XYB color, DCT"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+jpxl-bitstream.workspace = true
+
+[lints]
+workspace = true

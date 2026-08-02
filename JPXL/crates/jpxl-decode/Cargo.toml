@@ -1,0 +1,14 @@
+[package]
+name = "jpxl-decode"
+description = "JPEG XL decoder"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+jpxl-bitstream.workspace = true
+jpxl-core.workspace = true
+
+[lints]
+workspace = true
