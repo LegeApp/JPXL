@@ -36,3 +36,11 @@ dependencies = [
  "jpxl-bitstream",
  "jpxl-core",
 ]
+
+[[package]]
+name = "jpxl-entropy"
+version = "0.1.0"
+dependencies = [
+ "jpxl-bitstream",
+ "jpxl-core",
+]

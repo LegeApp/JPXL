@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "crates/jpxl-bitstream",
     "crates/jpxl-core",
+    "crates/jpxl-entropy",
     "crates/jpxl-decode",
     "crates/jpxl-cli",
     "crates/jpxl-conformance",
@@ -18,6 +19,7 @@ license = "MIT OR Apache-2.0"
 [workspace.dependencies]
 jpxl-bitstream = { path = "crates/jpxl-bitstream", version = "0.1.0" }
 jpxl-core = { path = "crates/jpxl-core", version = "0.1.0" }
+jpxl-entropy = { path = "crates/jpxl-entropy", version = "0.1.0" }
 jpxl-decode = { path = "crates/jpxl-decode", version = "0.1.0" }
 jpxl-conformance = { path = "crates/jpxl-conformance", version = "0.1.0" }
 

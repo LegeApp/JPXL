@@ -13,6 +13,27 @@ Keep this file small. Entries whose content has landed in `PLAN.md`,
 
 ---
 
+## 2026-08-02 — slice 3 (entropy, Annex C) complete; oracles live
+
+**State:** `jpxl-entropy` covers all of Annex C with nothing stubbed: C.2.1
+bundle, C.2.2 clustering + inverse MTF, C.2.3 hybrid-uint, C.2.4 prefix codes
+(RFC 7932 derivation, not transcription), C.2.5/C.2.6 ANS histograms + alias
+mapping, C.3.2 state machine, LZ77 with the reconstructed 120-entry
+`kSpecialDistances` (validated by monotonic `dx²+dy²` ordering). 75 tests,
+layer-by-layer. Oracle infra is live: djxl/cjxl v0.13.0 pinned + built,
+jxl-oxide 0.12.6 (ignores output extensions — always pass `--output-format`),
+conformance corpus at 4bf05352, four reproducible cjxl fixtures incl. a
+300×200 multi-group case.
+
+**Open for slice 7 (oracle experiments queued):**
+- C.2.2 nested-LZ77 reading: implemented as a *constraint* (nested
+  `lz77.enabled` flag is read and must be 0, stream rejected otherwise), not
+  an override. One-bit difference; verify against djxl-produced streams.
+- `tests/oracle_vectors.rs` harness is ready; its fixture-driven test is
+  `#[ignore]`d with TODO(slice 7).
+
+---
+
 ## 2026-08-02 — slice 2 (image headers) complete
 
 **State:** `jpxl-decode` parses signature + the full `ImageMetadata` bundle
@@ -161,6 +182,13 @@ codes, rANS, hybrid-uint, LZ77, clustering). Slice 3 unblocks slices 4, 5, and
 
 ## Traps — do not fix these by loosening a check
 
-Nothing yet. (When a strict limit or assertion fires and the real bug is
-upstream, record the check and the actual cause here — the tempting fix is
-almost always the wrong one.)
+- **C.2.6 alias mapping is `symbols[u] = o` (the overfull index), NOT
+  `symbols[u] = 0`** (2026-08-02). The LaTeX renders it as `0` — an OCR
+  corruption; only `o` is consistent with the algorithm. The invariant test
+  (each symbol s appears exactly D[s] times across all slots, offsets a
+  permutation of 0..D[s]) fails under `= 0`. If that test ever fires, the bug
+  is in new code, not the test.
+- **jxl-oxide ignores the output-file extension** and writes PNG bytes into
+  any filename. The harness rejects PPM-from-jxl-oxide before spawning
+  (`OracleError::UnsupportedFormat`). Do not "fix" a BadMagic PPM parse error
+  by loosening the PPM parser — pass `--output-format` explicitly.

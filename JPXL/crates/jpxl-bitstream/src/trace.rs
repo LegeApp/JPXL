@@ -61,7 +61,14 @@ impl TraceLog {
     /// Creates an empty log.
     #[must_use]
     pub fn new() -> Self {
-        Self::default()
+        #[cfg(feature = "trace")]
+        {
+            Self { events: Vec::new() }
+        }
+        #[cfg(not(feature = "trace"))]
+        {
+            Self
+        }
     }
 
     /// Records a field that spanned `[start_bit, end_bit)`.
