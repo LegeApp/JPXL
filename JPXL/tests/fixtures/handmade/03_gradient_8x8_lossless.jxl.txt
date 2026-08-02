@@ -1,0 +1,45 @@
+Fixture: 03_gradient_8x8_lossless.jxl
+8x8 gradient, mathematically lossless
+
+Purpose
+-------
+The smallest genuinely decodable fixture: one 8x8 image, comfortably inside a
+single 256x256 group, encoded losslessly (-d 0). Because it is lossless the
+expected output is exact, so this is the fixture to reach for when a decode
+stage is supposed to be bit-exact -- there is no tolerance to argue about.
+
+Verified: djxl decodes it to a PPM byte-identical to the source (checked by
+tools/make-handmade-fixtures.sh on every run).
+
+Note this is 8x8 and therefore single-group. It cannot catch group ordering,
+TOC or edge-group bugs; see 05_gradient_300x200_lossless.jxl for that, and
+tests/fixtures/README.md for why multi-group coverage is mandatory.
+
+Provenance
+----------
+  Encoder:      cjxl v0.13.0 196a43d9 [_AVX2_,SSE4,SSE2] {GNU 15.2.0}
+  libjxl rev:   196a43d996aa6ed33ebf98812a7c6d43b2b6d01b (v0.12-snapshot-2-g196a43d9)
+  cjxl flags:   -d 0 -e 7
+  Built by:     tools/setup-oracles.sh (flags recorded in
+                tools/oracle-bin/PINNED_REVISIONS.txt)
+  Regenerate:   tools/make-handmade-fixtures.sh
+                That script IS the recipe; it rewrites the source and re-encodes.
+
+  Source image: tests/fixtures/generated/src_8x8_gradient.ppm  (203 bytes)
+                sha256 9be1596014ca11bf4e3d0fabac0da7f761ff78123d01085c98ac66ba21721774
+                Synthetic, written by the Python snippet inside
+                tools/make-handmade-fixtures.sh -- no third-party image was
+                used, converted or consulted. 8x8 8-bit RGB:
+                  R = x * 255 / (w-1)      ramp along x
+                  G = y * 255 / (h-1)      ramp along y
+                  B = (x + y) mod 256      diagonal sawtooth
+                Smooth and highly correlated, so the lossless path has real
+                structure to exploit and the lossy path an easy target.
+
+  Fixture:      242 bytes
+                sha256 fddf0a8233b716817a80b22c6022023b3eea6310d2f2c9beb0259e9168e1f44a
+
+cjxl is used strictly as a BLACK BOX: it emits conformant streams for JPXL to
+parse. libjxl's source is never read. If a rebuild at a different libjxl
+revision changes these digests, that is the point of recording them -- do not
+silently update them; note the revision change.

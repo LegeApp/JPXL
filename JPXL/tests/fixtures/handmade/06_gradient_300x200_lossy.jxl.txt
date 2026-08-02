@@ -1,0 +1,41 @@
+Fixture: 06_gradient_300x200_lossy.jxl
+300x200 gradient, lossy (VarDCT, d=1) -- MULTI-GROUP
+
+Purpose
+-------
+The multi-group lossy fixture: same 300x200 source as 05, same partial-edge-
+group properties (see that sidecar for why the dimensions were chosen), but at
+the default lossy distance so the VarDCT path runs across group boundaries.
+
+Expected output is NOT exact -- grade with jpxl_conformance::metrics against an
+oracle decode and a stated error budget, never a pixel digest. djxl's own
+decode differs from the source by a peak of 53 / 28 / 94 (R/G/B) out of 255.
+
+Provenance
+----------
+  Encoder:      cjxl v0.13.0 196a43d9 [_AVX2_,SSE4,SSE2] {GNU 15.2.0}
+  libjxl rev:   196a43d996aa6ed33ebf98812a7c6d43b2b6d01b (v0.12-snapshot-2-g196a43d9)
+  cjxl flags:   -d 1 -e 7
+  Built by:     tools/setup-oracles.sh (flags recorded in
+                tools/oracle-bin/PINNED_REVISIONS.txt)
+  Regenerate:   tools/make-handmade-fixtures.sh
+                That script IS the recipe; it rewrites the source and re-encodes.
+
+  Source image: tests/fixtures/generated/src_300x200_gradient.ppm  (180015 bytes)
+                sha256 1e4ed3d06dafb8610266ddc1cedd2ea034d63c95409d8a2604fa13424918984d
+                Synthetic, written by the Python snippet inside
+                tools/make-handmade-fixtures.sh -- no third-party image was
+                used, converted or consulted. 300x200 8-bit RGB:
+                  R = x * 255 / (w-1)      ramp along x
+                  G = y * 255 / (h-1)      ramp along y
+                  B = (x + y) mod 256      diagonal sawtooth
+                Smooth and highly correlated, so the lossless path has real
+                structure to exploit and the lossy path an easy target.
+
+  Fixture:      2512 bytes
+                sha256 eb50cf08ec541351d897b6ff01101c40eff94e207e2a9e8cf2578abc41b9bc2b
+
+cjxl is used strictly as a BLACK BOX: it emits conformant streams for JPXL to
+parse. libjxl's source is never read. If a rebuild at a different libjxl
+revision changes these digests, that is the point of recording them -- do not
+silently update them; note the revision change.

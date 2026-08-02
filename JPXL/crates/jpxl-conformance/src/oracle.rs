@@ -3,14 +3,18 @@
 //! An *oracle* is a third-party decoder we run as a **black box** to produce
 //! reference pixels. We never read an oracle's source code — that is the whole
 //! point, and it is what lets JPXL claim a clean-room implementation. The only
-//! contract is: bytes in, PPM out.
+//! contract is: bytes in, pixels out.
 //!
 //! Two oracles are supported:
 //!
-//! | Kind | Binary | Provenance |
-//! |------|--------|------------|
-//! | [`OracleKind::Djxl`] | `djxl` | libjxl reference implementation, built by `tools/setup-oracles.sh` |
-//! | [`OracleKind::JxlOxide`] | `jxl-oxide` | independent Rust decoder, `cargo install jxl-oxide-cli` |
+//! | Kind | Binary | Writes | Provenance |
+//! |------|--------|--------|------------|
+//! | [`OracleKind::Djxl`] | `djxl` | PPM, PNG, NPY, … | libjxl reference implementation, built by `tools/setup-oracles.sh` |
+//! | [`OracleKind::JxlOxide`] | `jxl-oxide` | PNG, NPY (**no PPM**) | independent Rust decoder, `cargo install jxl-oxide-cli` |
+//!
+//! The exact revision each was built from is recorded in
+//! `tools/oracle-bin/PINNED_REVISIONS.txt`; a pixel mismatch is only
+//! interpretable against a known oracle build.
 //!
 //! # Graceful degradation
 //!
@@ -47,11 +51,69 @@ impl OracleKind {
             Self::JxlOxide => "jxl-oxide",
         }
     }
+
+    /// The format this decoder emits most naturally.
+    #[must_use]
+    pub const fn native_format(self) -> OutputFormat {
+        match self {
+            Self::Djxl => OutputFormat::Ppm,
+            Self::JxlOxide => OutputFormat::Png,
+        }
+    }
 }
 
 impl fmt::Display for OracleKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.binary_name())
+    }
+}
+
+/// A pixel container an oracle can write.
+///
+/// Not every oracle supports every entry — see [`Oracle::supports`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum OutputFormat {
+    /// Binary PPM (`P6`). The only format [`crate::metrics`] reads today.
+    /// `djxl` only.
+    Ppm,
+    /// PNG, at whatever bit depth the image declares.
+    Png,
+    /// NumPy `.npy`: little-endian `f32`, shape `(frames, h, w, channels)`.
+    /// Both oracles emit it, and it is what the official conformance suite
+    /// compares against.
+    Npy,
+}
+
+impl OutputFormat {
+    /// The conventional file extension, without the dot.
+    ///
+    /// `djxl` dispatches on this; `jxl-oxide` ignores it entirely.
+    #[must_use]
+    pub const fn extension(self) -> &'static str {
+        match self {
+            Self::Ppm => "ppm",
+            Self::Png => "png",
+            Self::Npy => "npy",
+        }
+    }
+
+    /// The spelling `jxl-oxide --output-format` expects.
+    ///
+    /// [`Self::Ppm`] has no spelling — jxl-oxide has no PNM writer — and maps
+    /// to `png` here only so this function can stay total; callers must gate
+    /// on [`Oracle::supports`] first, which they do.
+    #[must_use]
+    pub const fn jxl_oxide_name(self) -> &'static str {
+        match self {
+            Self::Png | Self::Ppm => "png",
+            Self::Npy => "npy",
+        }
+    }
+}
+
+impl fmt::Display for OutputFormat {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.extension())
     }
 }
 
@@ -71,26 +133,85 @@ impl Oracle {
         Self { kind, path }
     }
 
+    /// The format this oracle emits most naturally.
+    ///
+    /// `djxl` writes PPM; `jxl-oxide` cannot write PPM at all and writes PNG.
+    #[must_use]
+    pub const fn native_format(&self) -> OutputFormat {
+        self.kind.native_format()
+    }
+
+    /// Whether this oracle can emit `format`.
+    #[must_use]
+    pub const fn supports(&self, format: OutputFormat) -> bool {
+        match self.kind {
+            // libjxl's djxl advertises PPM, PNM, PFM, PAM, PGX, PNG, APNG and
+            // JPEG, selected by extension.
+            OracleKind::Djxl => true,
+            // jxl-oxide's `--output-format` accepts png, png8, png16, jpeg and
+            // npy only. There is no PNM writer.
+            OracleKind::JxlOxide => !matches!(format, OutputFormat::Ppm),
+        }
+    }
+
     /// Decode `input` and write the result to `output` as a PPM.
     ///
-    /// Both decoders infer the output format from the file extension, so
-    /// `output` should end in `.ppm`.
+    /// A convenience wrapper over [`Oracle::decode`]. Only [`OracleKind::Djxl`]
+    /// can satisfy it; `jxl-oxide` returns [`OracleError::UnsupportedFormat`].
     ///
-    /// * `djxl <input> <output.ppm>` — positional in/out, format by extension.
-    /// * `jxl-oxide decode -o <output> <input>` — subcommand plus `-o`.
-    ///   \[verify at first use\]: confirm against `jxl-oxide --help` that the
-    ///   `decode` subcommand and `-o` spelling still hold for the installed
-    ///   version, and that `.ppm` is an accepted output extension (PNG is the
-    ///   documented default; if PPM is rejected, decode to PNG here and add a
-    ///   PNG reader to [`crate::metrics`]).
+    /// # Errors
+    ///
+    /// As [`Oracle::decode`].
+    pub fn decode_to_ppm(&self, input: &Path, output: &Path) -> Result<(), OracleError> {
+        self.decode(input, output, OutputFormat::Ppm)
+    }
+
+    /// Decode `input` into `output` in the requested `format`.
+    ///
+    /// Verified against `djxl v0.13.0 196a43d9` and `jxl-oxide-cli 0.12.6`:
+    ///
+    /// * `djxl <input> <output>` — positional in/out. The format comes from
+    ///   `output`'s **extension** (`.ppm`, `.png`, `.pfm`, `.npy`, …), so this
+    ///   call appends the right one if it is missing.
+    /// * `jxl-oxide decode -q --output-format <fmt> -o <output> <input>`.
+    ///
+    /// > **`jxl-oxide` ignores the output extension.** Asking it for
+    /// > `out.ppm` succeeds and writes *PNG bytes into a file named `.ppm`*.
+    /// > That silent mismatch is why `--output-format` is always passed
+    /// > explicitly here and why [`Oracle::supports`] rejects PPM for it up
+    /// > front rather than letting a caller discover it via a confusing
+    /// > [`crate::metrics::PpmError::BadMagic`].
+    ///
+    /// [`crate::metrics`] currently reads PPM only, so the practical pairing
+    /// today is **`djxl` + PPM**. Two routes exist for bringing `jxl-oxide`
+    /// into pixel comparisons later, neither needing a dependency:
+    /// [`OutputFormat::Npy`] (both oracles emit it; it is the format the
+    /// official conformance suite compares against, a little-endian `f32`
+    /// array of shape `(frames, h, w, channels)` behind a short ASCII header)
+    /// or a small in-crate PNG reader. Npy is the better bet — it is already
+    /// the suite's lingua franca and needs no inflate.
     ///
     /// # Errors
     ///
     /// * [`OracleError::Unavailable`] if the binary is missing — callers should
     ///   treat this as "skip the test", never as a failure.
+    /// * [`OracleError::UnsupportedFormat`] if this oracle cannot emit
+    ///   `format`.
     /// * [`OracleError::Spawn`] if the process could not be started.
     /// * [`OracleError::Failed`] if it ran but exited non-zero.
-    pub fn decode_to_ppm(&self, input: &Path, output: &Path) -> Result<(), OracleError> {
+    pub fn decode(
+        &self,
+        input: &Path,
+        output: &Path,
+        format: OutputFormat,
+    ) -> Result<(), OracleError> {
+        if !self.supports(format) {
+            return Err(OracleError::UnsupportedFormat {
+                kind: self.kind,
+                format,
+            });
+        }
+
         if !self.path.exists()
             && self
                 .path
@@ -105,10 +226,30 @@ impl Oracle {
         let mut command = Command::new(&self.path);
         match self.kind {
             OracleKind::Djxl => {
-                command.arg(input).arg(output);
+                // djxl dispatches on the extension, so make sure there is one.
+                let has_extension = output
+                    .extension()
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case(format.extension()));
+                if has_extension {
+                    command.arg(input).arg(output);
+                } else {
+                    let mut with_extension = output.as_os_str().to_owned();
+                    with_extension.push(".");
+                    with_extension.push(format.extension());
+                    command.arg(input).arg(with_extension);
+                }
             }
             OracleKind::JxlOxide => {
-                command.arg("decode").arg("-o").arg(output).arg(input);
+                command
+                    .arg("decode")
+                    // Without -q every decode prints two INFO lines to stderr,
+                    // which buries any real diagnostic.
+                    .arg("-q")
+                    .arg("--output-format")
+                    .arg(format.jxl_oxide_name())
+                    .arg("-o")
+                    .arg(output)
+                    .arg(input);
             }
         }
 
@@ -137,6 +278,13 @@ impl Oracle {
 pub enum OracleError {
     /// The binary is not installed. Callers should skip, not fail.
     Unavailable(OracleKind),
+    /// This oracle cannot write the requested format at all.
+    UnsupportedFormat {
+        /// Which oracle was asked.
+        kind: OracleKind,
+        /// What it was asked for.
+        format: OutputFormat,
+    },
     /// The process could not be spawned.
     Spawn(OracleKind, std::io::Error),
     /// The process ran and exited non-zero.
@@ -164,6 +312,9 @@ impl fmt::Display for OracleError {
             Self::Unavailable(kind) => {
                 write!(f, "oracle `{kind}` is not installed")
             }
+            Self::UnsupportedFormat { kind, format } => {
+                write!(f, "oracle `{kind}` cannot write {format} output")
+            }
             Self::Spawn(kind, err) => write!(f, "could not run oracle `{kind}`: {err}"),
             Self::Failed {
                 kind,
@@ -188,7 +339,7 @@ impl std::error::Error for OracleError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Spawn(_, err) => Some(err),
-            Self::Unavailable(_) | Self::Failed { .. } => None,
+            Self::Unavailable(_) | Self::UnsupportedFormat { .. } | Self::Failed { .. } => None,
         }
     }
 }
@@ -314,6 +465,57 @@ mod tests {
         assert_eq!(OracleKind::Djxl.binary_name(), "djxl");
         assert_eq!(OracleKind::JxlOxide.binary_name(), "jxl-oxide");
         assert_eq!(OracleKind::Djxl.to_string(), "djxl");
+    }
+
+    #[test]
+    fn only_djxl_can_write_ppm() {
+        let djxl = Oracle::new(OracleKind::Djxl, PathBuf::from("djxl"));
+        let oxide = Oracle::new(OracleKind::JxlOxide, PathBuf::from("jxl-oxide"));
+
+        assert!(djxl.supports(OutputFormat::Ppm));
+        assert!(!oxide.supports(OutputFormat::Ppm));
+        for format in [OutputFormat::Png, OutputFormat::Npy] {
+            assert!(djxl.supports(format));
+            assert!(oxide.supports(format), "jxl-oxide should write {format}");
+        }
+
+        assert_eq!(djxl.native_format(), OutputFormat::Ppm);
+        assert_eq!(oxide.native_format(), OutputFormat::Png);
+    }
+
+    #[test]
+    fn asking_jxl_oxide_for_ppm_fails_before_spawning() {
+        // The point of the up-front check: jxl-oxide would otherwise exit 0
+        // having written PNG bytes into a file called `.ppm`.
+        let oxide = Oracle::new(OracleKind::JxlOxide, PathBuf::from("jxl-oxide"));
+        let err = oxide
+            .decode_to_ppm(Path::new("in.jxl"), Path::new("out.ppm"))
+            .expect_err("jxl-oxide has no PNM writer");
+        assert!(
+            matches!(
+                err,
+                OracleError::UnsupportedFormat {
+                    kind: OracleKind::JxlOxide,
+                    format: OutputFormat::Ppm
+                }
+            ),
+            "got {err}"
+        );
+        assert!(!err.is_unavailable());
+        assert_eq!(
+            err.to_string(),
+            "oracle `jxl-oxide` cannot write ppm output"
+        );
+    }
+
+    #[test]
+    fn format_extensions_and_oxide_spellings() {
+        assert_eq!(OutputFormat::Ppm.extension(), "ppm");
+        assert_eq!(OutputFormat::Png.extension(), "png");
+        assert_eq!(OutputFormat::Npy.extension(), "npy");
+        assert_eq!(OutputFormat::Npy.jxl_oxide_name(), "npy");
+        assert_eq!(OutputFormat::Png.jxl_oxide_name(), "png");
+        assert_eq!(OutputFormat::Npy.to_string(), "npy");
     }
 
     #[test]

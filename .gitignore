@@ -20,4 +20,5 @@ target/
 /JPXL/tests/fixtures/conformance/
 
 # Locally built oracle binaries (PINNED_REVISIONS.txt IS committed)
-/JPXL/tools/oracle-bin/
+/JPXL/tools/oracle-bin/*
+!/JPXL/tools/oracle-bin/PINNED_REVISIONS.txt

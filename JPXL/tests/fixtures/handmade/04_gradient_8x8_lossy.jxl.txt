@@ -1,0 +1,43 @@
+Fixture: 04_gradient_8x8_lossy.jxl
+8x8 gradient, lossy (VarDCT, d=1)
+
+Purpose
+-------
+The same 8x8 source at the default lossy distance (-d 1), which routes the
+image through VarDCT rather than Modular. Smallest fixture that exercises the
+lossy path at all -- 86 bytes.
+
+Expected output is NOT exact. Grade it against an oracle decode with
+jpxl_conformance::metrics and an explicit error budget; never against a stored
+digest of the pixels. For reference, djxl's own decode differs from the source
+by a peak of 36 / 6 / 59 (R/G/B) out of 255 -- that is the encoder's loss, not
+a decoder error, and it is large because an 8x8 gradient is mostly edge.
+
+Provenance
+----------
+  Encoder:      cjxl v0.13.0 196a43d9 [_AVX2_,SSE4,SSE2] {GNU 15.2.0}
+  libjxl rev:   196a43d996aa6ed33ebf98812a7c6d43b2b6d01b (v0.12-snapshot-2-g196a43d9)
+  cjxl flags:   -d 1 -e 7
+  Built by:     tools/setup-oracles.sh (flags recorded in
+                tools/oracle-bin/PINNED_REVISIONS.txt)
+  Regenerate:   tools/make-handmade-fixtures.sh
+                That script IS the recipe; it rewrites the source and re-encodes.
+
+  Source image: tests/fixtures/generated/src_8x8_gradient.ppm  (203 bytes)
+                sha256 9be1596014ca11bf4e3d0fabac0da7f761ff78123d01085c98ac66ba21721774
+                Synthetic, written by the Python snippet inside
+                tools/make-handmade-fixtures.sh -- no third-party image was
+                used, converted or consulted. 8x8 8-bit RGB:
+                  R = x * 255 / (w-1)      ramp along x
+                  G = y * 255 / (h-1)      ramp along y
+                  B = (x + y) mod 256      diagonal sawtooth
+                Smooth and highly correlated, so the lossless path has real
+                structure to exploit and the lossy path an easy target.
+
+  Fixture:      86 bytes
+                sha256 656f4cffd75b9b128e408ddf30de92a1e12e0d4a75b9489688a6eb914be0e0ca
+
+cjxl is used strictly as a BLACK BOX: it emits conformant streams for JPXL to
+parse. libjxl's source is never read. If a rebuild at a different libjxl
+revision changes these digests, that is the point of recording them -- do not
+silently update them; note the revision change.

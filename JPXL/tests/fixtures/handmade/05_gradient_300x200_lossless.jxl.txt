@@ -1,0 +1,50 @@
+Fixture: 05_gradient_300x200_lossless.jxl
+300x200 gradient, mathematically lossless -- MULTI-GROUP
+
+Purpose
+-------
+The multi-group lossless fixture. 300x200 is chosen deliberately:
+
+  * 300 > 256, so the frame spans more than one group column -- group order,
+    the TOC and per-group entropy state all matter here and cannot be
+    sidestepped.
+  * Neither 300 nor 200 is a multiple of 256, so BOTH the right-hand and the
+    bottom group edges are partial. Decoders that assume full 256x256 groups
+    fail here and nowhere else.
+
+tests/fixtures/README.md makes multi-group coverage mandatory for every real
+decode path; this is that fixture for the lossless side.
+
+Being lossless, its expected output is exact: djxl decodes it to a PPM
+byte-identical to the source (checked on every run of
+tools/make-handmade-fixtures.sh). 414 bytes for 180 KB of source -- the
+gradient is trivially predictable, which is the intent.
+
+Provenance
+----------
+  Encoder:      cjxl v0.13.0 196a43d9 [_AVX2_,SSE4,SSE2] {GNU 15.2.0}
+  libjxl rev:   196a43d996aa6ed33ebf98812a7c6d43b2b6d01b (v0.12-snapshot-2-g196a43d9)
+  cjxl flags:   -d 0 -e 7
+  Built by:     tools/setup-oracles.sh (flags recorded in
+                tools/oracle-bin/PINNED_REVISIONS.txt)
+  Regenerate:   tools/make-handmade-fixtures.sh
+                That script IS the recipe; it rewrites the source and re-encodes.
+
+  Source image: tests/fixtures/generated/src_300x200_gradient.ppm  (180015 bytes)
+                sha256 1e4ed3d06dafb8610266ddc1cedd2ea034d63c95409d8a2604fa13424918984d
+                Synthetic, written by the Python snippet inside
+                tools/make-handmade-fixtures.sh -- no third-party image was
+                used, converted or consulted. 300x200 8-bit RGB:
+                  R = x * 255 / (w-1)      ramp along x
+                  G = y * 255 / (h-1)      ramp along y
+                  B = (x + y) mod 256      diagonal sawtooth
+                Smooth and highly correlated, so the lossless path has real
+                structure to exploit and the lossy path an easy target.
+
+  Fixture:      414 bytes
+                sha256 bf48effe5edc1b0720bac1c6289f3999012e6862d1e42f47974e2f372f3b5569
+
+cjxl is used strictly as a BLACK BOX: it emits conformant streams for JPXL to
+parse. libjxl's source is never read. If a rebuild at a different libjxl
+revision changes these digests, that is the point of recording them -- do not
+silently update them; note the revision change.

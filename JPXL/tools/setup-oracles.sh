@@ -56,6 +56,12 @@ die()  { printf 'error: %s\n' "$*" >&2; exit 1; }
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
+# Ninja is materially faster than Make on a tree the size of libjxl; fall back
+# to CMake's default generator when it is absent.
+if have ninja; then
+  cmake_flags+=(-G Ninja)
+fi
+
 jobs="${JPXL_JOBS:-}"
 if [[ -z "${jobs}" ]]; then
   if have nproc; then
@@ -83,11 +89,30 @@ build_libjxl() {
 
   have cmake || { warn "cmake not found; skipping djxl/cjxl"; return 1; }
 
+  # libjxl vendors Highway, Brotli, skcms and friends as git submodules and
+  # will not configure without them. A fresh clone has them uninitialised, so
+  # initialise `third_party/` here -- but NOT `testdata/`, which is hundreds of
+  # megabytes of images we have no use for. Requires network on first run.
+  if [[ -d "${libjxl_dir}/.git" ]] && have git; then
+    if [[ ! -e "${libjxl_dir}/third_party/highway/CMakeLists.txt" ]]; then
+      log "initialising libjxl third_party submodules (network required)"
+      git -C "${libjxl_dir}" submodule update --init --recursive third_party \
+        || { warn "could not initialise libjxl submodules"; return 1; }
+    else
+      log "libjxl third_party submodules already present"
+    fi
+  fi
+
   log "configuring libjxl in ${build_dir}"
-  cmake -S "${libjxl_dir}" -B "${build_dir}" "${cmake_flags[@]}"
+  # Note: this function is invoked from a `||` list, which disables `set -e`
+  # inside it. Every failure must therefore be handled explicitly, or a broken
+  # configure silently proceeds to a build that cannot work.
+  cmake -S "${libjxl_dir}" -B "${build_dir}" "${cmake_flags[@]}" \
+    || { warn "cmake configure failed; see the output above"; return 1; }
 
   log "building djxl and cjxl with ${jobs} jobs (this takes a while)"
-  cmake --build "${build_dir}" --target djxl cjxl -j "${jobs}"
+  cmake --build "${build_dir}" --target djxl cjxl -j "${jobs}" \
+    || { warn "cmake build failed; see the output above"; return 1; }
 
   local found=0
   local tool

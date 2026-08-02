@@ -13,10 +13,25 @@ tests/fixtures/
 
 ## `handmade/` — committed
 
-Tiny fixtures written by hand, byte by byte, usually with `printf`. They exist
-to pin down *format* facts (signatures, header bit patterns, boundary
-conditions) rather than image content, so they stay in the repository and in
-review.
+Small fixtures with fully documented provenance. Two kinds live here:
+
+| Fixture | Bytes | What it is |
+|---------|-------|------------|
+| `00_signature_naked.bin` | 6 | `FF 0A` + filler; sniffing only, not decodable |
+| `01_signature_container.bin` | 20 | 12-byte JXL signature box + filler; not decodable |
+| `02_not_jxl.bin` | 16 | PNG magic; the negative case |
+| `03_gradient_8x8_lossless.jxl` | 242 | real stream, lossless, single group |
+| `04_gradient_8x8_lossy.jxl` | 86 | real stream, VarDCT `-d 1`, single group |
+| `05_gradient_300x200_lossless.jxl` | 414 | real stream, lossless, **multi-group** |
+| `06_gradient_300x200_lossy.jxl` | 2512 | real stream, VarDCT `-d 1`, **multi-group** |
+
+The `.bin` files are hand-authored byte by byte with `printf`. The `.jxl` files
+are produced by `tools/make-handmade-fixtures.sh`, which synthesises a gradient
+with a few lines of arithmetic and encodes it with `tools/oracle-bin/cjxl` —
+that script *is* the recipe the sidecars refer to, and it re-verifies every
+round-trip when run. The synthesised sources land in `generated/` and are not
+committed; each sidecar records their sha256 so a regenerated source can be
+checked against the one the fixture was made from.
 
 Rules:
 
@@ -31,6 +46,9 @@ Rules:
   says so.
 * Signature-only fixtures are **not decodable streams**. They exercise sniffing
   and error paths, nothing more; say so in the sidecar.
+* Encoder-produced fixtures record the **exact oracle revision and flags** they
+  came from, plus the sha256 of both the source and the fixture. `cjxl` is a
+  black box that emits conformant streams; its source is never read.
 
 ## `generated/` — gitignored
 
@@ -56,10 +74,15 @@ image. So:
 
 > **Once a decode path is real, it must be covered by at least one fixture of
 > at least 256×256, and preferably one whose dimensions are not a multiple of
-> the group size** (e.g. 300×260), so partial edge groups are exercised too.
+> the group size**, so partial edge groups are exercised too.
 
 "Passes on 32×32" is not evidence that a stage works. Treat a stage without a
 multi-group fixture as untested.
+
+`05_gradient_300x200_lossless.jxl` and `06_gradient_300x200_lossy.jxl` are that
+fixture for the lossless and lossy paths respectively. 300 exceeds one group in
+x, and neither 300 nor 200 is a multiple of 256, so the right-hand *and* bottom
+group edges are both partial.
 
 ## Expected-output caching
 

@@ -32,5 +32,5 @@ pub mod oracle;
 pub mod sniff;
 
 pub use metrics::{Image, max_abs_error, peak_error_per_channel};
-pub use oracle::{Oracle, OracleError, OracleKind};
+pub use oracle::{Oracle, OracleError, OracleKind, OutputFormat};
 pub use sniff::{StreamKind, sniff};

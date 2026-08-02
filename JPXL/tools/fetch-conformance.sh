@@ -17,21 +17,22 @@
 set -euo pipefail
 
 # --------------------------------------------------------------------------
-# PIN ME.
+# The pinned suite revision.
 #
-# TODO-pin-on-first-run: this must be a full 40-character commit SHA before
-# any conformance result is quotable. To pin it:
+# Pinned 2026-08-02 to whatever libjxl/conformance HEAD was on that date --
+# there are no releases or tags to prefer, so "HEAD at first use" is the
+# choice. To bump it:
 #
 #   1. git ls-remote https://github.com/libjxl/conformance HEAD
-#   2. Paste the SHA below, replacing "TODO-pin-on-first-run".
-#   3. Commit that change on its own, with the date and the reason for the
-#      choice in the message.
+#   2. Replace the SHA below.
+#   3. Commit that change on its own, with the date and the reason, and
+#      re-baseline any recorded pass rates in the same commit.
 #
 # Why pin at all: the suite evolves. An unpinned suite means "JPXL passes N
 # tests" is not reproducible and a pass-rate regression cannot be told apart
 # from an upstream change. Bumping the pin is a deliberate, reviewable act.
 # --------------------------------------------------------------------------
-PINNED_COMMIT="TODO-pin-on-first-run"
+PINNED_COMMIT="4bf053529c7cefd2951be453475bb3dccc7e7be8"
 
 REPO_URL="https://github.com/libjxl/conformance"
 
