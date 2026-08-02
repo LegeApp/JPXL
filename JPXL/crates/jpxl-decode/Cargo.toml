@@ -6,6 +6,12 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[features]
+default = []
+# Forwards to jpxl-bitstream's field tracing, so a mis-parsed header can be
+# localised to the bit at which it diverged.
+trace = ["jpxl-bitstream/trace"]
+
 [dependencies]
 jpxl-bitstream.workspace = true
 jpxl-core.workspace = true

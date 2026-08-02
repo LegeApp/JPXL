@@ -13,6 +13,30 @@ Keep this file small. Entries whose content has landed in `PLAN.md`,
 
 ---
 
+## 2026-08-02 — slice 2 (image headers) complete
+
+**State:** `jpxl-decode` parses signature + the full `ImageMetadata` bundle
+tree (D.2/D.3, E.2/E.3 colour encoding, L.2.1 opsin, B.3 extensions, B.2.6
+enums) — 97 tests, every field traced, trace intervals proven gap/overlap-free.
+Public API: `jpxl_decode::headers::decode_image_headers(&mut BitReader,
+&Limits)`.
+
+**Source-fidelity corrections (both directions now proven):**
+- `latex/part1.tex` is NOT uniformly better than `part1.md`: AspectRatio
+  ratio 5 reads `16 Idiv 39` in the LaTeX (wrong); the markdown's `16 Idiv 9`
+  is right (16:9). Cross-check numeric constants in BOTH sources.
+- `quant_bias0..2` (Table L.1) sign is ambiguous in both sources (`|1-0.05…`);
+  taken **positive** because L.2.3 multiplies small coefficients by it and a
+  negative would invert them. **Needs a check against a clean scan** — flagged
+  to the user.
+
+**Spec gotchas encoded as tests (do not relearn):** `default_m` is NOT under
+`all_default` (minimal metadata is two bits, not one); `BitSet(cw_mask, b)`
+takes masks 1/2/4, not bit indices; extra-channel names kept as raw bytes
+(UTF-8 validity is not a conformance requirement).
+
+---
+
 ## 2026-08-02 — Part 1 LaTeX landed; STANDARDS_INDEX re-audited
 
 **State:** `latex/part1.tex` (6236 lines, one TeX page per source page, all 96
