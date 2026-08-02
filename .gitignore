@@ -1,0 +1,22 @@
+# Nested checkouts / oracles — never committed (libjxl has its own .git)
+/libjxl/
+
+# Copyrighted ISO standard scans and derived conversions — must never enter history.
+# Agents read these from disk; see AGENTS.md and STANDARDS_INDEX.md.
+/original-pdfs-do-not-read-first-if-markdown-exists/
+/markdowns/
+
+# Large local test corpora (fixtures used by tests live under JPXL/tests/fixtures)
+/test-set/
+
+# Index / build artifacts
+/.codegraph/
+/JPXL/target/
+target/
+
+# Fetched / generated test data (never vendored)
+/JPXL/tests/fixtures/generated/
+/JPXL/tests/fixtures/conformance/
+
+# Locally built oracle binaries (PINNED_REVISIONS.txt IS committed)
+/JPXL/tools/oracle-bin/
