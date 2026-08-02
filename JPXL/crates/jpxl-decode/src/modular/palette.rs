@@ -301,8 +301,7 @@ pub fn apply_inverse(
             for x in 0..width {
                 let index = target.get(x, y);
                 let is_delta = i64::from(index) < i64::from(params.nb_deltas);
-                let mut value =
-                    lookup(&palette, params, ctx.bits_per_sample, c_u32, index)?;
+                let mut value = lookup(&palette, params, ctx.bits_per_sample, c_u32, index)?;
 
                 // The prediction is taken over the channel as reconstructed so
                 // far, in raster order, so W/N/NW are already final.
@@ -328,6 +327,12 @@ pub fn apply_inverse(
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::cast_possible_truncation,
+    reason = "hand-written spec vectors read better with direct indexing; a panic \
+              in a test is a failing test"
+)]
 mod tests {
     use jpxl_core::limits::Limits;
 
@@ -366,7 +371,11 @@ mod tests {
         // The three single-component rows that decide the disputed row 4.
         assert_eq!(DELTA_PALETTE[2], [11, 0, 0]);
         assert_eq!(DELTA_PALETTE[3], [0, 0, -13]);
-        assert_eq!(DELTA_PALETTE[4], [0, -12, 0], "part1.md reading, not the LaTeX");
+        assert_eq!(
+            DELTA_PALETTE[4],
+            [0, -12, 0],
+            "part1.md reading, not the LaTeX"
+        );
     }
 
     #[test]
@@ -472,8 +481,7 @@ mod tests {
     #[test]
     fn inverse_expands_one_index_channel_into_num_c_channels() {
         // Post-transform list: [palette, indices]. begin_c = 0, num_c = 3.
-        let indices =
-            Channel::from_samples(ChannelSpec::new(2, 2), vec![0, 1, 1, 0]).expect("2x2");
+        let indices = Channel::from_samples(ChannelSpec::new(2, 2), vec![0, 1, 1, 0]).expect("2x2");
         let mut channels = vec![palette_channel(), indices];
         let ctx = PaletteContext {
             bits_per_sample: 8,
@@ -481,7 +489,11 @@ mod tests {
         };
         apply_inverse(&mut channels, &params(), &ctx, &mut guard()).expect("inverse");
 
-        assert_eq!(channels.len(), 3, "the meta-channel is gone, 3 colours added");
+        assert_eq!(
+            channels.len(),
+            3,
+            "the meta-channel is gone, 3 colours added"
+        );
         // Colour 0 is (10, 20, 30) and colour 1 is (40, 50, 60).
         assert_eq!(channels[0].samples(), &[10, 40, 40, 10]);
         assert_eq!(channels[1].samples(), &[20, 50, 50, 20]);
@@ -500,10 +512,8 @@ mod tests {
         };
         // A 1x3 palette (one colour, one component) holding the value 5.
         let palette =
-            Channel::from_samples(ChannelSpec::with_shifts(2, 1, -1, -1), vec![5, 7])
-                .expect("2x1");
-        let indices = Channel::from_samples(ChannelSpec::new(3, 1), vec![0, 1, 0])
-            .expect("3x1");
+            Channel::from_samples(ChannelSpec::with_shifts(2, 1, -1, -1), vec![5, 7]).expect("2x1");
+        let indices = Channel::from_samples(ChannelSpec::new(3, 1), vec![0, 1, 0]).expect("3x1");
         let mut channels = vec![palette, indices];
         let ctx = PaletteContext {
             bits_per_sample: 8,

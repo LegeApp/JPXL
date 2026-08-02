@@ -322,7 +322,10 @@ fn narrow(v: i64) -> i32 {
 ///
 /// [`ModularError::Malformed`](super::ModularError::Malformed) if there are no
 /// non-meta channels to squeeze.
-pub fn default_params(channels: &[ChannelSpec], nb_meta_channels: usize) -> Result<Vec<SqueezeParams>> {
+pub fn default_params(
+    channels: &[ChannelSpec],
+    nb_meta_channels: usize,
+) -> Result<Vec<SqueezeParams>> {
     let first = nb_meta_channels;
     let Some(base) = channels.get(first) else {
         return Err(malformed!(
@@ -352,7 +355,7 @@ pub fn default_params(channels: &[ChannelSpec], nb_meta_channels: usize) -> Resu
         }
     }
 
-    let mut push = |sp: &mut Vec<SqueezeParams>, horizontal: bool| {
+    let push = |sp: &mut Vec<SqueezeParams>, horizontal: bool| {
         sp.push(SqueezeParams {
             horizontal,
             in_place: true,
@@ -379,6 +382,12 @@ pub fn default_params(channels: &[ChannelSpec], nb_meta_channels: usize) -> Resu
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::cast_possible_truncation,
+    reason = "hand-written spec vectors read better with direct indexing; a panic \
+              in a test is a failing test"
+)]
 mod tests {
     use jpxl_core::limits::Limits;
 
@@ -518,18 +527,18 @@ mod tests {
 
     #[test]
     fn inverse_squeeze_undoes_the_shift_increment() {
-        let lo = Channel::from_samples(ChannelSpec::with_shifts(2, 1, 1, 0), vec![10, 20])
-            .expect("2x1");
-        let hi = Channel::from_samples(ChannelSpec::with_shifts(2, 1, 1, 0), vec![0, 0])
-            .expect("2x1");
+        let lo =
+            Channel::from_samples(ChannelSpec::with_shifts(2, 1, 1, 0), vec![10, 20]).expect("2x1");
+        let hi =
+            Channel::from_samples(ChannelSpec::with_shifts(2, 1, 1, 0), vec![0, 0]).expect("2x1");
         let out = horiz_isqueeze(&lo, &hi, &mut guard()).expect("inverse");
         assert_eq!(out.hshift(), 0);
 
         // A channel whose shifts are "unrelated" (-1) keeps them.
         let lo = Channel::from_samples(ChannelSpec::with_shifts(2, 1, -1, -1), vec![10, 20])
             .expect("2x1");
-        let hi = Channel::from_samples(ChannelSpec::with_shifts(2, 1, -1, -1), vec![0, 0])
-            .expect("2x1");
+        let hi =
+            Channel::from_samples(ChannelSpec::with_shifts(2, 1, -1, -1), vec![0, 0]).expect("2x1");
         let out = horiz_isqueeze(&lo, &hi, &mut guard()).expect("inverse");
         assert_eq!(out.hshift(), -1);
     }
@@ -538,11 +547,17 @@ mod tests {
     fn mismatched_inputs_are_rejected() {
         let a = Channel::from_samples(ChannelSpec::new(2, 1), vec![0, 0]).expect("2x1");
         let b = Channel::from_samples(ChannelSpec::new(2, 2), vec![0; 4]).expect("2x2");
-        assert!(horiz_isqueeze(&a, &b, &mut guard()).is_err(), "height mismatch");
+        assert!(
+            horiz_isqueeze(&a, &b, &mut guard()).is_err(),
+            "height mismatch"
+        );
 
         let c = Channel::from_samples(ChannelSpec::new(9, 1), vec![0; 9]).expect("9x1");
         let d = Channel::from_samples(ChannelSpec::new(2, 1), vec![0, 0]).expect("2x1");
-        assert!(horiz_isqueeze(&c, &d, &mut guard()).is_err(), "width mismatch");
+        assert!(
+            horiz_isqueeze(&c, &d, &mut guard()).is_err(),
+            "width mismatch"
+        );
     }
 
     #[test]

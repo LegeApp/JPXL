@@ -260,6 +260,12 @@ impl Neighbours {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::cast_possible_truncation,
+    reason = "hand-written spec vectors read better with direct indexing; a panic \
+              in a test is a failing test"
+)]
 mod tests {
     use super::super::channel::ChannelSpec;
     use super::*;
@@ -445,20 +451,28 @@ mod tests {
         // A constant neighbourhood must be a fixed point of AvgAll, which is
         // exactly the statement that the coefficients sum to 16. This is the
         // invariant that resolves the `WW`/`WH` OCR damage in Table H.3.
-        for v in [-1000i64, -7, 0, 1, 255, 100_000] {
-            let nb = Neighbours {
-                w: v,
-                n: v,
-                nw: v,
-                ne: v,
-                nn: v,
-                nee: v,
-                ww: v,
-            };
-            // (16*v + 8) Idiv 16 == v for v >= 0; for v < 0 truncation towards
-            // zero also lands on v because |8| < 16.
-            assert_eq!(nb.predict(Predictor::AvgAll, 0), v, "AvgAll fixes {v}");
+        let flat = |v: i64| Neighbours {
+            w: v,
+            n: v,
+            nw: v,
+            ne: v,
+            nn: v,
+            nee: v,
+            ww: v,
+        };
+        for v in [0i64, 1, 255, 100_000] {
+            // (16*v + 8) Idiv 16 == v exactly when v >= 0.
+            assert_eq!(flat(v).predict(Predictor::AvgAll, 0), v, "AvgAll fixes {v}");
         }
+        // For v < 0 it is NOT a fixed point, and that is a real consequence of
+        // `Idiv`: (16 * -1000 + 8) = -15992, and -15992 Idiv 16 = -999 because
+        // truncation is towards zero. A `>> 4` in the same place would floor to
+        // -1000. Table H.3 writes `Idiv`, so -999 is what this decoder produces.
+        // TODO(slice 7): confirm against the oracle, since the two divisions
+        // differ for every negative sample and nothing else in H.3 disambiguates.
+        assert_eq!(flat(-1000).predict(Predictor::AvgAll, 0), -999);
+        assert_eq!(flat(-7).predict(Predictor::AvgAll, 0), -6);
+        assert_eq!((16 * -1000i64 + 8) >> 4, -1000, "the floored alternative");
     }
 
     #[test]

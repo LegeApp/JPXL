@@ -202,29 +202,6 @@ impl Channel {
         let end = start + self.spec.width as usize;
         self.data.get(start..end).unwrap_or(&[])
     }
-
-    /// Replaces the dimensions without touching the samples.
-    ///
-    /// Only the inverse transforms call this, and only together with a
-    /// matching rewrite of `data`; the length invariant is re-checked.
-    pub(super) fn set_spec(&mut self, spec: ChannelSpec) -> Result<()> {
-        if self.data.len() as u64 != spec.sample_count() {
-            return Err(malformed!(
-                "H.6: re-shaping a channel to {}x{} does not match its {} samples",
-                spec.width,
-                spec.height,
-                self.data.len()
-            ));
-        }
-        self.spec = spec;
-        Ok(())
-    }
-
-    /// Replaces both dimensions and samples, as the squeeze inverse does.
-    pub(super) fn replace(&mut self, spec: ChannelSpec, data: Vec<i32>) -> Result<()> {
-        *self = Self::from_samples(spec, data)?;
-        Ok(())
-    }
 }
 
 /// A modular image: the channel list plus the `nb_meta_channels` counter.
@@ -261,17 +238,15 @@ impl ModularImage {
     pub const fn nb_meta_channels(&self) -> usize {
         self.nb_meta_channels
     }
-
-    pub(super) fn channels_mut(&mut self) -> &mut Vec<Channel> {
-        &mut self.channels
-    }
-
-    pub(super) const fn set_nb_meta_channels(&mut self, n: usize) {
-        self.nb_meta_channels = n;
-    }
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::cast_possible_truncation,
+    reason = "hand-written spec vectors read better with direct indexing; a panic \
+              in a test is a failing test"
+)]
 mod tests {
     use jpxl_core::limits::Limits;
 

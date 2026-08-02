@@ -92,9 +92,14 @@ pub fn inverse_pixel(rct_type: u32, a: i64, b: i64, c: i64) -> Result<[i64; 3]> 
     let mut v = [0i64; 3];
     let p = permutation as usize;
     let half = p / 3;
-    v[p % 3] = d;
-    v[(p + 1 + half) % 3] = e;
-    v[(p + 2 - half) % 3] = f;
+    let mut place = |slot: usize, value: i64| {
+        if let Some(cell) = v.get_mut(slot % 3) {
+            *cell = value;
+        }
+    };
+    place(p, d);
+    place(p + 1 + half, e);
+    place(p + 2 - half, f);
     Ok(v)
 }
 
@@ -132,12 +137,12 @@ pub fn apply_inverse(channels: &mut [Channel], begin_c: usize, rct_type: u32) ->
             let b = i64::from(rest.first().map_or(0, |c| c.get(x, y)));
             let c = i64::from(rest.get(1).map_or(0, |c| c.get(x, y)));
             let v = inverse_pixel(rct_type, a, b, c)?;
-            first.set(x, y, narrow_to_i32(v[0]));
+            first.set(x, y, narrow_to_i32(v.first().copied().unwrap_or(0)));
             if let Some(ch) = rest.first_mut() {
-                ch.set(x, y, narrow_to_i32(v[1]));
+                ch.set(x, y, narrow_to_i32(v.get(1).copied().unwrap_or(0)));
             }
             if let Some(ch) = rest.get_mut(1) {
-                ch.set(x, y, narrow_to_i32(v[2]));
+                ch.set(x, y, narrow_to_i32(v.get(2).copied().unwrap_or(0)));
             }
         }
     }
@@ -145,6 +150,12 @@ pub fn apply_inverse(channels: &mut [Channel], begin_c: usize, rct_type: u32) ->
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::cast_possible_truncation,
+    reason = "hand-written spec vectors read better with direct indexing; a panic \
+              in a test is a failing test"
+)]
 mod tests {
     use super::super::channel::ChannelSpec;
     use super::*;
@@ -206,8 +217,15 @@ mod tests {
             let v = inverse_pixel(permutation * 7, 0, 1, 2).expect("valid rct_type");
             let mut sorted = v;
             sorted.sort_unstable();
-            assert_eq!(sorted, [0, 1, 2], "permutation {permutation} is a bijection");
-            assert!(!seen.contains(&v), "permutation {permutation} is a duplicate");
+            assert_eq!(
+                sorted,
+                [0, 1, 2],
+                "permutation {permutation} is a bijection"
+            );
+            assert!(
+                !seen.contains(&v),
+                "permutation {permutation} is a duplicate"
+            );
             seen.push(v);
         }
         assert_eq!(seen.len(), 6);
@@ -309,6 +327,9 @@ mod tests {
             Channel::from_samples(ChannelSpec::new(1, 1), vec![0]).expect("1x1"),
             Channel::from_samples(ChannelSpec::new(1, 1), vec![0]).expect("1x1"),
         ];
-        assert!(apply_inverse(&mut two, 0, 0).is_err(), "needs three channels");
+        assert!(
+            apply_inverse(&mut two, 0, 0).is_err(),
+            "needs three channels"
+        );
     }
 }

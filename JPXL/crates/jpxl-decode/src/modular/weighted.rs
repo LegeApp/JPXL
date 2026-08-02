@@ -59,7 +59,7 @@
 use jpxl_bitstream::{BitReader, read_bool, trace_field};
 use jpxl_core::limits::AllocGuard;
 
-use super::error::{Result, malformed};
+use super::error::Result;
 use super::predictor::Neighbours;
 
 /// Number of sub-predictors (H.5.1: `subpred[i]` with `i` in `[0, 4)`).
@@ -103,7 +103,7 @@ impl WpHeader {
         if default_wp {
             return Ok(Self::default_wp());
         }
-        let mut p5 = |reader: &mut BitReader<'_>, name| -> Result<i64> {
+        let p5 = |reader: &mut BitReader<'_>, name| -> Result<i64> {
             Ok(i64::from(trace_field!(reader, name, reader.read_bits(5))?))
         };
         let p1 = p5(reader, "wp.wp_p1")?;
@@ -115,7 +115,7 @@ impl WpHeader {
             p5(reader, "wp.wp_p3d")?,
             p5(reader, "wp.wp_p3e")?,
         ];
-        let mut w4 = |reader: &mut BitReader<'_>, name| -> Result<i64> {
+        let w4 = |reader: &mut BitReader<'_>, name| -> Result<i64> {
             Ok(i64::from(trace_field!(reader, name, reader.read_bits(4))?))
         };
         let w = [
@@ -196,16 +196,13 @@ impl WeightedState {
     /// The `true_err` of the sample to the west, or 0 if it does not exist.
     fn true_err_w(&self, x: u32) -> i64 {
         if x > 0 {
-            i64::from(self.curr.get(x as usize - 1).copied().unwrap_or_default().true_err)
-        } else {
-            0
-        }
-    }
-
-    /// The `true_err` two samples west, or 0.
-    fn true_err_ww(&self, x: u32) -> i64 {
-        if x > 1 {
-            i64::from(self.curr.get(x as usize - 2).copied().unwrap_or_default().true_err)
+            i64::from(
+                self.curr
+                    .get(x as usize - 1)
+                    .copied()
+                    .unwrap_or_default()
+                    .true_err,
+            )
         } else {
             0
         }
@@ -214,7 +211,13 @@ impl WeightedState {
     /// The `true_err` of the sample to the north, or 0 on the first row.
     fn true_err_n(&self, x: u32) -> i64 {
         if self.has_prev {
-            i64::from(self.prev.get(x as usize).copied().unwrap_or_default().true_err)
+            i64::from(
+                self.prev
+                    .get(x as usize)
+                    .copied()
+                    .unwrap_or_default()
+                    .true_err,
+            )
         } else {
             0
         }
@@ -223,7 +226,13 @@ impl WeightedState {
     /// The `true_err` to the north-west, falling back to `N` (H.5.2).
     fn true_err_nw(&self, x: u32) -> i64 {
         if x > 0 && self.has_prev {
-            i64::from(self.prev.get(x as usize - 1).copied().unwrap_or_default().true_err)
+            i64::from(
+                self.prev
+                    .get(x as usize - 1)
+                    .copied()
+                    .unwrap_or_default()
+                    .true_err,
+            )
         } else {
             self.true_err_n(x)
         }
@@ -232,7 +241,13 @@ impl WeightedState {
     /// The `true_err` to the north-east, falling back to `N` (H.5.2).
     fn true_err_ne(&self, x: u32) -> i64 {
         if x + 1 < self.width && self.has_prev {
-            i64::from(self.prev.get(x as usize + 1).copied().unwrap_or_default().true_err)
+            i64::from(
+                self.prev
+                    .get(x as usize + 1)
+                    .copied()
+                    .unwrap_or_default()
+                    .true_err,
+            )
         } else {
             self.true_err_n(x)
         }
@@ -360,12 +375,15 @@ impl WeightedState {
         let sum_weights: i64 = weight.iter().sum();
         let divisor = sum_weights.max(1);
 
-        let mut s = i64::from(sum_weights >> 1) - 1;
+        let mut s = (sum_weights >> 1) - 1;
         for (sp, wt) in subpred.iter().zip(weight.iter()) {
             s += sp * wt;
         }
         // The one place `i64` has no headroom; see the module documentation.
-        let prediction = ((i128::from(s) * i128::from((1i64 << 24) / divisor)) >> 24) as i64;
+        let wide = (i128::from(s) * i128::from((1i64 << 24) / divisor)) >> 24;
+        // Saturation is unreachable for any sample set H.1 admits, but it keeps
+        // the decoder total instead of relying on that.
+        let prediction = i64::try_from(wide).unwrap_or(i64::MAX);
 
         // H.5.2: clamp when true_err_N, true_err_W and true_err_NW do not all
         // share a sign. The products are taken in i64 so two i32 errors cannot
@@ -459,6 +477,12 @@ pub fn error2weight(err_sum: u32, maxweight: i64) -> i64 {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::cast_possible_truncation,
+    reason = "hand-written spec vectors read better with direct indexing; a panic \
+              in a test is a failing test"
+)]
 mod tests {
     use jpxl_core::limits::Limits;
 
@@ -682,22 +706,18 @@ mod tests {
         let te_ne = i64::from(state.prev[1].true_err);
         // subpred[1] = N3 - (((true_err_W + true_err_N + true_err_NE) * 16) >> 5)
         //            = 64 - (((0 + te_n + te_ne) * 16) >> 5)
-        assert_eq!(wp3.subpred[1], 64 - (((0 + te_n + te_ne) * 16) >> 5));
+        let te_w = 0i64; // no sample to the west of column 0
+        assert_eq!(wp3.subpred[1], 64 - (((te_w + te_n + te_ne) * 16) >> 5));
         // subpred[2] = W3 - (((true_err_W + true_err_N + true_err_NW) * 10) >> 5)
         // with true_err_NW == true_err_N here.
-        assert_eq!(wp3.subpred[2], 64 - (((0 + te_n + te_n) * 10) >> 5));
+        assert_eq!(wp3.subpred[2], 64 - (((te_w + te_n + te_n) * 10) >> 5));
         // max_error starts at true_err_W = 0 and is beaten by true_err_N.
         assert_eq!(i64::from(wp3.max_error), te_n);
     }
 
     /// Recomputes `predict`'s prediction from the public formula, independently
     /// of the implementation's loop structure.
-    fn replay_predict(
-        state: &WeightedState,
-        h: &WpHeader,
-        nb: &Neighbours,
-        x: u32,
-    ) -> i64 {
+    fn replay_predict(state: &WeightedState, h: &WpHeader, nb: &Neighbours, x: u32) -> i64 {
         let (n3, nw3, ne3, w3, nn3) = (nb.n << 3, nb.nw << 3, nb.ne << 3, nb.w << 3, nb.nn << 3);
         let te_w = state.true_err_w(x);
         let te_n = state.true_err_n(x);
@@ -715,7 +735,7 @@ mod tests {
                 >> 5),
         ];
         let mut weight = [0i64; 4];
-        for i in 0..4 {
+        for (i, slot) in weight.iter_mut().enumerate() {
             let mut sum = state.err_n(x, i)
                 + state.err_w(x, i)
                 + state.err_nw(x, i)
@@ -724,7 +744,7 @@ mod tests {
             if x + 1 == state.width {
                 sum += state.err_w(x, i);
             }
-            weight[i] = error2weight(sum as u32, h.w[i]);
+            *slot = error2weight(sum as u32, h.w[i]);
         }
         let sum: i64 = weight.iter().sum();
         let shift = (floor_log2(sum as u64) + 1) - 5;
@@ -733,8 +753,8 @@ mod tests {
         }
         let sum: i64 = weight.iter().sum();
         let mut s = (sum >> 1) - 1;
-        for i in 0..4 {
-            s += subpred[i] * weight[i];
+        for (sp, wt) in subpred.iter().zip(weight.iter()) {
+            s += sp * wt;
         }
         let prediction = ((i128::from(s) * i128::from((1i64 << 24) / sum)) >> 24) as i64;
         if ((te_n * te_w) | (te_n * te_nw)) <= 0 {

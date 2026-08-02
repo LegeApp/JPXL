@@ -106,13 +106,13 @@ pub struct TreeLimits {
 }
 
 impl TreeLimits {
-    /// The caps stated by H.4.2 itself: `1 << 26` nodes, and a depth that
-    /// cannot exceed the node count.
+    /// The cap H.4.2 itself states: `1 << 26` nodes, and no separate depth
+    /// bound (the node count already bounds the depth).
     #[must_use]
     pub const fn spec_maximum() -> Self {
         Self {
             max_nodes: SPEC_MAX_TREE_NODES,
-            max_depth: SPEC_MAX_TREE_NODES as u32,
+            max_depth: u32::MAX,
         }
     }
 
@@ -343,17 +343,17 @@ impl MaTree {
         if nodes.is_empty() {
             return Err(malformed!("H.4.2: MA tree has no nodes"));
         }
-        if nodes.len() % 2 == 0 {
+        if nodes.len().is_multiple_of(2) {
             return Err(malformed!(
                 "H.4.2: a full binary tree has an odd node count, got {}",
                 nodes.len()
             ));
         }
-        if (nodes.len() + 1) / 2 != num_leaves {
+        if nodes.len().div_ceil(2) != num_leaves {
             return Err(malformed!(
                 "H.4.2: {} nodes imply {} leaves but {num_leaves} were decoded",
                 nodes.len(),
-                (nodes.len() + 1) / 2
+                nodes.len().div_ceil(2)
             ));
         }
 
@@ -444,7 +444,9 @@ impl PropertyBuilder {
         };
         let mut previous = Vec::new();
         for j in (0..channel_index).rev() {
-            let Some(other) = channels.get(j) else { continue };
+            let Some(other) = channels.get(j) else {
+                continue;
+            };
             if other.spec() == current.spec() {
                 previous.push(j);
             }
@@ -476,11 +478,17 @@ impl PropertyBuilder {
 
     /// `GetProperties(i, x, y)` of H.4.1.
     ///
+    /// `earlier` is the channel list *before* the current channel — exactly
+    /// the slice the "previous channel" properties iterate over — and
+    /// `current` is the channel being decoded. Splitting them lets the caller
+    /// hold a mutable borrow of the channel it is writing into.
+    ///
     /// `nb` is the H.3 neighbourhood of the current sample and `max_error`
     /// is the H.5.1 output for it.
     pub fn compute(
         &mut self,
-        channels: &[Channel],
+        earlier: &[Channel],
+        current: &Channel,
         x: u32,
         y: u32,
         nb: &Neighbours,
@@ -490,10 +498,7 @@ impl PropertyBuilder {
         // of it, and it is the only property that looks at another sample's
         // property vector.
         let west_gradient_error = if x > 0 {
-            let left = channels
-                .get(self.channel_index)
-                .map(|c| Neighbours::gather(c, x - 1, y))
-                .unwrap_or_default();
+            let left = Neighbours::gather(current, x - 1, y);
             nb.w - (left.w + left.n - left.nw)
         } else {
             nb.w
@@ -523,7 +528,7 @@ impl PropertyBuilder {
 
         let mut k = NUM_STATIC_PROPERTIES;
         for &j in &self.previous {
-            let Some(other) = channels.get(j) else {
+            let Some(other) = earlier.get(j) else {
                 continue;
             };
             // H.4.1's edge rules for the previous-channel neighbours are NOT
@@ -559,6 +564,12 @@ impl PropertyBuilder {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::cast_possible_truncation,
+    reason = "hand-written spec vectors read better with direct indexing; a panic \
+              in a test is a failing test"
+)]
 mod tests {
     use jpxl_core::limits::Limits;
 
@@ -759,11 +770,8 @@ mod tests {
         let a = Channel::from_samples(ChannelSpec::new(2, 2), vec![0; 4]).expect("2x2");
         let b = Channel::from_samples(ChannelSpec::new(2, 2), vec![0; 4]).expect("2x2");
         // Different shifts, so this one does NOT contribute properties.
-        let c = Channel::from_samples(
-            ChannelSpec::with_shifts(2, 2, 1, 0),
-            vec![0; 4],
-        )
-        .expect("2x2 shifted");
+        let c = Channel::from_samples(ChannelSpec::with_shifts(2, 2, 1, 0), vec![0; 4])
+            .expect("2x2 shifted");
         let d = Channel::from_samples(ChannelSpec::new(2, 2), vec![0; 4]).expect("2x2");
         let channels = vec![a, b, c, d];
 
@@ -785,7 +793,7 @@ mod tests {
         let nb = Neighbours::gather(&channels[0], x, y);
         // From the predictor tests: W = 9, N = 6, NW = 5, NE = 7, NN = 2,
         // NEE = 7, WW = 8.
-        let props = pb.compute(&channels, x, y, &nb, -42);
+        let props = pb.compute(&[], &channels[0], x, y, &nb, -42);
         assert_eq!(props[0], 0, "channel index");
         assert_eq!(props[1], 7, "stream index");
         assert_eq!(props[2], 2, "y");
@@ -813,15 +821,14 @@ mod tests {
         let channels = vec![ch];
         let mut pb = PropertyBuilder::new(&channels, 0, 0, &mut guard()).expect("layout");
         let nb = Neighbours::gather(&channels[0], 0, 1);
-        let props = pb.compute(&channels, 0, 1, &nb, 0);
+        let props = pb.compute(&[], &channels[0], 0, 1, &nb, 0);
         assert_eq!(props[8], props[7], "x == 0 -> property 8 is just W");
     }
 
     #[test]
     fn previous_channel_properties_use_their_own_edge_rules() {
         // Channel 0 holds 1..=4; channel 1 is the one being decoded.
-        let prev =
-            Channel::from_samples(ChannelSpec::new(2, 2), vec![1, 2, 3, 4]).expect("2x2");
+        let prev = Channel::from_samples(ChannelSpec::new(2, 2), vec![1, 2, 3, 4]).expect("2x2");
         let cur = Channel::from_samples(ChannelSpec::new(2, 2), vec![0; 4]).expect("2x2");
         let channels = vec![prev, cur];
         let mut pb = PropertyBuilder::new(&channels, 1, 0, &mut guard()).expect("layout");
@@ -831,7 +838,8 @@ mod tests {
         // rG = clamp(0 + 1 - 0, min(0,1), max(0,1)) = clamp(1, 0, 1) = 1.
         // So the four properties are abs(3)=3, 3, abs(3-1)=2, 3-1=2.
         let nb = Neighbours::gather(&channels[1], 0, 1);
-        let props = pb.compute(&channels, 0, 1, &nb, 0);
+        let (earlier, from_here) = channels.split_at(1);
+        let props = pb.compute(earlier, &from_here[0], 0, 1, &nb, 0);
         assert_eq!(
             &props[NUM_STATIC_PROPERTIES..NUM_STATIC_PROPERTIES + 4],
             &[3, 3, 2, 2]

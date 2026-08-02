@@ -104,6 +104,12 @@ macro_rules! malformed {
 pub(crate) use malformed;
 
 #[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::cast_possible_truncation,
+    reason = "hand-written spec vectors read better with direct indexing; a panic \
+              in a test is a failing test"
+)]
 mod tests {
     use super::*;
 

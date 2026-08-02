@@ -13,6 +13,31 @@ Keep this file small. Entries whose content has landed in `PLAN.md`,
 
 ---
 
+## 2026-08-02 — slice 5 (Modular mode, Annex H) complete
+
+**State:** `jpxl-decode::modular` decodes modular sub-bitstreams end to end:
+ModularHeader, MA trees (decode/validate/traverse, Limits-capped), all 14
+predictors incl. the weighted predictor (H.5.1/H.5.2), UnpackSigned, and
+inverse RCT (42 variants, round-tripped) / palette + delta-palette / squeeze
+(round-tripped against an independent forward implementation over odd sizes).
+113 tests incl. a 2000-case no-panic fuzz sweep. `decode_channels` is public
+so slice 7 can supply its own SymbolDecoder.
+
+**Open for slice 7 (oracle experiments, in priority order):**
+1. H.2 global-tree distributions: reuse the global clustered bundle vs read a
+   fresh C.1 bundle per group (spec text contradicts itself; literal second
+   reading implemented). Wrong answer desynchronises a whole group.
+2. Table H.3 row 13 `AvgAll` uses `Idiv 16` (differs from `>> 4` for every
+   negative sample) — implemented as `Idiv`, verify.
+3. H.5.2 `err_sum` last-column `+= err[i]_W` (LaTeX-only text) — one addition,
+   verify.
+
+**Resolved-by-reasoning (documented in modular/mod.rs):** H.6.2 shift restore
+omission; H.6.4 `/4` as integer division; H.6.4 `(index & 1) == 0` despite
+Table 1 precedence making the literal text constant-false.
+
+---
+
 ## 2026-08-02 — slice 6 (FrameHeader/TOC/groups, Annexes F/G/J.1) complete
 
 **State:** `jpxl-decode::frame` parses FrameHeader with its full conditional
@@ -251,6 +276,13 @@ codes, rANS, hybrid-uint, LZ77, clustering). Slice 3 unblocks slices 4, 5, and
 
 ## Traps — do not fix these by loosening a check
 
+- **Annex H OCR corruptions, resolved 2026-08-02 — do not re-transcribe from
+  the corrupted source:** Table H.4 rows 4/5 are `abs(N)`/`abs(W)` (both
+  sources garble one each); `kDeltaPalette[4]` is `{0,-12,0}` (LaTeX's
+  `{0,-12,9}` is wrong); Table H.3 row 13 is `WW` not `WH` (pinned by the
+  coefficients-sum-to-16 test); H.5.2 weight normalisation and `error2weight`
+  exist ONLY in the LaTeX (part1.md drops the whole block); H.6.3 in part1.md
+  is scrambled — use the LaTeX, where `B = B + A&A` means `B = B + A`.
 - **C.2.6 alias mapping is `symbols[u] = o` (the overfull index), NOT
   `symbols[u] = 0`** (2026-08-02). The LaTeX renders it as `0` — an OCR
   corruption; only `o` is consistent with the algorithm. The invariant test
