@@ -13,6 +13,40 @@ Keep this file small. Entries whose content has landed in `PLAN.md`,
 
 ---
 
+## 2026-08-03 (VarDCT wave 2) — 8C HF decode proven on real streams; 8D-dequant + CfL
+
+**8C** — `vardct/{order,hf_coeff}.rs`: I.3.1 orders, I.3.3 histograms, I.4
+full context model to quantized integers. **The ANS final-state +
+section-exhaustion gate passes on fixtures 50/51/52/53/55/56 and corpus
+`grayscale`/`grayscale_5`** — six Order IDs, four non-square transforms,
+permutation branch exercised by the corpus (`used_orders = 20`).
+Mutation-verified (channel order, `c ^ 1`, `prev` seed all caught). New
+flip-point `PREV_USES_CURRENT_PASS_COEFFICIENT`. **Trap:** the passing ANS
+gate is structurally blind to the order-table direction (contexts depend on
+`k`, never `order[k]`); `order[k]` = destination cell per I.3.1's assignment,
+and 8F's pixel comparison is the decisive evidence. Unexercised by any
+stream found: LF/QF thresholds (`lf_idx ≡ 0` everywhere), `num_hf_presets
+> 1`, `num_passes > 1`.
+
+**8D-dequant** — `vardct/cfl.rs` + `lf.rs`'s dequant half: I.5.2
+(dequant → LF CfL → smoothing, in that clause-stated order), I.6 (LF: one
+frame-wide `(kX,kB)`; HF: per-64×64-tile via `CflFactors::for_hf`, applied
+in I.5.3 by 8F). **Wave-1 flip-point REVERSED by fixture evidence:**
+`LF_QUANT_CHANNEL_ORDER_IS_XYB = false` — LfQuant is Y,X,B (under the XYB
+reading two channels decode exactly flat while channel 0 carries all
+structure). See `docs/experiments/2026-08-03-lf-quant-channel-order-fixture-evidence.md`.
+
+**ESCALATION — the open modular bug now blocks VarDCT:** fixtures 54 and 57
+fail inside G.2.2 `LfQuant`'s own modular decode (C.3.2 terminal check),
+same content-dependent family as the sawtooth trap. Siblings 55/56 pass.
+Root-cause hunt dispatched alongside wave 3; 8C's two gate tests un-ignore
+when it's fixed.
+
+**Next:** wave 3 = 8F assembly + acceptance (fix HfGlobal skip, wire
+everything, e2e_vardct.rs ladder) in parallel with the modular bug hunt.
+
+---
+
 ## 2026-08-03 (VarDCT wave 1) — 8B parameter bundles, 8D-parse sub-bitstreams
 
 **8B** — `vardct/{quantizer,block_ctx,dequant_matrix}.rs`: G.1.2, I.2.1–I.2.6
