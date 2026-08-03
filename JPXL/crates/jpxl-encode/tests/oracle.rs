@@ -1,5 +1,5 @@
-//! The headline claim of slice 7.5: **other people's decoders** read what this
-//! encoder writes, sample for sample.
+//! The headline claim of slices 7.5 and 10: **other people's decoders** read
+//! what this encoder writes, sample for sample.
 //!
 //! `tests/roundtrip.rs` proves the encoder and `jpxl-decode` agree. That is a
 //! necessary check and an insufficient one — two implementations written from
@@ -22,15 +22,15 @@
 //!
 //! Lossless modular is in the bit-exact regime (`docs/PLAN.md`). Both
 //! comparisons are sample equality. `jxl-oxide`'s `.npy` is `f32` in `[0, 1]`,
-//! which for an 8-bit image is `k / 255` for integer `k`; the check asserts
-//! that each value is *exactly* that ratio rather than close to it.
+//! which for a `b`-bit image is `k / (2^b - 1)` for integer `k`; the check
+//! asserts that each value is *exactly* that ratio rather than close to it.
 
 #![allow(clippy::cast_possible_truncation, clippy::type_complexity)]
 
 use std::path::{Path, PathBuf};
 
-use jpxl_conformance::{Image, OracleKind, OutputFormat, oracle};
-use jpxl_encode::{GreyImage, encode_grey8};
+use jpxl_conformance::{Image as PnmImage, OracleKind, OutputFormat, oracle};
+use jpxl_encode::{EncodeOptions, Image, encode};
 
 /// A distinct directory per test, so parallel runs cannot collide.
 fn scratch(tag: &str) -> PathBuf {
@@ -39,33 +39,163 @@ fn scratch(tag: &str) -> PathBuf {
     dir
 }
 
-/// The images the oracle tests run over. Small, deterministic, and between
-/// them covering a flat field, a predictor-friendly ramp, a predictor-hostile
-/// pattern, and both a non-multiple-of-8 and a multi-hundred-pixel size.
-fn cases() -> Vec<(&'static str, GreyImage)> {
-    let mut out = Vec::new();
-    let specs: [(&'static str, u32, u32, fn(u32, u32) -> u8); 5] = [
-        ("flat", 32, 32, |_, _| 200),
-        ("ramp", 13, 7, |x, y| ((x * 7 + y * 13) % 256) as u8),
-        (
-            "checker",
-            64,
-            64,
-            |x, y| {
-                if (x + y) % 2 == 0 { 0 } else { 255 }
-            },
-        ),
-        ("noise", 48, 33, |x, y| {
-            let v = x
-                .wrapping_mul(2_654_435_761)
-                .wrapping_add(y.wrapping_mul(40_503));
-            ((v >> 13) & 0xFF) as u8
-        }),
-        ("large", 300, 200, |x, y| ((x + y) / 2 % 256) as u8),
-    ];
-    for (name, w, h, f) in specs {
-        let samples: Vec<u8> = (0..h).flat_map(|y| (0..w).map(move |x| f(x, y))).collect();
-        out.push((name, GreyImage::new(w, h, samples).expect("valid image")));
+/// One oracle case: a name, the image, and how it is to be encoded.
+struct Case {
+    name: &'static str,
+    image: Image,
+    options: EncodeOptions,
+}
+
+fn build(
+    width: u32,
+    height: u32,
+    channels: usize,
+    bits: u32,
+    f: fn(u32, u32, usize, u32) -> u32,
+) -> Image {
+    let max = (1u32 << bits) - 1;
+    let planes: Vec<Vec<i32>> = (0..channels)
+        .map(|c| {
+            (0..height)
+                .flat_map(|y| (0..width).map(move |x| f(x, y, c, max) as i32))
+                .collect()
+        })
+        .collect();
+    Image::new(width, height, bits, planes).expect("valid image")
+}
+
+/// The cases the oracle tests run over.
+///
+/// Between them they cover: a flat field, a predictor-friendly ramp, a
+/// predictor-hostile pattern, the full range of both bit depths, greyscale and
+/// RGB (hence the RCT), sizes that are neither square nor multiples of eight, a
+/// forced small group grid, a >512-per-side image at the default group size,
+/// and the container form.
+fn cases() -> Vec<Case> {
+    let default = EncodeOptions::default();
+    let tiny_groups = EncodeOptions {
+        container: false,
+        group_size_shift: Some(0),
+    };
+    let boxed = EncodeOptions {
+        container: true,
+        group_size_shift: None,
+    };
+
+    fn flat(_: u32, _: u32, c: usize, max: u32) -> u32 {
+        max / (2 + c as u32)
+    }
+    fn ramp(x: u32, y: u32, c: usize, max: u32) -> u32 {
+        (x * 7 + y * 13 + c as u32 * 29) % (max + 1)
+    }
+    fn full_range(x: u32, y: u32, c: usize, max: u32) -> u32 {
+        // Walks the whole value range so a 16-bit case really reaches 65535.
+        (x.wrapping_add(y.wrapping_mul(101))
+            .wrapping_add(c as u32 * 7)
+            .wrapping_mul(2_654_435_761))
+            % (max + 1)
+    }
+    fn noise(x: u32, y: u32, c: usize, max: u32) -> u32 {
+        let v = x
+            .wrapping_mul(2_654_435_761)
+            .wrapping_add(y.wrapping_mul(40_503))
+            .wrapping_add((c as u32).wrapping_mul(2_246_822_519));
+        (v >> 13) % (max + 1)
+    }
+    fn black(_: u32, _: u32, _: usize, _: u32) -> u32 {
+        0
+    }
+    fn white(_: u32, _: u32, _: usize, max: u32) -> u32 {
+        max
+    }
+
+    vec![
+        Case {
+            name: "grey8-flat",
+            image: build(32, 32, 1, 8, flat),
+            options: default,
+        },
+        Case {
+            name: "grey8-ramp-13x7",
+            image: build(13, 7, 1, 8, ramp),
+            options: default,
+        },
+        Case {
+            name: "grey8-noise-101x97",
+            image: build(101, 97, 1, 8, noise),
+            options: default,
+        },
+        Case {
+            name: "grey16-full-range-64x48",
+            image: build(64, 48, 1, 16, full_range),
+            options: default,
+        },
+        Case {
+            name: "grey16-black",
+            image: build(13, 7, 1, 16, black),
+            options: default,
+        },
+        Case {
+            name: "grey16-white",
+            image: build(13, 7, 1, 16, white),
+            options: default,
+        },
+        Case {
+            name: "rgb8-ramp-64x64",
+            image: build(64, 64, 3, 8, ramp),
+            options: default,
+        },
+        Case {
+            name: "rgb8-noise-101x97",
+            image: build(101, 97, 3, 8, noise),
+            options: default,
+        },
+        Case {
+            name: "rgb16-full-range-101x97",
+            image: build(101, 97, 3, 16, full_range),
+            options: default,
+        },
+        Case {
+            name: "grey8-multigroup-forced-300x200",
+            image: build(300, 200, 1, 8, ramp),
+            options: tiny_groups,
+        },
+        Case {
+            name: "rgb16-multigroup-forced-101x97",
+            image: build(101, 97, 3, 16, noise),
+            options: tiny_groups,
+        },
+        Case {
+            name: "grey8-multigroup-600x520",
+            image: build(600, 520, 1, 8, ramp),
+            options: default,
+        },
+        Case {
+            name: "rgb8-multigroup-600x520",
+            image: build(600, 520, 3, 8, noise),
+            options: default,
+        },
+        Case {
+            name: "grey16-container",
+            image: build(37, 41, 1, 16, full_range),
+            options: boxed,
+        },
+        Case {
+            name: "rgb8-container",
+            image: build(37, 41, 3, 8, ramp),
+            options: boxed,
+        },
+    ]
+}
+
+/// The image's samples, interleaved the way a Netpbm file stores them.
+fn interleaved(image: &Image) -> Vec<u16> {
+    let pixels = image.width() as usize * image.height() as usize;
+    let mut out = Vec::with_capacity(pixels * image.num_channels());
+    for i in 0..pixels {
+        for plane in image.planes() {
+            out.push(plane.get(i).copied().unwrap_or(0) as u16);
+        }
     }
     out
 }
@@ -78,10 +208,11 @@ fn djxl_decodes_our_output_to_the_source_samples() {
     };
     let dir = scratch("djxl");
 
-    for (name, image) in cases() {
+    for case in cases() {
+        let name = case.name;
         let jxl = dir.join(format!("{name}.jxl"));
         let ppm = dir.join(format!("{name}.ppm"));
-        std::fs::write(&jxl, encode_grey8(&image).expect("encodes")).expect("write");
+        std::fs::write(&jxl, encode(&case.image, &case.options).expect("encodes")).expect("write");
 
         match oracle.decode(&jxl, &ppm, OutputFormat::Ppm) {
             Ok(()) => {}
@@ -93,25 +224,25 @@ fn djxl_decodes_our_output_to_the_source_samples() {
         }
 
         let bytes = std::fs::read(&ppm).unwrap_or_else(|e| panic!("{name}: {e}"));
-        let decoded = Image::from_ppm(&bytes).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let decoded = PnmImage::from_ppm(&bytes).unwrap_or_else(|e| panic!("{name}: {e}"));
         assert_eq!(
             (decoded.w, decoded.h),
-            (image.width(), image.height()),
+            (case.image.width(), case.image.height()),
             "{name}: dimensions"
         );
-        assert_eq!(decoded.max_value, 255, "{name}: bit depth");
-        // djxl writes P6, so a greyscale image comes back with its single
-        // value replicated across the three channels.
+        let max = (1u32 << case.image.bits_per_sample()) - 1;
+        assert_eq!(u32::from(decoded.max_value), max, "{name}: bit depth");
+        // djxl always writes P6, so a greyscale image comes back with its
+        // single value replicated across the three channels.
         assert_eq!(decoded.channels, 3, "{name}: djxl always writes P6");
-        assert_eq!(
-            decoded.len(),
-            image.samples().len() * 3,
-            "{name}: sample count"
-        );
-        for (i, &want) in image.samples().iter().enumerate() {
-            for c in 0..3 {
-                let got = decoded.samples.get(i * 3 + c).copied();
-                assert_eq!(got, Some(u16::from(want)), "{name}: sample {i} channel {c}");
+
+        let want = interleaved(&case.image);
+        let repeat = 3 / case.image.num_channels();
+        assert_eq!(decoded.len(), want.len() * repeat, "{name}: sample count");
+        for (i, &value) in want.iter().enumerate() {
+            for r in 0..repeat {
+                let got = decoded.samples.get(i * repeat + r).copied();
+                assert_eq!(got, Some(value), "{name}: sample {i} copy {r}");
             }
         }
     }
@@ -125,10 +256,11 @@ fn jxl_oxide_decodes_our_output_to_the_source_samples() {
     };
     let dir = scratch("jxl-oxide");
 
-    for (name, image) in cases() {
+    for case in cases() {
+        let name = case.name;
         let jxl = dir.join(format!("{name}.jxl"));
         let npy = dir.join(format!("{name}.npy"));
-        std::fs::write(&jxl, encode_grey8(&image).expect("encodes")).expect("write");
+        std::fs::write(&jxl, encode(&case.image, &case.options).expect("encodes")).expect("write");
 
         match oracle.decode(&jxl, &npy, OutputFormat::Npy) {
             Ok(()) => {}
@@ -141,17 +273,18 @@ fn jxl_oxide_decodes_our_output_to_the_source_samples() {
 
         let bytes = std::fs::read(&npy).unwrap_or_else(|e| panic!("{name}: {e}"));
         let values = read_npy_f32(&bytes).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let want = interleaved(&case.image);
         assert_eq!(
             values.len(),
-            image.samples().len(),
-            "{name}: sample count (one channel, one frame expected)"
+            want.len(),
+            "{name}: sample count (one frame expected)"
         );
-        for (i, (&got, &want)) in values.iter().zip(image.samples().iter()).enumerate() {
-            // The conformance .npy convention is normalised f32. For 8-bit
-            // samples the only exact representation is k/255, so equality is
+        let max = ((1u32 << case.image.bits_per_sample()) - 1) as f32;
+        for (i, (&got, &value)) in values.iter().zip(want.iter()).enumerate() {
+            // The conformance .npy convention is normalised f32. For integer
+            // samples the only exact representation is k/max, so equality is
             // the right test and a tolerance would hide a real error.
-            let expected = f32::from(want) / 255.0;
-            assert_eq!(got, expected, "{name}: sample {i} ({want})");
+            assert_eq!(got, f32::from(value) / max, "{name}: sample {i} ({value})");
         }
     }
 }

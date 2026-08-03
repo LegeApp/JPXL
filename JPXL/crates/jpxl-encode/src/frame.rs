@@ -15,13 +15,15 @@
 //! bit-exactly reconstructed modular image and hand back different pixels. The
 //! filters are therefore disabled in the codestream, not assumed away.
 //!
-//! # The single-section frame
+//! # Sections
 //!
 //! F.3.1 gives a frame one TOC entry when `num_groups == 1` and
 //! `num_passes == 1`, and then every structure of Table F.1 is carried
-//! consecutively in that one section. Choosing `group_size_shift` so the image
-//! fits in one group is what buys that, and it is why this encoder never has to
-//! implement the LF-group / pass-group split.
+//! consecutively in that one section. Otherwise the TOC has one entry for
+//! `LfGlobal`, one per LF group, one for `HfGlobal`, and one per pass group.
+//! [`Geometry`] computes that grid; the LF-group and `HfGlobal` sections are
+//! always empty here, because nothing this encoder writes produces a channel
+//! with `hshift >= 3` (that needs Squeeze) and `HfGlobal` is VarDCT-only.
 
 use jpxl_bitstream::{BitWriter, U32Dist, U32Spec};
 
@@ -82,27 +84,127 @@ const TOC_ENTRY_SPEC: U32Spec = U32Spec::new([
     },
 ]);
 
-/// Largest side length a single group can cover: `128 << 3`.
-pub const MAX_SINGLE_GROUP_DIM: u32 = 1024;
+/// Largest `group_size_shift` the two-bit F.2 field can carry.
+pub const MAX_GROUP_SIZE_SHIFT: u32 = 3;
 
-/// The smallest `group_size_shift` (F.2) whose `group_dim = 128 << shift`
-/// covers both dimensions, so the frame is one group and therefore one section.
+/// The `group_size_shift` used when the caller does not name one.
 ///
-/// # Errors
+/// F.3.1 constrains nothing here: any of the four legal group sizes decodes,
+/// and the choice is purely the encoder's. 512 keeps every image up to
+/// 512x512 in a single section — the cheapest shape — while larger images get
+/// a group grid rather than one enormous group, which is what makes the
+/// multi-section path exercised by ordinary input rather than only by tests.
+pub const DEFAULT_GROUP_SIZE_SHIFT: u32 = 2;
+
+/// The group grid of a frame (18181-1 F.2, F.3.1, G.2, G.4).
 ///
-/// [`EncodeError::Unsupported`] if either dimension exceeds
-/// [`MAX_SINGLE_GROUP_DIM`]; multi-group encoding is slice 10.
-pub fn single_group_size_shift(width: u32, height: u32) -> Result<u32> {
-    let side = width.max(height);
-    for shift in 0..=3u32 {
-        if side <= 128u32 << shift {
-            return Ok(shift);
+/// Deliberately recomputed here rather than borrowed from `jpxl-decode`: an
+/// encoder that shares the decoder's geometry cannot detect a geometry bug by
+/// round-tripping against it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Geometry {
+    width: u32,
+    height: u32,
+    group_size_shift: u32,
+    group_dim: u32,
+    groups_x: u32,
+    groups_y: u32,
+    lf_groups_x: u32,
+    lf_groups_y: u32,
+}
+
+impl Geometry {
+    /// Builds the grid for a `width` x `height` frame at `group_size_shift`.
+    ///
+    /// # Errors
+    ///
+    /// [`EncodeError::ValueOutOfRange`] for a zero dimension or a shift above
+    /// [`MAX_GROUP_SIZE_SHIFT`].
+    pub fn new(width: u32, height: u32, group_size_shift: u32) -> Result<Self> {
+        if group_size_shift > MAX_GROUP_SIZE_SHIFT {
+            return Err(EncodeError::ValueOutOfRange {
+                what: "group_size_shift",
+                value: i64::from(group_size_shift),
+            });
+        }
+        for (what, value) in [("width", width), ("height", height)] {
+            if value == 0 {
+                return Err(EncodeError::ValueOutOfRange { what, value: 0 });
+            }
+        }
+        let group_dim = 128u32 << group_size_shift;
+        // An LF group covers 8x8 groups' worth of samples (G.2.3 NOTE).
+        let lf_dim = u64::from(group_dim) * 8;
+        Ok(Self {
+            width,
+            height,
+            group_size_shift,
+            group_dim,
+            groups_x: width.div_ceil(group_dim),
+            groups_y: height.div_ceil(group_dim),
+            lf_groups_x: u32::try_from(u64::from(width).div_ceil(lf_dim)).unwrap_or(1),
+            lf_groups_y: u32::try_from(u64::from(height).div_ceil(lf_dim)).unwrap_or(1),
+        })
+    }
+
+    /// `group_size_shift` as written in the frame header.
+    #[must_use]
+    pub const fn group_size_shift(&self) -> u32 {
+        self.group_size_shift
+    }
+
+    /// `group_dim = 128 << group_size_shift`.
+    #[must_use]
+    pub const fn group_dim(&self) -> u32 {
+        self.group_dim
+    }
+
+    /// Number of pass groups (`num_groups` of F.3.1).
+    #[must_use]
+    pub const fn num_groups(&self) -> u64 {
+        self.groups_x as u64 * self.groups_y as u64
+    }
+
+    /// Number of LF groups.
+    #[must_use]
+    pub const fn num_lf_groups(&self) -> u64 {
+        self.lf_groups_x as u64 * self.lf_groups_y as u64
+    }
+
+    /// Whether F.3.1's single-section form applies (`num_passes` is always 1).
+    #[must_use]
+    pub const fn is_single_section(&self) -> bool {
+        self.num_groups() == 1
+    }
+
+    /// Number of TOC entries (18181-1 F.3.1).
+    #[must_use]
+    pub const fn num_sections(&self) -> u64 {
+        if self.is_single_section() {
+            1
+        } else {
+            2 + self.num_lf_groups() + self.num_groups()
         }
     }
-    Err(EncodeError::unsupported(
-        "an image larger than one group (multi-group encoding)",
-        "F.3.1",
-    ))
+
+    /// The rectangle `(x0, y0, width, height)` covered by group `index` in
+    /// raster order, or `None` past the grid.
+    #[must_use]
+    pub fn group_rect(&self, index: u64) -> Option<(u32, u32, u32, u32)> {
+        if index >= self.num_groups() {
+            return None;
+        }
+        let gx = u32::try_from(index % u64::from(self.groups_x)).ok()?;
+        let gy = u32::try_from(index / u64::from(self.groups_x)).ok()?;
+        let x0 = gx.checked_mul(self.group_dim)?;
+        let y0 = gy.checked_mul(self.group_dim)?;
+        Some((
+            x0,
+            y0,
+            self.group_dim.min(self.width.saturating_sub(x0)),
+            self.group_dim.min(self.height.saturating_sub(y0)),
+        ))
+    }
 }
 
 /// Writes the `FrameHeader` of the single modular frame (18181-1 Table F.2).
@@ -168,29 +270,31 @@ fn write_restoration_filter_off(w: &mut BitWriter) -> Result<()> {
     Ok(())
 }
 
-/// Writes a one-entry TOC (18181-1 F.3).
+/// Writes the TOC (18181-1 F.3), one entry per section length, unpermuted.
 ///
-/// On return the writer is byte-aligned and the next byte is where the single
+/// On return the writer is byte-aligned and the next byte is where the first
 /// section begins.
 ///
 /// # Errors
 ///
-/// [`EncodeError::ValueOutOfRange`] if the section is larger than the TOC entry
+/// [`EncodeError::ValueOutOfRange`] if a section is larger than the TOC entry
 /// distribution can express.
-pub fn write_single_entry_toc(w: &mut BitWriter, section_len: usize) -> Result<()> {
-    let len = u32::try_from(section_len).map_err(|_| EncodeError::ValueOutOfRange {
-        what: "section length",
-        value: i64::try_from(section_len).unwrap_or(i64::MAX),
-    })?;
-
-    w.write_bool(false); // permuted_toc
+pub fn write_toc(w: &mut BitWriter, section_lens: &[usize]) -> Result<()> {
+    w.write_bool(false); // permuted_toc: sections are written in order
     w.zero_pad_to_byte(); // F.3.3, before the entries
-    w.write_u32(&TOC_ENTRY_SPEC, len)?;
+    for &section_len in section_lens {
+        let len = u32::try_from(section_len).map_err(|_| EncodeError::ValueOutOfRange {
+            what: "section length",
+            value: i64::try_from(section_len).unwrap_or(i64::MAX),
+        })?;
+        w.write_u32(&TOC_ENTRY_SPEC, len)?;
+    }
     w.zero_pad_to_byte(); // F.3.3, after the entries
     Ok(())
 }
 
 #[cfg(test)]
+#[allow(clippy::indexing_slicing, clippy::cast_possible_truncation)]
 mod tests {
     use super::*;
     use jpxl_bitstream::BitReader;
@@ -245,7 +349,7 @@ mod tests {
             let mut w = BitWriter::new();
             // Start unaligned, so the pads have something to do.
             w.write_bits(3, 0b101).expect("prefix");
-            write_single_entry_toc(&mut w, len).expect("toc");
+            write_toc(&mut w, &[len]).expect("toc");
             assert!(w.is_byte_aligned());
             let bytes = w.into_bytes();
 
@@ -262,16 +366,81 @@ mod tests {
     }
 
     #[test]
-    fn group_size_shift_is_the_smallest_that_makes_one_group() {
-        assert_eq!(single_group_size_shift(1, 1).expect("valid"), 0);
-        assert_eq!(single_group_size_shift(128, 128).expect("valid"), 0);
-        assert_eq!(single_group_size_shift(129, 1).expect("valid"), 1);
-        assert_eq!(single_group_size_shift(13, 7).expect("valid"), 0);
-        assert_eq!(single_group_size_shift(256, 300).expect("valid"), 2);
-        assert_eq!(single_group_size_shift(1024, 1024).expect("valid"), 3);
+    fn a_multi_entry_toc_round_trips_with_its_offsets() {
+        // Zero-length entries are the normal case for LfGroup and HfGlobal in
+        // modular mode (F.3.1 NOTE 1), so they must survive the round trip.
+        let lens = [40usize, 0, 0, 1500, 1500, 20_000, 3];
+        let mut w = BitWriter::new();
+        write_toc(&mut w, &lens).expect("toc");
+        assert!(w.is_byte_aligned());
+        let bytes = w.into_bytes();
+
+        let limits = Limits::default();
+        let mut guard = AllocGuard::new(&limits);
+        let mut r = BitReader::new(&bytes);
+        let toc = read_toc(&mut r, lens.len() as u64, &limits, &mut guard).expect("valid toc");
+        assert_eq!(toc.len(), lens.len());
+        assert_eq!(toc.total_size(), lens.iter().sum::<usize>() as u64);
+        let mut offset = 0u64;
+        for (i, &len) in lens.iter().enumerate() {
+            assert_eq!(toc.offset_of(i), Some(offset), "section {i}");
+            offset += len as u64;
+        }
+    }
+
+    #[test]
+    fn the_group_grid_tiles_the_frame_exactly() {
+        let g = Geometry::new(600, 520, 2).expect("valid");
+        assert_eq!(g.group_dim(), 512);
+        assert_eq!(g.num_groups(), 4);
+        assert_eq!(g.num_lf_groups(), 1);
+        assert!(!g.is_single_section());
+        assert_eq!(g.num_sections(), 2 + 1 + 4);
+        assert_eq!(g.group_rect(0), Some((0, 0, 512, 512)));
+        assert_eq!(g.group_rect(1), Some((512, 0, 88, 512)));
+        assert_eq!(g.group_rect(2), Some((0, 512, 512, 8)));
+        assert_eq!(g.group_rect(3), Some((512, 512, 88, 8)));
+        assert_eq!(g.group_rect(4), None);
+
+        // Every group rectangle covers each pixel exactly once, at every shift.
+        for shift in 0..=MAX_GROUP_SIZE_SHIFT {
+            for (w, h) in [(1u32, 1u32), (13, 7), (129, 260), (600, 520)] {
+                let g = Geometry::new(w, h, shift).expect("valid");
+                let mut covered = vec![0u8; (w * h) as usize];
+                for index in 0..g.num_groups() {
+                    let (x0, y0, gw, gh) = g.group_rect(index).expect("in range");
+                    assert!(gw > 0 && gh > 0, "{w}x{h} shift {shift}: empty group");
+                    for y in y0..y0 + gh {
+                        for x in x0..x0 + gw {
+                            covered[(y * w + x) as usize] += 1;
+                        }
+                    }
+                }
+                assert!(
+                    covered.iter().all(|&c| c == 1),
+                    "{w}x{h} shift {shift}: groups do not tile the frame"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_single_group_frame_has_one_section() {
+        let g = Geometry::new(512, 512, 2).expect("valid");
+        assert!(g.is_single_section());
+        assert_eq!(g.num_sections(), 1);
+        assert_eq!(g.group_rect(0), Some((0, 0, 512, 512)));
+    }
+
+    #[test]
+    fn degenerate_geometry_is_rejected() {
         assert!(matches!(
-            single_group_size_shift(1025, 8),
-            Err(EncodeError::Unsupported { .. })
+            Geometry::new(0, 4, 2),
+            Err(EncodeError::ValueOutOfRange { .. })
+        ));
+        assert!(matches!(
+            Geometry::new(4, 4, 4),
+            Err(EncodeError::ValueOutOfRange { .. })
         ));
     }
 }

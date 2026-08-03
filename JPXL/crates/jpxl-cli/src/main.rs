@@ -31,9 +31,13 @@ jpxl — JPEG XL codec (JPXL)
 Usage:
     jpxl info <file>              Identify a file and print its stream kind
     jpxl decode <in.jxl> <out>    Decode to a binary PGM (P5) or PPM (P6)
-    jpxl encode <in.pgm> <out>    Encode an 8-bit binary PGM (P5) losslessly
+    jpxl encode [opts] <in> <out> Encode a binary PGM (P5) or PPM (P6) losslessly
     jpxl --help                   Show this message
     jpxl --version                Show the version
+
+Encode options:
+    --container                   Wrap the codestream in a Part 2 container
+    --group-size-shift <0..3>     Force group_dim = 128 << shift (default 2)
 
 Exit codes:
     0  success (info: recognised as JPEG XL)
@@ -43,8 +47,9 @@ Exit codes:
 `decode` picks P5 for a one-channel image and P6 for three, and writes
 16-bit big-endian samples when the bit depth exceeds 8, as Netpbm requires.
 
-`encode` accepts only 8-bit greyscale P5 up to 1024x1024 and writes a naked
-lossless modular codestream; that is the whole of the encoder today.
+`encode` accepts P5 and P6 with maxval 255 or 65535 and writes a lossless
+modular codestream: greyscale as-is, RGB through the reversible colour
+transform, split into groups when the image exceeds one group.
 ";
 
 fn main() -> ExitCode {
@@ -151,14 +156,34 @@ fn cmd_decode(args: &[String]) -> u8 {
     }
 }
 
-/// `jpxl encode <in.pgm> <out.jxl>`: encode an 8-bit P5 losslessly.
+/// `jpxl encode [opts] <in.pgm|in.ppm> <out.jxl>`: encode losslessly.
 fn cmd_encode(args: &[String]) -> u8 {
-    let [input, output] = args else {
+    let mut options = jpxl_encode::EncodeOptions::default();
+    let mut positional: Vec<&String> = Vec::new();
+    let mut rest = args.iter();
+    while let Some(arg) = rest.next() {
+        match arg.as_str() {
+            "--container" => options.container = true,
+            "--group-size-shift" => {
+                let Some(value) = rest.next().and_then(|v| v.parse::<u32>().ok()) else {
+                    fail("`--group-size-shift` needs a number in 0..=3");
+                    return EXIT_ERROR;
+                };
+                options.group_size_shift = Some(value);
+            }
+            other if other.starts_with("--") => {
+                fail(&format!("unknown `encode` option `{other}`"));
+                return EXIT_ERROR;
+            }
+            _ => positional.push(arg),
+        }
+    }
+    let [input, output] = positional.as_slice() else {
         fail("`encode` takes an input and an output path");
         return EXIT_ERROR;
     };
 
-    let bytes = match std::fs::read(Path::new(input)) {
+    let bytes = match std::fs::read(Path::new(input.as_str())) {
         Ok(bytes) => bytes,
         Err(err) => {
             fail(&format!("{input}: {err}"));
@@ -166,7 +191,7 @@ fn cmd_encode(args: &[String]) -> u8 {
         }
     };
 
-    let image = match decode_p5(&bytes) {
+    let image = match decode_netpbm(&bytes) {
         Ok(image) => image,
         Err(err) => {
             fail(&format!("{input}: {err}"));
@@ -174,7 +199,7 @@ fn cmd_encode(args: &[String]) -> u8 {
         }
     };
 
-    let encoded = match jpxl_encode::encode_grey8(&image) {
+    let encoded = match jpxl_encode::encode(&image, &options) {
         Ok(encoded) => encoded,
         Err(err) => {
             fail(&format!("{input}: {err}"));
@@ -182,12 +207,14 @@ fn cmd_encode(args: &[String]) -> u8 {
         }
     };
 
-    match std::fs::write(Path::new(output), &encoded) {
+    match std::fs::write(Path::new(output.as_str()), &encoded) {
         Ok(()) => {
             println!(
-                "{output}: {}x{}, 1 channel, 8 bits per sample, {} bytes",
+                "{output}: {}x{}, {} channel(s), {} bits per sample, {} bytes",
                 image.width(),
                 image.height(),
+                image.num_channels(),
+                image.bits_per_sample(),
                 encoded.len()
             );
             EXIT_OK
@@ -199,16 +226,19 @@ fn cmd_encode(args: &[String]) -> u8 {
     }
 }
 
-/// Parses a binary PGM (P5) with `maxval` 255.
+/// Parses a binary PGM (P5) or PPM (P6) with `maxval` 255 or 65535.
 ///
 /// Hand-rolled to match `encode_netpbm`: the header is three whitespace-
 /// separated ASCII tokens after the magic, with `#` comments allowed anywhere
 /// in the header, and exactly one whitespace byte between `maxval` and the
-/// samples.
-fn decode_p5(bytes: &[u8]) -> Result<jpxl_encode::GreyImage, String> {
-    let rest = bytes
-        .strip_prefix(b"P5")
-        .ok_or_else(|| "not a binary PGM (P5)".to_owned())?;
+/// samples. Netpbm stores samples above `maxval` 255 as **big-endian** 16-bit
+/// pairs, which is the opposite of every byte order in the codestream.
+fn decode_netpbm(bytes: &[u8]) -> Result<jpxl_encode::Image, String> {
+    let (channels, rest) = match bytes.get(..2) {
+        Some(b"P5") => (1usize, bytes.get(2..).unwrap_or_default()),
+        Some(b"P6") => (3usize, bytes.get(2..).unwrap_or_default()),
+        _ => return Err("not a binary PGM (P5) or PPM (P6)".to_owned()),
+    };
 
     let mut cursor = 0usize;
     let mut fields = [0u32; 3];
@@ -216,25 +246,46 @@ fn decode_p5(bytes: &[u8]) -> Result<jpxl_encode::GreyImage, String> {
         *field = next_header_token(rest, &mut cursor)?;
     }
     let [width, height, maxval] = fields;
-    if maxval != 255 {
-        return Err(format!("only 8-bit PGM is supported, maxval is {maxval}"));
-    }
+    let bits_per_sample = match maxval {
+        255 => 8u32,
+        65535 => 16,
+        other => {
+            return Err(format!(
+                "only maxval 255 and 65535 are supported, this file has {other}"
+            ));
+        }
+    };
+    let bytes_per_sample = if bits_per_sample > 8 { 2usize } else { 1 };
 
-    let samples = rest
+    let body = rest
         .get(cursor..)
-        .ok_or_else(|| "truncated PGM body".to_owned())?;
-    let expected = u64::from(width) * u64::from(height);
-    if u64::try_from(samples.len()).unwrap_or(u64::MAX) < expected {
+        .ok_or_else(|| "truncated Netpbm body".to_owned())?;
+    let count = u64::from(width) * u64::from(height) * channels as u64;
+    let needed = count
+        .checked_mul(bytes_per_sample as u64)
+        .ok_or_else(|| "Netpbm body size overflows".to_owned())?;
+    if u64::try_from(body.len()).unwrap_or(u64::MAX) < needed {
         return Err(format!(
-            "truncated PGM body: {expected} samples expected, {} present",
-            samples.len()
+            "truncated Netpbm body: {needed} bytes expected, {} present",
+            body.len()
         ));
     }
-    let samples = samples
-        .get(..usize::try_from(expected).unwrap_or(usize::MAX))
-        .ok_or_else(|| "truncated PGM body".to_owned())?;
 
-    jpxl_encode::GreyImage::new(width, height, samples.to_vec()).map_err(|e| e.to_string())
+    let count = usize::try_from(count).map_err(|_| "image too large".to_owned())?;
+    let mut samples = Vec::with_capacity(count);
+    for i in 0..count {
+        let value = if bytes_per_sample == 2 {
+            let hi = body.get(i * 2).copied().unwrap_or(0);
+            let lo = body.get(i * 2 + 1).copied().unwrap_or(0);
+            u16::from_be_bytes([hi, lo])
+        } else {
+            u16::from(body.get(i).copied().unwrap_or(0))
+        };
+        samples.push(value);
+    }
+
+    jpxl_encode::Image::from_interleaved(width, height, channels, bits_per_sample, &samples)
+        .map_err(|e| e.to_string())
 }
 
 /// Reads one decimal header token, skipping whitespace and `#` comments, and

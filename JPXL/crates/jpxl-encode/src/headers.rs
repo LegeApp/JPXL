@@ -1,19 +1,27 @@
-//! Signature, `SizeHeader` and `ImageMetadata` for a greyscale 8-bit image
-//! (18181-1 D.1, D.2, D.3, E.2).
+//! Signature, `SizeHeader` and `ImageMetadata` (18181-1 D.1, D.2, D.3, E.2).
 //!
 //! # Why `all_default` is not usable here
 //!
-//! The Table D.3 defaults describe an **XYB-encoded sRGB** image. A greyscale
-//! non-XYB image differs in two of the guarded rows (`xyb_encoded` and
-//! `colour_encoding.colour_space`), and Table D.3 has no way to override one
-//! row while defaulting the rest — `all_default` is all or nothing. So the
-//! bundle is written out field by field, taking the table's own default for
-//! every row that can keep it.
+//! The Table D.3 defaults describe an **XYB-encoded sRGB** image. Every image
+//! this encoder produces is non-XYB, so `xyb_encoded` alone already breaks the
+//! default, and Table D.3 has no way to override one row while defaulting the
+//! rest — `all_default` is all or nothing. So the bundle is written out field
+//! by field, taking the table's own default for every row that can keep it.
 //!
 //! The one row that is *not* guarded by `all_default` is `default_m`, which is
 //! written last and set, meaning "use the L.1 opsin matrix and the K.2
 //! upsampling weights". It costs one bit even though nothing in a modular
-//! greyscale frame consults either.
+//! non-XYB frame consults either.
+//!
+//! # `modular_16bit_buffers`
+//!
+//! D.3 defines this as a claim about the *decoder's* working buffers: signed
+//! 16-bit integers suffice for every decoded modular sample and every inverse
+//! transform result. That is true for 8-bit samples (an RCT chroma residual
+//! stays well inside `±2^15`) and false for 16-bit ones, where the samples
+//! alone reach 65535. It is therefore derived from the bit depth rather than
+//! pinned to the table default. Annex M ties the `false` case to level 10,
+//! which is why the container writer emits a `jxll` box for 16-bit images.
 
 use jpxl_bitstream::{BitWriter, U32Dist, U32Spec};
 
@@ -118,25 +126,55 @@ pub fn write_size_header(w: &mut BitWriter, width: u32, height: u32) -> Result<(
     Ok(())
 }
 
-/// Writes an `ImageMetadata` bundle describing an 8-bit greyscale still image
+/// Whether an image is greyscale or RGB — the only two colour shapes this
+/// encoder produces (18181-1 G.1.3 counts channels from exactly this).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ColourShape {
+    /// One channel, `colour_space = kGrey`.
+    Grey,
+    /// Three channels, `colour_space = kRGB`.
+    Rgb,
+}
+
+impl ColourShape {
+    /// Number of colour channels the frame carries.
+    #[must_use]
+    pub const fn num_channels(self) -> usize {
+        match self {
+            Self::Grey => 1,
+            Self::Rgb => 3,
+        }
+    }
+}
+
+/// Writes an `ImageMetadata` bundle describing a non-XYB integer still image
 /// (18181-1 D.3, Table D.3).
 ///
 /// # Errors
 ///
-/// Only through the bit writer.
-pub fn write_grey8_metadata(w: &mut BitWriter) -> Result<()> {
+/// [`EncodeError::Unsupported`] if `bits_per_sample` is outside the 1..=16
+/// range this encoder handles, or a bit writer error.
+pub fn write_metadata(w: &mut BitWriter, shape: ColourShape, bits_per_sample: u32) -> Result<()> {
+    if bits_per_sample == 0 || bits_per_sample > 16 {
+        return Err(EncodeError::ValueOutOfRange {
+            what: "bits_per_sample",
+            value: i64::from(bits_per_sample),
+        });
+    }
+
     w.write_bool(false); // all_default: see the module documentation
     w.write_bool(false); // extra_fields: no orientation, preview or animation
 
-    // BitDepth (D.3.5, Table D.7): 8-bit integer samples.
+    // BitDepth (D.3.5, Table D.7): integer samples of the requested depth.
     w.write_bool(false); // float_sample
-    w.write_u32(&INT_BPS_SPEC, 8)?;
+    w.write_u32(&INT_BPS_SPEC, bits_per_sample)?;
 
-    w.write_bool(true); // modular_16bit_buffers, the table default
+    // See the module documentation: this is a claim about decoder buffers.
+    w.write_bool(bits_per_sample <= 8);
     w.write_u32(&NUM_EXTRA_SPEC, 0)?; // no extra channels
     w.write_bool(false); // xyb_encoded: samples are stored as-is
 
-    write_grey_colour_encoding(w)?;
+    write_colour_encoding(w, shape)?;
 
     // tone_mapping is guarded by extra_fields, which is false.
     w.write_u64(0)?; // extensions (B.3)
@@ -146,12 +184,27 @@ pub fn write_grey8_metadata(w: &mut BitWriter) -> Result<()> {
     Ok(())
 }
 
-/// Writes a `ColourEncoding` bundle for greyscale sRGB (18181-1 E.2, Table E.1).
+/// Writes an 8-bit greyscale `ImageMetadata` bundle.
 ///
-/// `use_desc` is true (no ICC profile) and `has_primaries` is false because
-/// the colour space is `kGrey`, so the primaries rows are skipped but the
-/// white point is still written.
-fn write_grey_colour_encoding(w: &mut BitWriter) -> Result<()> {
+/// # Errors
+///
+/// Only through the bit writer.
+pub fn write_grey8_metadata(w: &mut BitWriter) -> Result<()> {
+    write_metadata(w, ColourShape::Grey, 8)
+}
+
+/// Writes a `ColourEncoding` bundle (18181-1 E.2, Table E.1).
+///
+/// The Table E.1 defaults are exactly sRGB: `want_icc` false, `kRGB`, `kD65`,
+/// `kSRGB` primaries, the sRGB transfer function and `kRelative`. An RGB image
+/// is therefore one `all_default` bit. `kGrey` differs from the default, so
+/// the greyscale form is written out — with `has_primaries` false, which skips
+/// the primaries rows but not the white point.
+fn write_colour_encoding(w: &mut BitWriter, shape: ColourShape) -> Result<()> {
+    if shape == ColourShape::Rgb {
+        w.write_bool(true); // all_default
+        return Ok(());
+    }
     w.write_bool(false); // all_default (the default is kRGB)
     w.write_bool(false); // want_icc
     w.write_u32(&ENUM_SPEC, COLOUR_SPACE_GREY)?;
@@ -171,11 +224,11 @@ mod tests {
     use jpxl_core::limits::Limits;
     use jpxl_decode::headers::decode_image_headers;
 
-    fn headers(width: u32, height: u32) -> Vec<u8> {
+    fn headers(width: u32, height: u32, shape: ColourShape, bits: u32) -> Vec<u8> {
         let mut w = BitWriter::new();
         write_signature(&mut w).expect("signature");
         write_size_header(&mut w, width, height).expect("size");
-        write_grey8_metadata(&mut w).expect("metadata");
+        write_metadata(&mut w, shape, bits).expect("metadata");
         w.zero_pad_to_byte();
         w.into_bytes()
     }
@@ -183,20 +236,28 @@ mod tests {
     #[test]
     fn headers_round_trip_through_the_decoder() {
         for (width, height) in [(1u32, 1u32), (8, 8), (13, 7), (300, 200), (512, 512)] {
-            let bytes = headers(width, height);
-            let mut r = BitReader::new(&bytes);
-            let parsed = decode_image_headers(&mut r, &Limits::default())
-                .unwrap_or_else(|e| panic!("{width}x{height}: {e}"));
+            for shape in [ColourShape::Grey, ColourShape::Rgb] {
+                for bits in [8u32, 16] {
+                    let bytes = headers(width, height, shape, bits);
+                    let mut r = BitReader::new(&bytes);
+                    let parsed = decode_image_headers(&mut r, &Limits::default())
+                        .unwrap_or_else(|e| panic!("{width}x{height} {shape:?} {bits}: {e}"));
 
-            assert_eq!(parsed.width(), width);
-            assert_eq!(parsed.height(), height);
-            assert!(!parsed.metadata.xyb_encoded);
-            assert!(parsed.metadata.colour_encoding.is_grey());
-            assert_eq!(parsed.metadata.bit_depth.bits_per_sample(), 8);
-            assert!(parsed.metadata.ec_info.is_empty());
-            assert!(parsed.metadata.default_m);
-            assert!(parsed.metadata.preview.is_none());
-            assert!(parsed.metadata.animation.is_none());
+                    assert_eq!(parsed.width(), width);
+                    assert_eq!(parsed.height(), height);
+                    assert!(!parsed.metadata.xyb_encoded);
+                    assert_eq!(
+                        parsed.metadata.colour_encoding.is_grey(),
+                        shape == ColourShape::Grey
+                    );
+                    assert_eq!(parsed.metadata.bit_depth.bits_per_sample(), bits);
+                    assert_eq!(parsed.metadata.modular_16bit_buffers, bits <= 8);
+                    assert!(parsed.metadata.ec_info.is_empty());
+                    assert!(parsed.metadata.default_m);
+                    assert!(parsed.metadata.preview.is_none());
+                    assert!(parsed.metadata.animation.is_none());
+                }
+            }
         }
     }
 
@@ -204,17 +265,34 @@ mod tests {
     fn the_header_ends_where_the_writer_says_it_does() {
         // A wrong conditional shifts every later field, so the bit count is
         // the assertion that actually catches it.
-        let mut w = BitWriter::new();
-        write_signature(&mut w).expect("signature");
-        write_size_header(&mut w, 64, 64).expect("size");
-        write_grey8_metadata(&mut w).expect("metadata");
-        let written = w.bit_len();
-        w.zero_pad_to_byte();
-        let bytes = w.into_bytes();
+        for shape in [ColourShape::Grey, ColourShape::Rgb] {
+            for bits in [8u32, 16] {
+                let mut w = BitWriter::new();
+                write_signature(&mut w).expect("signature");
+                write_size_header(&mut w, 64, 64).expect("size");
+                write_metadata(&mut w, shape, bits).expect("metadata");
+                let written = w.bit_len();
+                w.zero_pad_to_byte();
+                let bytes = w.into_bytes();
 
-        let mut r = BitReader::new(&bytes);
-        decode_image_headers(&mut r, &Limits::default()).expect("valid");
-        assert_eq!(r.total_bits_read(), written);
+                let mut r = BitReader::new(&bytes);
+                decode_image_headers(&mut r, &Limits::default()).expect("valid");
+                assert_eq!(r.total_bits_read(), written, "{shape:?} {bits}");
+            }
+        }
+    }
+
+    #[test]
+    fn an_unrepresentable_bit_depth_is_rejected() {
+        let mut w = BitWriter::new();
+        assert!(matches!(
+            write_metadata(&mut w, ColourShape::Grey, 0),
+            Err(EncodeError::ValueOutOfRange { .. })
+        ));
+        assert!(matches!(
+            write_metadata(&mut w, ColourShape::Grey, 17),
+            Err(EncodeError::ValueOutOfRange { .. })
+        ));
     }
 
     #[test]
