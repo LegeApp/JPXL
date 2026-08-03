@@ -30,6 +30,7 @@ jpxl — JPEG XL codec (JPXL)
 
 Usage:
     jpxl info <file>              Identify a file and print its stream kind
+    jpxl boxes <file.jxl>         List the Part 2 box structure of a container
     jpxl decode <in.jxl> <out>    Decode to a binary PGM (P5) or PPM (P6)
     jpxl encode [opts] <in> <out> Encode a binary PGM (P5) or PPM (P6) losslessly
     jpxl --help                   Show this message
@@ -38,6 +39,8 @@ Usage:
 Encode options:
     --container                   Wrap the codestream in a Part 2 container
     --group-size-shift <0..3>     Force group_dim = 128 << shift (default 2)
+    --jxlp <bytes>                Split the codestream across jxlp boxes
+                                  (18181-2 9.10); implies --container
 
 Exit codes:
     0  success (info: recognised as JPEG XL)
@@ -74,6 +77,7 @@ fn run(args: &[String]) -> u8 {
             EXIT_OK
         }
         "info" => cmd_info(rest),
+        "boxes" => cmd_boxes(rest),
         "decode" => cmd_decode(rest),
         "encode" => cmd_encode(rest),
         other => {
@@ -156,6 +160,62 @@ fn cmd_decode(args: &[String]) -> u8 {
     }
 }
 
+/// `jpxl boxes <file.jxl>`: list the Part 2 box structure.
+///
+/// One line per box — offset, type, total size, payload size — then the level
+/// and whether the file satisfies the clause-9 "shall" requirements. The
+/// listing is what a box-lister oracle can be diffed against; the validation
+/// verdict is printed rather than turned into an exit code, because a
+/// decodable file that breaks a "shall" is still worth listing.
+fn cmd_boxes(args: &[String]) -> u8 {
+    let [path] = args else {
+        fail("`boxes` takes exactly one file argument");
+        return EXIT_ERROR;
+    };
+
+    let bytes = match std::fs::read(Path::new(path)) {
+        Ok(bytes) => bytes,
+        Err(err) => {
+            fail(&format!("{path}: {err}"));
+            return EXIT_ERROR;
+        }
+    };
+    if !jpxl_decode::container::is_container(&bytes) {
+        println!("{path}: not a container (naked codestream or unknown)");
+        return EXIT_UNRECOGNIZED;
+    }
+
+    let limits = Limits::default();
+    let mut guard = jpxl_core::limits::AllocGuard::new(&limits);
+    let tree = match jpxl_decode::container::BoxTree::parse(&bytes, &mut guard) {
+        Ok(tree) => tree,
+        Err(err) => {
+            fail(&format!("{path}: {err}"));
+            return EXIT_ERROR;
+        }
+    };
+
+    for b in tree.boxes() {
+        let name = core::str::from_utf8(&b.type_code).unwrap_or("????");
+        println!(
+            "{:>10}  {name}  size {:>10}  payload {:>10}  {}",
+            b.offset,
+            b.total_len(),
+            b.payload.len(),
+            b.kind.clause()
+        );
+    }
+    match tree.level() {
+        Ok(level) => println!("level: {level}"),
+        Err(err) => println!("level: {err}"),
+    }
+    match tree.validate() {
+        Ok(()) => println!("clause 9: conforming"),
+        Err(err) => println!("clause 9: {err}"),
+    }
+    EXIT_OK
+}
+
 /// `jpxl encode [opts] <in.pgm|in.ppm> <out.jxl>`: encode losslessly.
 fn cmd_encode(args: &[String]) -> u8 {
     let mut options = jpxl_encode::EncodeOptions::default();
@@ -170,6 +230,13 @@ fn cmd_encode(args: &[String]) -> u8 {
                     return EXIT_ERROR;
                 };
                 options.group_size_shift = Some(value);
+            }
+            "--jxlp" => {
+                let Some(value) = rest.next().and_then(|v| v.parse::<usize>().ok()) else {
+                    fail("`--jxlp` needs a fragment size in bytes");
+                    return EXIT_ERROR;
+                };
+                options.jxlp_fragment_size = Some(value);
             }
             other if other.starts_with("--") => {
                 fail(&format!("unknown `encode` option `{other}`"));

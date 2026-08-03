@@ -213,6 +213,12 @@ pub struct EncodeOptions {
     /// Force a `group_size_shift` (18181-1 F.2, `group_dim = 128 << shift`)
     /// instead of [`frame::DEFAULT_GROUP_SIZE_SHIFT`].
     pub group_size_shift: Option<u32>,
+    /// Split the codestream across `jxlp` boxes (18181-2 9.10) of at most this
+    /// many payload bytes each, instead of one `jxlc` box.
+    ///
+    /// Implies [`EncodeOptions::container`]: a fragmented codestream has
+    /// nowhere to live outside a container.
+    pub jxlp_fragment_size: Option<usize>,
 }
 
 /// An 8-bit greyscale image in raster order.
@@ -283,17 +289,20 @@ pub fn encode_grey8(image: &GreyImage) -> Result<Vec<u8>> {
 /// range its field can carry, and any error from the layers below.
 pub fn encode(image: &Image, options: &EncodeOptions) -> Result<Vec<u8>> {
     let codestream = encode_codestream(image, options)?;
-    if options.container {
-        // 18181-2 9.3 with Annex M of Part 1: `modular_16bit_buffers` is false
-        // for a >8-bit image, which level 5 does not permit.
-        let level = if image.bits_per_sample() > 8 {
-            container::EXTENDED_LEVEL
-        } else {
-            container::DEFAULT_LEVEL
-        };
-        return Ok(container::wrap(&codestream, level));
+    if !options.container && options.jxlp_fragment_size.is_none() {
+        return Ok(codestream);
     }
-    Ok(codestream)
+    // 18181-2 9.3 with Annex M of Part 1: `modular_16bit_buffers` is false
+    // for a >8-bit image, which level 5 does not permit.
+    let level = if image.bits_per_sample() > 8 {
+        container::EXTENDED_LEVEL
+    } else {
+        container::DEFAULT_LEVEL
+    };
+    Ok(match options.jxlp_fragment_size {
+        Some(size) => container::wrap_fragmented(&codestream, level, size),
+        None => container::wrap(&codestream, level),
+    })
 }
 
 /// Encodes the naked codestream, whatever [`EncodeOptions::container`] says.

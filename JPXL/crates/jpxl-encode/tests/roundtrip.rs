@@ -185,6 +185,7 @@ fn every_group_size_shift_round_trips() {
                     let options = EncodeOptions {
                         container: false,
                         group_size_shift: Some(shift),
+                        ..EncodeOptions::default()
                     };
                     round_trip("grid", &image, &options);
                 }
@@ -223,6 +224,7 @@ fn the_container_form_round_trips() {
             let options = EncodeOptions {
                 container: true,
                 group_size_shift: None,
+                ..EncodeOptions::default()
             };
             let bytes = round_trip("boxed", &image, &options);
             assert_eq!(bytes.get(4..8), Some(&b"JXL "[..]));
@@ -244,6 +246,7 @@ fn the_full_sixteen_bit_range_round_trips() {
     let options = EncodeOptions {
         container: false,
         group_size_shift: Some(0),
+        ..EncodeOptions::default()
     };
     round_trip("full-16-bit-grouped", &image, &options);
 }
@@ -298,10 +301,12 @@ fn truncating_the_output_errors_and_never_panics() {
         EncodeOptions {
             container: false,
             group_size_shift: Some(0),
+            ..EncodeOptions::default()
         },
         EncodeOptions {
             container: true,
             group_size_shift: None,
+            ..EncodeOptions::default()
         },
     ] {
         let image = build(40, 40, 3, 16, |x, y, c, max| {
@@ -325,6 +330,7 @@ fn corrupting_the_output_errors_and_never_panics() {
         EncodeOptions {
             container: false,
             group_size_shift: Some(0),
+            ..EncodeOptions::default()
         },
     ] {
         let bytes = encode(&image, &options).expect("encodes");

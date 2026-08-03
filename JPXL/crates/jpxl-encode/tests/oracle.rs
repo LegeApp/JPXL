@@ -76,10 +76,12 @@ fn cases() -> Vec<Case> {
     let tiny_groups = EncodeOptions {
         container: false,
         group_size_shift: Some(0),
+        ..EncodeOptions::default()
     };
     let boxed = EncodeOptions {
         container: true,
         group_size_shift: None,
+        ..EncodeOptions::default()
     };
 
     fn flat(_: u32, _: u32, c: usize, max: u32) -> u32 {
