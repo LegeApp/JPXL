@@ -106,6 +106,12 @@ pub struct DecodedImage {
     pub planes: Vec<Plane>,
     /// How many leading planes are colour rather than extra channels.
     pub num_colour_channels: usize,
+    /// The embedded ICC profile, present exactly when
+    /// `metadata.colour_encoding.want_icc` was set (Table A.1, E.4).
+    ///
+    /// These are the profile's own bytes, byte-identical to what the encoder
+    /// was given. Interpreting them is out of scope for a codestream decoder.
+    pub icc_profile: Option<Vec<u8>>,
 }
 
 impl DecodedImage {
@@ -159,6 +165,16 @@ pub fn decode(data: &[u8], limits: &Limits) -> Result<DecodedImage> {
 
     let mut reader = BitReader::new(codestream);
     let headers = decode_image_headers_metered(&mut reader, limits, &mut guard)?;
+
+    // A.1: the ICC profile sits between the headers and the first frame, in the
+    // same bit stream and with no alignment in between. It must be consumed
+    // even by a decoder that ignores colour management, or every frame offset
+    // after it is wrong.
+    let icc_profile = if headers.metadata.colour_encoding.want_icc {
+        Some(crate::icc::read_icc_profile(&mut reader, &mut guard)?)
+    } else {
+        None
+    };
 
     if headers.metadata.preview.is_some() {
         return Err(unsupported("preview frames", "18181-1 A.1"));
@@ -237,7 +253,10 @@ pub fn decode(data: &[u8], limits: &Limits) -> Result<DecodedImage> {
         }
     }
 
-    decoded.ok_or_else(|| unsupported("a codestream with no regular frame", "18181-1 A.1"))
+    let mut image =
+        decoded.ok_or_else(|| unsupported("a codestream with no regular frame", "18181-1 A.1"))?;
+    image.icc_profile = icc_profile;
+    Ok(image)
 }
 
 /// The byte range of TOC section `index`.
@@ -681,6 +700,9 @@ fn assemble(
         height: geometry.height(),
         planes,
         num_colour_channels: num_colour,
+        // Filled in by `decode`: the profile belongs to the codestream, not to
+        // any one frame (Table A.1).
+        icc_profile: None,
     })
 }
 
@@ -730,6 +752,7 @@ mod tests {
                 bits_per_sample: 8,
                 samples: vec![-5, 999],
             }],
+            icc_profile: None,
         };
         assert_eq!(image.interleaved_colour(), vec![0u16, 255]);
     }

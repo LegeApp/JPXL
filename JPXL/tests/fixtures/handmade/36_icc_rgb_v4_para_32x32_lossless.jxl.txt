@@ -1,0 +1,75 @@
+Fixture: 36_icc_rgb_v4_para_32x32_lossless.jxl (+ 36_icc_rgb_v4_para_32x32_lossless.icc)
+32x32 RGB, mathematically lossless, ICC v4 profile with mluc and para
+tags -- the non-v2 header and type-dictionary case
+
+Purpose
+-------
+Targets slice 4 (18181-1 E.4.3 and E.4.5). An ICC v4.3 profile
+(version field 0x04300000) whose text tags are multiLocalizedUnicode
+("mluc") and whose TRC is a parametricCurveType ("para", type 3, the sRGB
+piecewise curve), with a chad matrix.
+
+Two stages see something different from the v2 fixtures. E.4.3 predicts 4
+for header byte 8 (the major version), which a v2 profile contradicts and
+a v4 profile confirms -- so 31 and 36 together prove that byte is
+predicted rather than copied. E.4.5's type dictionary for commands 16..23
+contains "mluc" and "para" but not the v2 "desc" text layout, so a
+different pair of dictionary entries is exercised.
+
+Provenance
+----------
+  Encoder:      cjxl v0.13.0 196a43d9 [_AVX2_,SSE4,SSE2] {GNU 15.2.0}
+  libjxl rev:   196a43d996aa6ed33ebf98812a7c6d43b2b6d01b (v0.12-snapshot-2-g196a43d9)
+  cjxl flags:   -d 0 -e 3 -x icc_pathname=<profile>
+  Built by:     tools/setup-oracles.sh (flags recorded in
+                tools/oracle-bin/PINNED_REVISIONS.txt)
+  Regenerate:   tools/make-icc-fixtures.sh
+                That script IS the recipe; it rewrites the profile and the
+                source and re-encodes.
+
+  ICC profile:  tests/fixtures/generated/icc_rgb_v4_para.icc  (504 bytes)
+                sha256 6877533b29f73479d1b27f257a0b7c41d6c6e7c793d896346da00bedc2d34d4b
+                Synthetic. Built byte by byte by the Python snippet inside
+                tools/make-icc-fixtures.sh from the ICC.1 structure (128-byte
+                header, tag table, tag payloads). No system profile, no
+                third-party profile and no colour-management library was read,
+                converted or consulted, so this carries no licence beyond this
+                repository's own.
+
+  Source image: tests/fixtures/generated/src_icc_rgb_32x32.ppm  (3085 bytes)
+                sha256 dd47bb59a185edff496673cfdafab164d2d9f27582c227d40012be48a383d0ac
+                Synthetic, written by the Python snippet inside
+                tools/make-icc-fixtures.sh -- no third-party image was used,
+                converted or consulted.
+                32x32 8-bit RGB (PPM P6):
+                  R = x * 255 / 31        ramp along x
+                  G = y * 255 / 31        ramp along y
+                  B = (x + y) * 4 mod 256 diagonal sawtooth
+
+  Fixture:      36_icc_rgb_v4_para_32x32_lossless.jxl, 581 bytes
+                sha256 6480907303b6492cc0a1a8fc7778cbd31e7d27b5c2a23ec2db9de1209f860d27
+
+  Reference:    36_icc_rgb_v4_para_32x32_lossless.icc, 504 bytes
+                sha256 6877533b29f73479d1b27f257a0b7c41d6c6e7c793d896346da00bedc2d34d4b
+                A byte-identical copy of the ICC profile above, checked in so
+                that tests/e2e_icc.rs can assert byte-exactness without an
+                oracle installed.
+
+Verification
+------------
+tools/make-icc-fixtures.sh checks two things on every run, and refuses to
+write the fixture if either fails:
+
+  * djxl --orig_icc_out returns a profile byte-identical to the one cjxl was
+    given, so the reference really is what the codestream stores;
+  * djxl decodes the pixels to a PNM byte-identical to the source, so the
+    stream is mathematically lossless.
+
+tests/e2e_icc.rs then asserts that JPXL's own E.4 decoder reproduces the
+reference byte for byte, and repeats the comparison against a live djxl when
+one is installed.
+
+cjxl is used strictly as a BLACK BOX: it emits conformant streams for JPXL to
+parse. libjxl's source is never read. If a rebuild at a different libjxl
+revision changes these digests, that is the point of recording them -- do not
+silently update them; note the revision change.

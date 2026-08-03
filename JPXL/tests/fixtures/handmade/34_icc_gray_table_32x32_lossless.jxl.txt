@@ -1,0 +1,73 @@
+Fixture: 34_icc_gray_table_32x32_lossless.jxl (+ 34_icc_gray_table_32x32_lossless.icc)
+32x32 greyscale, mathematically lossless, greyscale ICC profile with a
+512-entry 16-bit tone curve -- the E.4.5 command-4 predictor case
+
+Purpose
+-------
+Targets slice 4 (18181-1 E.4.5). Same shape as fixture 30 but the kTRC
+payload is a 512-entry curveType table (a gamma-2.2 ramp, 16 bits per
+entry) instead of a single gamma value, which makes the profile 1356
+bytes -- an order of magnitude larger than its tag table.
+
+A smooth 16-bit ramp is exactly what E.4.5's command 4 is for: shuffle
+the payload into high-byte and low-byte planes, then run an Nth-order
+predictor over 2-byte integers `stride` bytes back. This fixture is the
+smallest one here whose decode depends on that predictor being right,
+including the carry between the two bytes of each entry.
+
+Provenance
+----------
+  Encoder:      cjxl v0.13.0 196a43d9 [_AVX2_,SSE4,SSE2] {GNU 15.2.0}
+  libjxl rev:   196a43d996aa6ed33ebf98812a7c6d43b2b6d01b (v0.12-snapshot-2-g196a43d9)
+  cjxl flags:   -d 0 -e 3 -x icc_pathname=<profile>
+  Built by:     tools/setup-oracles.sh (flags recorded in
+                tools/oracle-bin/PINNED_REVISIONS.txt)
+  Regenerate:   tools/make-icc-fixtures.sh
+                That script IS the recipe; it rewrites the profile and the
+                source and re-encodes.
+
+  ICC profile:  tests/fixtures/generated/icc_gray_table.icc  (1356 bytes)
+                sha256 995433fbb7851070380ed1b945cea96ba048b6bbf8d4ce7cc02e6c426225b501
+                Synthetic. Built byte by byte by the Python snippet inside
+                tools/make-icc-fixtures.sh from the ICC.1 structure (128-byte
+                header, tag table, tag payloads). No system profile, no
+                third-party profile and no colour-management library was read,
+                converted or consulted, so this carries no licence beyond this
+                repository's own.
+
+  Source image: tests/fixtures/generated/src_icc_gray_32x32.pgm  (1037 bytes)
+                sha256 f55ed4a26e83e6b1852f108e421519cf7c01cb6949ae371ee29fb2d540d5c159
+                Synthetic, written by the Python snippet inside
+                tools/make-icc-fixtures.sh -- no third-party image was used,
+                converted or consulted.
+                32x32 8-bit greyscale (PGM P5):
+                  v = (x * 255 / 31 + y * 255 / 31) / 2   smooth diagonal ramp
+                (integer division throughout)
+
+  Fixture:      34_icc_gray_table_32x32_lossless.jxl, 453 bytes
+                sha256 54111092424b046ceec33283dde53db02531405692d89d06b8a178fd389cf461
+
+  Reference:    34_icc_gray_table_32x32_lossless.icc, 1356 bytes
+                sha256 995433fbb7851070380ed1b945cea96ba048b6bbf8d4ce7cc02e6c426225b501
+                A byte-identical copy of the ICC profile above, checked in so
+                that tests/e2e_icc.rs can assert byte-exactness without an
+                oracle installed.
+
+Verification
+------------
+tools/make-icc-fixtures.sh checks two things on every run, and refuses to
+write the fixture if either fails:
+
+  * djxl --orig_icc_out returns a profile byte-identical to the one cjxl was
+    given, so the reference really is what the codestream stores;
+  * djxl decodes the pixels to a PNM byte-identical to the source, so the
+    stream is mathematically lossless.
+
+tests/e2e_icc.rs then asserts that JPXL's own E.4 decoder reproduces the
+reference byte for byte, and repeats the comparison against a live djxl when
+one is installed.
+
+cjxl is used strictly as a BLACK BOX: it emits conformant streams for JPXL to
+parse. libjxl's source is never read. If a rebuild at a different libjxl
+revision changes these digests, that is the point of recording them -- do not
+silently update them; note the revision change.

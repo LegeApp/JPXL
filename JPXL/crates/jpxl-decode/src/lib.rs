@@ -20,6 +20,9 @@
 //!   the frame as the annex requires.
 //! * Annex H modular — MA trees, all fourteen predictors including the
 //!   self-correcting one, and the RCT, palette and squeeze inverses.
+//! * Annex E.4 embedded ICC profiles — the compressed representation carried
+//!   in the codestream when `want_icc` is set, decoded to the exact profile
+//!   bytes ([`extract_icc_profile`]).
 //! * Annex C entropy coding, via [`jpxl_entropy`].
 //!
 //! Not implemented: VarDCT (Annex I), XYB and YCbCr reconstruction, upsampling,
@@ -66,6 +69,7 @@ pub mod decode;
 pub mod error;
 pub mod frame;
 pub mod headers;
+pub mod icc;
 pub mod modular;
 pub mod signature;
 
@@ -75,4 +79,5 @@ mod testsupport;
 pub use decode::{DecodedImage, Plane, decode};
 pub use error::{DecodeError, Result};
 pub use headers::{ImageHeaders, ImageMetadata, Orientation, SizeHeader, decode_image_headers};
+pub use icc::{IccError, extract_icc_profile};
 pub use signature::{CODESTREAM_SIGNATURE, SIGNATURE_BYTES, starts_with_signature};

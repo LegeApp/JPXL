@@ -15,6 +15,7 @@ use jpxl_core::JpxlError;
 use jpxl_entropy::EntropyError;
 
 use crate::frame::FrameError;
+use crate::icc::IccError;
 use crate::modular::ModularError;
 
 /// Anything that can go wrong while decoding a codestream.
@@ -35,6 +36,8 @@ pub enum DecodeError {
     Frame(Box<FrameError>),
     /// A modular sub-bitstream failed (Annex H).
     Modular(ModularError),
+    /// The embedded ICC profile failed to decode (E.4).
+    Icc(IccError),
     /// 18181-1 D.1: the 16-bit signature was not `0x0AFF`.
     InvalidSignature {
         /// The value actually read.
@@ -88,6 +91,7 @@ impl fmt::Display for DecodeError {
             Self::Entropy(e) => write!(f, "{e}"),
             Self::Frame(e) => write!(f, "{e}"),
             Self::Modular(e) => write!(f, "{e}"),
+            Self::Icc(e) => write!(f, "{e}"),
             Self::InvalidSignature { found } => write!(
                 f,
                 "18181-1 D.1: codestream signature is {found:#06x}, expected 0x0aff (bytes ff 0a)"
@@ -126,6 +130,7 @@ impl std::error::Error for DecodeError {
             Self::Entropy(e) => Some(e),
             Self::Frame(e) => Some(e),
             Self::Modular(e) => Some(e),
+            Self::Icc(e) => Some(e),
             Self::InvalidSignature { .. }
             | Self::FieldOutOfRange { .. }
             | Self::UnknownEnumValue { .. }
@@ -165,6 +170,15 @@ impl From<FrameError> for DecodeError {
 impl From<ModularError> for DecodeError {
     fn from(e: ModularError) -> Self {
         Self::Modular(e)
+    }
+}
+
+/// Slice 4 wiring: `IccError` (E.4) is a module-local leaf type for the same
+/// reason `ModularError` is — the ICC stages have their own vocabulary of
+/// failures — and composes into `DecodeError` here.
+impl From<IccError> for DecodeError {
+    fn from(e: IccError) -> Self {
+        Self::Icc(e)
     }
 }
 

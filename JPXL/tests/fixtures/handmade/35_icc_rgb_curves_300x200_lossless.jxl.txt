@@ -1,0 +1,79 @@
+Fixture: 35_icc_rgb_curves_300x200_lossless.jxl (+ 35_icc_rgb_curves_300x200_lossless.icc)
+300x200 RGB, mathematically lossless, RGB ICC profile with three
+distinct 1024-entry tone curves -- the large-profile, multi-group case
+
+Purpose
+-------
+Targets slice 4 (18181-1 E.4.5), and deliberately also the interaction
+with the frame layer.
+
+The profile is 6676 bytes: rXYZ/gXYZ/bXYZ, three *distinct* 1024-entry
+16-bit curveType tables (gammas 2.2, 2.4, 2.6, so tagcode 2's shared-TRC
+grouping cannot apply), a chad sf32 matrix, wtpt, desc and cprt. It is by
+far the largest ICC payload in the fixture set and drives the E.4.5
+command loop for thousands of bytes.
+
+The image is 300x200, which is wider than the 256-sample group dimension,
+so the frame that follows the profile is multi-section. Table A.1 puts
+the ICC payload between the headers and the first frame in the same bit
+stream: if its length were mis-read by even one bit, the TOC and every
+section offset after it would be wrong. That is why tests/e2e_icc.rs
+decodes this fixture's pixels as well as its profile.
+
+Provenance
+----------
+  Encoder:      cjxl v0.13.0 196a43d9 [_AVX2_,SSE4,SSE2] {GNU 15.2.0}
+  libjxl rev:   196a43d996aa6ed33ebf98812a7c6d43b2b6d01b (v0.12-snapshot-2-g196a43d9)
+  cjxl flags:   -d 0 -e 3 -x icc_pathname=<profile>
+  Built by:     tools/setup-oracles.sh (flags recorded in
+                tools/oracle-bin/PINNED_REVISIONS.txt)
+  Regenerate:   tools/make-icc-fixtures.sh
+                That script IS the recipe; it rewrites the profile and the
+                source and re-encodes.
+
+  ICC profile:  tests/fixtures/generated/icc_rgb_curves.icc  (6676 bytes)
+                sha256 e5a4935e0aef3b143e567f08939289ed1aefe7a7a352d9bc2d5b6f1b5abf3cf1
+                Synthetic. Built byte by byte by the Python snippet inside
+                tools/make-icc-fixtures.sh from the ICC.1 structure (128-byte
+                header, tag table, tag payloads). No system profile, no
+                third-party profile and no colour-management library was read,
+                converted or consulted, so this carries no licence beyond this
+                repository's own.
+
+  Source image: tests/fixtures/generated/src_icc_rgb_300x200.ppm  (180015 bytes)
+                sha256 1e4ed3d06dafb8610266ddc1cedd2ea034d63c95409d8a2604fa13424918984d
+                Synthetic, written by the Python snippet inside
+                tools/make-icc-fixtures.sh -- no third-party image was used,
+                converted or consulted.
+                300x200 8-bit RGB (PPM P6):
+                  R = x * 255 / 299       ramp along x
+                  G = y * 255 / 199       ramp along y
+                  B = (x + y) mod 256     diagonal sawtooth
+
+  Fixture:      35_icc_rgb_curves_300x200_lossless.jxl, 14738 bytes
+                sha256 2b88d7cda952cbcd2b0c29730f7ff65e5b8d4313de9174a8c7b1c86cac90bf07
+
+  Reference:    35_icc_rgb_curves_300x200_lossless.icc, 6676 bytes
+                sha256 e5a4935e0aef3b143e567f08939289ed1aefe7a7a352d9bc2d5b6f1b5abf3cf1
+                A byte-identical copy of the ICC profile above, checked in so
+                that tests/e2e_icc.rs can assert byte-exactness without an
+                oracle installed.
+
+Verification
+------------
+tools/make-icc-fixtures.sh checks two things on every run, and refuses to
+write the fixture if either fails:
+
+  * djxl --orig_icc_out returns a profile byte-identical to the one cjxl was
+    given, so the reference really is what the codestream stores;
+  * djxl decodes the pixels to a PNM byte-identical to the source, so the
+    stream is mathematically lossless.
+
+tests/e2e_icc.rs then asserts that JPXL's own E.4 decoder reproduces the
+reference byte for byte, and repeats the comparison against a live djxl when
+one is installed.
+
+cjxl is used strictly as a BLACK BOX: it emits conformant streams for JPXL to
+parse. libjxl's source is never read. If a rebuild at a different libjxl
+revision changes these digests, that is the point of recording them -- do not
+silently update them; note the revision change.

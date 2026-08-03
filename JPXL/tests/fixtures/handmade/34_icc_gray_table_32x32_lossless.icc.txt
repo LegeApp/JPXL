@@ -1,0 +1,31 @@
+Fixture: 34_icc_gray_table_32x32_lossless.icc
+Reference ICC profile for 34_icc_gray_table_32x32_lossless.jxl -- the exact bytes that
+codestream's E.4 payload must decode to.
+
+Purpose
+-------
+tests/e2e_icc.rs compares JPXL's decoded ICC profile against this file byte
+for byte. Keeping it in the tree means the slice-4 gate runs in any checkout,
+with or without the djxl oracle installed.
+
+Provenance
+----------
+  Synthetic. Built byte by byte from the ICC.1 structure (128-byte header, tag
+  table, tag payloads) by the Python snippet inside tools/make-icc-fixtures.sh,
+  which also feeds it to cjxl as -x icc_pathname=... to produce 34_icc_gray_table_32x32_lossless.jxl.
+  No system profile, no third-party profile and no colour-management library
+  was read, converted or consulted, so this carries no licence beyond this
+  repository's own.
+
+  Size:       1356 bytes
+  sha256      995433fbb7851070380ed1b945cea96ba048b6bbf8d4ce7cc02e6c426225b501
+  Regenerate: tools/make-icc-fixtures.sh
+
+  Full provenance, including the profile's structure and what it exercises in
+  E.4, is in 34_icc_gray_table_32x32_lossless.jxl.txt.
+
+Verification
+------------
+tools/make-icc-fixtures.sh refuses to write the pair unless
+`djxl --orig_icc_out` extracts a byte-identical profile from 34_icc_gray_table_32x32_lossless.jxl,
+so this file is confirmed to be what the codestream stores.
