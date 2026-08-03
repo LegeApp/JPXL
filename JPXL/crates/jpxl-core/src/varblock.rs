@@ -67,6 +67,12 @@ use crate::error::{JpxlError, Result};
 /// See `docs/experiments/2026-08-03-i9-dct8x4-half-placement.md`. Slice 8F can
 /// still probe it end to end once pixels exist; flipping this constant is the
 /// whole change.
+/// **NOT DISCRIMINATED by 8F's end-to-end probe (2026-08-03).** Flipping it
+/// changes no digit of any acceptance case, because cjxl never selected
+/// DctSelect 12 or 13 for any fixture or corpus stream available (the decoder's
+/// own DctSelect histograms are tabulated in the experiment note). Settling it
+/// still needs a stream containing DCT4x8/DCT8x4 varblocks. See
+/// `docs/experiments/2026-08-03-vardct-flip-point-probe.md`.
 pub const DCT8X4_HALF_INDEX_IS_LOW_COORDINATE: bool = true;
 
 /// **Flip point — I.8's `ScaleF` second argument.**
@@ -97,6 +103,11 @@ pub const DCT8X4_HALF_INDEX_IS_LOW_COORDINATE: bool = true;
 /// and its numeric verification are in
 /// `docs/experiments/2026-08-03-i8-scalef-argument.md`; `llf_matches_the_varblocks_own_low_frequency_coefficients`
 /// in this module's tests is the executable form.
+/// **PROBED-CONFIRMED end to end (2026-08-03, slice 8F).** Flipping this to
+/// the literal reading makes nine of the ten acceptance cases fail with `NaN`
+/// RMSE and `inf` peak error — the predicted division by zero, reached by
+/// every DCT16x16 and larger varblock in the fixtures. See
+/// `docs/experiments/2026-08-03-vardct-flip-point-probe.md`.
 pub const LLF_SCALEF_ARG_IS_VARBLOCK_DIMENSION: bool = true;
 
 // ---------------------------------------------------------------------------

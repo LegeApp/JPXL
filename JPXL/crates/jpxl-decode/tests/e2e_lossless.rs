@@ -344,6 +344,82 @@ fn gradient_260x10_rgb() {
 }
 
 // ---------------------------------------------------------------------------
+// Open bug: the H.5 weighted predictor on SelfCorrecting channels
+// ---------------------------------------------------------------------------
+
+/// # Divergence report (slice-8 modular hunt)
+///
+/// * **Fixture**: `60_sawtooth_32x32_lossless.jxl`, 277 bytes, one 32x32 grey
+///   channel, no transforms. Source `v = (x*7 + y*3) mod 256`; `djxl`
+///   round-trips it byte-identically, so the stream is conformant.
+/// * **Tree**: one decision node, `property[15] > 0`, both leaves
+///   `SelfCorrecting` — so every sample is a direct readout of the H.5.2
+///   weighted prediction and property 15 is `max_error`.
+/// * **State**: samples 0..638 decode bit-exactly. The first and only
+///   directly wrong sample is `(31, 19)` — the last column of row 19;
+///   everything after it is corrupted by the desynchronised entropy stream.
+/// * **The contradiction at (31, 19)**: neighbours are `W 11, N 15, NW 8`,
+///   `NE` is substituted by `N` (last column), and all four `true_err` are
+///   `-56`. The encoder's context is 0, which needs `property[15] > 0`, but
+///   `max_error` is `-56` and no selection rule over four equal candidates
+///   can be positive. Solving for the tree threshold over the 639 clean
+///   samples yields `T < -56` and `T >= 0` at once — infeasible. The escape
+///   of clamping the prediction down to `hi = 120` (which would make context
+///   1 correct) requires firing the upper cap where the printed guard says
+///   not to, and every variant of that breaks 5 to 11 currently bit-exact
+///   fixtures.
+/// * **Not the cause** (each tested): the `err_sum` last-column term (all
+///   three readings fail identically here), a wider clamp bound set, a
+///   symmetric clamp with corrected weights, bit depth.
+/// * **Known-too-narrow**: the lower clamp gate. Adding
+///   `true_err_W < 0 && true_err_N < 0` to it is backed by 18 834 harvested
+///   binding decisions plus this fixture, regresses nothing, and reduces this
+///   fixture from 206 wrong samples to one — but it fixes no fixture end to
+///   end and so was deliberately not shipped.
+///
+/// Full forensics:
+/// `docs/experiments/2026-08-03-h52-clamp-lower-gate-and-sawtooth.md`.
+#[test]
+#[ignore = "TODO: open H.5 bug; see the divergence report above"]
+fn sawtooth_32x32() {
+    check(&Case {
+        name: "60_sawtooth_32x32_lossless.jxl",
+        width: 32,
+        height: 32,
+        channels: 1,
+        bits: 8,
+        sample: |x, y, _| ((x * 7 + y * 3) % 256) as i32,
+    });
+}
+
+/// # Divergence report (slice-8 modular hunt)
+///
+/// * **Fixture**: `61_vardct_gradient_128x128_nofilters_d1.jxl`, 644 bytes —
+///   the minimisation of VarDCT fixtures 54 and 57, which is what this bug
+///   actually blocks. It is a *lossy* stream, so this test only asserts that
+///   the decode gets far enough to fail the way 54/57 do; it is not a
+///   sample-accuracy test.
+/// * **Failure**: G.2.2 `LfQuant`'s own modular sub-bitstream fails the C.3.2
+///   terminal-state check.
+/// * **Same family as fixture 60**: `LfQuant`'s MA tree is
+///   `property[1] > 2 ? West : (property[15] > 0 ? .. : ..)` with both
+///   non-`West` leaves `SelfCorrecting`. Property 1 is the stream index,
+///   which is 1 here, so the `West` branch is never taken and every sample
+///   runs through the H.5 weighted predictor.
+/// * **Minimisation**: the checkerboard half of 54/57's source is irrelevant
+///   (a pure gradient fails, a pure checkerboard decodes); the size
+///   transition is between 112 (decodes) and 120 (fails), i.e. `LfQuant`
+///   channels of 14x14 versus 15x15, and non-square variants up to 128 in one
+///   axis all decode. The trigger is therefore the LF channel's size, not the
+///   content.
+#[test]
+#[ignore = "TODO: open H.5 bug; blocks VarDCT 54/57. See the report above"]
+fn vardct_lf_quant_gradient_128x128() {
+    let bytes = read_fixture("61_vardct_gradient_128x128_nofilters_d1.jxl");
+    decode(&bytes, &Limits::default()).expect("LfQuant must decode");
+}
+
+// ---------------------------------------------------------------------------
 // Live oracle comparison
 // ---------------------------------------------------------------------------
 
@@ -435,18 +511,47 @@ const BIT_EXACT_FIXTURES: &[&str] = &[
 // Rejection of what this slice does not implement
 // ---------------------------------------------------------------------------
 
-/// A VarDCT frame must be a typed `Unsupported`, never wrong pixels.
+/// A VarDCT frame now decodes to float planes rather than being refused.
+///
+/// This replaces slice 7's `lossy_fixtures_report_vardct_as_unsupported`,
+/// which asserted the opposite. Slice 8 implements Annex I, so the old
+/// assertion is now a statement that the decoder is broken. What is still
+/// worth pinning here — in the *lossless* file, where a modular regression
+/// would show up first — is that the two paths stay distinguishable: modular
+/// output is integer-only, VarDCT output carries the unclipped `f32`
+/// representation 18181-3 grades. The pixel accuracy of the VarDCT path is
+/// graded in `e2e_vardct.rs`, not here.
 #[test]
-fn lossy_fixtures_report_vardct_as_unsupported() {
-    for name in ["04_gradient_8x8_lossy.jxl", "06_gradient_300x200_lossy.jxl"] {
+fn lossy_fixtures_decode_to_float_planes() {
+    let name = "04_gradient_8x8_lossy.jxl";
+    let bytes = read_fixture(name);
+    let image = decode(&bytes, &Limits::default()).unwrap_or_else(|e| panic!("{name}: {e}"));
+    assert_eq!((image.width, image.height), (8, 8));
+    let planes = image
+        .float_planes
+        .as_ref()
+        .unwrap_or_else(|| panic!("{name}: a kVarDCT decode must carry float planes"));
+    assert_eq!(planes.len(), image.num_colour_channels);
+    assert_eq!(planes.len(), image.planes.len());
+
+    // Fixture 06 is 300x200, i.e. more than one 256-sample group. It is
+    // blocked by the open content-dependent modular bug, which bites inside
+    // G.2.2's LfQuant sub-bitstream and reproduces without VarDCT at all. It
+    // is deliberately not asserted here; see docs/HANDOFF.md.
+}
+
+/// A modular decode must not grow a float representation.
+///
+/// The other half of the split above: `float_planes` is the signal that a
+/// frame went through Annex I and L.2, and a lossless modular frame did not.
+#[test]
+fn modular_fixtures_have_no_float_planes() {
+    for name in BIT_EXACT_FIXTURES {
         let bytes = read_fixture(name);
-        let err = decode(&bytes, &Limits::default())
-            .err()
-            .unwrap_or_else(|| panic!("{name}: a VarDCT frame must not decode"));
-        let text = err.to_string();
+        let image = decode(&bytes, &Limits::default()).unwrap_or_else(|e| panic!("{name}: {e}"));
         assert!(
-            text.contains("Annex I") || text.contains("L.2"),
-            "{name}: {text}"
+            image.float_planes.is_none(),
+            "{name}: modular output must stay integer"
         );
     }
 }

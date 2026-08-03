@@ -72,6 +72,11 @@ use super::quantizer::{LfChannelCorrelation, LfDequantMultipliers};
 /// for the fixture evidence and its limits (still only greyscale content;
 /// the RGB counterpart fixture was not successfully probed — see
 /// `lf_quant_channel_order_probe_against_fixture_51`'s doc comment).
+/// **PROBED-CONFIRMED end to end (2026-08-03, slice 8F), including the RGB
+/// case wave 2 could not reach.** Setting this back to `true` fails all ten
+/// acceptance cases with peak errors of 0.52 to 1.47 — the two RGB fixtures
+/// and both conformance-corpus cases among them. See
+/// `docs/experiments/2026-08-03-vardct-flip-point-probe.md`.
 pub const LF_QUANT_CHANNEL_ORDER_IS_XYB: bool = false;
 
 /// The three `LfQuant` channels of G.2.2, still quantized integers.

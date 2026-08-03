@@ -79,6 +79,10 @@ pub const EPF_STEP_MULTIPLIER_BASE: f32 = 1.65;
 /// literal mapping runs exactly `epf_iters` steps for every value of the
 /// field. The prefix reading would additionally have to contradict "the
 /// second step is always done". Set this to `false` for the prefix reading.
+/// **PROBED-CONFIRMED end to end (2026-08-03, slice 8F).** Flipping it takes
+/// fixture 52 from peak 1.4e-6 to 5.8e-3 and fixture 56 from 5.4e-5 to
+/// 1.2e-2, and pushes conformance case `grayscale` past its RMSE class.
+/// See `docs/experiments/2026-08-03-vardct-flip-point-probe.md`.
 pub const EPF_STEPS_FROM_EXPLICIT_CONDITIONS: bool = true;
 
 /// Where J.4.3's `epf_border_sad_mul` predicate is evaluated.
@@ -98,6 +102,11 @@ pub const EPF_STEPS_FROM_EXPLICIT_CONDITIONS: bool = true;
 /// `true` evaluates the predicate at the reference pixel, which is the
 /// reading above. `false` evaluates it at each tap's (unmirrored) frame
 /// coordinate instead.
+/// **PROBED-CONFIRMED end to end (2026-08-03, slice 8F).** Flipping it
+/// degrades every filters-on case by roughly 1000x (52: 1.4e-6 -> 2.4e-3;
+/// 53: 2.6e-6 -> 5.2e-3; 56: 5.4e-5 -> 3.3e-3) without any case crossing its
+/// class threshold — a consistent-direction result on four streams.
+/// See `docs/experiments/2026-08-03-vardct-flip-point-probe.md`.
 pub const EPF_BORDER_SAD_AT_REFERENCE_PIXEL: bool = true;
 
 /// Granularity of J.4.3's `sigma < 0.3` skip.
@@ -113,7 +122,19 @@ pub const EPF_BORDER_SAD_AT_REFERENCE_PIXEL: bool = true;
 /// the varblock covering the block — while the weights still use the block's
 /// own sigma. `false` tests the block's own sigma. With no varblock sigma
 /// supplied (Modular, where sigma is uniform) the two coincide.
-pub const EPF_SKIP_IS_PER_VARBLOCK: bool = true;
+///
+/// **REVERSED by 8F's end-to-end probe (2026-08-03): the shipped value is now
+/// `false`.** Under `true` the filters-on fixtures 52/53/56 landed at peak
+/// 0.0030/0.0111/0.0117 against their reference decodes; under `false` the
+/// same three land at 0.0000014/0.0000026/0.000054 — a ~2000x reduction, and
+/// the same order of magnitude the *filters-off* fixtures reach. An error that
+/// collapses to the float-noise floor when a one-bit reading is flipped is
+/// that reading being wrong, not a tolerance being generous. The clause's
+/// "for a given varblock" is therefore read as loose phrasing for "for the
+/// block", consistent with the sigma definition two sentences earlier, which
+/// is stated at the 8x8 rectangle containing the reference pixel.
+/// See `docs/experiments/2026-08-03-vardct-flip-point-probe.md`.
+pub const EPF_SKIP_IS_PER_VARBLOCK: bool = false;
 
 /// Whether J.4.2's `sample()` and J.4.4's `input()` are the same buffer.
 ///
@@ -126,6 +147,11 @@ pub const EPF_SKIP_IS_PER_VARBLOCK: bool = true;
 /// The literal single-buffer reading is therefore taken: within a step, both
 /// names denote that step's input. `false` selects the two-buffer reading,
 /// where every step measures distances against the filter's original input.
+/// **PROBED-CONFIRMED end to end (2026-08-03, slice 8F).** Only fixture 53
+/// discriminates — it is the one stream whose `epf_iters` runs more than one
+/// step, and a single-step filter has one buffer under either reading — but it
+/// discriminates by a factor of 1500 (2.6e-6 -> 4.0e-3).
+/// See `docs/experiments/2026-08-03-vardct-flip-point-probe.md`.
 pub const EPF_DISTANCE_USES_STEP_INPUT: bool = true;
 
 /// J.4.2 `coords`: the five-pixel cross a distance is summed over.
@@ -599,6 +625,17 @@ mod tests {
         vec![value; bx * by]
     }
 
+    /// A deterministic plane whose samples differ by only a few thousandths,
+    /// so that J.4.3's weights stay positive under the default channel scales.
+    fn low_contrast(dims: PlaneDims, seed: u32) -> Vec<f32> {
+        (0..dims.len())
+            .map(|i| {
+                let v = u32::try_from(i).unwrap_or(0).wrapping_mul(2_654_435_761) ^ seed;
+                0.5 + f32::from(u16::try_from(v % 8).unwrap_or(0)) * 0.001
+            })
+            .collect()
+    }
+
     fn ramp(dims: PlaneDims, seed: u32) -> Vec<f32> {
         (0..dims.len())
             .map(|i| {
@@ -878,7 +915,17 @@ mod tests {
         // threshold, but the varblock covering them is below it, so under the
         // per-varblock reading nothing is filtered.
         let dims = PlaneDims::new(16, 8);
-        let planes = [ramp(dims, 21), ramp(dims, 22), ramp(dims, 23)];
+        // Low-contrast content on purpose. `ramp` swings across the whole
+        // [0, 1) range, and `epf_channel_scale`'s defaults {40, 5, 3.5} then
+        // make every L1 distance large enough to zero every off-centre weight
+        // — so the filter would be the identity whichever way the skip reading
+        // goes, and the test would prove nothing. Amplitudes of a few
+        // thousandths keep the weights positive.
+        let planes = [
+            low_contrast(dims, 21),
+            low_contrast(dims, 22),
+            low_contrast(dims, 23),
+        ];
         let block_sigma = vec![4.0f32, 4.0];
         let varblock_sigma = vec![0.1f32, 0.1];
         let field = SigmaField::new(&block_sigma, 2, 1)

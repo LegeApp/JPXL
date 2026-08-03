@@ -141,6 +141,15 @@ const COEFF_NUM_NONZERO_CONTEXT: [u32; 64] = [
 ///
 /// `true` selects the current-pass reading. Flipping it changes the decode of
 /// any frame with `num_passes > 1` and nothing else.
+/// **NOT DISCRIMINATED by 8F's end-to-end probe (2026-08-03)**, and the probe
+/// found a second thing worth recording: every stream reachable today is
+/// single-pass, where the two readings coincide, *and* the `false` arm as
+/// written (`PREV_USES_CURRENT_PASS_COEFFICIENT && ucoeff != 0`) degenerates
+/// to a constant `false` rather than expressing the accumulator reading. So
+/// flipping the constant breaks the decoder without testing the question.
+/// Settling it needs a progressive stream and a `false` arm that actually
+/// consults the accumulator. See
+/// `docs/experiments/2026-08-03-vardct-flip-point-probe.md`.
 pub const PREV_USES_CURRENT_PASS_COEFFICIENT: bool = true;
 
 // ---------------------------------------------------------------------------

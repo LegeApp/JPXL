@@ -14,3 +14,4 @@ pub mod hf_meta;
 pub mod lf;
 pub mod order;
 pub mod quantizer;
+pub mod render;
