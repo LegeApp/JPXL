@@ -1,0 +1,66 @@
+Fixture: 60_sawtooth_32x32_lossless.jxl
+32x32 grey wrapping sawtooth, mathematically lossless, effort 3 --
+OPEN BUG REPRODUCER (JPXL does not decode this correctly yet)
+
+Purpose
+-------
+The "sawtooth trap" recorded in the HANDOFF ledger, promoted from a loose
+description to a checked-in fixture so it stops being re-derived by hand.
+
+  v(x, y) = (x * 7 + y * 3) mod 256
+
+The modulo is the whole point. Where the ramp wraps, a neighbouring sample
+drops by 249, so the H.5 weighted predictor sees neighbouring `true_err`
+values of ~2000 sitting next to values of ~-56. That is the regime in which
+the H.5.2 clamp's gating is exercised hardest, and it is where JPXL diverges.
+
+Status at the time of writing: the stream decodes to within ONE wrong sample,
+at (31, 19) -- the last column of row 19. Every sample before it matches the
+source exactly; everything after is corrupted by the desynchronised entropy
+stream. Full forensics, including the arithmetic showing that no reading of
+H.5.2's clamp explains that sample, are in
+docs/experiments/2026-08-03-h52-clamp-lower-gate-and-sawtooth.md.
+
+-e 3 (not -e 7) is deliberate: it is what the original bug report used, and
+it selects an MA tree whose leaves are both `SelfCorrecting`, so every sample
+is a direct readout of the weighted prediction with nothing else able to
+absorb an error.
+
+Provenance
+----------
+  Encoder:      cjxl v0.13.0 196a43d9 [_AVX2_,SSE4,SSE2] {GNU 15.2.0}
+  libjxl rev:   196a43d996aa6ed33ebf98812a7c6d43b2b6d01b (v0.12-snapshot-2-g196a43d9)
+  cjxl flags:   -d 0 -e 3
+  Built by:     tools/setup-oracles.sh (flags recorded in
+                tools/oracle-bin/PINNED_REVISIONS.txt)
+  Regenerate:   tools/make-debug-fixtures.sh
+                That script IS the recipe; it rewrites the source and
+                re-encodes.
+
+  Source image: tests/fixtures/generated/src_sawtooth_32x32.pgm  (1037 bytes)
+                sha256 45655fa0361875b9b455d6891601227ace5030c9a43c0fb456a914a375d9653f
+                Synthetic, written by the Python snippet inside
+                tools/make-debug-fixtures.sh -- no third-party image was used,
+                converted, or consulted. 32x32 8-bit grey (PGM P5),
+                  v(x, y) = (x * 7 + y * 3) mod 256
+
+  Fixture:      277 bytes
+                sha256 6691081521c9cd12cbbdc765195d4cf8fcbb6aaa5a0dbca29df60dd247ab14f6
+
+Verification
+------------
+djxl decodes it to a PGM byte-identical to the source (checked on every run of
+tools/make-debug-fixtures.sh), so the stream is conformant and the divergence
+is JPXL's.
+
+Modular features engaged
+-------------------------
+One 32x32 channel, no transforms, an MA tree of one decision node on property
+15 (`max_error > 0`) with two `SelfCorrecting` leaves -- confirmed by JPXL's
+own header and tree parse, both of which are believed correct (the first 639
+samples decode bit-exactly).
+
+cjxl is used strictly as a BLACK BOX: it emits conformant streams for JPXL to
+parse. libjxl's source is never read. If a rebuild at a different libjxl
+revision changes these digests, that is the point of recording them -- do not
+silently update them; note the revision change.

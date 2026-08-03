@@ -72,6 +72,18 @@ def write_ppm(name, w, h, pixel):
 COLOURS = [((i * 36) % 256, (i * 77) % 256, (i * 151) % 256) for i in range(6)]
 write_ppm("src_bands_24x24.ppm", 24, 24, lambda x, y: COLOURS[(x // 4) % 6])
 
+# 60: the sawtooth trap of the HANDOFF ledger, as a fixture. 32x32 grey,
+#     v = (x*7 + y*3) mod 256. The wrap makes neighbouring true_err values
+#     jump by ~2000 next to values of ~-56, which is what exercises the H.5.2
+#     clamp gating. Encoded -e 3 (not -e 7) because that is what the original
+#     report used and what selects the SelfCorrecting-only MA tree.
+#
+# 61: the smallest VarDCT stream whose G.2.2 LfQuant modular sub-bitstream
+#     trips the C.3.2 terminal check. Found by bisecting fixtures 54/57's
+#     128x128 mixed source: the checkerboard half is irrelevant (a plain
+#     gradient fails too) and the transition is between 112 (decodes) and
+#     120 (fails), i.e. LfQuant channels of 14x14 vs 15x15.
+
 # 21: the 300x200 gradient of fixture 05, shrunk to 260x10 -- the smallest
 #     size at which cjxl still emits the same Palette+RCT transform chain and
 #     the same divergence. 260 > 256 keeps the diagonal sawtooth's wrap inside
@@ -82,6 +94,25 @@ write_ppm(
     10,
     lambda x, y: ((x * 255) // 259, (y * 255) // 9, (x + y) % 256),
 )
+
+
+def write_pgm(name, w, h, pixel):
+    data = bytearray(pixel(x, y) for y in range(h) for x in range(w))
+    with open(os.path.join(out, name), "wb") as f:
+        f.write(b"P5\n%d %d\n255\n" % (w, h) + bytes(data))
+
+
+# 60: wrapping sawtooth, 32x32 grey.
+write_pgm("src_sawtooth_32x32.pgm", 32, 32, lambda x, y: (x * 7 + y * 3) % 256)
+
+# 61: plain RGB gradient at 128x128 -- the size at which the LfQuant failure
+#     appears. Same formula family as fixtures 05/09/11/21.
+write_ppm(
+    "src_gradient_128x128.ppm",
+    128,
+    128,
+    lambda x, y: ((x * 255) // 127, (y * 255) // 127, (x + y) % 256),
+)
 PY
 
 encode() {
@@ -89,20 +120,47 @@ encode() {
   shift 2
   log "encoding ${dst}"
   "${cjxl}" -d 0 "$@" "${generated}/${src}" "${handmade}/${dst}" >/dev/null
-  local check="${generated}/${dst}.roundtrip.ppm"
+  # djxl picks its output format from the extension, so the check file must
+  # have the same one as the source (a grey P5 source would otherwise come
+  # back as a 3-channel PPM and never compare equal).
+  local check="${generated}/${dst}.roundtrip.${src##*.}"
   "${djxl}" "${handmade}/${dst}" "${check}" >/dev/null
   cmp -s "${generated}/${src}" "${check}" \
     || die "${dst} does not round-trip to a byte-identical ${src}"
 }
 
+# A lossy fixture cannot round-trip byte-identically, so the check is only
+# that djxl accepts the stream and produces the signalled dimensions.
+encode_lossy() {
+  local src="$1" dst="$2"
+  shift 2
+  log "encoding ${dst} (lossy)"
+  "${cjxl}" "$@" "${generated}/${src}" "${handmade}/${dst}" >/dev/null
+  local check="${generated}/${dst}.roundtrip.${src##*.}"
+  "${djxl}" "${handmade}/${dst}" "${check}" >/dev/null \
+    || die "${dst}: djxl refused to decode it"
+  head -c 32 "${check}" | head -2 | tail -1 | grep -qE '^128 128$' \
+    || die "${dst}: djxl output is not 128x128"
+}
+
 encode src_bands_24x24.ppm     20_modular_palette_bands_24x24_lossless.jxl -e 7
 encode src_gradient_260x10.ppm 21_gradient_260x10_lossless.jxl             -e 7
 
+# Fixtures 60/61 are *reproducers for an open bug*: JPXL does not decode them
+# yet, so the djxl round-trip check inside encode() is the only verification
+# they get, and tests/e2e_lossless.rs carries them as #[ignore]d forensics.
+encode src_sawtooth_32x32.pgm  60_sawtooth_32x32_lossless.jxl              -e 3
+encode_lossy src_gradient_128x128.ppm \
+    61_vardct_gradient_128x128_nofilters_d1.jxl -d 1.0 --gaborish=0 --epf=0 -e 7
+
 log "digests (paste into the .txt sidecars)"
-( cd "${generated}" && sha256sum src_bands_24x24.ppm src_gradient_260x10.ppm )
+( cd "${generated}" && sha256sum src_bands_24x24.ppm src_gradient_260x10.ppm \
+    src_sawtooth_32x32.pgm src_gradient_128x128.ppm )
 ( cd "${handmade}" && sha256sum \
     20_modular_palette_bands_24x24_lossless.jxl \
-    21_gradient_260x10_lossless.jxl )
+    21_gradient_260x10_lossless.jxl \
+    60_sawtooth_32x32_lossless.jxl \
+    61_vardct_gradient_128x128_nofilters_d1.jxl )
 ( cd "${generated}" && wc -c src_bands_24x24.ppm src_gradient_260x10.ppm )
 ( cd "${handmade}" && wc -c \
     20_modular_palette_bands_24x24_lossless.jxl \

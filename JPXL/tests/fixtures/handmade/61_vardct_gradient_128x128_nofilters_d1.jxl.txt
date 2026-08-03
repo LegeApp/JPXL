@@ -1,0 +1,67 @@
+Fixture: 61_vardct_gradient_128x128_nofilters_d1.jxl
+128x128 RGB gradient, VarDCT d1.0, filters off --
+OPEN BUG REPRODUCER: the minimal stream that trips G.2.2 LfQuant's C.3.2 check
+
+Purpose
+-------
+The 644-byte minimisation of fixtures 54 and 57, whose G.2.2 `LfQuant`
+modular sub-bitstream fails its own C.3.2 terminal-state check and so blocks
+VarDCT acceptance. Two things were shrunk away:
+
+  * **Content.** 54/57's source is half smooth gradient, half 1-pixel
+    magenta/cyan checkerboard. The checkerboard is irrelevant: a pure
+    128x128 gradient fails identically, and a pure 128x128 checkerboard
+    decodes fine. So the trigger is smooth content, not high frequency.
+  * **Size.** Encoding the same gradient at 16, 32, 48, 64, 72, 80, 88, 96,
+    104 and 112 all decode; 120, 128 and 136 all fail. The transition sits
+    between 112 and 120, i.e. between LfQuant channels of 14x14 and 15x15.
+    Non-square variants (128x64, 64x128, 128x16, 16x128) all decode, so
+    BOTH dimensions have to be past the threshold.
+
+That transition is the most useful fact in this fixture: it says the trigger
+is a property of the LF channel's size, not of the image content, and it
+gives a 644-byte stream (vs 2316 for fixture 54) to trace by hand.
+
+The failing sub-bitstream's MA tree is
+`property[1] > 2 ? West : (property[15] > 0 ? ... : ...)` with both
+non-`West` leaves `SelfCorrecting` -- property 1 is the stream index and
+property 15 is `max_error`, so this is the same H.5 weighted-predictor
+surface as the sawtooth fixture 60. See
+docs/experiments/2026-08-03-h52-clamp-lower-gate-and-sawtooth.md.
+
+Provenance
+----------
+  Encoder:      cjxl v0.13.0 196a43d9 [_AVX2_,SSE4,SSE2] {GNU 15.2.0}
+  libjxl rev:   196a43d996aa6ed33ebf98812a7c6d43b2b6d01b (v0.12-snapshot-2-g196a43d9)
+  cjxl flags:   -d 1.0 --gaborish=0 --epf=0 -e 7
+                (the same settings as fixture 54, so the two are comparable;
+                filters off keeps the stream in Part 3's tighter error class
+                and keeps J.3/J.4 out of the picture entirely)
+  Built by:     tools/setup-oracles.sh (flags recorded in
+                tools/oracle-bin/PINNED_REVISIONS.txt)
+  Regenerate:   tools/make-debug-fixtures.sh
+
+  Source image: tests/fixtures/generated/src_gradient_128x128.ppm  (49167 bytes)
+                sha256 2e4f719a3760975255f2f344488740e8f154851c0f7e81df33e76993d6f6e1f9
+                Synthetic, written by the Python snippet inside
+                tools/make-debug-fixtures.sh -- no third-party image was used,
+                converted, or consulted. 128x128 8-bit RGB (PPM P6), the same
+                gradient family as fixtures 05/09/11/21:
+                  R = x * 255 / 127     ramp along x
+                  G = y * 255 / 127     ramp along y
+                  B = (x + y) mod 256   diagonal sawtooth
+
+  Fixture:      644 bytes
+                sha256 ce1c3502f9d4e4c3ce69aefa7e90d72cb861336d439aa7e5799ceeba6aefdd18
+
+Verification
+------------
+This fixture is LOSSY, so there is no byte-identical round-trip to check.
+tools/make-debug-fixtures.sh verifies only that djxl accepts the stream and
+reports 128x128 -- enough to establish that the stream is conformant and the
+failure is JPXL's.
+
+cjxl is used strictly as a BLACK BOX: it emits conformant streams for JPXL to
+parse. libjxl's source is never read. If a rebuild at a different libjxl
+revision changes these digests, that is the point of recording them -- do not
+silently update them; note the revision change.
