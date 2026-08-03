@@ -141,17 +141,30 @@ const COEFF_NUM_NONZERO_CONTEXT: [u32; 64] = [
 ///
 /// `true` selects the current-pass reading. Flipping it changes the decode of
 /// any frame with `num_passes > 1` and nothing else.
-/// **NOT DISCRIMINATED by 8F's end-to-end probe (2026-08-03)**: every stream
-/// reachable today is single-pass, where the two readings coincide.
 ///
-/// The probe also found the `false` arm to be degenerate — it was written
+/// **SETTLED `true` (2026-08-04, wave 5), PROBED-CONFIRMED.** Five independent
+/// multi-pass streams now exist — four handmade (`--progressive_ac`,
+/// `--qprogressive_ac`, `-p`, and `--progressive_dc=1 --qprogressive_ac`) and
+/// the conformance case `progressive`, which is 2 passes with `shift = [1]`.
+/// Under `true` all five decode with every pass-group section consumed to its
+/// exact TOC length and every ANS stream landing on C.3.2's terminal state,
+/// and `progressive` grades at peak 2.0e-5 against its published reference
+/// (its class is 0.02). Under `false` all five fail *inside* I.4 — the
+/// promised `non_zeros` are never delivered, because a wrong `prev` selects
+/// the neighbouring histogram and every later symbol in the block decodes to
+/// the wrong value. The single-pass streams in the same probe are byte
+/// identical under both arms, which is the control. See
+/// `docs/experiments/2026-08-04-lf-frame-and-multipass.md`.
+///
+/// History: 8F's probe (2026-08-03) could not discriminate the readings
+/// because every stream then reachable was single-pass, and it found the
+/// `false` arm degenerate — it was written
 /// `PREV_USES_CURRENT_PASS_COEFFICIENT && ucoeff != 0`, a constant `false`
-/// rather than the accumulator reading, so flipping the constant broke the
-/// decoder without testing the question. **Fixed 2026-08-03**: the decision now
-/// goes through [`next_prev`], whose `false` arm consults the accumulated
-/// multi-pass coefficient at the same order position, and
-/// [`decode_hf_group_with_prev_reading`] lets a test drive either arm over one
-/// bitstream. Settling the question still needs a progressive stream. See
+/// rather than the accumulator reading. That was repaired the same day: the
+/// decision goes through [`next_prev`], whose `false` arm consults the
+/// accumulated multi-pass coefficient at the same order position, and
+/// [`decode_hf_group_with_prev_reading`] drives either arm over one bitstream.
+/// The repair is what made this probe meaningful. See
 /// `docs/experiments/2026-08-03-vardct-flip-point-probe.md`.
 pub const PREV_USES_CURRENT_PASS_COEFFICIENT: bool = true;
 

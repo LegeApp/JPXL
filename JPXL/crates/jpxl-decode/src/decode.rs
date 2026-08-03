@@ -279,6 +279,83 @@ impl ReferenceFrame {
 /// The four `save_as_reference` slots of F.2.
 type ReferenceSlots = [Option<ReferenceFrame>; NUM_REFERENCE_SLOTS];
 
+/// Number of `LFFrame[]` slots F.2 can address.
+///
+/// `lf_level` is `1 + u(2)`, so a `kLFFrame` writes `LFFrame[lf_level - 1]`
+/// with the index in `0..4`, and G.2.2 reads `LFFrame[lf_level]` with
+/// `lf_level` the *consuming* frame's own field — 0 for a regular frame.
+pub const NUM_LF_FRAME_SLOTS: usize = 4;
+
+/// **Flip point — what an `LFFrame[]` slot holds (F.2 + G.2.2 + L.2.2).**
+///
+/// F.2 records "the samples of the frame before any colour transform is
+/// applied" as `LFFrame[lf_level - 1]`, and G.2.2 says those samples are used
+/// *instead of* what G.2.2 and I.5.2 would have produced — i.e. instead of
+/// **dequantized** LF. The two sentences pull in different directions for a
+/// `kModular` LF frame, whose decoded samples are integers:
+///
+/// * `true` (shipped): L.2.2's `kModular` pre-step (`X = x' *
+///   m_x_lf_unscaled`, `Y = y' * m_y_lf_unscaled`, `B = (B' + Y') *
+///   m_b_lf_unscaled`) is applied before storing, so the slot holds float XYB
+///   in exactly the space I.5.2 outputs. This is the only reading that can
+///   satisfy G.2.2 at all: a `kModular` frame's `LfGlobal` carries
+///   `LfChannelDequantization` but **not** the `Quantizer` bundle, so
+///   `mXDC = (1 << 16) * m_x_lf_unscaled / (global_scale * quant_lf)` is not
+///   computable for it, and the raw integers are in no shared scale.
+/// * `false`: the slot holds the raw modular integers and something later
+///   scales them. Nothing in G.2.2 says what.
+///
+/// Same reading, and the same clause, as [`reference_from_modular`] applies
+/// for `save_before_ct` reference frames. Probed end to end: see
+/// `docs/experiments/2026-08-04-lf-frame-and-multipass.md`.
+pub const LF_FRAME_IS_XYB_PRESTEP: bool = true;
+
+/// **Flip point — G.4.2's "the channel dimensions exceed group_dim".**
+///
+/// G.1.3 stops the `GlobalModular` decode at the first channel that is not
+/// "at most `group_dim`" in both dimensions; G.4.2 then admits a channel to
+/// group decoding only if "the channel dimensions exceed `group_dim` x
+/// `group_dim`". Taken together with unshifted dimensions those two tests
+/// leave a hole: a Squeeze pyramid's channel list is **not** monotone in size,
+/// so a small channel sitting *after* a large one is decoded by neither rule
+/// and stays zero. `progressive`'s LF frame is exactly that shape — its
+/// channels 37/38 are 127x169 with `(hshift, vshift) = (2, 1)`, sitting after
+/// a 254x338 channel.
+///
+/// * `true` (shipped): the comparison is against the channel's *own* grid,
+///   `group_dim >> hshift` by `group_dim >> vshift` — the same right shift
+///   G.2.3 and G.4.2 apply to the group rectangle two sentences later. Every
+///   channel after G.1.3's stop then exceeds its shifted group, so the hole
+///   closes and "remaining channel" means what the NOTE at G.1.3 says it
+///   means.
+/// * `false`: the literal unshifted comparison.
+///
+/// The two readings agree on every channel whose shifts are zero, which is
+/// every non-Squeeze stream — all of slices 5-9's modular fixtures. They
+/// disagree only on a squeezed channel list, and there `false` desynchronises
+/// the very first pass-group section. Settled by the section-exhaustion gate:
+/// see `docs/experiments/2026-08-04-lf-frame-and-multipass.md`.
+pub const G42_SIZE_TEST_IS_SHIFTED: bool = true;
+
+/// A stored `kLFFrame` (F.2), in the space G.2.2 substitutes for I.5.2's
+/// output.
+///
+/// One sample per 8x8 block of the consuming frame: a `kLFFrame` with
+/// `lf_level = 1` has frame dimensions `ceil(width / 8) x ceil(height / 8)`
+/// (F.1), which is exactly the LF grid.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LfFrame {
+    /// Width in LF samples.
+    pub width: u32,
+    /// Height in LF samples.
+    pub height: u32,
+    /// The three planes in Table I.1's `X, Y, B` numbering, raster order.
+    pub planes: [Vec<f32>; 3],
+}
+
+/// The `LFFrame[]` slots of F.2.
+type LfFrameSlots = [Option<LfFrame>; NUM_LF_FRAME_SLOTS];
+
 /// Decodes a JPEG XL file or naked codestream.
 ///
 /// Accepts either a naked codestream (starting `FF 0A`) or a Part 2 container,
@@ -323,6 +400,7 @@ pub fn decode(data: &[u8], limits: &Limits) -> Result<DecodedImage> {
 
     let mut decoded: Option<DecodedImage> = None;
     let mut references: ReferenceSlots = [None, None, None, None];
+    let mut lf_frames: LfFrameSlots = [None, None, None, None];
     let mut frames = 0u32;
     loop {
         frames += 1;
@@ -376,9 +454,32 @@ pub fn decode(data: &[u8], limits: &Limits) -> Result<DecodedImage> {
                 &header,
                 &headers,
                 &references,
+                &lf_frames,
                 limits,
                 &mut guard,
             )?);
+        } else if header.frame_type == FrameType::LfFrame {
+            // F.2: "if lf_level != 0, the samples of the frame (before any
+            // colour transform is applied) are recorded as
+            // LFFrame[lf_level - 1]". The frame itself is never displayed.
+            let frame = decode_lf_frame(
+                codestream,
+                section_base,
+                &toc,
+                &geometry,
+                &header,
+                &headers,
+                limits,
+                &mut guard,
+            )?;
+            let slot = usize::try_from(header.lf_level)
+                .ok()
+                .and_then(|level| level.checked_sub(1))
+                .unwrap_or(usize::MAX);
+            *lf_frames
+                .get_mut(slot)
+                .ok_or_else(|| unsupported("an LF frame level past four", "18181-1 F.2"))? =
+                Some(frame);
         } else if header.frame_type == FrameType::ReferenceOnly {
             // F.2: a kReferenceOnly frame is not part of the displayed
             // sequence; it exists to be read back by K.3 patches or by a later
@@ -399,10 +500,7 @@ pub fn decode(data: &[u8], limits: &Limits) -> Result<DecodedImage> {
                 .ok_or_else(|| unsupported("a reference slot past three", "18181-1 F.2"))? =
                 Some(frame);
         } else {
-            return Err(unsupported(
-                "kLFFrame and kSkipProgressive frames",
-                "18181-1 F.2",
-            ));
+            return Err(unsupported("kSkipProgressive frames", "18181-1 F.2"));
         }
 
         let total = usize::try_from(toc.total_size())
@@ -529,9 +627,6 @@ fn check_supported_common(header: &FrameHeader, purpose: FramePurpose) -> Result
     if header.flags.noise() {
         return Err(unsupported("noise synthesis", "18181-1 K.5"));
     }
-    if header.flags.use_lf_frame() {
-        return Err(unsupported("kUseLfFrame", "18181-1 G.2.2"));
-    }
     Ok(())
 }
 
@@ -542,6 +637,15 @@ fn check_supported_modular(
     purpose: FramePurpose,
 ) -> Result<()> {
     check_supported_common(header, purpose)?;
+    if header.flags.use_lf_frame() {
+        // G.2.2's substitution is defined against the `LF coefficients` row of
+        // Table G.3, which only exists for `encoding == kVarDCT`. A kModular
+        // frame has no LF coefficients to replace.
+        return Err(unsupported(
+            "kUseLfFrame in a kModular frame",
+            "18181-1 G.2.2",
+        ));
+    }
     if header.flags.patches() {
         // K.3.1's dictionary is the first bundle of LfGlobal for every
         // encoding, and the modular path does not read it — so this is a
@@ -606,12 +710,13 @@ fn decode_frame(
     header: &FrameHeader,
     headers: &ImageHeaders,
     references: &ReferenceSlots,
+    lf_frames: &LfFrameSlots,
     limits: &Limits,
     guard: &mut AllocGuard,
 ) -> Result<DecodedImage> {
     if header.encoding == Encoding::VarDct {
         return decode_vardct_frame(
-            codestream, base, toc, geometry, header, headers, references, guard,
+            codestream, base, toc, geometry, header, headers, references, lf_frames, guard,
         );
     }
     decode_modular_frame(
@@ -643,6 +748,135 @@ enum FramePurpose {
     Displayed,
     /// A `kReferenceOnly` frame headed for a `save_as_reference` slot.
     Reference,
+    /// A `kLFFrame` headed for an `LFFrame[]` slot. Like a reference frame it
+    /// is stored before the inverse colour transform (F.2 fixes
+    /// `save_before_ct` for it), so the same relaxations apply.
+    LfFrame,
+}
+
+/// Decodes a `kLFFrame` into an [`LfFrame`] slot (18181-1 F.2, G.2.2).
+///
+/// A `kLFFrame` is a `kModular` frame whose dimensions F.1 has already divided
+/// by `1 << (3 * lf_level)`, so at `lf_level = 1` it is exactly the consuming
+/// frame's 8x8-block grid. Its samples stand in for what G.2.2 and I.5.2 would
+/// have produced, which is why they go through L.2.2's `kModular` pre-step
+/// here — see [`LF_FRAME_IS_XYB_PRESTEP`].
+///
+/// # Errors
+///
+/// As [`decode_modular_frame`], plus [`DecodeError::Unsupported`] for a
+/// `kVarDCT` LF frame (no available encoder emits one) and for a non-XYB or
+/// greyscale one, which L.2.2's pre-step is not defined for.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the same frame-layer inputs decode_frame takes"
+)]
+fn decode_lf_frame(
+    codestream: &[u8],
+    base: usize,
+    toc: &Toc,
+    geometry: &FrameGeometry,
+    header: &FrameHeader,
+    headers: &ImageHeaders,
+    limits: &Limits,
+    guard: &mut AllocGuard,
+) -> Result<LfFrame> {
+    if header.encoding == Encoding::VarDct {
+        return Err(unsupported("a kVarDCT LF frame", "18181-1 F.2"));
+    }
+    let (image, lf_dequant) = decode_modular_frame(
+        codestream,
+        base,
+        toc,
+        geometry,
+        header,
+        headers,
+        FramePurpose::LfFrame,
+        limits,
+        guard,
+    )?;
+    let planes = if LF_FRAME_IS_XYB_PRESTEP {
+        xyb_from_modular(&image, &lf_dequant, &headers.metadata)?
+    } else {
+        raw_planes_as_float(&image)?
+    };
+    Ok(LfFrame {
+        width: image.width,
+        height: image.height,
+        planes,
+    })
+}
+
+/// The decoded modular planes as `f32`, with no L.2.2 pre-step — the `false`
+/// arm of [`LF_FRAME_IS_XYB_PRESTEP`].
+fn raw_planes_as_float(image: &DecodedImage) -> Result<[Vec<f32>; 3]> {
+    if image.num_colour_channels != 3 {
+        return Err(unsupported(
+            "a greyscale LF frame in an XYB image",
+            "18181-1 L.2.2",
+        ));
+    }
+    let plane = |i: usize| -> Vec<f32> {
+        image
+            .planes
+            .get(i)
+            .map(|p| p.samples.iter().map(|&v| v as f32).collect())
+            .unwrap_or_default()
+    };
+    Ok([plane(1), plane(0), plane(2)])
+}
+
+/// L.2.2's `kModular` pre-step over a whole decoded modular frame.
+///
+/// The clause names the first three channels **y', x', B'** — channel 0 is
+/// luma, not X — the same Y, X, B ordering `LfQuant` uses (G.2.2). Reading
+/// them as X, Y, B swaps the two chroma-carrying planes. The result is in
+/// Table I.1's `X, Y, B` numbering.
+fn xyb_from_modular(
+    image: &DecodedImage,
+    lf_dequant: &crate::vardct::quantizer::LfChannelDequantization,
+    metadata: &ImageMetadata,
+) -> Result<[Vec<f32>; 3]> {
+    if !metadata.xyb_encoded {
+        // A non-XYB image needs no pre-step: the samples are already in the
+        // space the consumer names. Nothing available exercises it, and
+        // guessing the scale is worse than refusing.
+        return Err(unsupported(
+            "a stored frame in a non-XYB image",
+            "18181-1 L.2.2",
+        ));
+    }
+    if image.num_colour_channels != 3 {
+        return Err(unsupported(
+            "a greyscale stored frame in an XYB image",
+            "18181-1 L.2.2",
+        ));
+    }
+    let [m_x, m_y, m_b] = lf_dequant.unscaled();
+    let cells = image.width as usize * image.height as usize;
+    let mut planes = [
+        vec![0.0f32; cells],
+        vec![0.0f32; cells],
+        vec![0.0f32; cells],
+    ];
+    for y in 0..image.height {
+        for x in 0..image.width {
+            let idx = y as usize * image.width as usize + x as usize;
+            let y_prime = image.planes.first().map_or(0, |p| p.get(x, y)) as f32;
+            let x_prime = image.planes.get(1).map_or(0, |p| p.get(x, y)) as f32;
+            let b_prime = image.planes.get(2).map_or(0, |p| p.get(x, y)) as f32;
+            if let Some(slot) = planes.first_mut().and_then(|p| p.get_mut(idx)) {
+                *slot = x_prime * m_x;
+            }
+            if let Some(slot) = planes.get_mut(1).and_then(|p| p.get_mut(idx)) {
+                *slot = y_prime * m_y;
+            }
+            if let Some(slot) = planes.get_mut(2).and_then(|p| p.get_mut(idx)) {
+                *slot = (b_prime + y_prime) * m_b;
+            }
+        }
+    }
+    Ok(planes)
 }
 
 /// Decodes a `kReferenceOnly` frame into a [`ReferenceFrame`] (18181-1 F.2).
@@ -709,50 +943,8 @@ fn reference_from_modular(
     metadata: &ImageMetadata,
     header: &FrameHeader,
 ) -> Result<ReferenceFrame> {
-    if !metadata.xyb_encoded {
-        // A non-XYB image needs no pre-step: the samples are already in the
-        // space K.3.2 names. Nothing available exercises it, and guessing the
-        // scale a patch would then be in is worse than refusing.
-        return Err(unsupported(
-            "a reference frame in a non-XYB image",
-            "18181-1 L.2.2",
-        ));
-    }
-    if image.num_colour_channels != 3 {
-        return Err(unsupported(
-            "a greyscale reference frame in an XYB image",
-            "18181-1 L.2.2",
-        ));
-    }
-    let [m_x, m_y, m_b] = lf_dequant.unscaled();
+    let planes = xyb_from_modular(image, lf_dequant, metadata)?;
     let (width, height) = (image.width, image.height);
-    let cells = width as usize * height as usize;
-
-    let mut planes = [
-        vec![0.0f32; cells],
-        vec![0.0f32; cells],
-        vec![0.0f32; cells],
-    ];
-    for y in 0..height {
-        for x in 0..width {
-            let idx = y as usize * width as usize + x as usize;
-            // L.2.2's own channel naming: the first three channels are
-            // y', x', B'.
-            let y_prime = image.planes.first().map_or(0, |p| p.get(x, y)) as f32;
-            let x_prime = image.planes.get(1).map_or(0, |p| p.get(x, y)) as f32;
-            let b_prime = image.planes.get(2).map_or(0, |p| p.get(x, y)) as f32;
-            if let Some(slot) = planes.first_mut().and_then(|p| p.get_mut(idx)) {
-                *slot = x_prime * m_x;
-            }
-            if let Some(slot) = planes.get_mut(1).and_then(|p| p.get_mut(idx)) {
-                *slot = y_prime * m_y;
-            }
-            if let Some(slot) = planes.get_mut(2).and_then(|p| p.get_mut(idx)) {
-                *slot = (b_prime + y_prime) * m_b;
-            }
-        }
-    }
-
     Ok(ReferenceFrame {
         origin_x: if header.have_crop { header.x0 } else { 0 },
         origin_y: if header.have_crop { header.y0 } else { 0 },
@@ -892,7 +1084,13 @@ fn decode_modular_frame(
                 let Some(c) = partial.channels().get(i) else {
                     return false;
                 };
-                if c.width() <= group_dim && c.height() <= group_dim {
+                if !G42_SIZE_TEST_IS_SHIFTED && c.width() <= group_dim && c.height() <= group_dim {
+                    return false;
+                }
+                if G42_SIZE_TEST_IS_SHIFTED
+                    && c.width() <= (group_dim >> c.hshift().clamp(0, 31))
+                    && c.height() <= (group_dim >> c.vshift().clamp(0, 31))
+                {
                     return false;
                 }
                 if c.hshift() >= 3 && c.vshift() >= 3 {
@@ -1098,7 +1296,11 @@ struct LfGroupState {
     /// reads the dequantized samples — two different numbers at the same
     /// coordinate, and conflating them is exactly the kind of mistake the
     /// typed split exists to prevent.
-    quant: crate::vardct::lf::LfQuantPlanes,
+    ///
+    /// `None` under `kUseLfFrame`, where G.2.2 is skipped outright: the clause
+    /// then declares every `LfQuant` sample to be `-inf`, so `lf_idx` is
+    /// always zero and `qdc` has no other reader.
+    quant: Option<crate::vardct::lf::LfQuantPlanes>,
     /// I.5.2's output: dequantized, CfL-corrected, smoothed LF planes.
     lf: crate::vardct::lf::DequantizedLf,
     /// G.2.4's `Sharpness` plane, one sample per 8x8 block.
@@ -1147,6 +1349,7 @@ fn decode_vardct_frame(
     header: &FrameHeader,
     headers: &ImageHeaders,
     references: &ReferenceSlots,
+    lf_frames: &LfFrameSlots,
     guard: &mut AllocGuard,
 ) -> Result<DecodedImage> {
     use crate::vardct::cfl::CflFactors;
@@ -1213,6 +1416,18 @@ fn decode_vardct_frame(
     let multipliers = vardct.quantizer.lf_multipliers(&lf_dequant);
     let smoothing = header.flags.adaptive_lf_smoothing();
 
+    // G.2.2: with kUseLfFrame the whole `LF coefficients` row is skipped —
+    // no `extra_precision`, no `LfQuant` sub-bitstream — and so is I.5.2,
+    // which carries chroma-from-luma for LF (I.6 says so in its own words) and
+    // the adaptive smoothing pass with it. The samples come from
+    // `LFFrame[frame_header.lf_level]` instead.
+    let use_lf_frame = header.flags.use_lf_frame();
+    let lf_frame = if use_lf_frame {
+        Some(lf_frame_slot(lf_frames, header.lf_level, geometry)?)
+    } else {
+        None
+    };
+
     // ---- LfGroup sections (G.2) -----------------------------------------
     let num_lf_groups = geometry.num_lf_groups();
     let mut lf_groups: Vec<LfGroupState> = Vec::with_capacity(
@@ -1241,15 +1456,19 @@ fn decode_vardct_frame(
             stream_index: stream_index_of::lf_coefficients(geometry, lf_index)?,
             ..modular_options
         };
-        let quant = read_lf_quant(
-            reader,
-            rect.width,
-            rect.height,
-            header.jpeg_upsampling,
-            &options,
-            tree_source(global_tree.as_ref(), true),
-            guard,
-        )?;
+        let quant = if use_lf_frame {
+            None
+        } else {
+            Some(read_lf_quant(
+                reader,
+                rect.width,
+                rect.height,
+                header.jpeg_upsampling,
+                &options,
+                tree_source(global_tree.as_ref(), true),
+                guard,
+            )?)
+        };
 
         // G.2.3 ModularLfGroup: no channels, so H.1 reads nothing. (Extra
         // channels are rejected above; a squeezed colour channel cannot exist
@@ -1271,8 +1490,22 @@ fn decode_vardct_frame(
             rect.height.div_ceil(8),
         )?;
 
-        // I.5.2 + I.6 (LF half).
-        let lf = dequantize_lf(&quant, &multipliers, &vardct.lf_chan_corr, false, smoothing)?;
+        // I.5.2's dequantization and I.6's LF chroma-from-luma, or G.2.2's
+        // substitution. I.5.2's *smoothing* pass is deliberately not run here:
+        // it is scoped to the frame-wide LF image, not to one LF group, and
+        // runs below once every group is in. See `smooth_lf_image`.
+        let lf = match (&quant, lf_frame) {
+            (Some(quant), _) => {
+                dequantize_lf(quant, &multipliers, &vardct.lf_chan_corr, false, false)?
+            }
+            (None, Some(frame)) => lf_from_frame(frame, rect),
+            (None, None) => {
+                return Err(unsupported(
+                    "an LF group with no LF source",
+                    "18181-1 G.2.2",
+                ));
+            }
+        };
 
         lf_groups.push(LfGroupState {
             quant,
@@ -1281,6 +1514,15 @@ fn decode_vardct_frame(
             cfl: CflFactors::for_hf(&vardct.lf_chan_corr, meta.x_from_y, meta.b_from_y),
             placements,
         });
+    }
+
+    // ---- I.5.2's adaptive smoothing, over the frame-wide LF image --------
+    //
+    // Skipped under kUseLfFrame (I.5.2 is skipped in its entirety for such a
+    // frame, and the smoothing paragraph is inside it) and under
+    // kSkipAdaptiveLFSmoothing.
+    if smoothing && !use_lf_frame {
+        smooth_lf_image(&mut lf_groups, geometry, &multipliers, guard)?;
     }
 
     // ---- HfGlobal (G.3) --------------------------------------------------
@@ -1366,11 +1608,12 @@ fn decode_vardct_frame(
                         hf_mul: p.hf_mul,
                         // I.4's qdc is LfQuant at the varblock's top-left
                         // block, in the clause's [X, Y, B] channel order.
-                        qdc: [
-                            state.quant.x.get(x, y),
-                            state.quant.y.get(x, y),
-                            state.quant.b.get(x, y),
-                        ],
+                        // Under kUseLfFrame there is no LfQuant and G.2.2
+                        // pins lf_idx to zero, so the value is never read.
+                        qdc: state
+                            .quant
+                            .as_ref()
+                            .map_or([0; 3], |q| [q.x.get(x, y), q.y.get(x, y), q.b.get(x, y)]),
                     }
                 })
                 .collect();
@@ -1408,8 +1651,10 @@ fn decode_vardct_frame(
                 blocks_w,
                 blocks_h,
                 num_hf_presets: hf_params.num_hf_presets,
-                // G.2.2's kUseLfFrame rule; the flag is rejected above.
-                lf_idx_is_zero: false,
+                // G.2.2: under kUseLfFrame every LfQuant sample counts as
+                // -inf, so no lf_threshold is ever exceeded and lf_idx is
+                // zero regardless of the thresholds.
+                lf_idx_is_zero: use_lf_frame,
             };
             let (orders, histograms) = passes.split_pass(pass as usize)?;
             decode_hf_group(
@@ -1530,6 +1775,207 @@ fn decode_vardct_frame(
     apply_transfer_function(&mut planes, metadata)?;
 
     assemble_float(planes, metadata, geometry)
+}
+
+/// The `LFFrame[frame_header.lf_level]` slot G.2.2 names, checked against the
+/// consuming frame's LF grid.
+///
+/// The shape check is the whole point of doing this once rather than per LF
+/// group: an LF frame whose dimensions do not match `ceil(width / 8) x
+/// ceil(height / 8)` would otherwise silently contribute zeros at the edges,
+/// which reads as a plausible image rather than as an error.
+fn lf_frame_slot<'a>(
+    lf_frames: &'a LfFrameSlots,
+    lf_level: u32,
+    geometry: &FrameGeometry,
+) -> Result<&'a LfFrame> {
+    let index = usize::try_from(lf_level).unwrap_or(usize::MAX);
+    let frame = lf_frames
+        .get(index)
+        .and_then(Option::as_ref)
+        .ok_or_else(|| unsupported("kUseLfFrame with no stored LF frame", "18181-1 G.2.2"))?;
+    let expected = (geometry.width().div_ceil(8), geometry.height().div_ceil(8));
+    if (frame.width, frame.height) != expected {
+        return Err(DecodeError::out_of_range(
+            "LF frame dimensions against the frame's LF grid",
+            "F.1",
+            u64::from(frame.width),
+        ));
+    }
+    Ok(frame)
+}
+
+/// I.5.2's adaptive smoothing pass, over the **frame-wide** LF image.
+///
+/// # Why this is not a per-LF-group operation
+///
+/// I.5.2 scopes the pass to "each LF sample of the image that is not in the
+/// first or last row or column", and closes by having I.8 read "the
+/// dequantized LF image". Both name the frame, not the LF group. Running the
+/// pass per LF group instead skips the first and last row and column of
+/// *every* group, so each internal LF-group seam keeps its unsmoothed values
+/// while both sides of it were smoothed — and, worse, the samples one step
+/// inside the seam are smoothed against a 3x3 neighbourhood that stops at the
+/// group edge instead of continuing into the next group.
+///
+/// The two readings coincide exactly for any frame with a single LF group,
+/// which is every fixture below 2048x2048 — that is why this survived slice 8
+/// and its whole flip-point probe. It is visible on `bike` (2048x2560, one
+/// internal seam at y = 2048) as a 16-row band carrying the entire remaining
+/// error, and on the corpus-free reproducer fixture 64. Evidence and
+/// localisation are the concurrent agent's, in
+/// `docs/experiments/2026-08-04-negative-transfer-function-branch.md` §6.
+///
+/// # Why assembling after I.6 is sound
+///
+/// The clause's order is dequantize, then I.6 chroma-from-luma, then smooth.
+/// The first two are per-sample: dequantization uses the group's own
+/// `extra_precision` and the frame's `mXDC`/`mYDC`/`mBDC`, and I.6's LF arm
+/// uses `x_factor_lf`/`b_factor_lf`, which are frame-wide constants from
+/// I.2.3 rather than the per-64x64-tile factors the HF arm uses. Neither
+/// looks at a neighbouring sample, so doing them per group and only then
+/// assembling gives the same image as assembling first. Smoothing is the one
+/// stage with a spatial footprint, and it is the one done frame-wide.
+///
+/// # Errors
+///
+/// A limit error if the frame-wide LF image exceeds the allocation budget, or
+/// [`DecodeError::FieldOutOfRange`] if the three planes disagree in shape.
+fn smooth_lf_image(
+    lf_groups: &mut [LfGroupState],
+    geometry: &FrameGeometry,
+    multipliers: &crate::vardct::quantizer::LfDequantMultipliers,
+    guard: &mut AllocGuard,
+) -> Result<()> {
+    use crate::vardct::lf::{DequantPlane, adaptive_smoothing};
+
+    let width = geometry.width().div_ceil(8);
+    let height = geometry.height().div_ceil(8);
+    let cells = (width as usize)
+        .checked_mul(height as usize)
+        .ok_or_else(|| unsupported("an oversized LF image", "18181-1 I.5.2"))?;
+    guard.charge(cells as u64 * 4 * 3)?;
+
+    // The LF group's block origin, for both the gather and the scatter. An LF
+    // group rectangle starts at a multiple of `8 * group_dim`, so the division
+    // is exact.
+    let origin = |index: usize| -> Result<(u32, u32)> {
+        let rect = geometry
+            .lf_group_rect(index as u64)
+            .ok_or_else(|| unsupported("an LF group index past the grid", "18181-1 G.2"))?;
+        Ok((rect.x0 / 8, rect.y0 / 8))
+    };
+
+    let mut planes = [
+        DequantPlane {
+            width,
+            height,
+            samples: vec![0.0; cells],
+        },
+        DequantPlane {
+            width,
+            height,
+            samples: vec![0.0; cells],
+        },
+        DequantPlane {
+            width,
+            height,
+            samples: vec![0.0; cells],
+        },
+    ];
+    for (index, state) in lf_groups.iter().enumerate() {
+        let (x0, y0) = origin(index)?;
+        for (c, source) in [&state.lf.x, &state.lf.y, &state.lf.b]
+            .into_iter()
+            .enumerate()
+        {
+            let Some(dest) = planes.get_mut(c) else {
+                continue;
+            };
+            for y in 0..source.height {
+                for x in 0..source.width {
+                    let (fx, fy) = (x0 + x, y0 + y);
+                    if fx >= width || fy >= height {
+                        continue;
+                    }
+                    if let Some(slot) = dest
+                        .samples
+                        .get_mut(fy as usize * width as usize + fx as usize)
+                    {
+                        *slot = source.get(x, y);
+                    }
+                }
+            }
+        }
+    }
+
+    let [fx, fy, fb] = &planes;
+    let (sx, sy, sb) = adaptive_smoothing(fx, fy, fb, multipliers)?;
+    let smoothed = [sx, sy, sb];
+
+    for (index, state) in lf_groups.iter_mut().enumerate() {
+        let (x0, y0) = origin(index)?;
+        for (c, dest) in [&mut state.lf.x, &mut state.lf.y, &mut state.lf.b]
+            .into_iter()
+            .enumerate()
+        {
+            let Some(source) = smoothed.get(c) else {
+                continue;
+            };
+            for y in 0..dest.height {
+                for x in 0..dest.width {
+                    let value = source.get(x0 + x, y0 + y);
+                    if let Some(slot) = dest
+                        .samples
+                        .get_mut(y as usize * dest.width as usize + x as usize)
+                    {
+                        *slot = value;
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// G.2.2's substitution: one LF group's worth of `LFFrame[...]`.
+///
+/// `rect` is the LF group's *pixel* rectangle, so its origin is a multiple of
+/// `8 * group_dim` and dividing by 8 is exact.
+fn lf_from_frame(frame: &LfFrame, rect: Rect) -> crate::vardct::lf::DequantizedLf {
+    use crate::vardct::lf::{DequantPlane, DequantizedLf};
+
+    let (x0, y0) = (rect.x0 / 8, rect.y0 / 8);
+    let width = (rect.x0 + rect.width).div_ceil(8).saturating_sub(x0);
+    let height = (rect.y0 + rect.height).div_ceil(8).saturating_sub(y0);
+    let cut = |plane: &Vec<f32>| -> DequantPlane {
+        let mut samples = Vec::with_capacity(width as usize * height as usize);
+        for y in 0..height {
+            for x in 0..width {
+                let (sx, sy) = (x0 + x, y0 + y);
+                let value = if sx < frame.width && sy < frame.height {
+                    plane
+                        .get(sy as usize * frame.width as usize + sx as usize)
+                        .copied()
+                        .unwrap_or(0.0)
+                } else {
+                    0.0
+                };
+                samples.push(value);
+            }
+        }
+        DequantPlane {
+            width,
+            height,
+            samples,
+        }
+    };
+    let [x, y, b] = &frame.planes;
+    DequantizedLf {
+        x: cut(x),
+        y: cut(y),
+        b: cut(b),
+    }
 }
 
 /// `Sharpness` at an LF-group-relative 8x8 block, clamped to the plane.

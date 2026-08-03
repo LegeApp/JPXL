@@ -241,3 +241,32 @@ it. Two new flip points came out of it, both untestable until a stream uses RAW:
 `RAW_MATRIX_CHANNEL_ORDER_IS_XYB` and `RAW_SUBBITSTREAM_IS_UNALIGNED`. See the
 addendum to `2026-08-03-i25-default-dequant-constants.md` for the wire-format
 derivation.
+
+---
+
+## Addendum, 2026-08-04 — `PREV_USES_CURRENT_PASS_COEFFICIENT` is settled `true`
+
+*Appended after the fact; nothing above is edited.*
+
+This report listed `PREV_USES_CURRENT_PASS_COEFFICIENT` as NOT-DISCRIMINATED
+and named what settling it would need: "a progressive (multi-pass) stream *and*
+a non-degenerate `false` arm". The `false` arm was repaired the same day (the
+addendum above). Wave 5 supplied the streams.
+
+Five independent multi-pass streams now exist — four handmade from `cjxl`
+(`--progressive_ac`: 3 passes with all shifts 0; `--qprogressive_ac`: 2 passes
+with `shift = [1]`; the two combined with `--progressive_dc=1`; and a 384x320
+RGB four-group variant) and the conformance case `progressive`, which is 2
+passes with `shift = [1]` over 176 groups.
+
+Under `true` all five decode with every section consumed to its exact TOC
+length and every ANS stream on C.3.2's terminal state; `progressive` grades at
+peak 2.0e-5 against its published reference, whose class is 0.02. Under `false`
+all five fail *inside* I.4 with undelivered non-zero coefficients — the entropy
+layer losing synchronisation, not a tolerance drift — while the single-pass
+control stream is byte-identical under both arms.
+
+**Verdict: PROBED-CONFIRMED `true`.** The constant's doc comment and the
+verdict table's reading of it are updated accordingly. Full method, numbers and
+two further flip points found in the same work are in
+`2026-08-04-lf-frame-and-multipass.md`.

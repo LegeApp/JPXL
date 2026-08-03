@@ -229,9 +229,10 @@ fn read_lf_quant_ordered(
 //
 // I.5.2's own text (paraphrased, no ISO text quoted):
 //
-// * Skipped entirely for a frame with `kUseLfFrame` set — already excluded
-//   upstream, since such a frame never reaches VarDCT decoding at all yet
-//   (`decode.rs::check_supported` rejects it).
+// * Skipped entirely for a frame with `kUseLfFrame` set, together with the
+//   whole of G.2.2 that feeds it. `decode.rs` handles that case by never
+//   calling `read_lf_quant` or `dequantize_lf` and slicing
+//   `LFFrame[frame_header.lf_level]` instead; nothing in this module runs.
 // * `dX = mXDC * qX / (1 << extra_precision)`, and likewise for Y and B —
 //   this is [`dequantize_channel`].
 // * Then I.6 chroma-from-luma runs over the dequantized `(dX, dY, dB)`.
@@ -241,6 +242,17 @@ fn read_lf_quant_ordered(
 //   shape (I.6: "skipped if any channel is subsampled"; smoothing: "no
 //   channel is subsampled"), so [`dequantize_lf`] skips both stages together
 //   whenever the caller reports a subsampled group.
+//
+// **Scope.** The first two steps are per-sample and are driven per LF group,
+// because `extra_precision` is a per-LF-group field. The smoothing pass is
+// not: I.5.2 scopes it to each LF sample *of the image*, so it runs once over
+// the assembled frame-wide LF image, from `decode::smooth_lf_image`. Driving
+// it per group instead leaves every internal LF-group seam unsmoothed, which
+// is a visible band — see that function's documentation and
+// `docs/experiments/2026-08-04-negative-transfer-function-branch.md` §6.
+// `dequantize_lf`'s own `smoothing_enabled` parameter therefore stays `false`
+// on the production path; it exists for this module's unit tests, which
+// exercise the pass on a single plane.
 
 /// One dequantized LF plane: `width x height` `f32` samples in raster order.
 ///
@@ -322,6 +334,14 @@ fn weighted_average(plane: &DequantPlane, x: u32, y: u32) -> f32 {
 ///
 /// The first/last row and column are left unchanged (I.5.2: the pass only
 /// touches an LF sample "not in the first or last row or column").
+///
+/// **The planes must be the frame-wide LF image, not one LF group's.** I.5.2
+/// says "each LF sample *of the image*", so the rows and columns this function
+/// leaves alone are the frame's own edges. Passing an LF group's planes makes
+/// it skip that group's edges too, which leaves every internal LF-group seam
+/// unsmoothed and its neighbours smoothed against a truncated neighbourhood.
+/// The production caller is [`crate::decode`]'s `smooth_lf_image`, which
+/// assembles the frame first.
 ///
 /// # Errors
 ///
@@ -414,7 +434,11 @@ pub struct DequantizedLf {
 /// `frame_header.jpeg_upsampling`'s three entries is nonzero — both I.6 and
 /// the smoothing pass require it to be `false` to run at all.
 /// `smoothing_enabled` is `frame_header.flags.adaptive_lf_smoothing()`
-/// (`!kSkipAdaptiveLFSmoothing`).
+/// (`!kSkipAdaptiveLFSmoothing`) — but the production caller passes `false`
+/// and runs the pass itself over the assembled frame, because I.5.2 scopes it
+/// to the image and `planes` here is one LF group. See the module
+/// documentation's **Scope** note; setting it `true` on a multi-LF-group frame
+/// is the seam defect this module used to have.
 ///
 /// # Errors
 ///

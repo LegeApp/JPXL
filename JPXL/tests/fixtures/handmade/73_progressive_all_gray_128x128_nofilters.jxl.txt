@@ -1,0 +1,68 @@
+Fixture: 73_progressive_all_gray_128x128_nofilters.jxl
+128x128 greyscale, VarDCT lossy, kLFFrame plus 2 shifted HF passes, d=1.0
+
+Purpose
+-------
+Wave 5 (progressive decoding) acceptance fixture. The combination of 71 and 72, and the smallest stream with the same
+feature set as the conformance case `progressive`: an LF frame
+feeding a kUseLfFrame regular frame that is itself split into two
+passes with a nonzero shift. Single group, so a failure here is not
+about group geometry.
+
+Frame structure, as parsed by JPXL itself (jpxl-decode's own frame-header
+reader, not by any oracle):
+
+  frame 0  kLFFrame       kModular  flags 0x0   lf_level 1
+           num_passes 2, shift [1], 5 TOC sections
+  frame 1  kRegularFrame  kVarDCT   flags 0x20 (kUseLfFrame)
+           num_passes 2, shift [1], downsample [2], last_pass [0]
+           1 group, 1 LF group, 5 TOC sections
+
+The source content is the same shape as fixtures 50-57 use: the left half is
+a smooth low-frequency ramp and the right half a 1-pixel checkerboard, the
+highest spatial frequency a discrete grid can represent, so cjxl's own
+transform-selection heuristic reaches for a mixture of varblock sizes. This
+sidecar does not claim particular transforms were chosen.
+
+--gaborish=0 --epf=0 disables both restoration filters. Per 18181-3 Annex A
+Table A.1 that puts the stream in the tighter error class:
+
+    Part 3 error class:  peak <= 0.004,  RMSE <= 1e-5   (no filters)
+
+Grading is against a reference DECODE of this stream (the committed .npy, or a fresh djxl decode), never
+against the original source PNM -- Part 3 conformance bounds
+decoder-vs-reference error, not encoder loss against the pre-encode image.
+
+Provenance
+----------
+  Encoder:      cjxl v0.13.0 196a43d9 [_AVX2_,SSE4,SSE2] {GNU 15.2.0}
+  libjxl rev:   196a43d996aa6ed33ebf98812a7c6d43b2b6d01b (v0.12-snapshot-2-g196a43d9)
+  cjxl flags:   -d 1.0 --gaborish=0 --epf=0 -e 7 -p --progressive_dc=1 --qprogressive_ac
+  Built by:     tools/setup-oracles.sh (flags recorded in
+                tools/oracle-bin/PINNED_REVISIONS.txt)
+  Regenerate:   tools/make-progressive-fixtures.sh
+                That script IS the recipe; it rewrites the source and re-encodes.
+
+  Source image: tests/fixtures/generated/src_progressive_gray_128x128.pgm  (16399 bytes)
+                sha256 02a9b857abdad87424263106db47a512603bb947fd17b7b8ccc15389a208d50e
+                Synthetic, written by the Python snippet inside
+                tools/make-progressive-fixtures.sh -- no third-party image was
+                used, converted or consulted.
+
+  Fixture:      2621 bytes
+                sha256 791995769efd2b2daa0591964eb0fbcba6bc021a7066df31c18eee504a994eaa
+
+  Reference decode (djxl --output_format npy):
+    73_progressive_all_gray_128x128_nofilters.npy  (65616 bytes)
+    sha256 ed54574ab1516d83e9814016efa88e02461a91173abeefec25dab808ff0761b0
+    Committed alongside the fixture (< 100 KB).
+    Shape (1, 128, 128, 1) little-endian f32, per 18181-3 4.1.2 -- djxl keeps a
+    single-channel greyscale image as num_channels=1 rather than replicating
+    it to RGB. Readable with jpxl_conformance::FloatImage::from_npy.
+    Regenerable at any time from the fixture with the pinned djxl build
+    (decode is deterministic per libjxl revision, see PINNED_REVISIONS.txt).
+
+cjxl/djxl are used strictly as BLACK BOXES: they emit/consume conformant
+streams for JPXL to parse. libjxl's source is never read. If a rebuild at a
+different libjxl revision changes these digests, that is the point of
+recording them -- do not silently update them; note the revision change.
