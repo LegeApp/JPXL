@@ -22,16 +22,20 @@ Last reviewed: 2026-08-04.
 | F, G | FrameHeader / TOC / permutation / sections | Bit-exact | multi-section fixtures in `e2e_lossless` | Supported |
 | Annex H | Modular (MA trees, all predictors incl. H.5 weighted, RCT, palette, Squeeze) | Bit-exact (samples) | `e2e_lossless` 19/19, zero ignores | Supported |
 | Annex I | VarDCT (all decoded transform types, dequant, CfL, multi-pass) | Part 3 class per test | `e2e_vardct` 13/13, `e2e_progressive` 6/6, zero ignores | Supported; Hornuss/AFV/DCT4x4/≥DCT128 have no pixel-comparison coverage yet |
+| G.1.3/G.2.3/G.4.2 | Extra channels in kVarDCT frames | Part 3 class; alpha itself lossless round-trip | `e2e_alpha` ladder 80–84 + corpus `alpha_*` | Supported (`ec_upsampling > 1` refused) |
+| F.2, Table F.8 | Multi-frame compositing, all five blend modes | Part 3 class | corpus `blendmodes`/`blendmodes_5` | Supported for stored frames; animation (frames with duration) refused |
 | G.2.2, F.2 | kLFFrame + `kUseLfFrame`, multi-pass accumulation | Part 3 class | `e2e_progressive` ladder 70–74 + corpus | Supported |
 | Annex J | Gaborish + EPF | Part 3 with-filters class | filters-on fixtures 52/53/56 | Supported (J.2/K.2 upsampling refused) |
-| K.3 | Patches, kReferenceOnly reference frames | Part 3 class | corpus `bike`/`bike_5`/`progressive` | Supported (alpha blend modes refused) |
+| K.3 | Patches incl. per-channel-group alpha blending, kReferenceOnly reference frames | Part 3 class | corpus `bike`/`bike_5`/`progressive`/`patches`/`patches_5` | Supported |
 | L.2 | XYB inverse, transfer functions incl. negative-branch behaviour | Tolerance | color.rs tests, fixture 63, corpus | Supported |
 | Part 2 §8–9 | Box parser, `jxlc`/`jxlp`, box validation | Bit-exact framing | `container` suite, jxlinfo cross-check | Supported (`brob` decompression, `jxli`/`jbrd` parsing deferred) |
 | — | Encoder (gray/RGB, 8/16-bit, RCT, multi-group, `jxlc`/`jxlp`) | Decoders must agree | self + `djxl` + `jxl-oxide` sample-exact | Supported |
 
-Refused (typed `Unsupported`, never guessed): extra channels in kVarDCT,
-alpha blending, YCbCr, upsampling, splines, noise, animation blending,
-`lf_level > 1`, kVarDCT LF frames, `brob` decompression.
+Refused (typed `Unsupported`, never guessed): YCbCr, frame and
+extra-channel upsampling (J.2/K.2), animation (presented frames with a
+duration), cropped/oriented displayed frames, splines, noise,
+`lf_level > 1`, kVarDCT LF frames, patches in kModular frames,
+`brob` decompression.
 
 ## Official conformance corpus
 
@@ -49,7 +53,7 @@ test case's files in from there.
 
 | Stream set | Revision | Result |
 | --- | --- | --- |
-| `tests/fixtures/conformance/` | pinned commit at clone time (see the submodule/checkout's own git log) | References downloaded via `download_and_symlink_using_curl.sh` (85 objects, ~1.2 GB, all 39 test cases linked). `bike_5`'s `reference_image.npy` (shape `(1, 2560, 2048, 3)`, sha256-verified) and `test.json` (`peak_error: 0.06`, `rms_error: 0.02`) are readable end to end by `jpxl_conformance::FloatImage::from_npy` — see `crates/jpxl-conformance/tests/corpus.rs`. **Six test cases pass their own `test.json` thresholds against JPXL's decoder**: `grayscale` / `grayscale_5` (peak 2.3e-4), `bike` / `bike_5` (peak 2.5e-4 after the frame-wide LF smoothing fix), `progressive` / `progressive_5` (peak 2.0e-5) — tests in `crates/jpxl-decode/tests/{e2e_vardct.rs,e2e_progressive.rs}`, zero ignores. Remaining cases need extra channels/alpha, YCbCr, animation, splines, noise, or `jbrd`. |
+| `tests/fixtures/conformance/` | pinned commit at clone time (see the submodule/checkout's own git log) | References downloaded via `download_and_symlink_using_curl.sh` (85 objects, ~1.2 GB, all 39 test cases linked). `bike_5`'s `reference_image.npy` (shape `(1, 2560, 2048, 3)`, sha256-verified) and `test.json` (`peak_error: 0.06`, `rms_error: 0.02`) are readable end to end by `jpxl_conformance::FloatImage::from_npy` — see `crates/jpxl-conformance/tests/corpus.rs`. **Thirteen test cases pass their own `test.json` thresholds against JPXL's decoder**: `grayscale` / `grayscale_5` (peak 2.3e-4), `bike` / `bike_5` (2.5e-4), `progressive` / `progressive_5` (2.0e-5), `alpha_nonpremultiplied` / `alpha_triangles` (1.2e-7), `alpha_premultiplied` (2.6e-6), `patches` / `patches_5` (7.8e-6 / 2.4e-2), `blendmodes` / `blendmodes_5` (1.9e-6) — tests in `crates/jpxl-decode/tests/{e2e_vardct.rs,e2e_progressive.rs,e2e_alpha.rs}`, zero ignores. Remaining cases need upsampling, cropped/oriented displayed frames, animation, YCbCr, splines, noise, or `jbrd`. |
 
 ### Part 3 §4.2 grading (18181-3 §4.1.2 / §4.2 / §4.3)
 

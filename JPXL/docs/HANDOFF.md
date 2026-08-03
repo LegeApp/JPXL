@@ -13,6 +13,55 @@ Keep this file small. Entries whose content has landed in `PLAN.md`,
 
 ---
 
+## 2026-08-04 (wave 6) — extra channels + alpha + frame blending; corpus 6 → 13 cases green
+
+**Seven more corpus cases pass their test.json thresholds:**
+`alpha_nonpremultiplied`/`alpha_triangles` (needed only 4-channel
+grading), `alpha_premultiplied` (extra channels in kVarDCT),
+`patches`/`patches_5` (K.3.2 per-channel-group alpha patch blending),
+`blendmodes`/`blendmodes_5` (multi-frame F.2 compositing, all five
+Table F.8 modes). Corpus total: 13 of 39.
+
+**Built:** G.1.3/G.2.3/G.4.2 extra-channel modular streams in kVarDCT
+frames (selection/copy-back FACTORED into shared
+`lf_group_selection`/`pass_group_selection`/`decode_group_channels` —
+do not re-duplicate); `render::ExtraPlanes` appended to DecodedImage at
+each channel's own ec bit depth; K.3.2 alpha in `apply_patches` (K.3.2's
+`c` ranges over [0, num_extra], honours clamp); `frame/blending.rs`
+`Canvas` + `blend_sample` + `composite_frame` with per-channel-group
+source slots. Pre-CT reference slots (XYB, K.3) and post-CT canvases
+(display space, F.2) are SEPARATE — F.2 blends after Annex L. An identity
+first frame returns its own integer planes, so lossless stays bit-exact.
+Animation (a presented frame with duration) is now an EXPLICIT refusal —
+the old "more than one regular frame" guard no longer covers it.
+
+**Flip points:** none settled — corpus can't discriminate
+(all reference frames at origin; every patch case has exactly one extra
+channel). Two NEW recorded as unexercised:
+`PATCH_ALPHA_IS_THE_PATCHS_OWN`, `ALPHA_SELF_RULE_IS_THE_NAMED_CHANNEL`
+(readings coincide for single-alpha images — every corpus stream).
+Addendum in 2026-08-03-patches-k3.md.
+
+**Known residual (pre-existing, not this wave):** greyscale-VarDCT Y
+carries ~1.9e-4 RMSE vs oracle (fixture 84 discriminator: identical grey
+source with NO alpha reproduces it to 4 s.f.) — same family as corpus
+`grayscale`'s 2.3e-4 peak. A future hunt should start from grey-only
+VarDCT, not alpha.
+
+**Out of scope, enumerated:** upsampling ×2 (J.2 + K.2 ec_upsampling=4),
+`spot`/`cmyk_layers`/`sunset_logo` (cropped displayed frames +
+orientation + kBlack), `patches_lossless` (patches in kModular +
+stored frame in non-XYB), animation ×5, `noise`, `cafe`,
+`bench_oriented_brg`, `grayscale_jpeg`, `bicycles`.
+
+**Next candidates:** J.2/K.2 upsampling (unlocks 2 cases); cropped
+displayed frames + orientation (unlocks 3, incl. spot/cmyk kBlack);
+animation compositing (5 cases — needs a decision on presentation
+semantics, PLAN lists it out of scope); rare-transform pixel coverage;
+the grey-Y 1.9e-4 residual; jxli/jbrd (scan first); Brotli decision.
+
+---
+
 ## 2026-08-04 (wave 5) — bike + progressive corpus PASS; six corpus cases green, zero ignores
 
 **bike divergence killed, two real bugs.** (1) Transfer functions below
