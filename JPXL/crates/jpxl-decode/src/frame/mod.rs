@@ -40,6 +40,7 @@ pub mod geometry;
 pub mod header;
 pub mod passes;
 pub mod restoration;
+pub mod stream_index;
 pub mod toc;
 
 use jpxl_core::limits::{AllocGuard, Limits};
