@@ -13,6 +13,64 @@ Keep this file small. Entries whose content has landed in `PLAN.md`,
 
 ---
 
+## 2026-08-04 (wave 5) — bike + progressive corpus PASS; six corpus cases green, zero ignores
+
+**bike divergence killed, two real bugs.** (1) Transfer functions below
+zero: BT.709 evaluates its piecewise condition on the SIGNED value (the
+linear toe `4.5·v`), sRGB extends with odd symmetry — measured both ways
+(bike spikes fit slope 1.000/const 4.4993; an out-of-gamut sRGB fixture
+matches odd at 8.1e-6 and misses literal by 0.11). Neither the standard
+nor IEC/ITU define the negative domain; pinned as flip point
+`NEGATIVES_TAKE_THE_LINEAR_SEGMENT = [false, true]` ([sRGB, 709]) with
+directional tests + fixture 63. (2) I.5.2 adaptive LF smoothing is
+FRAME-WIDE ("each LF sample of the image"), not per LF group — per-group
+loops skipped every group's edge rows, leaving a 16-row band at bike's
+only internal LF-group seam (y=2048). Fixed by assembling the frame-wide
+LF image (dequant and LF CfL commute with assembly — LF CfL uses the
+frame-wide I.2.3 factors, not per-tile). Fixture 64 (128×2176, `-d 6
+-e 3` load-bearing: `-d 1` sets kSkipAdaptiveLFSmoothing) is the only
+multi-LF-group fixture in the tree — the standing seam regression. bike
+0.2466 → 2.5e-4. Eliminated for bike: per-tile B CfL, I.5.3 B terms.
+Rare transforms (Hornuss/AFV/DCT4x4/≥DCT128) still have zero pixel
+coverage.
+
+**Progressive corpus done.** `progressive`(_5 is a symlink to it) = patch
+atlas + Squeezed kModular kLFFrame (lf_level 1) + 2-pass kVarDCT with
+kUseLfFrame. Built: LfFrame slots + L.2.2 kModular pre-step shared via
+`xyb_from_modular` (flip `LF_FRAME_IS_XYB_PRESTEP=true`: no Quantizer in
+an LF frame's LfGlobal, so raw integers have no shared scale; false gives
+peak 9e10); kUseLfFrame skips ALL of G.2.2/I.5.2 incl. smoothing (the
+corpus frame has 4 LF groups + smoothing bit clear and still grades
+2.0e-5 — independent confirmation). Multi-pass needed NO new code, only
+reachability. Flips settled: `PREV_USES_CURRENT_PASS_COEFFICIENT=true`
+(five multi-pass streams: true → exact TOC exhaustion + C.3.2 terminal
+states; false → entropy desync inside I.4; single-pass control byte-
+identical); `G42_SIZE_TEST_IS_SHIFTED=true` (unshifted leaves channels
+37/38/41/42 of a Squeeze pyramid decoded by NO rule; false runs off the
+section end at exactly its TOC length). Ladder fixtures 70–74 +
+`e2e_progressive.rs`.
+
+**State:** six corpus cases pass their test.json thresholds (grayscale,
+grayscale_5, bike, bike_5, progressive, progressive_5); ZERO `#[ignore]`
+in jpxl-decode tests; 945 tests green. jxlinfo now built/installed by
+setup-oracles.sh. Note: bike rungs cost ~78 s debug (6 s release); the
+progressive corpus rung is release-always but debug-opt-in via
+`JPXL_SLOW_TESTS=1`.
+
+**Traps:** the seam bug is invisible on every ≤1-LF-group image — do not
+"optimize" smoothing back into the per-group loop; fixture 64's rung is
+the only thing that would catch it. `smooth_lf_image` must stay gated on
+`!use_lf_frame`.
+
+**Next candidates:** extra channels in kVarDCT + alpha blend rows
+(Table K.1) — the alpha corpus cases; rare-transform pixel coverage;
+`lf_level > 1` / chained LF frames (nothing exercises them); jxli/jbrd
+parsing (scan first); Brotli decision; open flips still without streams:
+PATCH_REFERENCE_IS_CANVAS_COORDINATES, ALPHA_GUARD_COUNTS_EXTRA_CHANNELS,
+`num_hf_presets > 1`, nonzero `lf_idx`.
+
+---
+
 ## 2026-08-03 (wave 4) — THE MODULAR BUG IS DEAD: `^` misread as `*`; slice 9; patches; RAW fixed
 
 **Root cause of the project's oldest open bug — one character.** The original

@@ -5,18 +5,23 @@
 //! 1. **First light** — fixture 04, an 86-byte 8x8 lossy stream. One varblock,
 //!    one group, one section. Proves the whole chain runs and lands in the
 //!    right ballpark; its threshold is loose on purpose (see the test).
-//! 2. **Filters off** — fixtures 50, 51, 55 at the Part 3 no-filters class,
-//!    peak `0.004` / RMSE `1e-5`. These are the strict rung: they isolate
-//!    I.2–I.9 and L.2 from Annex J entirely, so a failure here is
+//! 2. **Filters off** — fixtures 50, 51, 55 and 63 at the Part 3 no-filters
+//!    class, peak `0.004` / RMSE `1e-5`. These are the strict rung: they
+//!    isolate I.2–I.9 and L.2 from Annex J entirely, so a failure here is
 //!    dequantization, the IDCT, chroma-from-luma or the colour transform, and
-//!    nothing else.
+//!    nothing else. 63 additionally pins Table E.6's behaviour below zero,
+//!    which only an out-of-gamut fixture can reach; 64 is the only fixture
+//!    with more than one LF group, and so the only one that can see I.5.2's
+//!    smoothing pass being scoped to the frame rather than to a group.
 //! 3. **Filters on** — fixtures 52, 53, 56 at the with-filters class, peak
 //!    `0.06` / RMSE `0.02`. The delta against rung 2 is exactly Annex J.
-//! 4. **The normative corpus** — `grayscale`, `grayscale_5` and `bike_5`
-//!    against their `reference_image.npy` at their own `test.json`
+//! 4. **The normative corpus** — `grayscale`, `grayscale_5`, `bike` and
+//!    `bike_5` against their `reference_image.npy` at their own `test.json`
 //!    thresholds. This is the only rung that measures conformance to the
 //!    *standard* rather than agreement with libjxl: the reference images are
-//!    published with the corpus, not produced here.
+//!    published with the corpus, not produced here. (`progressive` and
+//!    `progressive_5` are the same rung for the progressive feature set, and
+//!    live in `e2e_progressive.rs` with the fixtures that first-light them.)
 //!
 //! Fixtures 54 and 57 are deliberately absent: both fail inside G.2.2's
 //! `LfQuant` modular sub-bitstream, in the same content-dependent family as
@@ -299,6 +304,56 @@ fn fixture_55_rgb_nofilters_d4() {
     fixture_rung("55_vardct_mixed_rgb_128x128_nofilters_d4.jxl", 0.004, 1e-5);
 }
 
+/// Saturated primaries on black rules, filters off: 27% of its reference
+/// samples are below zero and 10% are below `-0.05`.
+///
+/// L.2.2's output is allowed outside the gamut and 18181-3 §4.2 forbids
+/// clipping before the comparison, so the signalled transfer function has to
+/// be evaluated at negative arguments — where Table E.6 and the standards it
+/// names stop defining it. This rung pins the `kSRGB` half of
+/// [`jpxl_core::color::NEGATIVES_TAKE_THE_LINEAR_SEGMENT`]: flipping it makes
+/// this fixture's peak error exceed 0.6. The `k709` half, which resolves the
+/// *other* way, is pinned by the `bike` corpus rungs below. See
+/// `docs/experiments/2026-08-04-negative-transfer-function-branch.md`.
+///
+/// Unlike 55 and 56 this one's reference `.npy` is committed (49 KB), so it
+/// grades without an oracle.
+#[test]
+fn fixture_63_rgb_out_of_gamut_nofilters_d4() {
+    fixture_rung(
+        "63_vardct_outofgamut_rgb_64x64_nofilters_d4.jxl",
+        0.004,
+        1e-5,
+    );
+}
+
+/// 128x2176: the only fixture here taller than one **LF group**, so the only
+/// one with an internal LF-group boundary (at `y = 2048`; LF groups are
+/// 2048x2048). Encoded at `-d 6 -e 3` because at `-d 1` cjxl sets
+/// `kSkipAdaptiveLFSmoothing` and I.5.2's smoothing pass never runs.
+///
+/// This fixture exists because I.5.2's adaptive smoothing used to be applied
+/// per LF group, which skips the first and last row and column of *every*
+/// group rather than only the frame's own edges. It was the corpus-free
+/// reproducer for the defect: the whole error budget sat in rows 2039..2056
+/// at peak `0.0106`, against `3.3e-6` everywhere else in the frame.
+///
+/// Fixed by running the pass over the frame-wide LF image
+/// (`decode::smooth_lf_image`), which is what I.5.2's "each LF sample of the
+/// image" says. The band is now gone: the whole frame grades at `2.7e-6`, in
+/// line with every single-LF-group fixture here. This rung is the regression
+/// test for that — no other fixture in this file has an internal LF-group
+/// boundary, so if the pass ever goes back to being per group nothing else
+/// notices.
+#[test]
+fn fixture_64_rgb_lf_group_seam_nofilters_d6() {
+    fixture_rung(
+        "64_vardct_lfgroupseam_rgb_128x2176_nofilters_d6.jxl",
+        0.004,
+        1e-5,
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Rung 3 — the with-filters class (peak 0.06, RMSE 0.02)
 // ---------------------------------------------------------------------------
@@ -347,11 +402,18 @@ fn corpus_grayscale_5() {
 ///
 /// K.3 is implemented, and this rung is written to **promote itself**: if the
 /// stream decodes it is graded at `test.json`'s thresholds, and if it does not
-/// the failure is asserted to be something other than patches. Today it stops
-/// inside G.2.2's `LfQuant` modular sub-bitstream — the open
-/// content-dependent modular bug, which reproduces on a 4 KB *lossless*
-/// 300x100 stream with no VarDCT and no patches involved. When that is fixed
-/// this becomes a graded colour-conformance rung with no edit here.
+/// the failure is asserted to be something other than patches. It now grades
+/// green, at peak `2.5e-4` against a `0.007` limit and channel RMSE `6.6e-7`
+/// against `1e-4`.
+///
+/// The last thing that kept it red was the LF-group seam: `bike` is 2048x2560
+/// with 2048x2048 LF groups, so it has exactly one internal boundary, and
+/// before the fix rows 2039..2056 carried the *entire* remaining error at
+/// peak 0.0317 on B. Running I.5.2's smoothing over the frame-wide LF image
+/// removes it. See `fixture_64_rgb_lf_group_seam_nofilters_d6` for the
+/// corpus-free regression test and
+/// `docs/experiments/2026-08-04-negative-transfer-function-branch.md` §6 for
+/// the localisation.
 ///
 /// That the patch path itself is correct is established separately: `LfGlobal`
 /// of this very frame is consumed to the bit (12293 of 12296, three bits of
@@ -359,22 +421,13 @@ fn corpus_grayscale_5() {
 /// end to end at peak 5.5e-4. See
 /// `docs/experiments/2026-08-03-patches-k3.md`.
 #[test]
-#[ignore = "B-channel-localised divergence: peak 0.2466 on channel B only \
-            (X 0.0179, Y 0.0134), channel RMSEs already near-passing \
-            (1.5e-4/1.1e-4/3.6e-4). Isolated wrong samples, not a systematic \
-            drift. Eliminated by direct probe: DCT8X4_HALF_INDEX_IS_LOW_COORDINATE \
-            flipped makes ALL channels fail at peak 1.1 (so the placement is \
-            right AND bike contains DCT8x4 varblocks). Suspects: B-channel \
-            dequant of a rare transform type (Hornuss/AFV/DCT4x4 have no pixel \
-            coverage), per-tile B chroma-from-luma, or B-specific I.5.3 terms."]
 fn corpus_bike_5() {
     corpus_rung_or_diagnose("bike_5");
 }
 
-/// `bike`: the level-10 sibling of `bike_5`, same two-frame patch structure.
+/// `bike`: the level-10 sibling of `bike_5`, same two-frame patch structure
+/// and the same numbers.
 #[test]
-#[ignore = "same B-channel divergence as corpus_bike_5 (identical numbers); \
-            see that test's forensics"]
 fn corpus_bike() {
     corpus_rung_or_diagnose("bike");
 }

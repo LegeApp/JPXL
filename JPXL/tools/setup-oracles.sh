@@ -3,7 +3,7 @@
 #
 # Two oracles are set up:
 #
-#   djxl / cjxl   built from the sibling libjxl checkout with CMake
+#   djxl / cjxl / jxlinfo   built from the sibling libjxl checkout with CMake
 #   jxl-oxide     installed with `cargo install jxl-oxide-cli --locked`
 #
 # The binaries are copied into tools/oracle-bin/, which
@@ -76,8 +76,8 @@ mkdir -p "${oracle_bin}"
 # ---------------------------------------------------------------- libjxl ----
 
 build_libjxl() {
-  if [[ -x "${oracle_bin}/djxl" && -x "${oracle_bin}/cjxl" ]]; then
-    log "djxl and cjxl already present in tools/oracle-bin -- skipping libjxl build"
+  if [[ -x "${oracle_bin}/djxl" && -x "${oracle_bin}/cjxl" && -x "${oracle_bin}/jxlinfo" ]]; then
+    log "djxl, cjxl and jxlinfo already present in tools/oracle-bin -- skipping libjxl build"
     return 0
   fi
 
@@ -110,13 +110,13 @@ build_libjxl() {
   cmake -S "${libjxl_dir}" -B "${build_dir}" "${cmake_flags[@]}" \
     || { warn "cmake configure failed; see the output above"; return 1; }
 
-  log "building djxl and cjxl with ${jobs} jobs (this takes a while)"
-  cmake --build "${build_dir}" --target djxl cjxl -j "${jobs}" \
+  log "building djxl, cjxl and jxlinfo with ${jobs} jobs (this takes a while)"
+  cmake --build "${build_dir}" --target djxl cjxl jxlinfo -j "${jobs}" \
     || { warn "cmake build failed; see the output above"; return 1; }
 
   local found=0
   local tool
-  for tool in djxl cjxl; do
+  for tool in djxl cjxl jxlinfo; do
     # The binaries land in tools/ under the build tree; search rather than
     # hard-coding a layout that upstream may change.
     local src
@@ -130,7 +130,7 @@ build_libjxl() {
     fi
   done
 
-  [[ "${found}" -eq 2 ]]
+  [[ "${found}" -eq 3 ]]
 }
 
 # ------------------------------------------------------------- jxl-oxide ----
