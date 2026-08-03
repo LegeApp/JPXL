@@ -13,6 +13,57 @@ Keep this file small. Entries whose content has landed in `PLAN.md`,
 
 ---
 
+## 2026-08-03 (wave 2) — slices 4 and 10 complete; flip-points pinned; gab_custom dead-code bug fixed
+
+**1. Slice 4 (ICC, E.4) done.** `jpxl-decode/src/icc/` decodes the
+compressed ICC representation; fixtures 30–36 (script-built profiles, v2 and
+v4, 336–6676 bytes) byte-exact vs `djxl --orig_icc_out`. Key readings, all in
+`docs/experiments/2026-08-03-icc-stream-placement.md`: the E.4.1 payload is
+UNALIGNED after the headers (aligned reading fails on the first symbol — no
+flip-point needed); E.4.4's dictionary has 17 entries (`part1.md` truncates
+to 15 — trap below); `output_size` is a constraint (growth refused), metered
+by AllocGuard, capped per Table M.1 level 10 as a module-local constant
+(promote to a `Limits` field if configurability is ever wanted). New API:
+`extract_icc_profile()`, `DecodedImage::icc_profile`.
+
+**2. Slice 10 (encoder breadth) done.** 16-bit gray, RGB via YCoCg-R
+(`rct_type = 6` declared once in LfGlobal), multi-group via SectionStore
+(each section encoded once into its own buffer → TOC from measured lengths →
+bodies appended), `jxlc` container behind a CLI flag with a `jxll` level-10
+box for >8-bit. Self-roundtrip + djxl + jxl-oxide sample-exact across the
+full matrix (both depths, both channel counts, all four `group_size_shift`
+values, naked and boxed, up to 600×520). 16-bit blocker settled by widening
+the token alphabet (power-of-two sizes keep the flat prefix code free;
+`token_bits` capped at 5 by C.3.3's `n < 32`); `split_exponent` bought
+nothing. Externally confirmed readings: multi-section `LfGlobal` carries
+ModularHeader + tree + C.1 bundle and ZERO samples; group sub-bitstreams
+predict rectangle-relative (H.3 edges are the group's own).
+
+**3. Flip-point sweep.** Real bug found and fixed: `read_restoration_filter`
+returned on `all_default` before computing the gaborish fields, so
+`GAB_CUSTOM_REQUIRES_NOT_ALL_DEFAULT` was dead code either way. AvgAll was
+withdrawn as a flip point — both primary sources agree on `Idiv 16`, never
+ambiguous. New named constants `NESTED_LZ77_REJECTS_ENABLED` and
+`RESETS_CANVAS_SHARED_ACROSS_BUNDLES` (both keep the shipped reading). All
+four remain UNEXERCISED by real cjxl output (~24 probes; cjxl never emits
+those configurations) — documented as negative results in
+`docs/experiments/2026-08-03-flip-point-fixtures.md`; each reading is pinned
+by hand-built-bitstream unit tests instead. Fixture 41 (RGBA) is the first
+end-to-end extra-channel decode, and it works.
+
+**Known open bug (queued, do not lose):** a 32×32 grey source of
+`x*7 + y*3` (wrapping sawtooth) encoded `cjxl -d 0 -e 3` fails to decode:
+`out of bounds: 16 bit(s) requested at bit position 2112`. Reproduces
+without ICC and at commit 26d8df3, so it is in the modular/frame layer, not
+ICC. Needs a minimised probe fixture and a root-cause hunt.
+
+**Next:** slice 8 (VarDCT) or slice 9 (container breadth: `jxlp`, Exif,
+brob); encoder future work list is at the end of the slice-10 report themes
+(ANS backend, real MA trees, palette/squeeze write side, alpha, TOC
+permutation, `jpxl-encode-policy`).
+
+---
+
 ## 2026-08-03 — H.5.2 clamp fixed, multi-section proven, slice 7.5 encoder complete
 
 Three concurrent tasks, all landed:
@@ -371,6 +422,17 @@ codes, rANS, hybrid-uint, LZ77, clustering). Slice 3 unblocks slices 4, 5, and
   yet, so an `all_default` J.1 bundle self-roundtrips green while djxl and
   jxl-oxide return different pixels. If external decodes ever drift while
   self-roundtrip stays green, look here first.
+- **`part1.md` truncates E.4.4's tag dictionary to 15 entries** (2026-08-03).
+  The real list has 17 (`bTRC`, `dmda` dropped by the OCR), fixed by the
+  tagcode range 4..=20 and confirmed by byte-exact fixtures. Use the LaTeX.
+- **`modular_16bit_buffers = false` for >8-bit encodes is deliberate**
+  (2026-08-03). It is a truthful claim about decoder working buffers (D.3);
+  the paired consequence is the `jxll` level-10 box in container output
+  (Annex M). Do not "restore the Table D.3 default".
+- **Sawtooth 32×32 `-e 3` decode bug is real and open** (2026-08-03): grey
+  `x*7 + y*3` via `cjxl -d 0 -e 3` fails with an out-of-bounds bit read at
+  position 2112, independent of ICC, present at 26d8df3. Do not loosen the
+  bounds check — the bug is upstream in modular/frame decoding.
 - **Annex H OCR corruptions, resolved 2026-08-02 — do not re-transcribe from
   the corrupted source:** Table H.4 rows 4/5 are `abs(N)`/`abs(W)` (both
   sources garble one each); `kDeltaPalette[4]` is `{0,-12,0}` (LaTeX's
