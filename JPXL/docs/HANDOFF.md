@@ -13,6 +13,53 @@ Keep this file small. Entries whose content has landed in `PLAN.md`,
 
 ---
 
+## 2026-08-03 (VarDCT wave 0) — 8A math, 8E filters, 8F0 conformance metrics
+
+Slice 8 (VarDCT) is underway per the approved plan (sub-slices 8A–8F + 8F0,
+four waves). Wave 0 landed:
+
+**8A** — `jpxl-core` gains `varblock.rs` (Table I.1/I.4/I.7 vocabulary,
+`CoeffMatrix`/`SampleBlock` distinct types — coefficients always landscape,
+I.3.2 natural order, I.8 LLF, I.9.2–I.9.8 reconstructions), block-coordinate
+newtypes in `geometry.rs`, I.7.2/I.7.3 wrappers + power-of-two kernels to 256
+in `dct.rs` (its `[provisional]` scaling note is RESOLVED: I.7.2 = orthonormal
+× uniform `1/√s` forward / `√s` inverse per 1-D pass — do not fold the factor
+into dequant matrices). 8B consumes `TransformType::{dequant_matrix_index,
+coeff_rows, coeff_cols, order_id}`; 8C consumes `natural_coeff_order`.
+**THIRD DEFECT IN THE PUBLISHED STANDARD:** I.8's `ScaleF` divides by zero
+from DCT16x16 up, identically in all three Part 1 sources; the shipped
+reading passes the varblock dimension (Dirichlet-identity derivation, exact
+<1e-9), flip-point `LLF_SCALEF_ARG_IS_VARBLOCK_DIMENSION`, see
+`docs/experiments/2026-08-03-i8-scalef-argument.md`. DCT8x4 half placement
+settled from I.9.8's stated layout (`DCT8X4_HALF_INDEX_IS_LOW_COORDINATE`,
+probe-worthy in 8F but not blocking).
+
+**8E** — `frame/{gaborish,epf}.rs`: J.3 with sum-to-1 rescale, J.4.1–J.4.4
+with all three steps; pure f32-plane functions, 8F wires them. OCR: step-0
+EPF kernel coord is `{0,-2}` (part1.md right, LaTeX `{9,-2}` wrong — third
+markdown-beats-LaTeX case); `epf_quant_mul=0.46` / `epf_sigma_for_modular=1.0`
+LaTeX-only. FOUR OPEN FLIP-POINTS in `epf.rs` awaiting 8F's filters-on
+probe: `EPF_STEPS_FROM_EXPLICIT_CONDITIONS`,
+`EPF_BORDER_SAD_AT_REFERENCE_PIXEL`, `EPF_SKIP_IS_PER_VARBLOCK`,
+`EPF_DISTANCE_USES_STEP_INPUT` (`docs/experiments/2026-08-03-epf-flip-points.md`).
+
+**8F0** — `jpxl-conformance` gains Part 3 §4.2 grading: `FloatImage`,
+hand-rolled NPY reader (djxl grayscale is channels=1, NOT replicated RGB —
+trap), normalized f32 peak + per-channel RMSE ("root of the sum" read as
+root-mean, documented). Conformance corpus references downloaded (39/39,
+`bike_5` verified). Fixtures 50–57 (filters on/off × d1/d4 × gray/RGB);
+zero-slack djxl-vs-djxl self-grading test proves the pipeline.
+
+**Traps (permanent copies below):** do not "fix" `scale_f` back to the
+printed I.8 call; `AFV_BASIS` is f64 on purpose (verbatim spec digits,
+orthonormality to 1.5e-14 proves the two OCR repairs).
+
+**Next:** wave 1 = 8B (I.2 parameter bundles, opus) + 8D-parse (G.2.2/G.2.4
+modular sub-bitstreams, sonnet); then wave 2 = 8C + 8D-dequant; wave 3 = 8F
+assembly/acceptance.
+
+---
+
 ## 2026-08-03 (wave 2) — slices 4 and 10 complete; flip-points pinned; gab_custom dead-code bug fixed
 
 **1. Slice 4 (ICC, E.4) done.** `jpxl-decode/src/icc/` decodes the
