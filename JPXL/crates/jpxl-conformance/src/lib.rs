@@ -31,6 +31,8 @@ pub mod metrics;
 pub mod oracle;
 pub mod sniff;
 
-pub use metrics::{Image, max_abs_error, peak_error_per_channel};
+pub use metrics::{
+    FloatImage, Image, NpyError, Similarity, max_abs_error, peak_error_per_channel, similarity,
+};
 pub use oracle::{Oracle, OracleError, OracleKind, OutputFormat};
 pub use sniff::{StreamKind, sniff};

@@ -42,6 +42,13 @@ fn every_handmade_fixture_has_a_provenance_sidecar() {
         if path.extension().is_some_and(|ext| ext == "txt") {
             continue;
         }
+        // A committed reference `.npy` (VarDCT fixtures 50+) is provenance
+        // for its *sibling* `.jxl`, not a fixture in its own right, and is
+        // documented in that sibling's sidecar (digest, shape, regeneration
+        // command) rather than one of its own.
+        if path.extension().is_some_and(|ext| ext == "npy") {
+            continue;
+        }
         fixtures += 1;
         let mut sidecar = path.clone().into_os_string();
         sidecar.push(".txt");

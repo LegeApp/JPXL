@@ -1,0 +1,66 @@
+Fixture: 50_vardct_mixed_gray_128x128_nofilters_d1.jxl
+128x128 greyscale, VarDCT lossy, gaborish and EPF disabled, d=1.0
+
+Purpose
+-------
+Slice 8 (VarDCT decode) acceptance fixture. Half the image is a smooth
+low-frequency ramp (should steer cjxl towards large transforms -- DCT16x16 /
+DCT32x32 candidates) and half is a 1-pixel checkerboard, the highest spatial
+frequency a discrete grid can represent (should steer cjxl towards small
+transforms -- DCT4x4, DCT2x2, AFV, Hornuss candidates). Which transform types
+actually appear must be read from JPXL's own DctSelect histogram once the
+VarDCT decoder can report one (djxl -v -v reports nothing per-feature) --
+this sidecar does not claim particular transforms were chosen, only that the
+content was designed to make cjxl's own selection heuristic reach for a
+mixture.
+
+--gaborish=0 --epf=0 disables both restoration filters. Per 18181-3 Annex A
+Table A.1, a VarDCT stream with no filters falls in the tighter error class:
+
+    Part 3 error class:  peak <= 0.004,  RMSE <= 1e-5   (no filters)
+
+Grading is against a reference DECODE of this stream (the committed .npy, or
+a fresh djxl/reference decode), never against the original source PNM --
+Part 3 conformance bounds decoder-vs-reference error, not encoder loss
+against the pre-encode image. JPXL's own decoder cannot decode VarDCT yet;
+this fixture is not wired into any decode test (that is wave 3 / 8F's
+tests/e2e_vardct.rs), only into fixture-presence and self-grading pipeline
+tests here in jpxl-conformance.
+
+Provenance
+----------
+  Encoder:      cjxl v0.13.0 196a43d9 [_AVX2_,SSE4,SSE2] {GNU 15.2.0}
+  libjxl rev:   196a43d996aa6ed33ebf98812a7c6d43b2b6d01b (v0.12-snapshot-2-g196a43d9)
+  cjxl flags:   -d 1.0 --gaborish=0 --epf=0 -e 7
+  Built by:     tools/setup-oracles.sh (flags recorded in
+                tools/oracle-bin/PINNED_REVISIONS.txt)
+  Regenerate:   tools/make-vardct-fixtures.sh
+                That script IS the recipe; it rewrites the source and re-encodes.
+
+  Source image: tests/fixtures/generated/src_vardct_mixed_gray_128x128.pgm  (16399 bytes)
+                sha256 02a9b857abdad87424263106db47a512603bb947fd17b7b8ccc15389a208d50e
+                Synthetic, written by the Python snippet inside
+                tools/make-vardct-fixtures.sh -- no third-party image was
+                used, converted or consulted. 128x128 8-bit greyscale:
+                  x <  64: value = ((x + y) * 255) / (64 + 128 - 2)   smooth ramp
+                  x >= 64: value = 255 if (x + y) even else 0         1px checkerboard
+
+  Fixture:      2314 bytes
+                sha256 78f6faabea5c2844fcf73606e307bec5c946c7a36e1ce842918d59568cc7735f
+
+  Reference decode (committed alongside, djxl --output_format npy):
+    50_vardct_mixed_gray_128x128_nofilters_d1.npy  (65616 bytes; committed, < 100 KB)
+    sha256 74be91bbd7a2b800ec006e8b009cf7f375f8c10edc47791bd9d62936364bb896
+    Shape (1, 128, 128, 1) little-endian f32, per 18181-3 4.1.2 -- djxl keeps
+    a single-channel greyscale image as num_channels=1 rather than
+    replicating it to RGB (verified against this file's own header bytes;
+    18181-3 4.2's "greyscale images ... RGB channels are equal" language
+    describes how a *reference* npy encodes greyscale, not what djxl writes
+    for its own decode). Readable with jpxl_conformance::FloatImage::from_npy.
+    Regenerable at any time from the fixture with the pinned djxl build
+    (decode is deterministic per libjxl revision, see PINNED_REVISIONS.txt).
+
+cjxl/djxl are used strictly as BLACK BOXES: they emit/consume conformant
+streams for JPXL to parse. libjxl's source is never read. If a rebuild at a
+different libjxl revision changes these digests, that is the point of
+recording them -- do not silently update them; note the revision change.

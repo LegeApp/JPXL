@@ -1,0 +1,46 @@
+Fixture: 55_vardct_mixed_rgb_128x128_nofilters_d4.jxl
+128x128 RGB, VarDCT lossy, gaborish and EPF disabled, d=4.0
+
+Purpose
+-------
+Same source and filter setting as 54, coarser distance (d=4.0). See 54's
+sidecar for the source recipe and general rationale.
+
+--gaborish=0 --epf=0 disables both restoration filters. Per 18181-3 Annex A
+Table A.1:
+
+    Part 3 error class:  peak <= 0.004,  RMSE <= 1e-5   (no filters)
+
+Provenance
+----------
+  Encoder:      cjxl v0.13.0 196a43d9 [_AVX2_,SSE4,SSE2] {GNU 15.2.0}
+  libjxl rev:   196a43d996aa6ed33ebf98812a7c6d43b2b6d01b (v0.12-snapshot-2-g196a43d9)
+  cjxl flags:   -d 4.0 --gaborish=0 --epf=0 -e 7
+  Built by:     tools/setup-oracles.sh (flags recorded in
+                tools/oracle-bin/PINNED_REVISIONS.txt)
+  Regenerate:   tools/make-vardct-fixtures.sh
+                That script IS the recipe; it rewrites the source and re-encodes.
+
+  Source image: tests/fixtures/generated/src_vardct_mixed_rgb_128x128.ppm  (49167 bytes)
+                sha256 35af85cc2cc50771ec10ec8842673a4fdc534e8eaa29d5153d313b34f4e8c85d
+                Same source as fixture 54 -- see its sidecar for the pixel formula.
+
+  Fixture:      1225 bytes
+                sha256 999c529790e57a02bf440ead01833ce59460091e54f93224e02d9ce5ff1ea78e
+
+  Reference decode (djxl --output_format npy): NOT committed -- 196688 bytes,
+  over this repo's 100 KB commit-next-to-fixture cutoff (see
+  tools/make-vardct-fixtures.sh). Regenerate with:
+    tools/oracle-bin/djxl --output_format npy \
+      tests/fixtures/handmade/55_vardct_mixed_rgb_128x128_nofilters_d4.jxl \
+      /tmp/55.npy
+  sha256 (pinned decoder, tools/oracle-bin/PINNED_REVISIONS.txt):
+    7dc53472911c6f1a50e805934ece46561774004510236e7f603d2b0fd0e4fb48
+  Shape (1, 128, 128, 3) little-endian f32, per 18181-3 4.1.2. Decode is
+  deterministic per libjxl revision, so this hash is expected to reproduce
+  exactly on the pinned oracle build.
+
+cjxl/djxl are used strictly as BLACK BOXES: they emit/consume conformant
+streams for JPXL to parse. libjxl's source is never read. If a rebuild at a
+different libjxl revision changes these digests, that is the point of
+recording them -- do not silently update them; note the revision change.

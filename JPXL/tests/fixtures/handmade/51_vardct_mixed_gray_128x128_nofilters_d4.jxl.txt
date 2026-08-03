@@ -1,0 +1,45 @@
+Fixture: 51_vardct_mixed_gray_128x128_nofilters_d4.jxl
+128x128 greyscale, VarDCT lossy, gaborish and EPF disabled, d=4.0
+
+Purpose
+-------
+Same source and filter setting as 50, at a coarser target distance (d=4.0
+vs. d=1.0), to give the "no filters" class a second, lossier operating
+point. See 50's sidecar for the source recipe (smooth ramp / 1px checkerboard
+split) and the general rationale (varblock zoo, black-box oracle use,
+grading-against-reference-decode-not-source).
+
+--gaborish=0 --epf=0 disables both restoration filters, so per 18181-3
+Annex A Table A.1 this is again the tighter class:
+
+    Part 3 error class:  peak <= 0.004,  RMSE <= 1e-5   (no filters)
+
+Provenance
+----------
+  Encoder:      cjxl v0.13.0 196a43d9 [_AVX2_,SSE4,SSE2] {GNU 15.2.0}
+  libjxl rev:   196a43d996aa6ed33ebf98812a7c6d43b2b6d01b (v0.12-snapshot-2-g196a43d9)
+  cjxl flags:   -d 4.0 --gaborish=0 --epf=0 -e 7
+  Built by:     tools/setup-oracles.sh (flags recorded in
+                tools/oracle-bin/PINNED_REVISIONS.txt)
+  Regenerate:   tools/make-vardct-fixtures.sh
+                That script IS the recipe; it rewrites the source and re-encodes.
+
+  Source image: tests/fixtures/generated/src_vardct_mixed_gray_128x128.pgm  (16399 bytes)
+                sha256 02a9b857abdad87424263106db47a512603bb947fd17b7b8ccc15389a208d50e
+                Same source as fixture 50 -- see its sidecar for the pixel formula.
+
+  Fixture:      1692 bytes
+                sha256 ef142bb249467dba2b8fa4d85e0ac80b68daed0376d4af62810545246d2c3020
+
+  Reference decode (committed alongside, djxl --output_format npy):
+    51_vardct_mixed_gray_128x128_nofilters_d4.npy  (65616 bytes; committed, < 100 KB)
+    sha256 c111b8d57042e11ebbea1bae489994d0ccc0ba4c04c61339f60d6f61ec09210e
+    Shape (1, 128, 128, 1) little-endian f32, per 18181-3 4.1.2. Readable
+    with jpxl_conformance::FloatImage::from_npy.
+    Regenerable at any time from the fixture with the pinned djxl build
+    (decode is deterministic per libjxl revision, see PINNED_REVISIONS.txt).
+
+cjxl/djxl are used strictly as BLACK BOXES: they emit/consume conformant
+streams for JPXL to parse. libjxl's source is never read. If a rebuild at a
+different libjxl revision changes these digests, that is the point of
+recording them -- do not silently update them; note the revision change.
