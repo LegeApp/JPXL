@@ -72,6 +72,7 @@ pub mod headers;
 pub mod icc;
 pub mod modular;
 pub mod signature;
+pub mod vardct;
 
 #[cfg(test)]
 mod testsupport;
