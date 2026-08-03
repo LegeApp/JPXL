@@ -13,6 +13,40 @@ Keep this file small. Entries whose content has landed in `PLAN.md`,
 
 ---
 
+## 2026-08-03 (VarDCT wave 1) — 8B parameter bundles, 8D-parse sub-bitstreams
+
+**8B** — `vardct/{quantizer,block_ctx,dequant_matrix}.rs`: G.1.2, I.2.1–I.2.6
+complete; reuses `DecodeError` (no error.rs wiring needed). **FOURTH DEFECT
+CANDIDATE:** Table I.6's DCT128x256 Y/B bases break the per-family doubling
+regularities while preserving exactly the doubled fractional parts; verified
+at the image scan (not OCR). Printed values ship behind
+`DCT128X256_DEFAULT_BASES_AS_PRINTED`, sentinel test
+`large_dct_bases_double_per_size_step`; see
+`docs/experiments/2026-08-03-i25-default-dequant-constants.md`. Eight I.2.5
+OCR garbles settled at page-ranged scan reads. RAW dequant matrices expose
+`raw_requests()`/`set_raw_matrix()`; `matrix()` is typed `Unsupported` until
+8F wires section `3*num_lf_groups + index`. 8F integration snippet is in the
+8B report (read_lf_channel_dequantization → read_lf_global_vardct →
+read_hf_global_params).
+
+**8D-parse** — `vardct/{lf,hf_meta}.rs` + `frame/stream_index.rs`: G.2.2
+LfQuant to quantized planes (I.5.2 seam marked), G.2.4 four channels +
+greedy varblock placement (covered-exactly-once, no LF-group crossing,
+reject-not-clamp), all five H.4.1 stream-index formulas typed (decode.rs's
+two inline sites migrate in 8F). Open flip-point:
+`LF_QUANT_CHANNEL_ORDER_IS_XYB` (needs nonzero-LF-chroma fixture, 8F).
+
+**Traps:** `latex/part1.tex` and the transcription PDF are BYTE-IDENTICAL
+for Part 1 numeric tables — they are one source, not two; the only
+independent pair is `part1.md` vs that pair. Do not "fix" Table I.6 index 16
+without flipping the constant. Do not apply ×64 to I.2.5 defaults — they are
+already post-scale (Hornuss 280 vs DCT8x8 3150 is the cross-check).
+
+**Next:** wave 2 = 8C (HfPass/coefficient decode, opus) + 8D-dequant
+(I.5.2/I.6, callback to the 8D agent); then wave 3 = 8F assembly.
+
+---
+
 ## 2026-08-03 (VarDCT wave 0) — 8A math, 8E filters, 8F0 conformance metrics
 
 Slice 8 (VarDCT) is underway per the approved plan (sub-slices 8A–8F + 8F0,
