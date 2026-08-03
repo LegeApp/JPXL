@@ -13,6 +13,7 @@ dependencies = [
  "jpxl-conformance",
  "jpxl-core",
  "jpxl-decode",
+ "jpxl-encode",
 ]
 
 [[package]]
@@ -36,6 +37,17 @@ dependencies = [
  "jpxl-bitstream",
  "jpxl-conformance",
  "jpxl-core",
+ "jpxl-entropy",
+]
+
+[[package]]
+name = "jpxl-encode"
+version = "0.1.0"
+dependencies = [
+ "jpxl-bitstream",
+ "jpxl-conformance",
+ "jpxl-core",
+ "jpxl-decode",
  "jpxl-entropy",
 ]
 

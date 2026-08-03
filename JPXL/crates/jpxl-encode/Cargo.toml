@@ -1,0 +1,21 @@
+[package]
+name = "jpxl-encode"
+description = "JPEG XL encoder"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+jpxl-bitstream.workspace = true
+jpxl-core.workspace = true
+
+[dev-dependencies]
+jpxl-conformance.workspace = true
+jpxl-decode.workspace = true
+# Decode-side reference for the entropy round-trip tests only: the encoder
+# itself must not share an implementation with what validates it.
+jpxl-entropy.workspace = true
+
+[lints]
+workspace = true

@@ -5,6 +5,7 @@ members = [
     "crates/jpxl-core",
     "crates/jpxl-entropy",
     "crates/jpxl-decode",
+    "crates/jpxl-encode",
     "crates/jpxl-cli",
     "crates/jpxl-conformance",
 ]
@@ -21,6 +22,7 @@ jpxl-bitstream = { path = "crates/jpxl-bitstream", version = "0.1.0" }
 jpxl-core = { path = "crates/jpxl-core", version = "0.1.0" }
 jpxl-entropy = { path = "crates/jpxl-entropy", version = "0.1.0" }
 jpxl-decode = { path = "crates/jpxl-decode", version = "0.1.0" }
+jpxl-encode = { path = "crates/jpxl-encode", version = "0.1.0" }
 jpxl-conformance = { path = "crates/jpxl-conformance", version = "0.1.0" }
 
 [workspace.lints.rust]

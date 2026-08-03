@@ -2,9 +2,9 @@
 //!
 //! This crate is shared by the decoder and the encoder. It provides the
 //! lowest layer of the codestream: a [`BitReader`] that consumes bits
-//! LSB-first within each byte, and the header-syntax primitives built on it —
-//! `u(n)`, `Bool()`, [`U32()`](read_u32), [`U64()`](read_u64) and
-//! [`F16()`](read_f16_as_f32).
+//! LSB-first within each byte, the mirror-image [`BitWriter`], and the
+//! header-syntax primitives built on them — `u(n)`, `Bool()`,
+//! [`U32()`](read_u32), [`U64()`](read_u64) and [`F16()`](read_f16_as_f32).
 //!
 //! # Bit order
 //!
@@ -42,8 +42,10 @@ pub mod error;
 pub mod primitives;
 pub mod reader;
 pub mod trace;
+pub mod writer;
 
 pub use error::{BitstreamError, Result};
 pub use primitives::{U32Dist, U32Spec, read_bool, read_f16_as_f32, read_u32, read_u64};
 pub use reader::BitReader;
 pub use trace::{TraceEvent, TraceLog};
+pub use writer::BitWriter;
