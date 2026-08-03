@@ -175,6 +175,166 @@ pub fn peek_blend_mode(reader: &BitReader<'_>) -> Result<BlendMode> {
         .ok_or_else(|| FrameError::out_of_range("blending_info.mode", "F.8", u64::from(raw)))
 }
 
+// ---------------------------------------------------------------------------
+// F.2 — compositing a frame onto the canvas
+// ---------------------------------------------------------------------------
+
+/// One `Reference[]` buffer, or the canvas a frame is composited onto.
+///
+/// # Which colour space
+///
+/// F.2 is explicit: "the blending is done in the colour space after inverse
+/// colour transforms from Annex L have been applied (except for L.4)". So a
+/// canvas holds display-space samples on the nominal `[0, 1]` scale — the same
+/// scale [`crate::DecodedImage::float_planes`] uses — and **not** the XYB that
+/// K.3.2's patch references hold. The two uses of a `save_as_reference` slot
+/// are distinguished by `save_before_ct`, and this type is the `false` one.
+///
+/// Samples are unclipped: `kAdd` legitimately overshoots, and clipping here
+/// would change what a later frame blends against.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Canvas {
+    /// Width in samples.
+    pub width: u32,
+    /// Height in samples.
+    pub height: u32,
+    /// Colour planes, 1 for greyscale and 3 otherwise.
+    pub colour: Vec<Vec<f32>>,
+    /// Extra-channel planes, in `ec_info` index order.
+    pub extra: Vec<Vec<f32>>,
+}
+
+impl Canvas {
+    /// A canvas of zeroes — F.2's "if no frame was previously stored, the
+    /// source frame is assumed to have all sample values set to zeroes".
+    #[must_use]
+    pub fn zeros(width: u32, height: u32, num_colour: usize, num_extra: usize) -> Self {
+        let len = width as usize * height as usize;
+        Self {
+            width,
+            height,
+            colour: vec![vec![0.0; len]; num_colour],
+            extra: vec![vec![0.0; len]; num_extra],
+        }
+    }
+
+    /// One colour sample, or `0.0` outside the canvas.
+    #[must_use]
+    pub fn colour_at(&self, channel: usize, x: u32, y: u32) -> f32 {
+        Self::at(self.colour.get(channel), self.width, self.height, x, y)
+    }
+
+    /// One extra-channel sample, or `0.0` outside the canvas.
+    #[must_use]
+    pub fn extra_at(&self, channel: usize, x: u32, y: u32) -> f32 {
+        Self::at(self.extra.get(channel), self.width, self.height, x, y)
+    }
+
+    fn at(plane: Option<&Vec<f32>>, width: u32, height: u32, x: u32, y: u32) -> f32 {
+        if x >= width || y >= height {
+            return 0.0;
+        }
+        plane
+            .and_then(|p| p.get(y as usize * width as usize + x as usize))
+            .copied()
+            .unwrap_or(0.0)
+    }
+}
+
+/// **Flip point — which extra channel is "the alpha channel itself" (F.8).**
+///
+/// Table F.8 gives `kBlend` and `kMulAdd` a second formula "for the alpha
+/// channel itself", where `kBlend` becomes the Porter-Duff `over` on opacity
+/// and `kMulAdd` preserves the source frame's value. The clause never says
+/// which extra channels that exception covers.
+///
+/// * `true` (shipped): the channel named by this rule's `alpha_channel`, i.e.
+///   the exception fires exactly when the channel being blended is the same
+///   one supplying `new_alpha`/`old_alpha`. Under this reading the formula is
+///   self-consistent — `new_sample` and `new_alpha` are then the same number —
+///   which is what makes the alternate formula a *simplification* rather than
+///   a different operation.
+/// * `false`: every extra channel of type `kAlpha`, whether or not it is the
+///   one being blended with.
+///
+/// The two readings coincide for any image with a single alpha channel, which
+/// is every multi-frame stream in the corpus (`blendmodes` blends its one
+/// alpha channel with `alpha_channel = 0` in all four non-trivial modes).
+pub const ALPHA_SELF_RULE_IS_THE_NAMED_CHANNEL: bool = true;
+
+/// What a single [`blend_sample`] call needs from Table F.8.
+#[derive(Debug, Clone, Copy)]
+pub struct BlendContext {
+    /// The rule in force for this channel group.
+    pub info: BlendingInfo,
+    /// Whether the named alpha channel has premultiplied semantics
+    /// (`ec_info[alpha_channel].alpha_associated`, D.3.6).
+    pub alpha_associated: bool,
+    /// Whether the sample being blended is the alpha channel itself; see
+    /// [`ALPHA_SELF_RULE_IS_THE_NAMED_CHANNEL`].
+    pub is_alpha_itself: bool,
+}
+
+/// Table F.8, for one sample.
+///
+/// `new_alpha`/`old_alpha` are the named alpha channel's values at the same
+/// position, from the current frame and the source canvas respectively; they
+/// are ignored by the modes that do not read alpha.
+#[must_use]
+pub fn blend_sample(
+    ctx: &BlendContext,
+    old_sample: f32,
+    new_sample: f32,
+    old_alpha: f32,
+    new_alpha: f32,
+) -> f32 {
+    // F.2: with `clamp`, kBlend and kMulAdd clamp new_alpha to [0, 1], and
+    // kMul clamps new_sample instead.
+    let new_alpha = if ctx.info.clamp {
+        new_alpha.clamp(0.0, 1.0)
+    } else {
+        new_alpha
+    };
+    match ctx.info.mode {
+        BlendMode::Replace => new_sample,
+        BlendMode::Add => old_sample + new_sample,
+        BlendMode::Blend => {
+            if ctx.is_alpha_itself {
+                // "The blending on the alpha channel itself always uses the
+                // following formula instead."
+                return new_alpha.mul_add(1.0 - old_alpha, old_alpha);
+            }
+            if ctx.alpha_associated {
+                return new_alpha.mul_add(-old_sample, old_sample) + new_sample;
+            }
+            let alpha = new_alpha.mul_add(1.0 - old_alpha, old_alpha);
+            if alpha == 0.0 {
+                // Fully transparent on both sides: the quotient is 0/0 and
+                // every term of the numerator is zero, so the only value that
+                // is not an invention is zero.
+                return 0.0;
+            }
+            (new_alpha * new_sample + old_alpha * old_sample * (1.0 - new_alpha)) / alpha
+        }
+        BlendMode::MulAdd => {
+            if ctx.is_alpha_itself {
+                // "For the alpha channel itself, the values of the source
+                // frame are preserved."
+                return old_alpha;
+            }
+            new_alpha.mul_add(new_sample, old_sample)
+        }
+        BlendMode::Mul => {
+            let new_sample = if ctx.info.clamp {
+                new_sample.clamp(0.0, 1.0)
+            } else {
+                new_sample
+            };
+            old_sample * new_sample
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -304,5 +464,126 @@ mod tests {
         let r = BitReader::new(&data);
         assert_eq!(peek_blend_mode(&r).expect("valid"), BlendMode::Blend);
         assert_eq!(r.total_bits_read(), 0);
+    }
+
+    // ----------------------------------------------------------------
+    // F.2 — Table F.8
+    // ----------------------------------------------------------------
+
+    fn ctx(mode: BlendMode, associated: bool, is_alpha_itself: bool) -> BlendContext {
+        BlendContext {
+            info: BlendingInfo {
+                mode,
+                alpha_channel: 0,
+                clamp: false,
+                source: 0,
+            },
+            alpha_associated: associated,
+            is_alpha_itself,
+        }
+    }
+
+    #[test]
+    fn table_f8_colour_rows_are_hand_computed() {
+        // old = 0.25, new = 0.75, old_alpha = 0.5, new_alpha = 0.5.
+        let (o, n, oa, na) = (0.25f32, 0.75f32, 0.5f32, 0.5f32);
+        assert_eq!(
+            blend_sample(&ctx(BlendMode::Replace, false, false), o, n, oa, na),
+            0.75
+        );
+        assert_eq!(
+            blend_sample(&ctx(BlendMode::Add, false, false), o, n, oa, na),
+            1.0
+        );
+        assert_eq!(
+            blend_sample(&ctx(BlendMode::Mul, false, false), o, n, oa, na),
+            0.1875
+        );
+        // kMulAdd: old + new_alpha * new = 0.25 + 0.5 * 0.75.
+        assert_eq!(
+            blend_sample(&ctx(BlendMode::MulAdd, false, false), o, n, oa, na),
+            0.625
+        );
+        // kBlend premultiplied: new + old * (1 - new_alpha) = 0.75 + 0.125.
+        assert_eq!(
+            blend_sample(&ctx(BlendMode::Blend, true, false), o, n, oa, na),
+            0.875
+        );
+        // kBlend unassociated: alpha = 0.5 + 0.5 * 0.5 = 0.75;
+        // (0.5 * 0.75 + 0.5 * 0.25 * 0.5) / 0.75 = 0.4375 / 0.75.
+        let want = (0.5f32 * 0.75 + 0.5 * 0.25 * 0.5) / 0.75;
+        assert!(
+            (blend_sample(&ctx(BlendMode::Blend, false, false), o, n, oa, na) - want).abs() < 1e-7
+        );
+    }
+
+    #[test]
+    fn the_alpha_channel_has_its_own_two_formulas() {
+        // The trap: using the generic kBlend/kMulAdd formulas on the alpha
+        // channel itself. Table F.8 replaces both.
+        let (o, n, oa, na) = (0.5f32, 0.25f32, 0.5f32, 0.25f32);
+        // kBlend on alpha: old_alpha + new_alpha * (1 - old_alpha).
+        assert_eq!(
+            blend_sample(&ctx(BlendMode::Blend, false, true), o, n, oa, na),
+            0.5 + 0.25 * 0.5
+        );
+        // ... and the premultiplied flag does not change it.
+        assert_eq!(
+            blend_sample(&ctx(BlendMode::Blend, true, true), o, n, oa, na),
+            0.5 + 0.25 * 0.5
+        );
+        // kMulAdd on alpha: the source frame's value is preserved.
+        assert_eq!(
+            blend_sample(&ctx(BlendMode::MulAdd, false, true), o, n, oa, na),
+            oa
+        );
+    }
+
+    #[test]
+    fn clamp_applies_to_alpha_except_under_kmul() {
+        // F.2: kBlend/kMulAdd clamp new_alpha; kMul clamps new_sample instead.
+        let mut c = ctx(BlendMode::MulAdd, false, false);
+        c.info.clamp = true;
+        // new_alpha 2.0 clamps to 1.0, so old + 1.0 * new.
+        assert_eq!(blend_sample(&c, 0.25, 0.5, 0.0, 2.0), 0.75);
+        c.info.clamp = false;
+        assert_eq!(blend_sample(&c, 0.25, 0.5, 0.0, 2.0), 1.25);
+
+        let mut m = ctx(BlendMode::Mul, false, false);
+        m.info.clamp = true;
+        // new_sample 3.0 clamps to 1.0; the (huge) alpha is not consulted.
+        assert_eq!(blend_sample(&m, 0.5, 3.0, 0.0, 9.0), 0.5);
+        m.info.clamp = false;
+        assert_eq!(blend_sample(&m, 0.5, 3.0, 0.0, 9.0), 1.5);
+    }
+
+    #[test]
+    fn a_fully_transparent_unassociated_blend_is_zero_not_nan() {
+        // Both alphas zero makes the unassociated quotient 0/0. Every term of
+        // the numerator is zero, so zero is the only value that is not an
+        // invention -- and a NaN here would poison the whole canvas.
+        let v = blend_sample(&ctx(BlendMode::Blend, false, false), 0.5, 0.75, 0.0, 0.0);
+        assert_eq!(v, 0.0);
+    }
+
+    #[test]
+    fn alpha_one_and_zero_are_the_endpoints_of_an_unassociated_blend() {
+        // Orientation check: at new_alpha 1 the new sample wins outright, at
+        // new_alpha 0 the old one does (when it is opaque).
+        let over = ctx(BlendMode::Blend, false, false);
+        assert_eq!(blend_sample(&over, 0.25, 0.75, 1.0, 1.0), 0.75);
+        assert_eq!(blend_sample(&over, 0.25, 0.75, 1.0, 0.0), 0.25);
+    }
+
+    #[test]
+    fn an_unwritten_canvas_reads_as_zeroes() {
+        // F.2: "if no frame was previously stored, the source frame is assumed
+        // to have all sample values set to zeroes."
+        let c = Canvas::zeros(2, 3, 3, 1);
+        assert_eq!(c.colour_at(2, 1, 2), 0.0);
+        assert_eq!(c.extra_at(0, 1, 2), 0.0);
+        // Out of bounds is zero too, not a panic.
+        assert_eq!(c.colour_at(0, 9, 9), 0.0);
+        assert_eq!(c.extra_at(7, 0, 0), 0.0);
     }
 }

@@ -137,6 +137,92 @@ impl ColourPlanes {
     }
 }
 
+/// A frame's extra channels as `f32` planes on the nominal `[0, 1]` scale.
+///
+/// One plane per `metadata.ec_info` entry, in index order, each the size of
+/// the frame. Unlike [`ColourPlanes`] these never pass through Annex L: an
+/// extra channel is not colour, so G.4.2's interpretation "according to
+/// `metadata.ec_info[i].bit_depth`" is the whole of it. Samples are left
+/// unclipped for the same reason the colour planes are.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ExtraPlanes {
+    /// Width in samples.
+    pub width: u32,
+    /// Height in samples.
+    pub height: u32,
+    /// One plane per extra channel, each `width * height` long.
+    pub planes: Vec<Vec<f32>>,
+}
+
+impl ExtraPlanes {
+    /// An image with no extra channels.
+    #[must_use]
+    pub const fn empty(width: u32, height: u32) -> Self {
+        Self {
+            width,
+            height,
+            planes: Vec::new(),
+        }
+    }
+
+    /// Allocates `count` zeroed frame-sized planes, metering the allocation.
+    ///
+    /// # Errors
+    ///
+    /// [`DecodeError::Core`] if the planes exceed the allocation budget, or
+    /// [`DecodeError::FieldOutOfRange`] if `width * height` overflows.
+    pub fn zeros(width: u32, height: u32, count: usize, guard: &mut AllocGuard) -> Result<Self> {
+        let cells = u64::from(width)
+            .checked_mul(u64::from(height))
+            .ok_or_else(|| DecodeError::out_of_range("frame area", "G.4.2", u64::from(width)))?;
+        guard.charge(cells * 4 * count as u64)?;
+        let len = usize::try_from(cells)
+            .map_err(|_| DecodeError::out_of_range("frame area", "G.4.2", cells))?;
+        Ok(Self {
+            width,
+            height,
+            planes: vec![vec![0.0; len]; count],
+        })
+    }
+
+    /// How many extra channels this holds.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.planes.len()
+    }
+
+    /// Whether the frame has no extra channels.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.planes.is_empty()
+    }
+
+    /// Writes one sample, ignoring coordinates outside the frame.
+    pub fn set(&mut self, channel: usize, x: u32, y: u32, value: f32) {
+        if x >= self.width || y >= self.height {
+            return;
+        }
+        let idx = y as usize * self.width as usize + x as usize;
+        if let Some(slot) = self.planes.get_mut(channel).and_then(|p| p.get_mut(idx)) {
+            *slot = value;
+        }
+    }
+
+    /// Reads one sample, or `0.0` outside the frame or past the last channel.
+    #[must_use]
+    pub fn get(&self, channel: usize, x: u32, y: u32) -> f32 {
+        if x >= self.width || y >= self.height {
+            return 0.0;
+        }
+        let idx = y as usize * self.width as usize + x as usize;
+        self.planes
+            .get(channel)
+            .and_then(|p| p.get(idx))
+            .copied()
+            .unwrap_or(0.0)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // I.5.3 — HF dequantization
 // ---------------------------------------------------------------------------
@@ -510,31 +596,35 @@ pub fn apply_restoration(
 /// [`patches`](crate::frame::patches) module documentation for the two places
 /// the standard pins that position.
 ///
-/// `num_extra` is the image's extra-channel count. Only the colour group
-/// (K.3.2's `c == 0`, which "iterates over the three colour channels") is
-/// blended here: extra channels are not carried on these planes at all, so a
-/// dictionary that touches them is refused rather than silently dropped.
+/// `extra` carries the frame's extra channels on the `[0, 1]` scale of G.4.2's
+/// last paragraph; they are blended too, and they are also where the alpha of
+/// an alpha-using mode is read from.
+///
+/// # The per-channel-group loop
+///
+/// K.3.2 iterates `c` over `[0, num_extra]`, where `c == 0` means all three
+/// colour channels together and `c > 0` means extra channel `c - 1`. Each `c`
+/// has its own mode, alpha channel and clamp flag, so a patch can (and
+/// `patches`/`patches_lossless` do) replace the colour and alpha-blend the
+/// alpha, or vice versa.
+///
+/// # Which alpha
+///
+/// See [`PATCH_ALPHA_IS_THE_PATCHS_OWN`](crate::vardct::render::PATCH_ALPHA_IS_THE_PATCHS_OWN).
 ///
 /// # Errors
 ///
-/// [`DecodeError::Unsupported`] for a blend mode that needs an alpha channel
-/// (no alpha exists on these planes) or for a dictionary with extra-channel
-/// blend rules; [`DecodeError::FieldOutOfRange`] for a patch naming an
-/// unwritten reference slot or reading outside it.
+/// [`DecodeError::Unsupported`] for an alpha-using blend mode on an image with
+/// no extra channel to read alpha from; [`DecodeError::FieldOutOfRange`] for a
+/// patch naming an unwritten reference slot.
 pub fn apply_patches(
     planes: &mut ColourPlanes,
+    extra: &mut ExtraPlanes,
     dictionary: &PatchDictionary,
     references: &[Option<ReferenceFrame>],
-    num_extra: usize,
 ) -> Result<()> {
     if dictionary.patches.is_empty() {
         return Ok(());
-    }
-    if num_extra != 0 {
-        return Err(DecodeError::Unsupported {
-            feature: "patches on a frame with extra channels",
-            clause: "18181-1 K.3.2",
-        });
     }
 
     for patch in &dictionary.patches {
@@ -551,33 +641,62 @@ pub fn apply_patches(
             })?;
 
         for position in &patch.positions {
-            // K.3.2: index 0 of `blending` governs the three colour channels
-            // together. With no extra channels it is the only entry.
-            let rule = position.blending.first().copied().unwrap_or_default();
-            if rule.mode.uses_alpha() {
-                return Err(DecodeError::Unsupported {
-                    feature: "an alpha-blending patch mode without an alpha channel",
-                    clause: "18181-1 K.3.2",
-                });
-            }
-            if rule.mode == PatchBlendMode::None {
-                continue;
-            }
+            for (group, rule) in position.blending.iter().enumerate() {
+                if rule.mode == PatchBlendMode::None {
+                    continue;
+                }
+                let alpha_index = usize::try_from(rule.alpha_channel).unwrap_or(usize::MAX);
+                if rule.mode.uses_alpha() && alpha_index >= extra.len() {
+                    return Err(DecodeError::Unsupported {
+                        feature: "an alpha-blending patch mode without an alpha channel",
+                        clause: "18181-1 K.3.2",
+                    });
+                }
 
-            for iy in 0..patch.height {
-                for ix in 0..patch.width {
-                    // K.3.1 already proved (x, y) + (width, height) is inside
-                    // the frame, so no clipping is needed here; `ColourPlanes`
-                    // still ignores an out-of-frame write, which keeps a
-                    // future caller honest rather than silently corrupting.
-                    let (dx, dy) = (position.x + ix, position.y + iy);
-                    for c in 0..NUM_CHANNELS {
-                        let new_sample = reference.get(c, patch.x0 + ix, patch.y0 + iy);
-                        let old_sample = planes.get(c, dx, dy);
-                        // No alpha reaches here: `uses_alpha` modes are
-                        // refused above, and the rest ignore the argument.
-                        let blended = patch_blend(rule.mode, old_sample, new_sample, 0.0);
-                        planes.set(c, dx, dy, blended);
+                for iy in 0..patch.height {
+                    for ix in 0..patch.width {
+                        // K.3.1 already proved (x, y) + (width, height) is
+                        // inside the frame, so no clipping is needed here; the
+                        // plane types still ignore an out-of-frame write,
+                        // which keeps a future caller honest rather than
+                        // silently corrupting.
+                        let (dx, dy) = (position.x + ix, position.y + iy);
+                        let (sx, sy) = (patch.x0 + ix, patch.y0 + iy);
+                        let alpha = if rule.mode.uses_alpha() {
+                            let a = if PATCH_ALPHA_IS_THE_PATCHS_OWN {
+                                reference.get_extra(alpha_index, sx, sy)
+                            } else {
+                                extra.get(alpha_index, dx, dy)
+                            };
+                            // K.3.2: "If clamp is true, alpha values are
+                            // clamped to the interval [0, 1] before blending."
+                            if rule.clamp { a.clamp(0.0, 1.0) } else { a }
+                        } else {
+                            0.0
+                        };
+
+                        if group == 0 {
+                            for c in 0..NUM_CHANNELS {
+                                let new_sample = reference.get(c, sx, sy);
+                                let old_sample = planes.get(c, dx, dy);
+                                planes.set(
+                                    c,
+                                    dx,
+                                    dy,
+                                    patch_blend(rule.mode, old_sample, new_sample, alpha),
+                                );
+                            }
+                        } else {
+                            let c = group - 1;
+                            let new_sample = reference.get_extra(c, sx, sy);
+                            let old_sample = extra.get(c, dx, dy);
+                            extra.set(
+                                c,
+                                dx,
+                                dy,
+                                patch_blend(rule.mode, old_sample, new_sample, alpha),
+                            );
+                        }
                     }
                 }
             }
@@ -585,6 +704,31 @@ pub fn apply_patches(
     }
     Ok(())
 }
+
+/// **Flip point — whose alpha K.3.2 blends with.**
+///
+/// Table K.1's alpha modes say "the alpha channel is the extra channel with
+/// index `k = patch[i].blending[j].alpha_channel[c]`" and stop there: the
+/// clause never says whether that channel is read from the *patch* (the
+/// reference frame) or from the *canvas* (the frame being drawn on). Table
+/// F.7's `kBlend`, which K.1 defers to, is a frame-blending rule where alpha
+/// unambiguously belongs to the frame being composited — i.e. to the new
+/// sample.
+///
+/// * `true` (shipped): alpha comes from the reference frame, at the patch's
+///   own `(x0 + ix, y0 + iy)`. A patch then carries its own opacity, which is
+///   the only reading under which a patch dictionary can express an
+///   antialiased glyph over arbitrary background — the use K.3 exists for.
+///   It also makes `kBlendAbove` on the colour group agree with what the
+///   *same position's* alpha-channel rule writes into the alpha plane.
+/// * `false`: alpha comes from the canvas at the blit position.
+///
+/// **Unexercised.** `patches`'s 654 positions blend the colour group with
+/// `kAdd` and the alpha group with `kNone`, and no other available stream uses
+/// a Table K.1 row above 3 at all, so nothing discriminates the two readings.
+/// See `docs/experiments/2026-08-04-vardct-extra-channels-and-frame-blending.md`
+/// §4.
+pub const PATCH_ALPHA_IS_THE_PATCHS_OWN: bool = true;
 
 /// L.2.2: converts the frame's XYB planes to linear sRGB in place.
 pub fn to_linear_srgb(planes: &mut ColourPlanes, opsin: &OpsinInverse) {
@@ -764,7 +908,48 @@ mod tests {
             width: 2,
             height: 2,
             planes: [vec![x; 4], vec![y; 4], vec![b; 4]],
+            extra: Vec::new(),
         }
+    }
+
+    /// The same 2x2 reference with one constant extra channel.
+    fn flat_reference_with_alpha(x: f32, y: f32, b: f32, alpha: f32) -> ReferenceFrame {
+        ReferenceFrame {
+            extra: vec![vec![alpha; 4]],
+            ..flat_reference(x, y, b)
+        }
+    }
+
+    /// A dictionary whose position carries one rule per channel group.
+    fn dictionary_groups(rules: &[(PatchBlendMode, u32, bool)], at: (u32, u32)) -> PatchDictionary {
+        PatchDictionary {
+            patches: vec![crate::frame::patches::Patch {
+                reference: 0,
+                x0: 0,
+                y0: 0,
+                width: 2,
+                height: 2,
+                positions: vec![crate::frame::patches::PatchPosition {
+                    x: at.0,
+                    y: at.1,
+                    blending: rules
+                        .iter()
+                        .map(
+                            |&(mode, alpha_channel, clamp)| crate::frame::patches::PatchBlending {
+                                mode,
+                                alpha_channel,
+                                clamp,
+                            },
+                        )
+                        .collect(),
+                }],
+            }],
+        }
+    }
+
+    /// No extra channels, for the tests that only exercise the colour group.
+    fn no_extra() -> ExtraPlanes {
+        ExtraPlanes::empty(0, 0)
     }
 
     fn dictionary(mode: PatchBlendMode, at: (u32, u32)) -> PatchDictionary {
@@ -800,9 +985,9 @@ mod tests {
 
         apply_patches(
             &mut planes,
+            &mut no_extra(),
             &dictionary(PatchBlendMode::Replace, (1, 2)),
             &refs,
-            0,
         )
         .unwrap();
 
@@ -841,6 +1026,7 @@ mod tests {
                 (0..16).map(|i| i as f32).collect(),
                 vec![0.0; 16],
             ],
+            extra: Vec::new(),
         };
         let dict = PatchDictionary {
             patches: vec![crate::frame::patches::Patch {
@@ -860,7 +1046,7 @@ mod tests {
                 }],
             }],
         };
-        apply_patches(&mut planes, &dict, &one_slot(reference), 0).unwrap();
+        apply_patches(&mut planes, &mut no_extra(), &dict, &one_slot(reference)).unwrap();
 
         // Reference rows 1 and 2, columns 2 and 3: indices 6, 7, 10, 11.
         assert_eq!(planes.get(1, 0, 0), 6.0);
@@ -887,7 +1073,13 @@ mod tests {
             for plane in &mut planes.planes {
                 plane.fill(0.25);
             }
-            apply_patches(&mut planes, &dictionary(mode, (0, 0)), &refs, 0).unwrap();
+            apply_patches(
+                &mut planes,
+                &mut no_extra(),
+                &dictionary(mode, (0, 0)),
+                &refs,
+            )
+            .unwrap();
             assert_eq!(planes.get(1, 0, 0), want, "{mode:?}");
         }
     }
@@ -904,9 +1096,9 @@ mod tests {
         assert!(
             apply_patches(
                 &mut planes,
+                &mut no_extra(),
                 &dictionary(PatchBlendMode::Add, (0, 0)),
                 &empty,
-                0
             )
             .is_err()
         );
@@ -928,19 +1120,149 @@ mod tests {
             PatchBlendMode::MulAddBelow,
         ] {
             assert!(
-                apply_patches(&mut planes, &dictionary(mode, (0, 0)), &refs, 0).is_err(),
+                apply_patches(
+                    &mut planes,
+                    &mut no_extra(),
+                    &dictionary(mode, (0, 0)),
+                    &refs
+                )
+                .is_err(),
                 "{mode:?}"
             );
         }
-        assert!(
+    }
+
+    #[test]
+    fn each_channel_group_follows_its_own_rule() {
+        // K.3.2 iterates c over [0, num_extra]: c == 0 is all three colour
+        // channels together, c > 0 is extra channel c - 1. This is the shape
+        // the `patches` corpus case has -- kAdd on colour, kNone on alpha --
+        // and a decoder that applied the colour rule to the extra channel
+        // would overwrite the alpha plane with the patch's.
+        let limits = Limits::default();
+        let mut guard = AllocGuard::new(&limits);
+        let mut planes = ColourPlanes::zeros(2, 2, &mut guard).unwrap();
+        for plane in &mut planes.planes {
+            plane.fill(0.25);
+        }
+        let mut extra = ExtraPlanes::zeros(2, 2, 1, &mut guard).unwrap();
+        extra.planes[0].fill(0.5);
+        let refs = one_slot(flat_reference_with_alpha(0.5, 0.5, 0.5, 0.125));
+
+        apply_patches(
+            &mut planes,
+            &mut extra,
+            &dictionary_groups(
+                &[
+                    (PatchBlendMode::Add, 0, false),
+                    (PatchBlendMode::None, 0, false),
+                ],
+                (0, 0),
+            ),
+            &refs,
+        )
+        .unwrap();
+
+        assert_eq!(planes.get(1, 0, 0), 0.75, "colour took kAdd");
+        assert_eq!(extra.get(0, 0, 0), 0.5, "kNone left the alpha plane alone");
+    }
+
+    #[test]
+    fn an_extra_channel_group_blends_into_the_extra_plane() {
+        let limits = Limits::default();
+        let mut guard = AllocGuard::new(&limits);
+        let mut planes = ColourPlanes::zeros(2, 2, &mut guard).unwrap();
+        let mut extra = ExtraPlanes::zeros(2, 2, 1, &mut guard).unwrap();
+        extra.planes[0].fill(0.25);
+        let refs = one_slot(flat_reference_with_alpha(0.0, 0.0, 0.0, 0.5));
+
+        apply_patches(
+            &mut planes,
+            &mut extra,
+            &dictionary_groups(
+                &[
+                    (PatchBlendMode::None, 0, false),
+                    (PatchBlendMode::Replace, 0, false),
+                ],
+                (0, 0),
+            ),
+            &refs,
+        )
+        .unwrap();
+
+        assert_eq!(extra.get(0, 0, 0), 0.5, "the patch's own extra channel");
+        assert_eq!(planes.get(1, 0, 0), 0.0, "kNone left the colour alone");
+    }
+
+    #[test]
+    fn an_alpha_mode_reads_the_alpha_the_flip_point_names() {
+        // With PATCH_ALPHA_IS_THE_PATCHS_OWN the alpha comes from the
+        // reference frame, so kBlendAbove at alpha 0.5 lands halfway between
+        // the canvas and the patch regardless of the canvas's own alpha.
+        let limits = Limits::default();
+        let mut guard = AllocGuard::new(&limits);
+        let mut planes = ColourPlanes::zeros(2, 2, &mut guard).unwrap();
+        for plane in &mut planes.planes {
+            plane.fill(0.25);
+        }
+        let mut extra = ExtraPlanes::zeros(2, 2, 1, &mut guard).unwrap();
+        extra.planes[0].fill(1.0);
+        let refs = one_slot(flat_reference_with_alpha(0.75, 0.75, 0.75, 0.5));
+
+        apply_patches(
+            &mut planes,
+            &mut extra,
+            &dictionary_groups(
+                &[
+                    (PatchBlendMode::BlendAbove, 0, false),
+                    (PatchBlendMode::None, 0, false),
+                ],
+                (0, 0),
+            ),
+            &refs,
+        )
+        .unwrap();
+
+        let want = if PATCH_ALPHA_IS_THE_PATCHS_OWN {
+            // alpha 0.5 from the reference: 0.25 + 0.5 * (0.75 - 0.25).
+            0.5
+        } else {
+            // alpha 1.0 from the canvas: the patch wins outright.
+            0.75
+        };
+        assert_eq!(planes.get(1, 0, 0), want);
+    }
+
+    #[test]
+    fn a_clamped_alpha_is_clamped_before_blending() {
+        // K.3.2: "If clamp is true, alpha values are clamped to the interval
+        // [0, 1] before blending." An alpha of 2.0 would otherwise overshoot
+        // past the patch sample.
+        let limits = Limits::default();
+        let mut guard = AllocGuard::new(&limits);
+        let mut extra = ExtraPlanes::zeros(2, 2, 1, &mut guard).unwrap();
+        let refs = one_slot(flat_reference_with_alpha(1.0, 1.0, 1.0, 2.0));
+
+        for (clamp, want) in [(true, 1.0f32), (false, 1.75)] {
+            let mut planes = ColourPlanes::zeros(2, 2, &mut guard).unwrap();
+            for plane in &mut planes.planes {
+                plane.fill(0.25);
+            }
             apply_patches(
                 &mut planes,
-                &dictionary(PatchBlendMode::Add, (0, 0)),
+                &mut extra,
+                &dictionary_groups(
+                    &[
+                        (PatchBlendMode::BlendAbove, 0, clamp),
+                        (PatchBlendMode::None, 0, false),
+                    ],
+                    (0, 0),
+                ),
                 &refs,
-                1
             )
-            .is_err()
-        );
+            .unwrap();
+            assert_eq!(planes.get(1, 0, 0), want, "clamp = {clamp}");
+        }
     }
 
     #[test]
@@ -953,7 +1275,13 @@ mod tests {
         }
         let before = planes.clone();
         let empty: [Option<ReferenceFrame>; 4] = [None, None, None, None];
-        apply_patches(&mut planes, &PatchDictionary::default(), &empty, 0).unwrap();
+        apply_patches(
+            &mut planes,
+            &mut no_extra(),
+            &PatchDictionary::default(),
+            &empty,
+        )
+        .unwrap();
         assert_eq!(planes, before);
     }
 

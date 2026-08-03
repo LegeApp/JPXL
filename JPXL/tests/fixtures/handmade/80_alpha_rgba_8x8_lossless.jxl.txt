@@ -1,0 +1,80 @@
+Fixture: 80_alpha_rgba_8x8_lossless.jxl
+8x8 RGBA, modular lossless, 8-bit colour and 8-bit alpha
+
+Purpose
+-------
+Wave 6 (extra channels) rung 1: the smallest expressible RGBA image. Both the
+colour channels and the alpha channel are at most group_dim in each dimension,
+so G.1.3's GlobalModular sub-bitstream decodes the whole channel list and
+neither G.2.3's nor G.4.2's group rule is reached. This is the rung that fails
+first if the extra channel is missing from the initial channel list of G.1.3,
+or if its bit depth is read from metadata.bit_depth instead of
+ec_info[0].bit_depth.
+
+Frame structure, as parsed by JPXL itself (jpxl-decode's own frame-header
+reader, not by any oracle):
+
+  frame 0  kRegularFrame  kModular  1 group, 1 LF group, 1 TOC section
+           1 extra channel (kAlpha), ec_upsampling 1, dim_shift 0
+
+The colour content is the shape the VarDCT and progressive recipes use -- a
+smooth left half and a 1-pixel checkerboard right half, the highest spatial
+frequency a discrete grid can represent, so cjxl's own transform-selection
+heuristic reaches for a mixture of varblock sizes. This sidecar does not claim
+particular transforms were chosen.
+
+The alpha content is deliberately NOT the same shape as the colour: a radial
+ramp with a hard-edged fully transparent notch in the top-left quadrant. A
+decode that transposed the alpha plane with a colour plane, shifted it, or
+dropped it and left zeros therefore cannot produce a plausible image, and the
+test asserts the alpha plane is non-constant before it grades anything.
+
+Grading (18181-3 4.2)
+---------------------
+Lossless, so the reference decode and ours agree exactly as integers; the only
+tolerance the test allows is the f32 round-trip of those integers, at
+peak <= 1e-6 and RMSE <= 1e-6. The alpha channel is additionally held to a
+peak of 1e-6 on its own.
+
+Grading is against a reference DECODE of this stream (the committed .npy, or a
+fresh djxl decode), never against the original source PNG -- Part 3 conformance
+bounds decoder-vs-reference error, not encoder loss against the pre-encode
+image.
+
+Provenance
+----------
+  Encoder:      cjxl v0.13.0 196a43d9 [_AVX2_,SSE4,SSE2] {GNU 15.2.0}
+  libjxl rev:   196a43d996aa6ed33ebf98812a7c6d43b2b6d01b (v0.12-snapshot-2-g196a43d9)
+  cjxl flags:   -d 0 -e 7
+  Built by:     tools/setup-oracles.sh (flags recorded in
+                tools/oracle-bin/PINNED_REVISIONS.txt)
+  Regenerate:   tools/make-alpha-fixtures.sh
+                That script IS the recipe; it rewrites the source and re-encodes.
+
+  Source image: tests/fixtures/generated/src_alpha_rgba_8x8.png  (226 bytes)
+                sha256 23f6ac535e2720df2db660dc14f6f53ee0305e49f8c82348fa2c38ee3f7e8ff0
+                Synthetic PNG, written by the Python snippet inside
+                tools/make-alpha-fixtures.sh with nothing but the standard
+                library -- no third-party image was used, converted or
+                consulted, and no image library is involved. PNG rather than
+                PNM because PNM has no alpha channel.
+
+  Fixture:      288 bytes
+                sha256 b5419de2969b4ebddce5f2d97ab3bf60fb0403ab1c3e5977c8211cdabb4ebec1
+
+  Reference decode (djxl --output_format npy):
+    80_alpha_rgba_8x8_lossless.npy  (1100 bytes)
+    sha256 c656a2e9f6530f43d1ca8de643cfef06833daceee01268d170183c153f65e672
+    Committed alongside the fixture (< 100 KB).
+    Shape (1, 8, 8, 4) little-endian f32, per 18181-3 4.1.2. The channel count
+    includes the alpha channel: djxl interleaves the extra channels after the
+    colour ones, which is the same order G.1.3 gives the modular channel list
+    and the order jpxl-decode returns its planes in. Readable with
+    jpxl_conformance::FloatImage::from_npy.
+    Regenerable at any time from the fixture with the pinned djxl build
+    (decode is deterministic per libjxl revision, see PINNED_REVISIONS.txt).
+
+cjxl/djxl are used strictly as BLACK BOXES: they emit/consume conformant
+streams for JPXL to parse. libjxl's source is never read. If a rebuild at a
+different libjxl revision changes these digests, that is the point of
+recording them -- do not silently update them; note the revision change.

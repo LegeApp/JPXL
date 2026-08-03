@@ -46,7 +46,9 @@ pub mod toc;
 
 use jpxl_core::limits::{AllocGuard, Limits};
 
-pub use blending::{BlendMode, BlendingInfo, read_blending_info};
+pub use blending::{
+    BlendContext, BlendMode, BlendingInfo, Canvas, blend_sample, read_blending_info,
+};
 pub use epf::{EpfStep, SigmaField, epf, epf_step, epf_steps, epf_weight, vardct_sigma};
 pub use error::{FrameError, Result};
 pub use gaborish::{GaborKernel, PlaneDims, gaborish, gaborish_into, gaborish_planes, mirror1d};

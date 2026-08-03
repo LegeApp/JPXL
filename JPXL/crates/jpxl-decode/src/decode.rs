@@ -48,9 +48,10 @@ use jpxl_core::limits::{AllocGuard, Limits};
 
 use crate::container;
 use crate::error::{DecodeError, Result};
+use crate::frame::blending::ALPHA_SELF_RULE_IS_THE_NAMED_CHANNEL;
 use crate::frame::{
-    Encoding, FrameGeometry, FrameHeader, FrameType, Rect, Toc, read_frame_header, read_toc,
-    stream_index as stream_index_of,
+    BlendContext, BlendMode, BlendingInfo, Canvas, Encoding, FrameGeometry, FrameHeader, FrameType,
+    Rect, Toc, read_frame_header, read_toc, stream_index as stream_index_of,
 };
 use crate::headers::{ImageHeaders, ImageMetadata, decode_image_headers_metered};
 use crate::modular::{
@@ -237,6 +238,10 @@ pub struct ReferenceFrame {
     pub height: u32,
     /// The three colour planes, raster order, `width * height` each.
     pub planes: [Vec<f32>; 3],
+    /// The extra channels, in `ec_info` index order, on G.4.2's `[0, 1]`
+    /// scale. K.3.2 blends these alongside the colour planes, and an
+    /// alpha-using mode reads its alpha from one of them.
+    pub extra: Vec<Vec<f32>>,
 }
 
 impl ReferenceFrame {
@@ -247,6 +252,17 @@ impl ReferenceFrame {
     /// canvas coordinate rather than a rectangle-relative one.
     #[must_use]
     pub fn get(&self, channel: usize, x: u32, y: u32) -> f32 {
+        self.sample(self.planes.get(channel), x, y)
+    }
+
+    /// The extra-channel sample at a **canvas** coordinate, or `0.0` outside
+    /// the stored rectangle or past the last extra channel.
+    #[must_use]
+    pub fn get_extra(&self, channel: usize, x: u32, y: u32) -> f32 {
+        self.sample(self.extra.get(channel), x, y)
+    }
+
+    fn sample(&self, plane: Option<&Vec<f32>>, x: u32, y: u32) -> f32 {
         let (ox, oy) = if PATCH_REFERENCE_IS_CANVAS_COORDINATES {
             (self.origin_x, self.origin_y)
         } else {
@@ -268,11 +284,7 @@ impl ReferenceFrame {
             usize::try_from(ly).unwrap_or(0),
         );
         let idx = ly * self.width as usize + lx;
-        self.planes
-            .get(channel)
-            .and_then(|p| p.get(idx))
-            .copied()
-            .unwrap_or(0.0)
+        plane.and_then(|p| p.get(idx)).copied().unwrap_or(0.0)
     }
 }
 
@@ -398,8 +410,15 @@ pub fn decode(data: &[u8], limits: &Limits) -> Result<DecodedImage> {
     let mut cursor = usize::try_from(reader.total_bits_read() / 8)
         .map_err(|_| unsupported("a codestream larger than the address space", "18181-1 A.1"))?;
 
+    // A codestream with one regular frame returns that frame's own planes,
+    // integers included and bit-exact for a lossless modular decode. As soon
+    // as a second regular frame appears, F.2's compositing takes over and the
+    // result is the canvas — floats, because `kBlend` divides.
     let mut decoded: Option<DecodedImage> = None;
+    let mut canvas: Option<Canvas> = None;
+    let mut regular_frames = 0u32;
     let mut references: ReferenceSlots = [None, None, None, None];
+    let mut canvases: CanvasSlots = [None, None, None, None];
     let mut lf_frames: LfFrameSlots = [None, None, None, None];
     let mut frames = 0u32;
     loop {
@@ -440,13 +459,26 @@ pub fn decode(data: &[u8], limits: &Limits) -> Result<DecodedImage> {
                 .map_err(|_| unsupported("an oversized TOC", "18181-1 F.3.3"))?;
 
         if header.frame_type == FrameType::RegularFrame {
-            if decoded.is_some() {
+            // F.2 makes the composition of several regular frames into one
+            // image conditional: "if duration is zero and !is_last, the
+            // decoder does not present the current frame, but the frame may be
+            // composed together with the next frames ... in particular, in the
+            // case that metadata.have_animation is false, the decoder returns
+            // a single image consisting of the composition of all the
+            // zero-duration frames." A presented frame — an animation, or any
+            // non-final frame with a duration — is a separate output image,
+            // and this decoder returns exactly one. Compositing them anyway
+            // would silently return an image the standard does not describe.
+            if regular_frames > 0 && headers.metadata.animation.is_some() {
+                return Err(unsupported("animation frames", "18181-1 F.2"));
+            }
+            if header.duration != 0 && !header.is_last {
                 return Err(unsupported(
-                    "a codestream with more than one regular frame (blending)",
+                    "a presented regular frame with a duration",
                     "18181-1 F.2",
                 ));
             }
-            decoded = Some(decode_frame(
+            let image = decode_frame(
                 codestream,
                 section_base,
                 &toc,
@@ -457,7 +489,58 @@ pub fn decode(data: &[u8], limits: &Limits) -> Result<DecodedImage> {
                 &lf_frames,
                 limits,
                 &mut guard,
-            )?);
+            )?;
+            regular_frames += 1;
+
+            // F.2: the frame is composited onto `Reference[source]` with its
+            // own blending modes. The first frame of a still image is almost
+            // always a full-frame kReplace against an empty canvas, which is
+            // the identity — recognising that is what keeps a one-frame
+            // lossless decode exactly integral.
+            let trivial = regular_frames == 1 && is_identity_blend(&header, &headers.metadata);
+            if trivial {
+                // The canvas copy is only needed if a later frame reads this
+                // one back.
+                canvas = if header.can_reference() {
+                    Some(canvas_from_image(&image, &headers.metadata))
+                } else {
+                    None
+                };
+                decoded = Some(image);
+            } else {
+                let frame_canvas = canvas_from_image(&image, &headers.metadata);
+                drop(image);
+                let composed = composite_frame(
+                    &frame_canvas,
+                    &header,
+                    &headers.metadata,
+                    &canvases,
+                    &mut guard,
+                )?;
+                decoded = None;
+                canvas = Some(composed);
+            }
+
+            // "If can_reference, then the samples of the decoded frame are
+            // recorded as Reference[save_as_reference] ... Blending is
+            // performed before recording the reference frame."
+            if header.can_reference() {
+                if header.save_before_ct {
+                    // The slot would then hold pre-colour-transform samples,
+                    // which is the space K.3 patches read and not the space
+                    // F.2 blends in. Nothing available emits a regular frame
+                    // that way.
+                    return Err(unsupported(
+                        "a regular frame saved before the colour transform",
+                        "18181-1 F.2",
+                    ));
+                }
+                let slot = usize::try_from(header.save_as_reference).unwrap_or(usize::MAX);
+                *canvases
+                    .get_mut(slot)
+                    .ok_or_else(|| unsupported("a reference slot past three", "18181-1 F.2"))? =
+                    canvas.clone();
+            }
         } else if header.frame_type == FrameType::LfFrame {
             // F.2: "if lf_level != 0, the samples of the frame (before any
             // colour transform is applied) are recorded as
@@ -513,10 +596,272 @@ pub fn decode(data: &[u8], limits: &Limits) -> Result<DecodedImage> {
         }
     }
 
-    let mut image =
-        decoded.ok_or_else(|| unsupported("a codestream with no regular frame", "18181-1 A.1"))?;
+    if regular_frames == 0 {
+        return Err(unsupported(
+            "a codestream with no regular frame",
+            "18181-1 A.1",
+        ));
+    }
+    let mut image = match decoded {
+        Some(image) => image,
+        None => {
+            let canvas = canvas
+                .ok_or_else(|| unsupported("a codestream with no regular frame", "18181-1 A.1"))?;
+            image_from_canvas(canvas, &headers.metadata)
+        }
+    };
     image.icc_profile = icc_profile;
     Ok(image)
+}
+
+/// The four `Reference[]` slots as F.2's blending reads them.
+type CanvasSlots = [Option<Canvas>; NUM_REFERENCE_SLOTS];
+
+/// Whether compositing this frame is the identity, so the frame's own planes
+/// are the result.
+///
+/// True exactly when the frame covers the canvas and every one of its
+/// blending rules — the colour one and each extra channel's — is `kReplace`.
+/// That is F.2's `resets_canvas` extended over the extra channels: under it no
+/// sample of any source buffer can reach the output, so there is nothing to
+/// composite and the integer planes survive untouched.
+fn is_identity_blend(header: &FrameHeader, metadata: &ImageMetadata) -> bool {
+    if header.have_crop {
+        return false;
+    }
+    if header.blending_info.mode != BlendMode::Replace {
+        return false;
+    }
+    header
+        .ec_blending_info
+        .iter()
+        .take(metadata.num_extra())
+        .all(|info| info.mode == BlendMode::Replace)
+}
+
+/// A decoded frame as a display-space [`Canvas`].
+///
+/// The float planes are authoritative where they exist (`kVarDCT`, which has
+/// already been through Annex L); a modular frame is integral, so G.4.2's
+/// interpretation by bit depth is applied here — `value / ((1 << bits) - 1)`,
+/// per channel, colour and extra alike.
+fn canvas_from_image(image: &DecodedImage, metadata: &ImageMetadata) -> Canvas {
+    let num_colour = image.num_colour_channels;
+    let mut colour = Vec::with_capacity(num_colour);
+    let mut extra = Vec::with_capacity(metadata.num_extra());
+    match image.float_planes.as_ref() {
+        Some(planes) => {
+            for (index, plane) in planes.iter().enumerate() {
+                if index < num_colour {
+                    colour.push(plane.samples.clone());
+                } else {
+                    extra.push(plane.samples.clone());
+                }
+            }
+        }
+        None => {
+            for (index, plane) in image.planes.iter().enumerate() {
+                let max = plane.max_value() as f32;
+                let samples: Vec<f32> = plane.samples.iter().map(|&v| v as f32 / max).collect();
+                if index < num_colour {
+                    colour.push(samples);
+                } else {
+                    extra.push(samples);
+                }
+            }
+        }
+    }
+    Canvas {
+        width: image.width,
+        height: image.height,
+        colour,
+        extra,
+    }
+}
+
+/// A composited canvas as the returned [`DecodedImage`].
+///
+/// The floats are the result; the integer planes are their quantization to
+/// each channel's own bit depth, exactly as [`assemble_float`] does it for a
+/// single `kVarDCT` frame.
+fn image_from_canvas(canvas: Canvas, metadata: &ImageMetadata) -> DecodedImage {
+    let (width, height) = (canvas.width, canvas.height);
+    let num_colour = canvas.colour.len();
+    let colour_bits = metadata.bit_depth.bits_per_sample();
+    let mut planes = Vec::with_capacity(num_colour + canvas.extra.len());
+    let mut float_planes = Vec::with_capacity(num_colour + canvas.extra.len());
+    let mut push = |samples: Vec<f32>, bits: u32| {
+        let max = if bits >= 32 {
+            f32::from(u16::MAX)
+        } else {
+            ((1u32 << bits) - 1) as f32
+        };
+        let quantized = samples
+            .iter()
+            .map(|v| {
+                let scaled = (v * max).round();
+                if scaled.is_finite() {
+                    #[allow(
+                        clippy::cast_possible_truncation,
+                        reason = "the value is clamped to [0, max] first"
+                    )]
+                    let quantized = scaled.clamp(0.0, max) as i32;
+                    quantized
+                } else {
+                    0
+                }
+            })
+            .collect();
+        planes.push(Plane {
+            width,
+            height,
+            bits_per_sample: bits,
+            samples: quantized,
+        });
+        float_planes.push(FloatPlane {
+            width,
+            height,
+            samples,
+        });
+    };
+    for samples in canvas.colour {
+        push(samples, colour_bits);
+    }
+    for (index, samples) in canvas.extra.into_iter().enumerate() {
+        let bits = metadata
+            .ec_info
+            .get(index)
+            .map_or(8, |info| info.bit_depth.bits_per_sample());
+        push(samples, bits);
+    }
+    DecodedImage {
+        width,
+        height,
+        planes,
+        num_colour_channels: num_colour,
+        icc_profile: None,
+        float_planes: Some(float_planes),
+    }
+}
+
+/// F.2's compositing of one frame onto the canvas (Tables F.7 and F.8).
+///
+/// Every channel group has its own rule, and — because `source` is part of
+/// [`BlendingInfo`] — its own source buffer: the colour channels blend against
+/// `Reference[blending_info.source]` and extra channel `i` against
+/// `Reference[ec_blending_info[i].source]`. A slot no frame has written is
+/// "assumed to have all sample values set to zeroes".
+///
+/// # Errors
+///
+/// [`DecodeError::Unsupported`] if a rule names an alpha channel the image
+/// does not have, and any allocation rejection.
+fn composite_frame(
+    frame: &Canvas,
+    header: &FrameHeader,
+    metadata: &ImageMetadata,
+    canvases: &CanvasSlots,
+    guard: &mut AllocGuard,
+) -> Result<Canvas> {
+    let (width, height) = (frame.width, frame.height);
+    let num_colour = frame.colour.len();
+    let num_extra = frame.extra.len();
+    let cells = u64::from(width)
+        .checked_mul(u64::from(height))
+        .ok_or_else(|| DecodeError::out_of_range("frame area", "F.2", u64::from(width)))?;
+    guard.charge(cells * 4 * (num_colour + num_extra) as u64)?;
+
+    let empty = Canvas::zeros(width, height, num_colour, num_extra);
+    let source_of = |slot: u32| -> &Canvas {
+        canvases
+            .get(usize::try_from(slot).unwrap_or(usize::MAX))
+            .and_then(Option::as_ref)
+            .unwrap_or(&empty)
+    };
+
+    // Table F.8's alpha terms: `alpha_channel` indexes the *extra* channels,
+    // and D.3.6's `alpha_associated` on that channel decides between the
+    // premultiplied and the unassociated form of `kBlend`.
+    let alpha_context = |info: &BlendingInfo, is_alpha_itself: bool| -> Result<BlendContext> {
+        let index = usize::try_from(info.alpha_channel).unwrap_or(usize::MAX);
+        if info.mode.uses_alpha_channel() && index >= num_extra {
+            return Err(unsupported(
+                "a blend mode naming an alpha channel the image does not have",
+                "18181-1 F.2",
+            ));
+        }
+        Ok(BlendContext {
+            info: *info,
+            alpha_associated: metadata
+                .ec_info
+                .get(index)
+                .is_some_and(|ec| ec.alpha_associated),
+            is_alpha_itself,
+        })
+    };
+
+    let mut out = Canvas::zeros(width, height, num_colour, num_extra);
+
+    for c in 0..num_colour {
+        let ctx = alpha_context(&header.blending_info, false)?;
+        let old = source_of(header.blending_info.source);
+        let alpha = usize::try_from(ctx.info.alpha_channel).unwrap_or(usize::MAX);
+        for y in 0..height {
+            for x in 0..width {
+                let new_sample = frame.colour_at(c, x, y);
+                let old_sample = old.colour_at(c, x, y);
+                let value = crate::frame::blend_sample(
+                    &ctx,
+                    old_sample,
+                    new_sample,
+                    old.extra_at(alpha, x, y),
+                    frame.extra_at(alpha, x, y),
+                );
+                if let Some(slot) = out
+                    .colour
+                    .get_mut(c)
+                    .and_then(|p| p.get_mut(y as usize * width as usize + x as usize))
+                {
+                    *slot = value;
+                }
+            }
+        }
+    }
+
+    for c in 0..num_extra {
+        let info = header.ec_blending_info.get(c).copied().unwrap_or_default();
+        let is_alpha_itself = if ALPHA_SELF_RULE_IS_THE_NAMED_CHANNEL {
+            usize::try_from(info.alpha_channel).unwrap_or(usize::MAX) == c
+        } else {
+            metadata.ec_info.get(c).is_some_and(|ec| {
+                ec.channel_type == crate::headers::enums::ExtraChannelType::KAlpha
+            })
+        };
+        let ctx = alpha_context(&info, is_alpha_itself)?;
+        let old = source_of(info.source);
+        let alpha = usize::try_from(info.alpha_channel).unwrap_or(usize::MAX);
+        for y in 0..height {
+            for x in 0..width {
+                let new_sample = frame.extra_at(c, x, y);
+                let old_sample = old.extra_at(c, x, y);
+                let value = crate::frame::blend_sample(
+                    &ctx,
+                    old_sample,
+                    new_sample,
+                    old.extra_at(alpha, x, y),
+                    frame.extra_at(alpha, x, y),
+                );
+                if let Some(slot) = out
+                    .extra
+                    .get_mut(c)
+                    .and_then(|p| p.get_mut(y as usize * width as usize + x as usize))
+                {
+                    *slot = value;
+                }
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// The byte range of TOC section `index`.
@@ -678,20 +1023,45 @@ fn check_supported_vardct(header: &FrameHeader, metadata: &ImageMetadata) -> Res
             "18181-1 L.2",
         ));
     }
-    if metadata.num_extra() != 0 {
-        // Extra channels in a kVarDCT frame ride in the G.2.3/G.4.2 modular
-        // sub-bitstreams, which interleave with the HF coefficients inside the
-        // same sections. That wiring is a separate slice.
-        return Err(unsupported(
-            "extra channels in a kVarDCT frame",
-            "18181-1 G.4.2",
-        ));
-    }
+    check_supported_extra_channels(header, metadata)?;
     if header.jpeg_upsampling != [0, 0, 0] {
         return Err(unsupported(
             "chroma subsampling in a kVarDCT frame",
             "18181-1 G.2.2",
         ));
+    }
+    Ok(())
+}
+
+/// Rejects the extra-channel shapes no encoding renders yet.
+///
+/// Decoding an extra channel is the same modular machinery for every
+/// encoding; what is not implemented is *resampling* one. D.3.6's `dim_shift`
+/// and F.2's `ec_upsampling` both make a channel smaller than the frame, and
+/// L.4 (and K.1 before it) restores it with K.2's non-separable upsampling —
+/// a filter this decoder does not have. A channel that arrives at a different
+/// size than the frame is therefore refused rather than stretched.
+fn check_supported_extra_channels(header: &FrameHeader, metadata: &ImageMetadata) -> Result<()> {
+    for (index, info) in metadata.ec_info.iter().enumerate() {
+        if info.dim_shift != 0 {
+            return Err(unsupported(
+                "an extra channel with dim_shift > 0 (K.2 upsampling)",
+                "18181-1 L.4",
+            ));
+        }
+        if header.ec_upsampling.get(index).copied().unwrap_or(1) != 1 {
+            return Err(unsupported(
+                "an extra channel with ec_upsampling > 1 (K.2 upsampling)",
+                "18181-1 K.2",
+            ));
+        }
+        if info.bit_depth.is_float() {
+            // G.4.2's last paragraph interprets the integers "according to
+            // metadata.ec_info[i].bit_depth"; the float reading of that is
+            // D.3.5's bit pattern, not a division, and nothing available
+            // exercises it.
+            return Err(unsupported("a float-sample extra channel", "18181-1 G.4.2"));
+        }
     }
     Ok(())
 }
@@ -944,6 +1314,19 @@ fn reference_from_modular(
     header: &FrameHeader,
 ) -> Result<ReferenceFrame> {
     let planes = xyb_from_modular(image, lf_dequant, metadata)?;
+    // The extra channels of a reference frame are not colour and so take no
+    // part in L.2.2's pre-step: G.4.2's interpretation by `ec_info[i].
+    // bit_depth` is all of it, which puts them on the same `[0, 1]` scale the
+    // consuming frame's own extra channels are on.
+    let extra = image
+        .planes
+        .iter()
+        .skip(image.num_colour_channels)
+        .map(|plane| {
+            let max = plane.max_value() as f32;
+            plane.samples.iter().map(|&v| v as f32 / max).collect()
+        })
+        .collect();
     let (width, height) = (image.width, image.height);
     Ok(ReferenceFrame {
         origin_x: if header.have_crop { header.x0 } else { 0 },
@@ -951,6 +1334,7 @@ fn reference_from_modular(
         width,
         height,
         planes,
+        extra,
     })
 }
 
@@ -1035,14 +1419,7 @@ fn decode_modular_frame(
         let rect = geometry
             .lf_group_rect(lf_index)
             .ok_or_else(|| unsupported("an LF group index past the grid", "18181-1 G.2"))?;
-        let selected: Vec<usize> = (first_undecoded..partial.channels().len())
-            .filter(|&i| {
-                partial
-                    .channels()
-                    .get(i)
-                    .is_some_and(|c| c.hshift() >= 3 && c.vshift() >= 3)
-            })
-            .collect();
+        let selected = lf_group_selection(&partial, first_undecoded);
         // H.4.1: ModularLfGroup streams are numbered 1 + num_lf_groups + index.
         options.stream_index = stream_index_of::modular_lf_group(geometry, lf_index)?;
         decode_group_section(
@@ -1076,30 +1453,17 @@ fn decode_modular_frame(
                 downsample.trailing_zeros() as i32
             });
 
-        let selected: Vec<usize> = (first_undecoded..partial.channels().len())
-            .filter(|&i| {
-                if i < nb_meta || decoded_in_pass.get(i).copied().unwrap_or(true) {
-                    return false;
-                }
-                let Some(c) = partial.channels().get(i) else {
-                    return false;
-                };
-                if !G42_SIZE_TEST_IS_SHIFTED && c.width() <= group_dim && c.height() <= group_dim {
-                    return false;
-                }
-                if G42_SIZE_TEST_IS_SHIFTED
-                    && c.width() <= (group_dim >> c.hshift().clamp(0, 31))
-                    && c.height() <= (group_dim >> c.vshift().clamp(0, 31))
-                {
-                    return false;
-                }
-                if c.hshift() >= 3 && c.vshift() >= 3 {
-                    return false;
-                }
-                let m = c.hshift().min(c.vshift());
-                minshift <= m && m < maxshift
-            })
-            .collect();
+        let selected = pass_group_selection(
+            &partial,
+            &PassSelection {
+                first_undecoded,
+                nb_meta,
+                group_dim,
+                minshift,
+                maxshift,
+            },
+            &decoded_in_pass,
+        );
 
         for group in 0..num_groups {
             let rect = geometry
@@ -1169,6 +1533,51 @@ fn decode_group_section(
         return Ok(());
     }
 
+    match single_reader {
+        Some(reader) => {
+            decode_group_channels(reader, partial, selected, rect, global_tree, options, guard)
+        }
+        None => {
+            let slice = section_slice(codestream, base, toc, section)?;
+            if slice.is_empty() {
+                return Ok(());
+            }
+            let mut reader = BitReader::new(slice);
+            decode_group_channels(
+                &mut reader,
+                partial,
+                selected,
+                rect,
+                global_tree,
+                options,
+                guard,
+            )
+        }
+    }
+}
+
+/// One LF-group or pass-group modular sub-bitstream, read from `reader` at its
+/// current position and copied back into the frame-wide channel list.
+///
+/// Split from [`decode_group_section`] because a `kVarDCT` frame reaches the
+/// same two sub-bitstreams (G.2.3, G.4.2) from the middle of a section it is
+/// already reading — `ModularLfGroup` sits between `LfQuant` and `HfMetadata`,
+/// and `Modular group data` follows the HF coefficients — so it has a reader
+/// but no section index. G.2.3 and G.4.2 are one code path for both encodings;
+/// only the channel selection differs, and that is the caller's.
+fn decode_group_channels(
+    reader: &mut BitReader<'_>,
+    partial: &mut crate::modular::PartialModular,
+    selected: &[usize],
+    rect: Rect,
+    global_tree: Option<&GlobalTree>,
+    options: &ModularOptions,
+    guard: &mut AllocGuard,
+) -> Result<()> {
+    if selected.is_empty() {
+        return Ok(());
+    }
+
     let mut specs = Vec::with_capacity(selected.len());
     let mut origins = Vec::with_capacity(selected.len());
     for &i in selected {
@@ -1198,17 +1607,7 @@ fn decode_group_section(
     }
 
     let source = tree_source(global_tree, true);
-    let decoded = match single_reader {
-        Some(reader) => decode_sub_bitstream_with(reader, &specs, options, source, guard)?,
-        None => {
-            let slice = section_slice(codestream, base, toc, section)?;
-            if slice.is_empty() {
-                return Ok(());
-            }
-            let mut reader = BitReader::new(slice);
-            decode_sub_bitstream_with(&mut reader, &specs, options, source, guard)?
-        }
-    };
+    let decoded = decode_sub_bitstream_with(reader, &specs, options, source, guard)?;
 
     // "The decoded modular group data is then copied into the partially
     // decoded GlobalModular image in the corresponding positions."
@@ -1226,6 +1625,74 @@ fn decode_group_section(
         }
     }
     Ok(())
+}
+
+/// G.2.3's channel selection: every not-yet-decoded channel whose `hshift`
+/// *and* `vshift` are at least 3.
+fn lf_group_selection(
+    partial: &crate::modular::PartialModular,
+    first_undecoded: usize,
+) -> Vec<usize> {
+    (first_undecoded..partial.channels().len())
+        .filter(|&i| {
+            partial
+                .channels()
+                .get(i)
+                .is_some_and(|c| c.hshift() >= 3 && c.vshift() >= 3)
+        })
+        .collect()
+}
+
+/// The per-pass inputs to G.4.2's channel selection.
+struct PassSelection {
+    /// First channel the `GlobalModular` section left undecoded.
+    first_undecoded: usize,
+    /// `nb_meta_channels` of the frame-wide channel list.
+    nb_meta: usize,
+    /// `group_dim` of the frame.
+    group_dim: u32,
+    /// G.4.2's `minshift` for this pass.
+    minshift: i32,
+    /// G.4.2's `maxshift` for this pass.
+    maxshift: i32,
+}
+
+/// G.4.2's channel selection for one pass.
+///
+/// See [`G42_SIZE_TEST_IS_SHIFTED`] for the one reading in it that the clause
+/// leaves open.
+fn pass_group_selection(
+    partial: &crate::modular::PartialModular,
+    sel: &PassSelection,
+    decoded_in_pass: &[bool],
+) -> Vec<usize> {
+    (sel.first_undecoded..partial.channels().len())
+        .filter(|&i| {
+            if i < sel.nb_meta || decoded_in_pass.get(i).copied().unwrap_or(true) {
+                return false;
+            }
+            let Some(c) = partial.channels().get(i) else {
+                return false;
+            };
+            if !G42_SIZE_TEST_IS_SHIFTED
+                && c.width() <= sel.group_dim
+                && c.height() <= sel.group_dim
+            {
+                return false;
+            }
+            if G42_SIZE_TEST_IS_SHIFTED
+                && c.width() <= (sel.group_dim >> c.hshift().clamp(0, 31))
+                && c.height() <= (sel.group_dim >> c.vshift().clamp(0, 31))
+            {
+                return false;
+            }
+            if c.hshift() >= 3 && c.vshift() >= 3 {
+                return false;
+            }
+            let m = c.hshift().min(c.vshift());
+            sel.minshift <= m && m < sel.maxshift
+        })
+        .collect()
 }
 
 /// Picks the tree source for a sub-bitstream (H.2).
@@ -1375,8 +1842,16 @@ fn decode_vardct_frame(
     let whole = section_slice(codestream, base, toc, 0)?;
     let mut single_reader = BitReader::new(whole);
 
+    // G.1.3's channel list for a kVarDCT frame is the extra channels alone:
+    // `num_channels = num_extra`, with the `+ 1` or `+ 3` colour channels only
+    // for kModular. They ride the same three sub-bitstreams a modular frame's
+    // channels do (G.1.3, G.2.3, G.4.2), interleaved into the sections the
+    // VarDCT structures already occupy.
+    let (ec_specs, _) = initial_channels(header, metadata, geometry)?;
+    let group_dim = geometry.group_dim();
+
     // ---- LfGlobal (G.1) --------------------------------------------------
-    let (patches, lf_dequant, vardct, global_tree) = {
+    let (patches, lf_dequant, vardct, global_tree, mut ec_partial) = {
         let mut owned;
         let reader: &mut BitReader<'_> = if single {
             &mut single_reader
@@ -1401,17 +1876,28 @@ fn decode_vardct_frame(
         let lf_dequant = read_lf_channel_dequantization(reader)?;
         let vardct = read_lf_global_vardct(reader, guard)?;
         // G.1.3 GlobalModular: the leading Bool() is read whatever the channel
-        // count. With no extra channels and no modular colour channels the
-        // channel list is empty, and H.1 says an empty sub-bitstream is not
-        // read at all — which `check_supported_vardct` has already ensured.
+        // count. With no extra channels the channel list is empty and H.1 says
+        // such a sub-bitstream is not read at all — so the `Bool()` is the
+        // only thing this row contributes for a plain colour-only frame.
         let have_global_tree = reader.read_bool()?;
         let global_tree = if have_global_tree {
             Some(read_global_tree(reader, &modular_options, guard)?)
         } else {
             None
         };
-        (patches, lf_dequant, vardct, global_tree)
+        let ec_partial = decode_sub_bitstream_partial(
+            reader,
+            &ec_specs,
+            &modular_options,
+            tree_source(global_tree.as_ref(), true),
+            ChannelStop::GlobalModular { group_dim },
+            guard,
+        )?;
+        (patches, lf_dequant, vardct, global_tree, ec_partial)
     };
+
+    let ec_first_undecoded = ec_partial.first_undecoded();
+    let ec_nb_meta = ec_partial.header().layout().nb_meta_channels;
 
     let multipliers = vardct.quantizer.lf_multipliers(&lf_dequant);
     let smoothing = header.flags.adaptive_lf_smoothing();
@@ -1470,9 +1956,21 @@ fn decode_vardct_frame(
             )?)
         };
 
-        // G.2.3 ModularLfGroup: no channels, so H.1 reads nothing. (Extra
-        // channels are rejected above; a squeezed colour channel cannot exist
-        // in a kVarDCT frame.)
+        // G.2.3 ModularLfGroup, between LfQuant and HfMetadata in Table G.3.
+        // Only the extra channels can appear here — a kVarDCT frame's colour
+        // channels are not modular at all — and only those with hshift and
+        // vshift both at least 3, which needs a Squeeze on an extra channel.
+        options.stream_index = stream_index_of::modular_lf_group(geometry, lf_index)?;
+        let selected = lf_group_selection(&ec_partial, ec_first_undecoded);
+        decode_group_channels(
+            reader,
+            &mut ec_partial,
+            &selected,
+            rect,
+            global_tree.as_ref(),
+            &options,
+            guard,
+        )?;
 
         // G.2.4 HfMetadata.
         options.stream_index = stream_index_of::hf_metadata(geometry, lf_index)?;
@@ -1567,7 +2065,30 @@ fn decode_vardct_frame(
     let lf_groups_x = geometry.width().div_ceil(lf_dim);
     let mut groups: Vec<GroupState> = Vec::new();
 
+    let ec_pairs = header.passes.pairs_with_implicit_final();
+    let mut ec_maxshift = 3i32;
+    let mut ec_decoded_in_pass = vec![false; ec_partial.channels().len()];
+
     for pass in 0..header.passes.num_passes {
+        // G.4.2's minshift/maxshift walk, exactly as the modular path runs it.
+        let ec_minshift = ec_pairs
+            .iter()
+            .find(|&&(_, last_pass)| last_pass == pass)
+            .map_or(ec_maxshift, |&(downsample, _)| {
+                downsample.trailing_zeros() as i32
+            });
+        let ec_selected = pass_group_selection(
+            &ec_partial,
+            &PassSelection {
+                first_undecoded: ec_first_undecoded,
+                nb_meta: ec_nb_meta,
+                group_dim,
+                minshift: ec_minshift,
+                maxshift: ec_maxshift,
+            },
+            &ec_decoded_in_pass,
+        );
+
         for group in 0..num_groups {
             let rect = geometry
                 .group_rect(group)
@@ -1668,9 +2189,34 @@ fn decode_vardct_frame(
                 guard,
             )?;
 
-            // G.4.2 modular group data: no channels, nothing read.
+            // G.4.2 modular group data, in the same section and immediately
+            // after the HF coefficients (Table G.5's second row).
+            let ec_options = ModularOptions {
+                stream_index: stream_index_of::modular_group(geometry, u64::from(pass), group)?,
+                ..modular_options
+            };
+            decode_group_channels(
+                reader,
+                &mut ec_partial,
+                &ec_selected,
+                rect,
+                global_tree.as_ref(),
+                &ec_options,
+                guard,
+            )?;
         }
+        for &i in &ec_selected {
+            if let Some(slot) = ec_decoded_in_pass.get_mut(i) {
+                *slot = true;
+            }
+        }
+        ec_maxshift = ec_minshift;
     }
+
+    // H.6's inverse transforms over the now-complete extra-channel image, and
+    // G.4.2's last paragraph: the integers are interpreted according to
+    // `ec_info[i].bit_depth`.
+    let extra = extra_channel_planes(ec_partial, &modular_options, metadata, geometry, guard)?;
 
     // ---- I.5.3, I.6, I.8, I.9 -------------------------------------------
     let dequant = render::HfDequantParams {
@@ -1769,12 +2315,61 @@ fn decode_vardct_frame(
     // Clause 4 fixes this order: frame data (G), restoration filters (J),
     // image features (K), and "finally ... colour transforms as specified in
     // Annex L". K.3.2 repeats it from its own side.
+    let mut extra = extra;
     render::apply_restoration(&mut planes, filter, &sigma)?;
-    render::apply_patches(&mut planes, &patches, references, metadata.num_extra())?;
+    render::apply_patches(&mut planes, &mut extra, &patches, references)?;
     render::to_linear_srgb(&mut planes, &opsin_inverse(metadata));
     apply_transfer_function(&mut planes, metadata)?;
 
-    assemble_float(planes, metadata, geometry)
+    assemble_float(planes, extra, metadata, geometry)
+}
+
+/// H.6 plus G.4.2's last paragraph, over a frame's extra channels.
+///
+/// The decoded integers are interpreted according to `ec_info[i].bit_depth`:
+/// nominal full scale is `(1 << bits_per_sample) - 1`, so a sample becomes
+/// `value / max`, the same `[0, 1]` scale the colour channels are on after
+/// Annex L and the scale 18181-3 §4.2 grades. The values are **not** clipped —
+/// a lossy alpha channel legitimately overshoots, and clipping here would hide
+/// it from the conformance metric.
+fn extra_channel_planes(
+    partial: crate::modular::PartialModular,
+    options: &ModularOptions,
+    metadata: &ImageMetadata,
+    geometry: &FrameGeometry,
+    guard: &mut AllocGuard,
+) -> Result<crate::vardct::render::ExtraPlanes> {
+    let (width, height) = (geometry.width(), geometry.height());
+    let num_extra = metadata.num_extra();
+    if num_extra == 0 {
+        return Ok(crate::vardct::render::ExtraPlanes::empty(width, height));
+    }
+    let channels = partial.into_image(options, guard)?.into_channels();
+    if channels.len() != num_extra {
+        return Err(DecodeError::out_of_range(
+            "decoded extra-channel count",
+            "G.1.3",
+            channels.len() as u64,
+        ));
+    }
+    let mut planes = crate::vardct::render::ExtraPlanes::zeros(width, height, num_extra, guard)?;
+    for (index, channel) in channels.iter().enumerate() {
+        let bits = metadata
+            .ec_info
+            .get(index)
+            .map_or(8, |info| info.bit_depth.bits_per_sample());
+        let max = if bits >= 32 {
+            f32::from(u16::MAX)
+        } else {
+            ((1u32 << bits) - 1) as f32
+        };
+        for y in 0..height {
+            for x in 0..width {
+                planes.set(index, x, y, channel.get(x, y) as f32 / max);
+            }
+        }
+    }
+    Ok(planes)
 }
 
 /// The `LFFrame[frame_header.lf_level]` slot G.2.2 names, checked against the
@@ -2102,6 +2697,7 @@ fn apply_transfer_function(
 /// what the PGM/PPM writer consumes.
 fn assemble_float(
     planes: crate::vardct::render::ColourPlanes,
+    extra: crate::vardct::render::ExtraPlanes,
     metadata: &ImageMetadata,
     geometry: &FrameGeometry,
 ) -> Result<DecodedImage> {
@@ -2111,17 +2707,21 @@ fn assemble_float(
         3
     };
     let bits = metadata.bit_depth.bits_per_sample();
-    let max = if bits >= 32 {
-        f32::from(u16::MAX)
-    } else {
-        ((1u32 << bits) - 1) as f32
+    let full_scale = |bits: u32| -> f32 {
+        if bits >= 32 {
+            f32::from(u16::MAX)
+        } else {
+            ((1u32 << bits) - 1) as f32
+        }
     };
+    let max = full_scale(bits);
 
     let (width, height) = (planes.width, planes.height);
-    let mut float_planes = Vec::with_capacity(num_colour);
-    let mut integer_planes = Vec::with_capacity(num_colour);
-    for samples in planes.planes.into_iter().take(num_colour) {
-        let quantized = samples
+    let total = num_colour + extra.len();
+    let mut float_planes = Vec::with_capacity(total);
+    let mut integer_planes = Vec::with_capacity(total);
+    let quantize = |samples: &[f32], max: f32| -> Vec<i32> {
+        samples
             .iter()
             .map(|v| {
                 let scaled = (v * max).round();
@@ -2138,12 +2738,33 @@ fn assemble_float(
                     0
                 }
             })
-            .collect();
+            .collect()
+    };
+    for samples in planes.planes.into_iter().take(num_colour) {
         integer_planes.push(Plane {
             width,
             height,
             bits_per_sample: bits,
-            samples: quantized,
+            samples: quantize(&samples, max),
+        });
+        float_planes.push(FloatPlane {
+            width,
+            height,
+            samples,
+        });
+    }
+    // G.1.3's channel order: the extra channels follow the colour ones, in
+    // ascending index order, each on its own `ec_info[i].bit_depth` scale.
+    for (index, samples) in extra.planes.into_iter().enumerate() {
+        let ec_bits = metadata
+            .ec_info
+            .get(index)
+            .map_or(8, |info| info.bit_depth.bits_per_sample());
+        integer_planes.push(Plane {
+            width,
+            height,
+            bits_per_sample: ec_bits,
+            samples: quantize(&samples, full_scale(ec_bits)),
         });
         float_planes.push(FloatPlane {
             width,
