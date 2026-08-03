@@ -46,4 +46,4 @@ One file per experiment: `YYYY-MM-DD-short-slug.md`. Sections:
 
 | Date | Report | Question | Outcome |
 | --- | --- | --- | --- |
-| — | — | — | No experiments yet. |
+| 2026-08-03 | [h52-clamp-asymmetry](2026-08-03-h52-clamp-asymmetry.md) | What single reading of Annex H decodes all nine handmade lossless-modular fixtures bit-exactly? | H.5.2's clamp is asymmetric, not the symmetric clamp the clause prints; `max_error` is the clause as written and the slice-7 diagnosis is withdrawn. |

@@ -1,0 +1,71 @@
+Fixture: 20_modular_palette_bands_24x24_lossless.jxl
+24x24 RGB, 6 flat colour bands, mathematically lossless, effort 7 --
+H.5.2 clamp probe: the "must NOT clamp upward on row 0" case
+
+Purpose
+-------
+Minimal counter-example to the literal reading of the H.5.2 self-correcting
+predictor clamp, found while chasing the slice-7 divergence of fixtures 05,
+09 and 10. See docs/experiments/2026-08-03-h52-clamp-asymmetry.md.
+
+cjxl turns this into a Palette(begin_c 0, num_c 3, nb_colours 6) whose
+6x3 meta-channel is decoded with the SelfCorrecting predictor at every
+sample and a single MA-tree branch on property 0 (channel index), so the
+decoded palette is a *direct* readout of the weighted predictor: no context
+choice, no other predictor, nothing else can absorb an error.
+
+The decisive sample is meta-channel (3, 0). There
+`true_err_W = +864`, `true_err_N = true_err_NW = 0` and
+`W3 = N3 = NE3 = 576`, so the printed clause's symmetric clamp would force
+the prediction to exactly 576. The stream requires 400 -- the unclamped
+weighted average -- proving the lower half of the clamp does not apply here.
+Fixture 08 (16-bit grey) is the mirror case: same all-zero products, opposite
+sign of true_err_W, and there the *upper* half of the clamp is required.
+
+The six colours are deliberately non-monotonic in every component
+(R = 36i, G = 77i, B = 151i, all mod 256), so the palette's first row swings
+up and down and both signs of true_err_W occur within nine samples.
+
+Provenance
+----------
+  Encoder:      cjxl v0.13.0 196a43d9 [_AVX2_,SSE4,SSE2] {GNU 15.2.0}
+  libjxl rev:   196a43d996aa6ed33ebf98812a7c6d43b2b6d01b (v0.12-snapshot-2-g196a43d9)
+  cjxl flags:   -d 0 -e 7
+  Built by:     tools/setup-oracles.sh (flags recorded in
+                tools/oracle-bin/PINNED_REVISIONS.txt)
+  Regenerate:   tools/make-debug-fixtures.sh
+                That script IS the recipe; it rewrites the source and
+                re-encodes.
+
+  Source image: tests/fixtures/generated/src_bands_24x24.ppm  (1741 bytes)
+                sha256 bdaa85f87160fe787570af5df590506a2e4974d017b7eecca51232d47294669d
+                Synthetic, written by the Python snippet inside
+                tools/make-debug-fixtures.sh -- no third-party image was used,
+                converted, or consulted. 24x24 8-bit RGB (PPM P6), six
+                4-pixel-wide vertical bands, colour i (i in 0..5) being
+                  R = (36 * i) mod 256
+                  G = (77 * i) mod 256
+                  B = (151 * i) mod 256
+                i.e. (0,0,0), (36,77,151), (72,154,46), (108,231,197),
+                (144,52,92), (180,129,243).
+
+  Fixture:      63 bytes
+                sha256 3317a07c7e67dc12ce961d0c884ae41138706331eb71521671526973a6a140b6
+
+Verification
+------------
+djxl decodes it to a PPM byte-identical to the source (checked on every run of
+tools/make-debug-fixtures.sh).
+
+Modular features engaged
+-------------------------
+The palette transform is confirmed by JPXL's own header parse
+(Palette{begin_c 0, num_c 3, nb_colours 6, nb_deltas 0, d_pred 0}), not
+merely inferred: the fixture decodes bit-exactly through that path. cjxl
+itself printed only "Modular, lossless"; jxlinfo is not built in this
+checkout.
+
+cjxl is used strictly as a BLACK BOX: it emits conformant streams for JPXL to
+parse. libjxl's source is never read. If a rebuild at a different libjxl
+revision changes these digests, that is the point of recording them -- do not
+silently update them; note the revision change.

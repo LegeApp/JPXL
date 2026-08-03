@@ -1,0 +1,68 @@
+Fixture: 21_gradient_260x10_lossless.jxl
+260x10 RGB gradient, mathematically lossless, effort 7 --
+H.5.2 clamp probe: the "must clamp when every neighbouring error is zero" case
+
+Purpose
+-------
+The shrunk form of fixture 05. Starting from 05's 300x200 gradient and
+bisecting on both axes, 260x10 is the smallest size at which cjxl still emits
+the same transform chain -- Palette(begin_c 1, num_c 1) followed by
+RCT(begin_c 1, type 10) -- and the decoder still diverges. 237 bytes and
+7 810 coded samples instead of 414 bytes and 180 200, which is what made the
+divergence traceable by hand. See
+docs/experiments/2026-08-03-h52-clamp-asymmetry.md.
+
+The decisive sample is coded channel 2 at (251, 5), where the diagonal
+sawtooth B = (x + y) mod 256 wraps. There all of true_err_W, true_err_N and
+true_err_NW are exactly zero, W3 = 2000, N3 = 2008, NE3 = -32 and the
+unclamped weighted prediction is -40. The stream requires -32, i.e. the
+*lower* bound min(W3, N3, NE3) must be applied -- the opposite of what
+fixture 20's row-0 sample requires. Those two samples together are why the
+clamp's two halves are gated separately.
+
+Width 260 > 256 is deliberate: it puts the sawtooth's wrap inside a single
+row (x + y = 256 is reached at x = 251 when y = 5), which is what produces
+the all-errors-zero neighbourhood next to a large NE3 jump. It does not make
+the frame multi-group -- cjxl chose a group_dim large enough that this is a
+single group, so the fixture isolates H.5 and not the group geometry.
+
+Provenance
+----------
+  Encoder:      cjxl v0.13.0 196a43d9 [_AVX2_,SSE4,SSE2] {GNU 15.2.0}
+  libjxl rev:   196a43d996aa6ed33ebf98812a7c6d43b2b6d01b (v0.12-snapshot-2-g196a43d9)
+  cjxl flags:   -d 0 -e 7
+  Built by:     tools/setup-oracles.sh (flags recorded in
+                tools/oracle-bin/PINNED_REVISIONS.txt)
+  Regenerate:   tools/make-debug-fixtures.sh
+                That script IS the recipe; it rewrites the source and
+                re-encodes.
+
+  Source image: tests/fixtures/generated/src_gradient_260x10.ppm  (7814 bytes)
+                sha256 43293a34aea100113a6357eadef09f722b4746fc0921b5671402b5efcebbd42f
+                Synthetic, written by the Python snippet inside
+                tools/make-debug-fixtures.sh -- no third-party image was used,
+                converted, or consulted. 260x10 8-bit RGB (PPM P6), the same
+                gradient family as fixtures 05, 09, 11 and 13:
+                  R = x * 255 / 259     ramp along x
+                  G = y * 255 / 9       ramp along y
+                  B = (x + y) mod 256   diagonal sawtooth
+
+  Fixture:      237 bytes
+                sha256 3869d67017c07d3bd595f04d94ac37f22f619ee958e2f370320c62699072e30f
+
+Verification
+------------
+djxl decodes it to a PPM byte-identical to the source (checked on every run of
+tools/make-debug-fixtures.sh).
+
+Modular features engaged
+-------------------------
+Palette + RCT are confirmed by JPXL's own header parse
+(Palette{begin_c 1, num_c 1, nb_colours 10}, Rct{begin_c 1, rct_type 10}) and
+by the fixture decoding bit-exactly through both inverses. cjxl itself printed
+only "Modular, lossless"; jxlinfo is not built in this checkout.
+
+cjxl is used strictly as a BLACK BOX: it emits conformant streams for JPXL to
+parse. libjxl's source is never read. If a rebuild at a different libjxl
+revision changes these digests, that is the point of recording them -- do not
+silently update them; note the revision change.

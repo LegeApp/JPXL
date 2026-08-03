@@ -17,13 +17,18 @@
 //! arithmetic is integer throughout, so "close" is a bug. Nothing here is a
 //! tolerance comparison.
 //!
-//! # Fixtures that do not yet decode
+//! # The H.5.2 clamp
 //!
-//! Three fixtures are `#[ignore]`d with a precise divergence report rather
-//! than a loosened check. All three fail the same way and for the same
-//! reason; see [`EXPERIMENT_MAX_ERROR_RULE`] and the per-test comments.
+//! Fixtures 05, 09 and 10 were `#[ignore]`d through slice 7 with a divergence
+//! blamed on H.5.2's `max_error` walk. That diagnosis was wrong and is
+//! corrected here: the walk is the clause as written, and the `true_err`
+//! values fed into it were wrong because H.5.2's clamp is not the single
+//! symmetric clamp the clause prints. Fixtures 20 and 21 are the minimised
+//! probes that pin the two halves of the clamp down in opposite directions;
+//! see [`EXPERIMENT_CLAMP_SYMMETRIC`] and
+//! `docs/experiments/2026-08-03-h52-clamp-asymmetry.md`.
 //!
-//! [`EXPERIMENT_MAX_ERROR_RULE`]: jpxl_decode::modular::weighted::EXPERIMENT_MAX_ERROR_RULE
+//! [`EXPERIMENT_CLAMP_SYMMETRIC`]: jpxl_decode::modular::weighted::EXPERIMENT_CLAMP_SYMMETRIC
 
 #![allow(clippy::indexing_slicing, clippy::cast_possible_truncation)]
 
@@ -212,33 +217,20 @@ fn modular_rgb_16x16() {
 }
 
 // ---------------------------------------------------------------------------
-// Divergences — documented, not loosened
+// The fixtures the H.5.2 clamp correction unblocked (slice 8)
 // ---------------------------------------------------------------------------
 
-/// # Divergence report (slice 7)
+/// 128x128, four flat quadrants: a `Palette(num_c 3, nb_colours 4)` whose
+/// 4x3 meta-channel is where the slice-7 divergence began.
 ///
-/// * **Section**: `LfGlobal` / `GlobalModular` (G.1.3), channel 0 — the
-///   palette meta-channel, 4 wide by 3 tall (`nb_colours = 4`, `num_c = 3`).
-/// * **First wrong sample**: `(2, 1)`, the 7th symbol of the sub-bitstream.
-///   Decoded 237, correct value 28.
-/// * **First differing bit**: the divergence is a *context* choice, not a bit
-///   offset — the ANS stream stays byte-synchronised until it runs out at bit
-///   426 of the 432-bit section.
-/// * **Hypothesis**: `max_error` (H.5.2, property 15 of Table H.4). Branching
-///   the ANS decoder at every symbol shows the encoder's context sequence is
-///   `[0,1,0,1,1,1,1,1,0,0,1]` — the only sequence that reproduces the four
-///   known palette colours (255,255,255), (0,114,255), (237,28,36), (0,0,0).
-///   That requires `max_error <= -255` at `(1,1)`, `(2,1)` and `(3,1)`. With
-///   `true_err = [-2040, +2040, -1896, +1896]` across row 0, the clause's
-///   `abs(x) > abs(max)` walk yields `+2040` at `(2,1)` while the encoder used
-///   `-1896`. No magnitude rule, tie-break or walk order reproduces that; only
-///   a plain minimum does, and a plain minimum breaks fixtures 11 and 12.
-///   Every other H.5 reading (clamped `true_err`, the sign-guard parse, the
-///   last-column `err_sum` term) was flipped and re-tested; none accounts for
-///   it. The remaining suspects are the Table H.4 property numbering and the
-///   `err`/`true_err` state of a channel whose `hshift`/`vshift` are `-1`.
+/// What it proves: the MA tree here is a single branch on property 15
+/// (`max_error > -255`), so every one of the meta-channel's twelve samples is
+/// a direct test of the H.5.1 `max_error` output — and, through `true_err`,
+/// of the H.5.2 clamp. Slice 7 read the divergence as a broken `max_error`
+/// walk; it is really the clamp, and at `(2, 0)` of the meta-channel the
+/// literal symmetric clamp turns `true_err = -2242` into `-1896`, which is
+/// exactly the amount needed to flip the property-15 comparison at `(1, 1)`.
 #[test]
-#[ignore = "TODO: H.5.2 max_error selection diverges; see the divergence report above"]
 fn modular_palette_128x128() {
     // Four 64x64 blocks: white, blue / red, black — see the `.txt` sidecar.
     check(&Case {
@@ -259,21 +251,15 @@ fn modular_palette_128x128() {
     });
 }
 
-/// # Divergence report (slice 7)
+/// 64x64 RGB at `-e 3`: `Palette`, `Palette`, `RCT(type 6)`.
 ///
-/// * **Section**: `LfGlobal` / `GlobalModular`, channel 3 (a 64x64 colour
-///   channel) — but the first *wrong context* is earlier, in one of the two
-///   64-entry palette meta-channels.
-/// * **Failure**: the ANS stream runs out at bit 5486 of the section.
-/// * **Transform chain**: `Palette(begin_c 0, num_c 1, 64 colours)`,
-///   `Palette(begin_c 2, num_c 1, 64 colours)`, `RCT(begin_c 2, type 6)`.
-/// * **Hypothesis**: the same `max_error` selection as fixture 10. This
-///   fixture's MA tree has 34 leaves and tests property 15 at every one of its
-///   33 decision nodes with thresholds 0, ±3, ±7, ±31, 47, 95, 191, 392, …, so
-///   it is the most `max_error`-sensitive fixture in the set and diverges as
-///   soon as the rule is wrong once.
+/// What it proves: the most property-15-sensitive fixture in the set — 34
+/// leaves, and every one of the 33 decision nodes tests property 15, with
+/// thresholds 0, ±3, ±7, ±31, 47, 95, 191, 392, … A single wrong `true_err`
+/// anywhere in 12 416 samples desynchronises it, so this is the fixture that
+/// says the corrected clamp is right sample after sample rather than on
+/// average.
 #[test]
-#[ignore = "TODO: H.5.2 max_error selection diverges; see the divergence report above"]
 fn modular_rgb_64x64() {
     check(&Case {
         name: "09_modular_rgb_64x64_lossless.jxl",
@@ -285,21 +271,12 @@ fn modular_rgb_64x64() {
     });
 }
 
-/// # Divergence report (slice 7)
+/// 300x200 RGB at `-e 7`: `Palette(200 colours)` then `RCT(type 10)`.
 ///
-/// * **Section**: `LfGlobal` / `GlobalModular`, channel 2, at `(224, 76)`.
-/// * **Failure**: the ANS stream runs out at bit 3205 of the section.
-/// * **Transform chain**: `Palette(begin_c 1, num_c 1, 200 colours)`,
-///   `RCT(begin_c 1, type 10)`. The 200-entry palette meta-channel decodes
-///   correctly (it is the smooth ramp `y * 255 / 199`), so unlike fixture 10
-///   the divergence is not in the palette itself.
-/// * **Hypothesis**: as fixtures 09 and 10 — the MA tree has 12 leaves over 6
-///   clusters and mixes `Gradient` with `SelfCorrecting`. This is the fixture
-///   whose failure point *does* move with
-///   `EXPERIMENT_ERR_SUM_LAST_COLUMN` (bit 3205 / 3205 / 3201), so it is the
-///   one to re-test first once the `max_error` question is settled.
+/// What it proves: the largest fixture in the set (180 200 coded samples over
+/// four channels) and the one whose divergence survived every other H.5
+/// reading. Fixture 21 is its 260x10 minimisation.
 #[test]
-#[ignore = "TODO: H.5.2 max_error selection diverges; see the divergence report above"]
 fn gradient_300x200_rgb() {
     check(&Case {
         name: "05_gradient_300x200_lossless.jxl",
@@ -308,6 +285,61 @@ fn gradient_300x200_rgb() {
         channels: 3,
         bits: 8,
         sample: |x, y, c| rgb_gradient(x, y, c, 300, 200),
+    });
+}
+
+// ---------------------------------------------------------------------------
+// H.5.2 clamp probes (slice 8) — see docs/experiments/
+// ---------------------------------------------------------------------------
+
+/// 24x24, six flat colour bands: `Palette(num_c 3, nb_colours 6)`.
+///
+/// What it proves: the 6x3 meta-channel decodes with the `SelfCorrecting`
+/// predictor at *every* sample and its MA tree branches only on property 0
+/// (the channel index), so the decoded palette is a direct readout of the
+/// weighted prediction — nothing else can absorb an error. At `(3, 0)` the
+/// three neighbouring errors are `(W +864, N 0, NW 0)` and
+/// `W3 = N3 = NE3 = 576`, so H.5.2's printed symmetric clamp would force the
+/// prediction to 576; the stream requires the unclamped 400. That is the
+/// counter-example to the lower half of the clamp.
+#[test]
+fn modular_palette_bands_24x24() {
+    // Colour i is (36i, 77i, 151i) mod 256, in 4-pixel bands — see the sidecar.
+    check(&Case {
+        name: "20_modular_palette_bands_24x24_lossless.jxl",
+        width: 24,
+        height: 24,
+        channels: 3,
+        bits: 8,
+        sample: |x, _y, c| {
+            let i = ((x / 4) % 6) as i32;
+            match c {
+                0 => (36 * i) % 256,
+                1 => (77 * i) % 256,
+                _ => (151 * i) % 256,
+            }
+        },
+    });
+}
+
+/// 260x10, the minimisation of fixture 05: same `Palette` + `RCT(type 10)`
+/// chain, 7 810 coded samples instead of 180 200.
+///
+/// What it proves: the opposite half of the clamp from fixture 20. At coded
+/// channel 2 `(251, 5)` — where the diagonal sawtooth wraps — every
+/// neighbouring error is zero, `min(W3, N3, NE3) = -32` and the unclamped
+/// prediction is `-40`; the stream requires `-32`, so the lower bound *is*
+/// applied there. Fixtures 20 and 21 cannot both be satisfied by one guard in
+/// front of one symmetric clamp.
+#[test]
+fn gradient_260x10_rgb() {
+    check(&Case {
+        name: "21_gradient_260x10_lossless.jxl",
+        width: 260,
+        height: 10,
+        channels: 3,
+        bits: 8,
+        sample: |x, y, c| rgb_gradient(x, y, c, 260, 10),
     });
 }
 
@@ -384,14 +416,19 @@ fn matches_djxl_output() {
     println!("compared {compared} fixture(s) against djxl byte for byte");
 }
 
-/// The fixtures this slice decodes bit-exactly.
+/// Every fixture the lossless modular path decodes bit-exactly.
 const BIT_EXACT_FIXTURES: &[&str] = &[
     "03_gradient_8x8_lossless.jxl",
+    "05_gradient_300x200_lossless.jxl",
     "07_modular_gray_8x8_lossless.jxl",
     "08_modular_gray16_32x32_lossless.jxl",
+    "09_modular_rgb_64x64_lossless.jxl",
+    "10_modular_palette_128x128_lossless.jxl",
     "11_modular_gradient_256x256_lossless.jxl",
     "12_modular_gray_300x200_lossless.jxl",
     "13_modular_rgb_16x16_lossless.jxl",
+    "20_modular_palette_bands_24x24_lossless.jxl",
+    "21_gradient_260x10_lossless.jxl",
 ];
 
 // ---------------------------------------------------------------------------

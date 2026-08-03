@@ -76,35 +76,52 @@ pub const EXPERIMENT_TRUE_ERR_USES_CLAMPED: bool = true;
 /// 0 = `abs(x) > abs(max)` (the clause as transcribed), 1 = `x < max`
 /// (minimum), 2 = `x > max` (maximum), 3 = `abs(x) >= abs(max)`.
 ///
-/// **PARTIALLY RESOLVED (slice 7): 0, with a known contradiction.** Rule 0 is
-/// what H.5.2 states and it decodes fixtures 03, 07, 08, 11, 12 and 13
-/// bit-exactly — fixture 12 alone is 60 000 samples whose contexts all hinge
-/// on property 15. Rules 1, 2 and 3 each break at least one of those.
-///
-/// Fixture 10 nonetheless *requires* rule 1. Its palette meta-channel is
-/// 4x3 with alternating extreme values, so row 0 leaves
-/// `true_err = [-2040, +2040, -1896, +1896]`. Recovering the encoder's context
-/// sequence by branching the ANS decoder at every symbol (the sequence
-/// `[0,1,0,1,1,1,1,1,0,0,1]` is the only one reproducing the four known
-/// palette colours) shows that at `(2, 1)` the encoder's `max_error` is
-/// `-1896` even though `+2040` is present and larger in magnitude. No
-/// magnitude-based rule can produce that, and no tie-break or walk order fixes
-/// it either. Since rule 0 is both the written clause and the one supported by
-/// far more evidence, it stays; fixtures 05, 09 and 10 are left as documented
-/// divergences rather than fitting the rule to one file. See
-/// `tests/e2e_lossless.rs` for the per-fixture divergence reports.
+/// **RESOLVED (slice 8): 0, the clause as written.** Slice 7 recorded an
+/// apparent contradiction — fixture 10 seemed to need a plain minimum — but
+/// that was a symptom, not a cause: the `true_err` values fed into the walk
+/// were wrong because of the H.5.2 clamp (see [`EXPERIMENT_CLAMP_SYMMETRIC`]).
+/// With the clamp corrected, rule 0 decodes all nine handmade fixtures
+/// bit-exactly, and rules 1, 2 and 3 each break at least one.
 pub const EXPERIMENT_MAX_ERROR_RULE: u32 = 0;
 
-/// How H.5.2's "not all the same sign" clamp guard is parsed.
+/// Whether H.5.2's clamp is the single symmetric clamp the clause prints.
 ///
-/// Both transcriptions render it as
-/// `if (((true_err_N * true_err_W) | (true_err_N * true_err_NW)) <= 0)`.
-/// Read literally (`true`) the `<= 0` applies to the bitwise OR of the two
-/// products. Read as a collapsed pair of comparisons (`false`) it is
-/// `(p1 <= 0) or (p2 <= 0)`. The two differ in exactly one case — one product
-/// zero and the other positive, i.e. one neighbouring error is zero — which is
-/// precisely the case the prose ("don't have the same sign") says must clamp.
-pub const EXPERIMENT_CLAMP_BITWISE_OR: bool = false;
+/// H.5.2 prints
+///
+/// ```text
+/// if (((true_err_N * true_err_W) | (true_err_N * true_err_NW)) <= 0)
+///     prediction = clamp(prediction, min(W3, N3, NE3), max(W3, N3, NE3));
+/// ```
+///
+/// **That is contradicted by the oracle.** Four `cjxl`-produced streams pin
+/// the behaviour down, and no reading of one guard plus one symmetric clamp
+/// satisfies all four (the full derivation, with the exact samples, is in
+/// `docs/experiments/2026-08-03-h52-clamp-asymmetry.md`):
+///
+/// * fixture 08 `(2, 0)`, `true_err = (W -8456, N 0, NW 0)`: the prediction
+///   **must** be pulled down to `max(W3, N3, NE3)`;
+/// * fixture 20 `(3, 0)`, `true_err = (W +864, N 0, NW 0)`: the prediction
+///   **must not** be pulled up to `min(W3, N3, NE3)`;
+/// * fixture 10 `(2, 0)`, `true_err = (W +2040, N 0, NW 0)`: likewise, and
+///   here the wrong `true_err` is what corrupts property 15 downstream;
+/// * fixture 21 `(251, 5)`, `true_err = (0, 0, 0)`: the prediction **must**
+///   be pulled up to `min(W3, N3, NE3)`.
+///
+/// The first two differ only in the sign of `true_err_W`, so no guard that is
+/// a function of the two printed products can separate them: the upper and
+/// lower halves of the clamp are gated differently. What satisfies every
+/// sample of all nine handmade fixtures plus the debug fixtures is
+///
+/// * cap above by `max(W3, N3, NE3)` when the printed guard holds
+///   (`p1 <= 0 || p2 <= 0`), and
+/// * floor below by `min(W3, N3, NE3)` only on a *strict* sign disagreement
+///   (`p1 < 0 || p2 < 0`) or when `true_err_N`, `true_err_W` and
+///   `true_err_NW` are all zero.
+///
+/// Setting this constant to `true` restores the literal clause; it breaks
+/// fixtures 05, 09, 10 and 20. `[provisional]`: this describes libjxl 0.13.0's
+/// behaviour, which the printed clause does not.
+pub const EXPERIMENT_CLAMP_SYMMETRIC: bool = false;
 
 /// Which extra term H.5.2 adds to `err_sum` on the last column.
 /// 0 = none, 1 = `err[i]_W` (the LaTeX reading), 2 = `err[i]_N`.
@@ -471,20 +488,43 @@ impl WeightedState {
         // the decoder total instead of relying on that.
         let prediction = i64::try_from(wide).unwrap_or(i64::MAX);
 
-        // H.5.2: clamp when true_err_N, true_err_W and true_err_NW do not all
-        // share a sign. The products are taken in i64 so two i32 errors cannot
-        // overflow, and `a | b <= 0` is true exactly when either product is
-        // negative or both are zero.
-        let clamp_fires = if EXPERIMENT_CLAMP_BITWISE_OR {
-            ((te_n * te_w) | (te_n * te_nw)) <= 0
-        } else {
-            (te_n * te_w) <= 0 || (te_n * te_nw) <= 0
-        };
+        // H.5.2's clamp. The clause prints one symmetric clamp behind one
+        // guard; oracle evidence contradicts that (see
+        // `EXPERIMENT_CLAMP_SYMMETRIC` and
+        // `docs/experiments/2026-08-03-h52-clamp-asymmetry.md`), so the two
+        // halves of the range are gated separately.
+        //
+        // The products are taken in `i64`, so two `i32` errors cannot overflow.
+        let p1 = te_n * te_w;
+        let p2 = te_n * te_nw;
+        // The printed guard, `((p1) | (p2)) <= 0`, read as the pair of
+        // comparisons its prose describes.
+        let disagree = p1 <= 0 || p2 <= 0;
+        // A real sign disagreement: some product is strictly negative.
+        let disagree_strict = p1 < 0 || p2 < 0;
+        // No error information at all in the three neighbours.
+        let quiescent = te_n == 0 && te_w == 0 && te_nw == 0;
+
         let unclamped = prediction;
-        let prediction = if clamp_fires {
-            prediction.clamp(w3.min(n3).min(ne3), w3.max(n3).max(ne3))
+        let lo = w3.min(n3).min(ne3);
+        let hi = w3.max(n3).max(ne3);
+        let prediction = if EXPERIMENT_CLAMP_SYMMETRIC {
+            if disagree {
+                prediction.clamp(lo, hi)
+            } else {
+                prediction
+            }
         } else {
-            prediction
+            let capped = if disagree {
+                prediction.min(hi)
+            } else {
+                prediction
+            };
+            if disagree_strict || quiescent {
+                capped.max(lo)
+            } else {
+                capped
+            }
         };
 
         // max_error = the neighbouring true_err of largest magnitude, tested in
@@ -861,10 +901,20 @@ mod tests {
             s += sp * wt;
         }
         let prediction = ((i128::from(s) * i128::from((1i64 << 24) / sum)) >> 24) as i64;
-        if ((te_n * te_w) | (te_n * te_nw)) <= 0 {
-            prediction.clamp(w3.min(n3).min(ne3), w3.max(n3).max(ne3))
+        // The asymmetric clamp of §4.3 of
+        // docs/experiments/2026-08-03-h52-clamp-asymmetry.md, written out
+        // independently of `predict`'s control flow.
+        let (p1, p2) = (te_n * te_w, te_n * te_nw);
+        let (lo, hi) = (w3.min(n3).min(ne3), w3.max(n3).max(ne3));
+        let capped = if p1 <= 0 || p2 <= 0 {
+            prediction.min(hi)
         } else {
             prediction
+        };
+        if p1 < 0 || p2 < 0 || (te_n == 0 && te_w == 0 && te_nw == 0) {
+            capped.max(lo)
+        } else {
+            capped
         }
     }
 
@@ -912,6 +962,95 @@ mod tests {
             unclamped.prediction, clamped.prediction,
             "the sign test must actually change the result"
         );
+    }
+
+    /// The two halves of H.5.2's clamp are gated differently, and this is the
+    /// pair of cases that proves it — fixtures 08 and 20 reduced to their
+    /// arithmetic. Both have `true_err_N == true_err_NW == 0`, so the guard
+    /// the clause prints sees identical inputs; they differ only in the sign
+    /// of `true_err_W`, and they require opposite outcomes.
+    ///
+    /// See `docs/experiments/2026-08-03-h52-clamp-asymmetry.md`.
+    #[test]
+    fn the_clamp_caps_above_but_does_not_floor_below_on_a_zero_north_error() {
+        let h = WpHeader::default_wp();
+
+        // Row 0 of a 4-wide channel, sitting at x = 1, so N/NW/NE all fall
+        // back to W (Table H.2) and every neighbouring error but W is zero.
+        let mut over = WeightedState::new(4, &mut guard()).expect("4 wide");
+        over.curr[0] = ErrorEntry {
+            true_err: -8456,
+            err: [1057; 4],
+        };
+        let nb = Neighbours {
+            w: 1057,
+            n: 1057,
+            nw: 1057,
+            ne: 1057,
+            nn: 1057,
+            nee: 1057,
+            ww: 1057,
+        };
+        let wp = over.predict(&h, &nb, 1);
+        // A negative west error makes the sub-predictors extrapolate upward,
+        // above max(W3, N3, NE3) = 8456 — and the cap brings it back.
+        assert!(wp.unclamped > 8456, "unclamped {}", wp.unclamped);
+        assert_eq!(wp.prediction, 8456, "the upper bound must apply");
+
+        // Same shape, opposite sign: the extrapolation goes below
+        // min(W3, N3, NE3) = 576 and must be left there.
+        let mut under = WeightedState::new(4, &mut guard()).expect("4 wide");
+        under.curr[0] = ErrorEntry {
+            true_err: 864,
+            err: [108, 144, 130, 108],
+        };
+        let nb = Neighbours {
+            w: 72,
+            n: 72,
+            nw: 72,
+            ne: 72,
+            nn: 72,
+            nee: 72,
+            ww: 72,
+        };
+        let wp = under.predict(&h, &nb, 1);
+        assert!(wp.unclamped < 576, "unclamped {}", wp.unclamped);
+        assert_eq!(
+            wp.prediction, wp.unclamped,
+            "the lower bound must NOT apply when only true_err_W is non-zero"
+        );
+    }
+
+    /// The other half: with no error information at all, the lower bound is
+    /// applied after all (fixture 21, coded channel 2 at `(251, 5)`).
+    #[test]
+    fn the_clamp_floors_below_when_every_neighbouring_error_is_zero() {
+        let h = WpHeader::default_wp();
+        let mut state = WeightedState::new(4, &mut guard()).expect("4 wide");
+        // Two clean rows: every true_err is zero, but sub-predictor 0 has been
+        // far more accurate than the others, so it takes nearly all the weight
+        // — which is what lets the prediction leave the neighbour range at all.
+        for cell in state.prev.iter_mut().chain(state.curr.iter_mut()) {
+            *cell = ErrorEntry {
+                true_err: 0,
+                err: [0, 4000, 4000, 4000],
+            };
+        }
+        state.has_prev = true;
+        // W and N are large and NE is far below them, so subpred[0] =
+        // W3 + NE3 - N3 drags the weighted prediction under min(W3, N3, NE3).
+        let nb = Neighbours {
+            w: 250,
+            n: 251,
+            nw: 250,
+            ne: -4,
+            nn: 250,
+            nee: -4,
+            ww: 249,
+        };
+        let wp = state.predict(&h, &nb, 1);
+        assert!(wp.unclamped < -32, "unclamped {}", wp.unclamped);
+        assert_eq!(wp.prediction, -32, "min(W3, N3, NE3) must apply");
     }
 
     #[test]
