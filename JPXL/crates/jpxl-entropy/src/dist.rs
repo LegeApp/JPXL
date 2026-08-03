@@ -20,6 +20,37 @@ use crate::error::{Result, malformed};
 /// Upper bound on cluster indices (18181-1 C.2.2).
 pub const MAX_CLUSTERS: usize = 256;
 
+/// Whether C.2.2's `num_dist == 2` rule rejects a nested distribution that
+/// sets `lz77.enabled`, versus silently overriding the flag to disabled.
+///
+/// C.2.2 states that when `num_dist == 2` the recursive distribution decoding
+/// has `lz77.enabled` false. Table C.1 lists the `lz77.enabled` bit
+/// unconditionally, so a conforming encoder still writes the bit; the
+/// question is what a conforming *decoder* does if a stream sets it anyway.
+/// `true` (this crate's reading) treats the clause as a constraint on
+/// well-formed streams and rejects such a stream as malformed. `false` would
+/// instead read the bit as usual (so bit consumption is identical either way,
+/// since `Lz77Params::read` always reads `min_symbol`/`min_length` once
+/// `enabled` is set) and simply force `lz77.enabled = false` afterwards,
+/// silently discarding the encoder's request.
+///
+/// UNEXERCISED (negative result), 2026-08-03: a temporary depth/`forbid_lz77`
+/// trace over the eleven existing lossless fixtures plus nine new `cjxl`
+/// v0.13.0 probes (checkerboard, thin stripes, and two-value noise, each at
+/// `-e 1/3/9`, chosen to make both a 2-leaf MA tree and LZ77 attractive to the
+/// encoder) found that `SymbolDecoder::open_nested` is **never** called with
+/// `forbid_lz77 = true` at all — none of these streams' entropy-coded bundles
+/// ever has exactly two pre-clustered contexts *and* chooses the general
+/// (nested) clustering encoding over the simple one. The constraint-vs-override
+/// distinction is therefore not reachable by this corpus, let alone the
+/// ambiguous bit itself. See
+/// `docs/experiments/2026-08-03-flip-point-fixtures.md`. The rule also exists
+/// to bound recursion depth ([`MAX_NESTING_DEPTH`] enforces that
+/// independently), so a real encoder has no incentive to set the flag here.
+/// The constraint reading stands as the safer default for attacker-controlled
+/// input; see `docs/experiments/2026-08-03-flip-point-fixtures.md`.
+pub(crate) const NESTED_LZ77_REJECTS_ENABLED: bool = true;
+
 /// Deepest nesting of C.2.2's recursive distribution decoding that this
 /// implementation will follow.
 ///

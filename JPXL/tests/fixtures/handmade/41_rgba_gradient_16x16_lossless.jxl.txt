@@ -1,0 +1,57 @@
+Fixture: 41_rgba_gradient_16x16_lossless.jxl
+16x16 RGBA gradient, mathematically lossless, effort 7 --
+resets_canvas sharing probe (F.2 / F.7)
+
+Purpose
+-------
+Aimed at RESETS_CANVAS_SHARED_ACROSS_BUNDLES
+(jpxl-decode/src/frame/header.rs): whether resets_canvas is computed once
+from the colour blending_info and shared with every ec_blending_info bundle
+(this crate's reading) or re-evaluated per bundle against that bundle's own
+mode. Needs at least one extra channel for ec_blending_info to exist; alpha
+is the only extra channel a PAM/PNG source can carry through cjxl's CLI.
+
+Result: negative, but useful anyway. See
+docs/experiments/2026-08-03-flip-point-fixtures.md. This decoder now decodes
+this fixture end to end (jpxl_decode::decode) -- the first RGBA modular
+extra-channel fixture in this project's test corpus. Both the colour and the
+extra channel's blending_info.mode come back kReplace, so the two readings of
+resets_canvas cannot be told apart by this stream: there is no cjxl CLI lever
+that sets an extra channel's blend mode independently of the colour channel's
+for a single, non-animated frame. The ambiguity itself is exercised instead by
+a hand-built bitstream unit test,
+frame::header::tests::resets_canvas_is_shared_from_the_colour_bundle.
+
+Provenance
+----------
+  Encoder:      cjxl v0.13.0 196a43d9 [_AVX2_,SSE4,SSE2] {GNU 15.2.0}
+  libjxl rev:   196a43d996aa6ed33ebf98812a7c6d43b2b6d01b (v0.12-snapshot-2-g196a43d9)
+  Built by:     tools/setup-oracles.sh (flags recorded in
+                tools/oracle-bin/PINNED_REVISIONS.txt)
+  cjxl flags:   -d 0 -e 7 -m 1
+  Regenerate:   tools/make-experiment-fixtures.sh
+                That script IS the recipe; it rewrites the source and
+                re-encodes.
+
+  Source image: tests/fixtures/generated/src_rgba_16x16.pam (1091 bytes)
+                sha256 c1069796c9a27903a8541f8a246cc4fd5dc0bb3966c1e6dc3289e996e11aadbd
+                Synthetic, written by the Python snippet inside
+                tools/make-experiment-fixtures.sh -- no third-party image was
+                used, converted, or consulted. 16x16 8-bit RGBA (PAM P7,
+                TUPLTYPE RGB_ALPHA):
+                  R = x * 15 mod 256, G = y * 15 mod 256, B = (x + y) mod 256
+                  A = 128 if (x + y) even else 255
+
+  Fixture:      110 bytes
+                sha256 65be179333eeaa8ac70733ae789d80273e7c215bf8b4c37043a5c2b451212fd0
+
+Verification
+------------
+djxl decodes it to a PAM byte-identical to the source (checked on every run of
+tools/make-experiment-fixtures.sh). jpxl_decode::decode() also decodes it
+successfully (see tests/e2e_experiments.rs).
+
+cjxl is used strictly as a BLACK BOX: it emits conformant streams for JPXL to
+parse. libjxl's source is never read. If a rebuild at a different libjxl
+revision changes these digests, that is the point of recording them -- do not
+silently update them; note the revision change.

@@ -16,7 +16,7 @@ use jpxl_bitstream::BitReader;
 use jpxl_core::limits::AllocGuard;
 
 use crate::ans::{AnsDistribution, AnsState};
-use crate::dist::{ClusterMap, MAX_NESTING_DEPTH, read_cluster_map};
+use crate::dist::{ClusterMap, MAX_NESTING_DEPTH, NESTED_LZ77_REJECTS_ENABLED, read_cluster_map};
 use crate::error::{Result, malformed};
 use crate::hybrid::HybridUintConfig;
 use crate::lz77::{Lz77Params, Lz77Window, resolve_distance};
@@ -128,12 +128,17 @@ impl SymbolDecoder {
             ));
         }
 
-        let lz77 = Lz77Params::read(reader)?;
+        let mut lz77 = Lz77Params::read(reader)?;
         if forbid_lz77 && lz77.enabled {
-            return Err(malformed!(
-                "C.2.2: the nested distribution decoder of a two-context stream must not enable \
-                 LZ77"
-            ));
+            if NESTED_LZ77_REJECTS_ENABLED {
+                return Err(malformed!(
+                    "C.2.2: the nested distribution decoder of a two-context stream must not \
+                     enable LZ77"
+                ));
+            }
+            // Override reading: the bits are already consumed (`min_symbol`,
+            // `min_length`), the flag is just not honoured.
+            lz77.enabled = false;
         }
 
         // C.2.1: enabling LZ77 appends one context for the distance symbols.
@@ -416,6 +421,30 @@ impl SymbolDecoder {
 mod tests {
     use super::*;
     use jpxl_core::limits::Limits;
+
+    /// Regression test for `NESTED_LZ77_REJECTS_ENABLED`: pins the constraint
+    /// reading of C.2.2 (see the constant's doc comment in `dist`) — a nested
+    /// distribution decoder whose parent had `num_dist == 2` must reject a
+    /// stream that sets `lz77.enabled`, rather than silently overriding it.
+    ///
+    /// Bit layout, in read order:
+    ///   b0     = 1   lz77.enabled = true                        (Table C.1)
+    ///   b1, b2 = 0   min_symbol selector 0 -> Val(224)
+    ///   b3, b4 = 0   min_length selector 0 -> Val(3)
+    /// `forbid_lz77 = true` (as `num_dist == 2` in the caller would set it)
+    /// must fail right here, regardless of what follows.
+    #[test]
+    fn nested_lz77_rejects_the_flag_when_forbidden() {
+        let mut g = AllocGuard::new(&Limits::relaxed());
+        let data = [0b0000_0001u8];
+        let mut r = BitReader::new(&data);
+        let err = SymbolDecoder::open_nested(&mut r, 1, 1, true, true, &mut g)
+            .expect_err("a forbidden nested LZ77 flag must be rejected");
+        assert!(
+            err.to_string().contains("must not enable"),
+            "unexpected error: {err}"
+        );
+    }
 
     /// A minimal prefix-coded bundle: one context, no LZ77, one cluster whose
     /// alphabet size is 1, so every symbol is 0 and no code bits exist.

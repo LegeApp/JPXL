@@ -94,6 +94,30 @@ const NAME_LEN_SPEC: U32Spec = U32Spec::new([
 /// `duration` value meaning "present the next frame as the next page".
 pub const DURATION_NEXT_PAGE: u32 = 0xFFFF_FFFF;
 
+/// Whether `resets_canvas` is computed once from the colour `blending_info`
+/// and shared with every `ec_blending_info` bundle (`true`, this
+/// implementation's reading), or re-evaluated per bundle against that
+/// bundle's own `mode` (`false`).
+///
+/// F.2 defines `resets_canvas = full_frame and blending_info.mode ==
+/// kReplace`, naming the frame's *colour* `blending_info` specifically, and
+/// every `ec_blending_info[i]`'s `source` row is gated on `!resets_canvas`.
+/// Read literally, that is one expression evaluated once; the alternative is
+/// that each bundle's `source` row is really asking about *its own* mode. The
+/// two differ by up to two bits per extra channel (the `source` row is
+/// `u(2)`) whenever an extra channel's mode disagrees with the colour
+/// channel's about being `kReplace`. See the ambiguity note in
+/// `frame::blending`.
+///
+/// UNEXERCISED (negative result), 2026-08-03: no combination of `cjxl`
+/// v0.13.0 flags forces an extra channel's blend mode independently of the
+/// colour channel's (there is no CLI lever for per-channel blend mode; it is
+/// an animation/patches encoder heuristic), and single-frame images always
+/// have `mode == kReplace` for every bundle, which both readings agree on. No
+/// stream that could distinguish the two readings was found. See
+/// `docs/experiments/2026-08-03-flip-point-fixtures.md`.
+pub const RESETS_CANVAS_SHARED_ACROSS_BUNDLES: bool = true;
+
 /// Frame type (18181-1 Table F.3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(u8)]
@@ -544,14 +568,21 @@ pub fn read_frame_header(
     if normal_frame {
         // resets_canvas depends on this bundle's own mode, so the mode is
         // peeked before the bundle is read; see the blending module for why
-        // one value then governs every ec_blending_info too.
+        // one value then governs every ec_blending_info too, and
+        // RESETS_CANVAS_SHARED_ACROSS_BUNDLES for the alternative reading.
         let mode = peek_blend_mode(reader)?;
-        let resets_canvas = is_full_frame && mode == BlendMode::Replace;
+        let colour_resets_canvas = is_full_frame && mode == BlendMode::Replace;
 
         header.blending_info =
-            read_blending_info(reader, extra, resets_canvas, "frame.blending_info")?;
+            read_blending_info(reader, extra, colour_resets_canvas, "frame.blending_info")?;
         header.ec_blending_info = Vec::with_capacity(num_extra);
         for _ in 0..num_extra {
+            let resets_canvas = if RESETS_CANVAS_SHARED_ACROSS_BUNDLES {
+                colour_resets_canvas
+            } else {
+                let ec_mode = peek_blend_mode(reader)?;
+                is_full_frame && ec_mode == BlendMode::Replace
+            };
             header.ec_blending_info.push(read_blending_info(
                 reader,
                 extra,
@@ -1047,6 +1078,55 @@ mod tests {
         assert_eq!(bits, expected);
         assert_eq!(header.ec_upsampling, vec![2, 1]);
         assert_eq!(header.ec_blending_info.len(), 2);
+    }
+
+    #[test]
+    fn resets_canvas_is_shared_from_the_colour_bundle() {
+        // Regression test for RESETS_CANVAS_SHARED_ACROSS_BUNDLES: the colour
+        // bundle is kReplace (resets_canvas = true, so its own `source` row
+        // is not read), and ec_blending_info[0] is kAdd — a mode that would
+        // itself make resets_canvas false if evaluated per-bundle, and so
+        // would cost this channel a two-bit `source` row under the
+        // unshared/per-bundle reading. Under the current (shared) reading no
+        // such row exists for either bundle: the single `source`-suppressing
+        // fact comes entirely from the colour mode. If
+        // RESETS_CANVAS_SHARED_ACROSS_BUNDLES is ever flipped to `false`
+        // without a matching fixture change, this stream is two bits short
+        // and `read_with` returns an error instead of a header.
+        let mut metadata = default_metadata();
+        metadata.ec_info = vec![crate::headers::extra_channels::ExtraChannelInfo::default_alpha()];
+
+        let mut w = BitWriter::new();
+        w.bool(false)
+            .u(2, 0) // kRegularFrame
+            .u(1, 1) // Modular
+            .u64_field(0)
+            .u32_field(0, 0, 0) // upsampling
+            .u32_field(0, 0, 0) // ec_upsampling[0]
+            .u(2, 1) // group_size_shift
+            .u32_field(0, 0, 0) // num_passes
+            .bool(false) // have_crop
+            .u32_field(0, 0, 0) // blending_info.mode = kReplace
+            // no colour `source` row: resets_canvas (colour) is true
+            .u32_field(1, 0, 0) // ec_blending_info[0].mode = kAdd
+            // no ec `source` row either, under the shared reading
+            .bool(true) // is_last
+            .u32_field(0, 0, 0) // name_len
+            .bool(true) // restoration all_default
+            .u64_field(0); // extensions
+        let expected = w.bit_len();
+        let data = w.finish_padded(1);
+        let (header, bits) = read_with(&data, &metadata, 300, 200).expect("valid");
+
+        assert_eq!(bits, expected);
+        let ec = header.ec_blending_info.first().expect("one extra channel");
+        assert_eq!(header.blending_info.mode, BlendMode::Replace);
+        assert_eq!(ec.mode, BlendMode::Add);
+        assert_eq!(
+            ec.source, 0,
+            "the shared resets_canvas suppresses this row even though kAdd \
+             alone would not"
+        );
     }
 
     #[test]

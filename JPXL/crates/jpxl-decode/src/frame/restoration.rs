@@ -43,8 +43,21 @@
 //! `!all_default && gab`, preserving the invariant that every other bundle in
 //! the standard obeys: `all_default` costs exactly one bit.
 //! [`GAB_CUSTOM_REQUIRES_NOT_ALL_DEFAULT`] names the decision so it can be
-//! flipped in one place. **TODO(slice 7):** settle against a real stream — the
-//! two readings differ by one bit on nearly every frame.
+//! flipped in one place.
+//!
+//! UNEXERCISED (negative result), 2026-08-03: [`read_restoration_filter`] used
+//! to return immediately on `all_default`, before `gab` or `gab_custom` were
+//! ever computed — which made the two readings bit-identical regardless of
+//! the constant, since the literal reading's extra bit lives exactly on the
+//! branch the early return skipped. That is fixed (the early return now
+//! happens after `gab`/`gab_custom` are resolved), so the constant is live.
+//! But no `cjxl` v0.13.0 stream tried — twelve synthetic probes (checkerboard,
+//! stripes, two-value noise, and existing gradient fixtures, modular and
+//! VarDCT, lossless and lossy, effort 1/3/5/7/9, plus `--gaborish=0/1`
+//! explicitly) — ever produced `all_default == true` for this bundle: cjxl
+//! always writes at least one non-default field, so `all_default` is 0 and
+//! both readings agree. See
+//! `docs/experiments/2026-08-03-flip-point-fixtures.md`.
 
 use jpxl_bitstream::{BitReader, read_bool, read_f16_as_f32, trace_field};
 
@@ -185,11 +198,18 @@ pub fn read_restoration_filter(
     encoding: Encoding,
 ) -> Result<(RestorationFilter, Option<Extensions>)> {
     let all_default = trace_field!(reader, "restoration.all_default", read_bool(reader))?;
-    if all_default {
-        return Ok((RestorationFilter::default(), None));
-    }
 
-    let gab = trace_field!(reader, "restoration.gab", read_bool(reader))?;
+    // Table J.1's `gab` row is guarded by `!all_default` and defaults to
+    // `true`, so an all-default bundle has `gab == true` without a bit being
+    // read for it. Computed here, before the early return, so the flip point
+    // below can be tested: under the literal `GAB_CUSTOM_REQUIRES_NOT_ALL_DEFAULT
+    // = false` reading a `gab_custom` bit is read even when `all_default`,
+    // which the early return would otherwise make unreachable.
+    let gab = if all_default {
+        true
+    } else {
+        trace_field!(reader, "restoration.gab", read_bool(reader))?
+    };
 
     let read_gab_custom = gab && (!GAB_CUSTOM_REQUIRES_NOT_ALL_DEFAULT || !all_default);
     let gab_custom = if read_gab_custom {
@@ -213,6 +233,20 @@ pub fn read_restoration_filter(
                 *b = w2;
             }
         }
+    }
+
+    if all_default {
+        // Every other field defaults; only `gab_custom` (and, if it was read
+        // as true under the literal reading, its weights) could have consumed
+        // bits above.
+        return Ok((
+            RestorationFilter {
+                gab_custom,
+                gab_weights,
+                ..RestorationFilter::default()
+            },
+            None,
+        ));
     }
 
     let mut epf = EpfParams {

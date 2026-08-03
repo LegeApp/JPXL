@@ -1,0 +1,68 @@
+Fixture: 42_gab_forced_16x16_lossless.jxl
+16x16 RGB gradient, modular, --gaborish=1 forced, effort 7 --
+gab_custom all_default probe (Table J.1)
+
+Purpose
+-------
+Aimed at GAB_CUSTOM_REQUIRES_NOT_ALL_DEFAULT
+(jpxl-decode/src/frame/restoration.rs): both transcriptions guard the
+gab_custom row with bare "gab" (which defaults true), so a literal reading
+would still read a gab_custom bit even when the whole RestorationFilter
+bundle is all_default. That only differs from this crate's reading
+(!all_default && gab) when a stream's RestorationFilter is genuinely
+all_default == true, so this fixture forces Gaborish on to try to produce
+that shape.
+
+Result: negative. See docs/experiments/2026-08-03-flip-point-fixtures.md. In
+this and eleven other probes (modular and VarDCT, lossless and lossy, effort
+1/3/5/7/9, --gaborish=0/1 explicit and left at the encoder's default), cjxl
+v0.13.0 never emits RestorationFilter.all_default == true: it always writes
+at least one field explicitly. The two readings therefore agree on every
+probe tried. Kept anyway as a header-parse regression fixture (see below) and
+because building it exposed a real bug: read_restoration_filter used to
+return on all_default before gab/gab_custom were ever computed, which made
+the flip point dead code regardless of the constant's value; that is fixed
+(crates/jpxl-decode/src/frame/restoration.rs) and covered by the existing
+unit test frame::restoration::tests::all_default_costs_one_bit, which is now
+a real assertion instead of a vacuous one.
+
+IMPORTANT: this fixture is NOT mathematically lossless despite -d 0. Forcing
+Gaborish (18181-1 J.3) smooths the reconstructed pixels regardless of
+quantization losslessness -- djxl's output differs from the source at the
+byte level (verified: 42's sibling gab_off.jxl, same source, --gaborish=0,
+DOES round-trip byte-identical; only the forced-on variant does not). This
+decoder does not apply J.3/J.4 to pixels yet (see the restoration.rs module
+doc), so this fixture is for header/TOC parsing only, not a pixel-exactness
+fixture -- do not add it to a bit-exact-against-djxl fixture list.
+
+Provenance
+----------
+  Encoder:      cjxl v0.13.0 196a43d9 [_AVX2_,SSE4,SSE2] {GNU 15.2.0}
+  libjxl rev:   196a43d996aa6ed33ebf98812a7c6d43b2b6d01b (v0.12-snapshot-2-g196a43d9)
+  Built by:     tools/setup-oracles.sh (flags recorded in
+                tools/oracle-bin/PINNED_REVISIONS.txt)
+  cjxl flags:   -d 0 -e 7 -m 1 --gaborish=1
+  Regenerate:   tools/make-experiment-fixtures.sh
+                That script IS the recipe; it rewrites the source and
+                re-encodes.
+
+  Source image: tests/fixtures/generated/src_gab_16x16.ppm (781 bytes)
+                sha256 15157ddb5b9488bdcfe175c1d13f938ac17265a8fc13b4ea3571f58d9cf4db67
+                Synthetic, written by the Python snippet inside
+                tools/make-experiment-fixtures.sh -- no third-party image was
+                used, converted, or consulted. 16x16 8-bit RGB (PPM P6):
+                  R = x * 15 mod 256, G = y * 15 mod 256, B = (x+y)*7 mod 256
+
+  Fixture:      97 bytes
+                sha256 85d182cc60d942e871882ae8c2da959996f319bfe12cda63abb44b9f84017c69
+
+Verification
+------------
+Not round-trip verified against djxl (see IMPORTANT above). jpxl_decode::decode()
+parses the header/TOC and decodes without a bitstream error (pixel values are
+not compared) -- see tests/e2e_experiments.rs.
+
+cjxl is used strictly as a BLACK BOX: it emits conformant streams for JPXL to
+parse. libjxl's source is never read. If a rebuild at a different libjxl
+revision changes these digests, that is the point of recording them -- do not
+silently update them; note the revision change.
