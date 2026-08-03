@@ -16,11 +16,14 @@
 //! * [`geometry`] — checked dimension, bit-depth, and group-size newtypes.
 //! * [`color`] — the XYB color model and its inverse.
 //! * [`dct`] — the integer/float DCT shared by both directions.
+//! * [`varblock`] — the VarDCT transform-type vocabulary (18181-1 Annex I) and
+//!   the coefficients-to-samples reconstruction.
 
 pub mod color;
 pub mod dct;
 pub mod error;
 pub mod geometry;
 pub mod limits;
+pub mod varblock;
 
 pub use error::{JpxlError, Result};

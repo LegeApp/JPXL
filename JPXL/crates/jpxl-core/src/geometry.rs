@@ -156,6 +156,186 @@ impl GroupDim {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Block coordinates (VarDCT)
+// ---------------------------------------------------------------------------
+
+/// Side of a VarDCT coding block, in pixels.
+///
+/// The whole of 18181-1 Annex I is phrased in 8x8 blocks: `DctSelect` is stored
+/// one entry per block, the LF image is the frame downsampled by this factor,
+/// and I.3.2's `bwidth`/`bheight` are multiples of it.
+pub const BLOCK_DIM: u32 = 8;
+
+/// Side of an LF group, in 8x8 blocks.
+///
+/// 5.3 and the G.2.3 note put an LF group at `group_dim` LF samples on a side,
+/// and `group_size_shift` is only read for `kModular` frames (F.2), so a VarDCT
+/// frame always has `group_dim == 256`. This is that number in *blocks*, which
+/// is the unit [`LfBlockPos`] counts in.
+pub const LF_GROUP_BLOCKS: u32 = 256;
+
+/// A pixel position inside a frame.
+///
+/// Exists so that a pixel coordinate cannot be handed to a function expecting a
+/// block coordinate. The previous project lost weeks to exactly that confusion,
+/// so the conversions are explicit and named.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct PixelPos {
+    x: u32,
+    y: u32,
+}
+
+/// A frame-absolute 8x8-block position.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct BlockPos {
+    bx: u32,
+    by: u32,
+}
+
+/// An 8x8-block position relative to the origin of an LF group.
+///
+/// G.2.4's greedy varblock placement walks this coordinate space, and every
+/// varblock must lie wholly inside one LF group, so mixing it with [`BlockPos`]
+/// silently moves varblocks between groups.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct LfBlockPos {
+    bx: u32,
+    by: u32,
+}
+
+impl PixelPos {
+    /// A pixel position. Any `u32` pair is representable.
+    #[must_use]
+    pub const fn new(x: u32, y: u32) -> Self {
+        Self { x, y }
+    }
+
+    /// Column, in pixels.
+    #[must_use]
+    pub const fn x(self) -> u32 {
+        self.x
+    }
+
+    /// Row, in pixels.
+    #[must_use]
+    pub const fn y(self) -> u32 {
+        self.y
+    }
+
+    /// The 8x8 block containing this pixel.
+    #[must_use]
+    pub const fn block(self) -> BlockPos {
+        BlockPos {
+            bx: self.x / BLOCK_DIM,
+            by: self.y / BLOCK_DIM,
+        }
+    }
+
+    /// Offset of this pixel inside its block, as `(x, y)` in `0..8`.
+    #[must_use]
+    pub const fn offset_in_block(self) -> (u32, u32) {
+        (self.x % BLOCK_DIM, self.y % BLOCK_DIM)
+    }
+}
+
+impl BlockPos {
+    /// A frame-absolute block position.
+    #[must_use]
+    pub const fn new(bx: u32, by: u32) -> Self {
+        Self { bx, by }
+    }
+
+    /// Block column.
+    #[must_use]
+    pub const fn bx(self) -> u32 {
+        self.bx
+    }
+
+    /// Block row.
+    #[must_use]
+    pub const fn by(self) -> u32 {
+        self.by
+    }
+
+    /// The top-left pixel of this block.
+    ///
+    /// # Errors
+    ///
+    /// [`JpxlError::InvalidHeader`] if the pixel coordinate would not fit in
+    /// `u32`. Block indices come from stream-controlled geometry, so this
+    /// multiplication is checked rather than wrapped.
+    pub fn origin_pixel(self) -> Result<PixelPos> {
+        let scale = |v: u32, axis: &str| {
+            v.checked_mul(BLOCK_DIM).ok_or_else(|| {
+                JpxlError::InvalidHeader(format!("block {axis} index {v} overflows a pixel index"))
+            })
+        };
+        Ok(PixelPos::new(
+            scale(self.bx, "column")?,
+            scale(self.by, "row")?,
+        ))
+    }
+
+    /// This block's position relative to the LF group whose origin is
+    /// `group_origin`.
+    ///
+    /// Returns `None` if the block lies before the group origin on either axis.
+    #[must_use]
+    pub fn relative_to(self, group_origin: Self) -> Option<LfBlockPos> {
+        Some(LfBlockPos {
+            bx: self.bx.checked_sub(group_origin.bx)?,
+            by: self.by.checked_sub(group_origin.by)?,
+        })
+    }
+
+    /// The origin of the LF group containing this block.
+    #[must_use]
+    pub const fn lf_group_origin(self) -> Self {
+        Self {
+            bx: self.bx - self.bx % LF_GROUP_BLOCKS,
+            by: self.by - self.by % LF_GROUP_BLOCKS,
+        }
+    }
+}
+
+impl LfBlockPos {
+    /// A block position relative to an LF group origin.
+    #[must_use]
+    pub const fn new(bx: u32, by: u32) -> Self {
+        Self { bx, by }
+    }
+
+    /// Block column within the LF group.
+    #[must_use]
+    pub const fn bx(self) -> u32 {
+        self.bx
+    }
+
+    /// Block row within the LF group.
+    #[must_use]
+    pub const fn by(self) -> u32 {
+        self.by
+    }
+
+    /// Promotes back to a frame-absolute block position.
+    ///
+    /// # Errors
+    ///
+    /// [`JpxlError::InvalidHeader`] if the sum overflows `u32`.
+    pub fn to_frame(self, group_origin: BlockPos) -> Result<BlockPos> {
+        let add = |a: u32, b: u32, axis: &str| {
+            a.checked_add(b).ok_or_else(|| {
+                JpxlError::InvalidHeader(format!("LF-group-relative block {axis} index overflows"))
+            })
+        };
+        Ok(BlockPos::new(
+            add(group_origin.bx, self.bx, "column")?,
+            add(group_origin.by, self.by, "row")?,
+        ))
+    }
+}
+
 /// Total pixels in a `width` x `height` image, checked against `limits`.
 ///
 /// # Errors
@@ -257,5 +437,62 @@ mod tests {
             pixel_count(w, h, &Limits::relaxed()).expect("relaxed limits allow it"),
             1u64 << 60
         );
+    }
+
+    /// Pixel-to-block and block-to-pixel are inverse where they should be, and
+    /// the offset within the block is recovered. Proves the two coordinate
+    /// spaces cannot be silently interchanged: the conversion is a named call,
+    /// not an implicit `usize`.
+    #[test]
+    fn pixel_and_block_coordinates_convert() {
+        let p = PixelPos::new(17, 8);
+        assert_eq!(p.block(), BlockPos::new(2, 1));
+        assert_eq!(p.offset_in_block(), (1, 0));
+        assert_eq!(
+            BlockPos::new(2, 1).origin_pixel().expect("in range"),
+            PixelPos::new(16, 8)
+        );
+        assert_eq!(PixelPos::new(0, 0).block(), BlockPos::new(0, 0));
+    }
+
+    /// Block indices are stream-controlled, so the multiply into pixel space is
+    /// checked rather than wrapped.
+    #[test]
+    fn block_origin_rejects_overflow() {
+        assert!(BlockPos::new(u32::MAX, 0).origin_pixel().is_err());
+        assert!(BlockPos::new(0, u32::MAX / 4).origin_pixel().is_err());
+    }
+
+    /// LF-group-relative coordinates round-trip through the group origin, and a
+    /// block before the origin has no relative position at all rather than
+    /// wrapping to a huge one.
+    #[test]
+    fn lf_group_relative_coordinates_round_trip() {
+        let origin = BlockPos::new(256, 512);
+        let block = BlockPos::new(260, 512);
+        let rel = block.relative_to(origin).expect("inside the group");
+        assert_eq!((rel.bx(), rel.by()), (4, 0));
+        assert_eq!(rel.to_frame(origin).expect("in range"), block);
+
+        assert!(BlockPos::new(255, 512).relative_to(origin).is_none());
+        assert!(
+            LfBlockPos::new(1, 0)
+                .to_frame(BlockPos::new(u32::MAX, 0))
+                .is_err()
+        );
+    }
+
+    /// The LF-group origin of a block is that block rounded down to a multiple
+    /// of `LF_GROUP_BLOCKS`, which is what makes `relative_to` total for blocks
+    /// in their own group.
+    #[test]
+    fn lf_group_origin_rounds_down() {
+        assert_eq!(
+            BlockPos::new(300, 5).lf_group_origin(),
+            BlockPos::new(256, 0)
+        );
+        assert_eq!(BlockPos::new(0, 0).lf_group_origin(), BlockPos::new(0, 0));
+        let b = BlockPos::new(1000, 700);
+        assert!(b.relative_to(b.lf_group_origin()).is_some());
     }
 }
