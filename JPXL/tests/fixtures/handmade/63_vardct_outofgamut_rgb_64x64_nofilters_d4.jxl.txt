@@ -1,0 +1,68 @@
+Fixture: 63_vardct_outofgamut_rgb_64x64_nofilters_d4.jxl
+64x64 RGB, VarDCT lossy, gaborish and EPF disabled, d=4.0
+
+Purpose
+-------
+Pins the below-zero behaviour of the signalled transfer function (18181-1
+Table E.6, applied after L.2.2).
+
+L.2.2 hands back linear light that is explicitly allowed outside the coded
+gamut, and 18181-3 4.2 forbids clipping before the conformance comparison, so
+the transfer function is evaluated at negative arguments. Neither 18181-1 nor
+the transfer standards it names say what happens there, and the two defensible
+readings -- take the printed piecewise condition on the signed value (linear
+branch) or extend the whole curve with odd symmetry -- differ by more than 1.0
+on this fixture. It is therefore a flip point:
+jpxl_core::color::NEGATIVES_TAKE_THE_LINEAR_SEGMENT, settled in
+docs/experiments/2026-08-04-negative-transfer-function-branch.md.
+
+This stream signals TransferFunction::kSRGB, the entry that is *odd*. Its
+counterpart (kSRGB's sibling k709, which is *not* odd) is exercised by the
+`bike` conformance case, whose reference image is published rather than
+produced here.
+
+The source is 8x8 tiles of fully saturated primaries separated by 2-pixel
+black rules: every tile edge is a step between two channel extremes, so the
+lossy encode rings hard. In the pinned reference decode 3288 of the 12288
+samples are below -0.0031308 (the point where the two readings start to
+diverge) and 1196 are below -0.05, with a minimum of -0.325. Under the wrong
+reading this fixture's peak error is over 0.6; under the right one it is
+4.6e-5.
+
+--gaborish=0 --epf=0 disables both restoration filters. Per 18181-3 Annex A
+Table A.1:
+
+    Part 3 error class:  peak <= 0.004,  RMSE <= 1e-5   (no filters)
+
+Provenance
+----------
+  Encoder:      cjxl v0.13.0 196a43d9 [_AVX2_,SSE4,SSE2] {GNU 15.2.0}
+  libjxl rev:   196a43d996aa6ed33ebf98812a7c6d43b2b6d01b (v0.12-snapshot-2-g196a43d9)
+  cjxl flags:   -d 4.0 --gaborish=0 --epf=0 -e 7
+  Built by:     tools/setup-oracles.sh (flags recorded in
+                tools/oracle-bin/PINNED_REVISIONS.txt)
+  Regenerate:   tools/make-vardct-fixtures.sh
+                That script IS the recipe; it rewrites the source and re-encodes.
+
+  Source image: tests/fixtures/generated/src_vardct_outofgamut_rgb_64x64.ppm  (12303 bytes)
+                sha256 5053f04e648ca8df3491358fd9e64be87eebf94e52329a4a38998d03d7c55799
+                Pixel formula, x and y in 0..64:
+                  black (0,0,0) where (x % 8) < 2 or (y % 8) < 2
+                  otherwise PALETTE[(x/8 + y/8) % 6], PALETTE =
+                  red, green, blue, yellow, cyan, magenta at full saturation.
+
+  Fixture:      781 bytes
+                sha256 f66c48d820903b16ab78016ffdc07d80ff3a78a7e1f646b952ab1d4108db80d3
+
+  Reference decode (djxl --output_format npy): committed alongside as
+  63_vardct_outofgamut_rgb_64x64_nofilters_d4.npy, 49230 bytes (under this
+  repo's 100 KB commit-next-to-fixture cutoff).
+                sha256 5b2eabed8ac26963903f1e622cad89becc9b5f41b5b69fc88edafb64732cf407
+  Shape (1, 64, 64, 3) little-endian f32, per 18181-3 4.1.2. Decode is
+  deterministic per libjxl revision, so this hash is expected to reproduce
+  exactly on the pinned oracle build.
+
+cjxl/djxl are used strictly as BLACK BOXES: they emit/consume conformant
+streams for JPXL to parse. libjxl's source is never read. If a rebuild at a
+different libjxl revision changes these digests, that is the point of
+recording them -- do not silently update them; note the revision change.

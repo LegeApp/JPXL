@@ -165,19 +165,49 @@ fn cube(v: f32) -> f32 {
 // Transfer functions (18181-1 Table E.6)
 // ---------------------------------------------------------------------------
 
+/// Flip point: how a piecewise OETF with a linear toe is extended below zero.
+///
+/// L.2.2's output is explicitly allowed outside the coded gamut and 18181-3
+/// §4.2 forbids clipping before the conformance comparison, so a decoder that
+/// signals `TransferFunction::kSRGB` or `k709` has to evaluate its OETF at
+/// negative arguments. Neither 18181-1 Table E.6 nor the referenced transfer
+/// standards (IEC 61966-2-1, ITU-R BT.709-6) says what happens there: both
+/// print a two-branch curve whose stated domain starts at zero.
+///
+/// Two readings are defensible:
+///
+/// * *literal* — evaluate the printed condition on the **signed** value.
+///   Every negative argument is below the toe threshold, so it takes the
+///   linear branch: `12.92 * v` (sRGB), `4.5 * v` (BT.709).
+/// * *odd* — extend the whole curve with odd symmetry, `f(-v) == -f(v)`, so a
+///   negative argument takes the *power* branch on its magnitude.
+///
+/// The two disagree by a lot — at `v == -0.13` BT.709 gives `-0.587` literally
+/// and `-0.341` under odd symmetry — and, measured against published
+/// references, **the two curves do not answer the same way**: this array is
+/// `[sRGB, BT.709] = [odd, literal]`. Both entries are measurements, not
+/// deductions; see
+/// `docs/experiments/2026-08-04-negative-transfer-function-branch.md` for the
+/// evidence and the residuals.
+///
+/// [`linear_to_gamma`] is not covered: a pure power law has no linear branch,
+/// so odd symmetry is the only continuous extension available there.
+pub const NEGATIVES_TAKE_THE_LINEAR_SEGMENT: [bool; 2] = [false, true];
+
 /// The IEC 61966-2-1 (sRGB) opto-electronic transfer function.
 ///
 /// L.2.2 hands back **linear** light; the samples a conformance reference or a
 /// PNG holds are in the signalled colour encoding, whose transfer function for
 /// `TransferFunction::kSRGB` is this curve.
 ///
-/// Negative inputs occur — L.2.2's output is explicitly allowed outside the
-/// sRGB gamut and 18181-3 §4.2 forbids clipping before comparison — so the
-/// curve is extended with odd symmetry, `f(-v) == -f(v)`. That is the only
-/// extension that is continuous, monotonic and sign-preserving, and it leaves
-/// the in-gamut values exactly as the standard curve defines them.
+/// Negative (out-of-gamut) samples are extended with odd symmetry,
+/// `f(-v) == -f(v)` — see [`NEGATIVES_TAKE_THE_LINEAR_SEGMENT`], entry 0.
+/// Nothing is clipped.
 #[must_use]
 pub fn linear_to_srgb(v: f32) -> f32 {
+    if NEGATIVES_TAKE_THE_LINEAR_SEGMENT[0] && v <= 0.003_130_8 {
+        return 12.92 * v;
+    }
     let a = v.abs();
     let encoded = if a <= 0.003_130_8 {
         12.92 * a
@@ -187,15 +217,22 @@ pub fn linear_to_srgb(v: f32) -> f32 {
     if v < 0.0 { -encoded } else { encoded }
 }
 
-/// The ITU-R BT.709-6 opto-electronic transfer function, with the same odd
-/// extension as [`linear_to_srgb`].
+/// The ITU-R BT.709-6 opto-electronic transfer function.
 ///
 /// `E' = 4.5 E` below `0.018` and `1.099 E^0.45 - 0.099` above. This is the
 /// curve `TransferFunction::k709` names, and it is *not* the sRGB curve — the
 /// two differ by up to about 0.02 in the shadows, which is five times the
 /// no-filters conformance budget, so the distinction is load-bearing.
+///
+/// The difference extends below zero, where the two curves are extended
+/// *differently*: this one takes its printed condition on the signed value, so
+/// a negative sample lands on the linear branch and encodes as `4.5 * v` —
+/// see [`NEGATIVES_TAKE_THE_LINEAR_SEGMENT`], entry 1.
 #[must_use]
 pub fn linear_to_rec709(v: f32) -> f32 {
+    if NEGATIVES_TAKE_THE_LINEAR_SEGMENT[1] && v < 0.018 {
+        return 4.5 * v;
+    }
     let a = v.abs();
     let encoded = if a < 0.018 {
         4.5 * a
@@ -205,8 +242,12 @@ pub fn linear_to_rec709(v: f32) -> f32 {
     if v < 0.0 { -encoded } else { encoded }
 }
 
-/// A pure power-law OETF, `v^exponent`, with the same odd extension as
-/// [`linear_to_srgb`].
+/// A pure power-law OETF, `v^exponent`, extended below zero with odd
+/// symmetry.
+///
+/// Unlike [`linear_to_rec709`] this curve has no linear toe to fall back on,
+/// so odd symmetry is the only continuous, monotonic, sign-preserving
+/// extension available. See [`NEGATIVES_TAKE_THE_LINEAR_SEGMENT`].
 ///
 /// 18181-1 E.7 signals `gamma` as an integer scaled by `10^7`, and the value
 /// it names is the OETF exponent itself, so the caller passes `gamma / 1e7`
@@ -604,17 +645,48 @@ mod tests {
 
     /// Negative (out-of-gamut) samples must survive with their sign, because
     /// 18181-3 forbids clipping before the conformance comparison.
+    ///
+    /// Which *branch* they take is [`NEGATIVES_TAKE_THE_LINEAR_SEGMENT`];
+    /// this test only pins sign preservation, strict monotonicity and the
+    /// absence of clipping, which hold under either reading.
     #[test]
-    fn transfer_functions_are_odd_and_never_clip() {
+    fn transfer_functions_preserve_sign_and_never_clip() {
         for v in [-0.001f32, -0.25, -1.5] {
-            assert!((linear_to_srgb(v) + linear_to_srgb(-v)).abs() < 1e-6, "{v}");
-            assert!((linear_to_gamma(v, 0.45) + linear_to_gamma(-v, 0.45)).abs() < 1e-6);
+            assert!(linear_to_srgb(v) < 0.0, "{v}");
+            assert!(linear_to_rec709(v) < 0.0, "{v}");
+            assert!(linear_to_gamma(v, 0.45) < 0.0, "{v}");
+        }
+        for pair in [(-1.5f32, -0.25), (-0.25, -0.001), (-0.001, 0.0)] {
+            assert!(linear_to_srgb(pair.0) < linear_to_srgb(pair.1), "{pair:?}");
             assert!(
-                (linear_to_rec709(v) + linear_to_rec709(-v)).abs() < 1e-6,
-                "{v}"
+                linear_to_rec709(pair.0) < linear_to_rec709(pair.1),
+                "{pair:?}"
             );
         }
         assert!(linear_to_srgb(2.0) > 1.0);
+        // A pure power law has no toe, so it stays odd whatever the flip
+        // point says.
+        assert!((linear_to_gamma(-0.25, 0.45) + linear_to_gamma(0.25, 0.45)).abs() < 1e-6);
+    }
+
+    /// The flip point itself, in both directions. Below zero BT.709 takes its
+    /// *linear* branch while sRGB stays odd — measured, not deduced (see the
+    /// experiment note). Flipping BT.709 back to odd moves `bike`'s blue
+    /// channel by up to 0.25, 35x its conformance budget; flipping sRGB to the
+    /// linear branch moves an out-of-gamut synthetic by over 1.0.
+    #[test]
+    fn negatives_take_the_branch_each_curve_was_measured_to_take() {
+        assert_eq!(NEGATIVES_TAKE_THE_LINEAR_SEGMENT, [false, true]);
+        for v in [-0.001f32, -0.13, -0.25, -1.5] {
+            assert!((linear_to_rec709(v) - 4.5 * v).abs() < 1e-6, "709 {v}");
+            assert!(
+                (linear_to_srgb(v) + linear_to_srgb(-v)).abs() < 1e-6,
+                "sRGB {v}"
+            );
+        }
+        // -0.13 is where the two readings are furthest apart in practice.
+        assert!((linear_to_rec709(-0.13) + 0.585).abs() < 1e-3);
+        assert!((linear_to_srgb(-0.13) + 0.396).abs() < 1e-3);
     }
 
     /// A custom (non-default) matrix must actually be used: swapping two rows

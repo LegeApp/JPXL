@@ -1,0 +1,82 @@
+Fixture: 64_vardct_lfgroupseam_rgb_128x2176_nofilters_d6.jxl
+128x2176 RGB, VarDCT lossy, gaborish and EPF disabled, d=6.0, effort 3
+
+Purpose
+-------
+The first fixture in this tree with more than one **LF group**. LF groups are
+2048x2048 samples, so every other fixture here is a single LF group and no
+test could see what happens at an internal LF-group boundary. This one is
+2176 rows tall: one horizontal seam, at y = 2048.
+
+It currently FAILS, on purpose, and its rung in
+crates/jpxl-decode/tests/e2e_vardct.rs is #[ignore]d with the diagnosis. The
+whole error budget is at the seam:
+
+    peak 0.010567  (X 0.010567, Y 0.002333, B 0.008631)
+    peak outside rows 2030..2066: 3.3e-6
+
+That is the signature of I.5.2's adaptive LF smoothing being applied per LF
+group instead of over the frame-wide LF image: JPXL leaves the first and last
+row and column of each LF group's own plane unsmoothed, but I.5.2 says the
+pass runs for each LF sample "of the image" that is not in the first or last
+row or column -- so only the frame's own edges are excluded and an internal
+seam must be smoothed across, using the neighbouring LF group's samples. The
+band is 16 rows (the two 8x8 block rows either side of the seam), which is
+exactly what an unsmoothed LF block row expands to through I.8/I.9.
+
+The same defect is what keeps the `bike` / `bike_5` conformance rungs red;
+this fixture reproduces it without needing the corpus fetched. See
+docs/experiments/2026-08-04-negative-transfer-function-branch.md section 6.
+
+Why these encoder settings
+--------------------------
+-d 6.0 -e 3 is load-bearing. At -d 1.0 cjxl sets kSkipAdaptiveLFSmoothing and
+the seam vanishes entirely (measured: peak 3e-6 over the whole image). The
+smoothing pass has to actually run for this fixture to prove anything.
+
+--gaborish=0 --epf=0 disables both restoration filters, so the seam is not
+smeared by Annex J and the band's extent is exactly the LF block rows. Per
+18181-3 Annex A Table A.1:
+
+    Part 3 error class:  peak <= 0.004,  RMSE <= 1e-5   (no filters)
+
+Provenance
+----------
+  Encoder:      cjxl v0.13.0 196a43d9 [_AVX2_,SSE4,SSE2] {GNU 15.2.0}
+  libjxl rev:   196a43d996aa6ed33ebf98812a7c6d43b2b6d01b (v0.12-snapshot-2-g196a43d9)
+  cjxl flags:   -d 6.0 --gaborish=0 --epf=0 -e 3
+  Built by:     tools/setup-oracles.sh (flags recorded in
+                tools/oracle-bin/PINNED_REVISIONS.txt)
+  Regenerate:   tools/make-vardct-fixtures.sh
+                That script IS the recipe; it rewrites the source and re-encodes.
+
+  Source image: tests/fixtures/generated/src_vardct_lfgroupseam_rgb_128x2176.ppm  (835600 bytes)
+                sha256 1307e39ef19f9dd5e5933a6208dba4d42df357a18af9356275d07e075d2367ad
+                Pixel formula, integer arithmetic only (so it is byte-identical
+                on any platform), with tri(t, p) the triangle wave
+                0 .. p/2 .. 0 over one period p:
+                  channel c = (24 + 2*tri(2x + y + 11c, 150)
+                                  + tri(y, 96) + 2*tri(5x + c, 32)) & 0xFF
+                Piecewise linear, hence locally smooth, which is what makes
+                I.5.2's max(0, 3 - 4*gap) factor non-zero and the smoothing
+                pass actually change samples.
+
+  Fixture:      11474 bytes
+                sha256 16a1ade870348c108ced7fc302eda291b222e7bf5634e23804be7fefc623e03b
+
+  Reference decode (djxl --output_format npy): NOT committed -- 3342417 bytes,
+  far over this repo's 100 KB commit-next-to-fixture cutoff (see
+  tools/make-vardct-fixtures.sh). Regenerate with:
+    tools/oracle-bin/djxl --output_format npy \
+      tests/fixtures/handmade/64_vardct_lfgroupseam_rgb_128x2176_nofilters_d6.jxl \
+      /tmp/64.npy
+  sha256 (pinned decoder, tools/oracle-bin/PINNED_REVISIONS.txt):
+    3546e42f47cc647d211e9a9a3674fcfe7bdb77139ca1de9e8c2b030df553c954
+  Shape (1, 2176, 128, 3) little-endian f32, per 18181-3 4.1.2. Decode is
+  deterministic per libjxl revision, so this hash is expected to reproduce
+  exactly on the pinned oracle build.
+
+cjxl/djxl are used strictly as BLACK BOXES: they emit/consume conformant
+streams for JPXL to parse. libjxl's source is never read. If a rebuild at a
+different libjxl revision changes these digests, that is the point of
+recording them -- do not silently update them; note the revision change.
