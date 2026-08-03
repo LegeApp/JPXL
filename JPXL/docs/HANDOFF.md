@@ -13,6 +13,62 @@ Keep this file small. Entries whose content has landed in `PLAN.md`,
 
 ---
 
+## 2026-08-03 (VarDCT wave 3) — 8F assembly: VarDCT DECODES END TO END; slice 8 core complete
+
+**Every acceptance rung passes, 2–3 orders of magnitude inside its class:**
+fixture 04 first-light peak 7e-6; filters-off 50/51/55 ≤5e-5 (class 0.004 /
+1e-5); filters-on 52/53/56 ≤5.4e-5 (class 0.06 / 0.02); **conformance corpus
+`grayscale`/`grayscale_5` at 2.3e-4 against PUBLISHED references** — true
+standard conformance, not libjxl agreement. `bike_5` skips (needs patches,
+K.3, out of slice scope). `DecodedImage` gains `float_planes` (unclipped
+f32, the §4.2 surface); integer planes quantize at the edge for VarDCT.
+Output colour space is the SIGNALLED encoding, except under `want_icc`
+where output stays linear (clause 4 — worth 0.287 → 0.001 peak on corpus
+`grayscale`).
+
+**Flip-point probe pass: 9 tested, 1 REVERSED** —
+`EPF_SKIP_IS_PER_VARBLOCK = false` (per 8×8 block; the literal per-varblock
+reading cost three orders of magnitude and masked the other EPF probes).
+Confirmed load-bearing by flip: LLF ScaleF argument, I.3.1 order-table
+direction, LfQuant Y,X,B, three EPF readings. Still open for want of
+streams: `DCT8X4_HALF_INDEX_IS_LOW_COORDINATE`,
+`PREV_USES_CURRENT_PASS_COEFFICIENT` (whose false-arm is also degenerate —
+8C defect, needs a real accumulator consult before it can be tested).
+See `docs/experiments/2026-08-03-vardct-flip-point-probe.md`.
+
+**Traps:**
+- RAW dequant matrices are REFUSED (`Unsupported`), not missing: I.2.4
+  reads the 3-channel matrix inline mid-bitstream; 8B's
+  `raw_requests()`/`set_raw_matrix()` split cannot express that. Fixing it
+  means restructuring `read_dequant_matrices` to take the modular decoder.
+- Multi-section VarDCT is PROVEN working (264×100 / 100×264 at 2e-6);
+  anything failing inside G.2.2 LfQuant is the modular bug below, upstream
+  of VarDCT.
+
+**Modular H.5 bug — sharpened, not fixed (deliberately).** A clamp
+lower-gate refinement fits all 18 834 harvested clamp decisions and cuts
+the sawtooth to ONE wrong sample — but that sample ((31,19): all four
+true_err equal, no `max_error` reading satisfies the encoder's branch)
+REFUTES the model, so it was not shipped. Minimal repros checked in:
+fixture 60 (277 B sawtooth, one bad sample), 61 (644 B VarDCT LfQuant;
+trigger is channel size ≥15×15 both dimensions, content-irrelevant). 8F
+adds: reproduces losslessly at 300×100; can corrupt samples SILENTLY
+(268×100 decodes at 500× normal error). Eliminated with evidence: err_sum
+last-column, wider clamp bounds, corrected-weight symmetric clamp, bit
+depth. Next surfaces: `err[i]`/`err_sum` weight computation, last-column NE
+substitution. Method note: branching probes must prefer the decoder's own
+context or they desync (the old (2,1) first-divergence was that artifact;
+the true one is (29,17)). See
+`docs/experiments/2026-08-03-h52-clamp-lower-gate-and-sawtooth.md`. 8C's
+54/57 gate tests remain `#[ignore]`d.
+
+**Slice 8 residuals (beyond the modular bug):** patches K.3 (unlocks
+bike_5/bike/progressive), extra channels in kVarDCT (alpha corpus cases),
+Hornuss/DCT4x4/AFV/≥DCT128 untested by any pixel comparison (cjxl never
+emitted them), RAW matrices, progressive/multi-pass streams.
+
+---
+
 ## 2026-08-03 (VarDCT wave 2) — 8C HF decode proven on real streams; 8D-dequant + CfL
 
 **8C** — `vardct/{order,hf_coeff}.rs`: I.3.1 orders, I.3.3 histograms, I.4
