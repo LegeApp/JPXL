@@ -190,3 +190,54 @@ does not depend on a threshold being crossed.
   (round-trip, DC-only, AFV orthonormality) stand, but no pixel comparison
   covers them.
 * `num_hf_presets > 1` and nonzero `lf_idx` remain unexercised, as 8C reported.
+
+---
+
+## Addendum, 2026-08-03 — the degenerate `false` arm is repaired
+
+*Appended after the fact; nothing above is edited.*
+
+This report's finding that `PREV_USES_CURRENT_PASS_COEFFICIENT`'s `false` arm
+read `PREV_USES_CURRENT_PASS_COEFFICIENT && ucoeff != 0` — constant `false`
+rather than the accumulator reading — has been acted on. `vardct/hf_coeff.rs`
+now routes the decision through a `next_prev(prev_uses_current_pass, ucoeff,
+accumulated)` helper whose `false` arm tests the accumulated multi-pass
+coefficient at the same order position, read after this pass's contribution has
+been added. `decode_hf_group_with_prev_reading` exposes the arm as a parameter
+so one bitstream can be decoded both ways, mirroring how `vardct::lf` drives its
+channel-order flip point.
+
+Three unit tests were added, none of which settles the question — they make it
+*testable*:
+
+* `the_two_prev_readings_are_genuinely_different_functions` — a truth table over
+  `(ucoeff, accumulated)`. The discriminating row is `(0, 7)`: the current-pass
+  arm says `false`, the accumulator arm says `true`. Under the old formulation
+  both said `false`.
+* `prev_shifts_the_coefficient_context_by_exactly_one` — `prev` enters I.4's
+  context index additively, so a wrong `prev` selects the neighbouring histogram
+  for every later symbol in the block. This is why the reading matters.
+* `the_two_prev_readings_coincide_on_a_single_pass_stream` — decodes one
+  hand-built stream under both arms and gets identical coefficients. The reason
+  is structural: `UnpackSigned(u) == 0` exactly when `u == 0`, and F.2's left
+  shift cannot turn a non-zero into a zero without an overflow that is rejected,
+  so with a zero accumulator the two arms are the same function. This is what
+  licenses shipping `true` with the question open, and it is why all eight
+  passing ANS-gate fixtures are unaffected (verified: 50, 51, 52, 53, 55, 56,
+  `corpus_grayscale`, `corpus_grayscale_5` all still green under both arms).
+
+Still not settled: no progressive stream exists to decode. The status of this
+report's conclusion is unchanged — the flip point is open, but flipping it no
+longer breaks the decoder for reasons unrelated to the question.
+
+## Addendum, 2026-08-03 — RAW dequantization matrices are no longer refused
+
+This report and the wave-3 ledger recorded that RAW matrices were refused
+because I.2.4 reads the 3-channel matrix inline and 8B's
+`raw_requests()`/`set_raw_matrix()` split could not express that. That is fixed:
+`read_dequant_matrices_with` / `read_hf_global_params_with` take an optional
+`RawMatrixContext` and decode the sub-bitstream at the bit where the clause puts
+it. Two new flip points came out of it, both untestable until a stream uses RAW:
+`RAW_MATRIX_CHANNEL_ORDER_IS_XYB` and `RAW_SUBBITSTREAM_IS_UNALIGNED`. See the
+addendum to `2026-08-03-i25-default-dequant-constants.md` for the wire-format
+derivation.

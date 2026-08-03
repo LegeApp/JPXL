@@ -229,3 +229,16 @@ Hypotheses eliminated, with the evidence:
 * `tools/make-debug-fixtures.sh` (new) and fixtures
   `20_modular_palette_bands_24x24_lossless.jxl`,
   `21_gradient_260x10_lossless.jxl` with provenance sidecars.
+
+---
+
+**ADDENDUM 2026-08-03 (later the same day).** The clamp conclusions of this
+report are SUPERSEDED by
+`2026-08-03-h52-clamp-xor-scan-resolution.md`. H.5.2's guard is
+`((true_err_N ^ true_err_W) | (true_err_N ^ true_err_NW)) <= 0` — **XOR, not
+multiplication**. Every text rendition in this repository misread `^` as `*`,
+which is what made the clause look defective. The published standard is
+correct and there is no asymmetric clamp; read as XOR, one symmetric clamp
+explains every sample cited here. The *evidence* recorded below stands and was
+what made the resolution checkable — only the conclusions drawn from it are
+withdrawn.

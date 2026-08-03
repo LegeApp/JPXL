@@ -141,14 +141,17 @@ const COEFF_NUM_NONZERO_CONTEXT: [u32; 64] = [
 ///
 /// `true` selects the current-pass reading. Flipping it changes the decode of
 /// any frame with `num_passes > 1` and nothing else.
-/// **NOT DISCRIMINATED by 8F's end-to-end probe (2026-08-03)**, and the probe
-/// found a second thing worth recording: every stream reachable today is
-/// single-pass, where the two readings coincide, *and* the `false` arm as
-/// written (`PREV_USES_CURRENT_PASS_COEFFICIENT && ucoeff != 0`) degenerates
-/// to a constant `false` rather than expressing the accumulator reading. So
-/// flipping the constant breaks the decoder without testing the question.
-/// Settling it needs a progressive stream and a `false` arm that actually
-/// consults the accumulator. See
+/// **NOT DISCRIMINATED by 8F's end-to-end probe (2026-08-03)**: every stream
+/// reachable today is single-pass, where the two readings coincide.
+///
+/// The probe also found the `false` arm to be degenerate — it was written
+/// `PREV_USES_CURRENT_PASS_COEFFICIENT && ucoeff != 0`, a constant `false`
+/// rather than the accumulator reading, so flipping the constant broke the
+/// decoder without testing the question. **Fixed 2026-08-03**: the decision now
+/// goes through [`next_prev`], whose `false` arm consults the accumulated
+/// multi-pass coefficient at the same order position, and
+/// [`decode_hf_group_with_prev_reading`] lets a test drive either arm over one
+/// bitstream. Settling the question still needs a progressive stream. See
 /// `docs/experiments/2026-08-03-vardct-flip-point-probe.md`.
 pub const PREV_USES_CURRENT_PASS_COEFFICIENT: bool = true;
 
@@ -210,6 +213,18 @@ impl QuantCoeffBlock {
             return 0;
         }
         self.data.get(y * self.cols + x).copied().unwrap_or(0)
+    }
+
+    /// The coefficient at a row-major index, i.e. at an entry of the I.3.1
+    /// order vector; 0 outside the block.
+    ///
+    /// Distinct from [`QuantCoeffBlock::at`], which takes `(x, y)`. I.4's
+    /// `prev` question is asked about an *order* position, and the order
+    /// vector holds row-major destinations, so this is the accessor that
+    /// matches the clause.
+    #[must_use]
+    pub fn at_index(&self, index: usize) -> i32 {
+        self.data.get(index).copied().unwrap_or(0)
     }
 
     /// Adds `value` at row-major index `index`, as I.4's multi-pass
@@ -668,6 +683,41 @@ pub fn decode_hf_group(
     coefficients: &mut HfCoefficients,
     guard: &mut AllocGuard,
 ) -> Result<()> {
+    decode_hf_group_with_prev_reading(
+        reader,
+        params,
+        varblocks,
+        orders,
+        histograms,
+        model,
+        coefficients,
+        PREV_USES_CURRENT_PASS_COEFFICIENT,
+        guard,
+    )
+}
+
+/// [`decode_hf_group`], with [`PREV_USES_CURRENT_PASS_COEFFICIENT`] as an
+/// explicit parameter rather than baked in.
+///
+/// Exists so the flip point is a real branch a test can drive both ways on one
+/// bitstream, the same way `vardct::lf`'s channel-order flip point is driven.
+/// `true` reads `prev` from the symbol this pass decoded; `false` reads it from
+/// the accumulated multi-pass coefficient at the same order position.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "mirrors decode_hf_group's own list plus the one flip-point bool"
+)]
+fn decode_hf_group_with_prev_reading(
+    reader: &mut BitReader<'_>,
+    params: &HfGroupParams,
+    varblocks: &[HfVarblock],
+    orders: &OrderLookup<'_>,
+    histograms: &mut SymbolDecoder,
+    model: &HfBlockContext,
+    coefficients: &mut HfCoefficients,
+    prev_uses_current_pass: bool,
+    guard: &mut AllocGuard,
+) -> Result<()> {
     if coefficients.len() != varblocks.len() {
         return Err(DecodeError::out_of_range(
             "coefficient storage length",
@@ -780,9 +830,12 @@ pub fn decode_hf_group(
                         break;
                     }
                 }
-                // PREV_USES_CURRENT_PASS_COEFFICIENT: the flag tracks the
-                // symbol this pass decoded, not the accumulator.
-                previous_was_nonzero = PREV_USES_CURRENT_PASS_COEFFICIENT && ucoeff != 0;
+                // Read *after* the add above, so the accumulator arm sees this
+                // pass's contribution plus every earlier pass's.
+                let accumulated = coefficients
+                    .block(index, channel)?
+                    .at_index(order[k] as usize);
+                previous_was_nonzero = next_prev(prev_uses_current_pass, ucoeff, accumulated);
                 k += 1;
             }
 
@@ -799,6 +852,27 @@ pub fn decode_hf_group(
     // C.3.2: the section's HF stream must land exactly on its terminal state.
     histograms.finish()?;
     Ok(())
+}
+
+/// I.4's `prev` for the *next* order position, under either reading of
+/// [`PREV_USES_CURRENT_PASS_COEFFICIENT`].
+///
+/// `ucoeff` is the raw symbol this pass decoded at the current position;
+/// `accumulated` is the coefficient stored at the same position after this
+/// pass's contribution was added, i.e. the sum over all passes so far.
+///
+/// The two arms coincide whenever the accumulator was zero before the pass:
+/// `UnpackSigned(u) == 0` exactly when `u == 0`, and the left shift of F.2
+/// cannot turn a non-zero into a zero without overflowing (which is rejected),
+/// so `accumulated != 0` reduces to `ucoeff != 0`. They differ only for a
+/// progressive frame in which an earlier pass already wrote this position —
+/// which is the whole question the flip point asks.
+const fn next_prev(prev_uses_current_pass: bool, ucoeff: u32, accumulated: i32) -> bool {
+    if prev_uses_current_pass {
+        ucoeff != 0
+    } else {
+        accumulated != 0
+    }
 }
 
 /// `ceil(log2(n))` for `n >= 1`.
@@ -1266,6 +1340,199 @@ mod tests {
             5 + (1 << 3),
             "the pass added UnpackSigned(2) << 3 to the seeded 5"
         );
+    }
+
+    // ------------------------------------------------------------------
+    // PREV_USES_CURRENT_PASS_COEFFICIENT
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn the_two_prev_readings_are_genuinely_different_functions() {
+        // The defect this replaces: the false arm was
+        // `PREV_USES_CURRENT_PASS_COEFFICIENT && ucoeff != 0`, which is a
+        // constant `false` once the constant is false. Row 3 below is the one
+        // that failed under that formulation and is the whole point of the
+        // flip point: this pass decoded a zero on top of an earlier pass's
+        // non-zero.
+        //                        (ucoeff, accumulated) -> (true arm, false arm)
+        let cases: [(u32, i32, bool, bool); 5] = [
+            (0, 0, false, false), // nothing decoded, nothing accumulated
+            (2, 1, true, true),   // first pass writing a fresh position
+            (0, 7, false, true),  // ** the discriminating case **
+            (2, 0, true, false),  // only reachable if an add overflowed away
+            (0, -3, false, true), // sign does not matter, only zero-ness
+        ];
+        for (ucoeff, accumulated, expect_true_arm, expect_false_arm) in cases {
+            assert_eq!(
+                next_prev(true, ucoeff, accumulated),
+                expect_true_arm,
+                "current-pass arm at ({ucoeff}, {accumulated})"
+            );
+            assert_eq!(
+                next_prev(false, ucoeff, accumulated),
+                expect_false_arm,
+                "accumulator arm at ({ucoeff}, {accumulated})"
+            );
+        }
+        // And the false arm is not constant: it answers both ways.
+        assert!(next_prev(false, 0, 7));
+        assert!(!next_prev(false, 0, 0));
+    }
+
+    #[test]
+    fn prev_shifts_the_coefficient_context_by_exactly_one() {
+        // Why the reading matters at all: `prev` is added straight into I.4's
+        // context index, so a wrong `prev` selects the neighbouring histogram
+        // for every subsequent symbol in the block and the ANS stream desyncs.
+        // Together with the test above, this is what makes the flip point a
+        // real behavioural fork for a progressive frame rather than a comment.
+        for (block_ctx, k, non_zeros, num_blocks) in [
+            (0usize, 1usize, 1u32, 1usize),
+            (14, 40, 9, 1),
+            (7, 12, 3, 4),
+        ] {
+            let c0 = coefficient_context(block_ctx, 15, k, non_zeros, num_blocks, 0).expect("ctx");
+            let c1 = coefficient_context(block_ctx, 15, k, non_zeros, num_blocks, 1).expect("ctx");
+            assert_eq!(c1, c0 + 1, "prev enters the context additively");
+        }
+    }
+
+    #[test]
+    fn the_two_prev_readings_coincide_on_a_single_pass_stream() {
+        // The invariant that keeps every reachable stream — and all eight
+        // passing ANS-gate fixtures — bit-identical under either arm: with a
+        // zero accumulator the two readings are the same function, so the same
+        // bitstream decodes to the same coefficients and both runs reach the
+        // C.3.2 terminal state. This is what licenses shipping `true` while the
+        // question is open.
+        let nb_block_ctx = 15usize;
+        let mut w = BitWriter::default();
+        w.u(2, 2);
+        write_four_symbol_bundle(&mut w, CONTEXTS_PER_BLOCK_CTX * nb_block_ctx);
+        write_symbol(&mut w, 2); // Y non_zeros = 2
+        write_symbol(&mut w, 0); // k = 1: 0    (prev becomes false either way)
+        write_symbol(&mut w, 2); // k = 2: +1   (prev becomes true either way)
+        write_symbol(&mut w, 1); // k = 3: -1, stop
+        write_symbol(&mut w, 0); // X
+        write_symbol(&mut w, 0); // B
+        let data = w.finish();
+
+        let decode_with = |prev_uses_current_pass: bool| {
+            let mut reader = BitReader::new(&data);
+            let limits = Limits::default();
+            let mut guard = AllocGuard::new(&limits);
+            let mut passes =
+                read_hf_passes(&mut reader, 1, nb_block_ctx, 1, &mut guard).expect("pass");
+            let varblocks = [HfVarblock {
+                bx: 0,
+                by: 0,
+                transform: TransformType::Dct8x8,
+                hf_mul: 1,
+                qdc: [0; 3],
+            }];
+            let mut coefficients = HfCoefficients::new(&varblocks, &mut guard).expect("storage");
+            let params = HfGroupParams {
+                shift: 0,
+                blocks_w: 1,
+                blocks_h: 1,
+                num_hf_presets: 1,
+                lf_idx_is_zero: false,
+            };
+            let model = HfBlockContext::default();
+            let (orders, histograms) = passes.split_pass(0).expect("pass 0");
+            decode_hf_group_with_prev_reading(
+                &mut reader,
+                &params,
+                &varblocks,
+                &orders,
+                histograms,
+                &model,
+                &mut coefficients,
+                prev_uses_current_pass,
+                &mut guard,
+            )
+            .expect("decode");
+            coefficients.block(0, 1).expect("Y").as_slice().to_vec()
+        };
+
+        let current = decode_with(true);
+        let accumulated = decode_with(false);
+        assert_eq!(current, accumulated);
+        // ...and it is not trivially equal because both are empty.
+        assert_eq!(current.iter().filter(|v| **v != 0).count(), 2);
+    }
+
+    #[test]
+    fn the_accumulator_arm_reads_a_seeded_earlier_pass() {
+        // Drives the false arm over a stream whose accumulator is already
+        // non-zero at the position `k = 1` visits, so the arm returns `true`
+        // where the current-pass arm returns `false`. Proves the arm is wired
+        // to real accumulator state rather than being dead code: with the old
+        // `&&` formulation this decode took the identical path as `true`.
+        //
+        // The four-symbol test bundle maps every context to one cluster, so the
+        // *decoded* symbols cannot diverge here — that is deliberate, because a
+        // diverging context in a single-cluster stream would prove nothing
+        // about the histograms. The behavioural consequence is established by
+        // `prev_shifts_the_coefficient_context_by_exactly_one` instead.
+        let nb_block_ctx = 15usize;
+        let mut w = BitWriter::default();
+        w.u(2, 2);
+        write_four_symbol_bundle(&mut w, CONTEXTS_PER_BLOCK_CTX * nb_block_ctx);
+        write_symbol(&mut w, 1); // Y non_zeros = 1
+        write_symbol(&mut w, 0); // k = 1: 0 on top of the seeded cell 1
+        write_symbol(&mut w, 2); // k = 2: +1 at cell 8, stop
+        write_symbol(&mut w, 0); // X
+        write_symbol(&mut w, 0); // B
+        let data = w.finish();
+
+        let mut reader = BitReader::new(&data);
+        let limits = Limits::default();
+        let mut guard = AllocGuard::new(&limits);
+        let mut passes = read_hf_passes(&mut reader, 1, nb_block_ctx, 1, &mut guard).expect("pass");
+        let varblocks = [HfVarblock {
+            bx: 0,
+            by: 0,
+            transform: TransformType::Dct8x8,
+            hf_mul: 1,
+            qdc: [0; 3],
+        }];
+        let mut coefficients = HfCoefficients::new(&varblocks, &mut guard).expect("storage");
+        // An earlier pass wrote cell 1 — the very cell `k = 1` revisits.
+        coefficients
+            .block_mut(0, 1)
+            .expect("block")
+            .add_at(1, 9)
+            .expect("seed");
+
+        let params = HfGroupParams {
+            shift: 0,
+            blocks_w: 1,
+            blocks_h: 1,
+            num_hf_presets: 1,
+            lf_idx_is_zero: false,
+        };
+        let model = HfBlockContext::default();
+        let (orders, histograms) = passes.split_pass(0).expect("pass 0");
+        decode_hf_group_with_prev_reading(
+            &mut reader,
+            &params,
+            &varblocks,
+            &orders,
+            histograms,
+            &model,
+            &mut coefficients,
+            false,
+            &mut guard,
+        )
+        .expect("decode");
+
+        let y = coefficients.block(0, 1).expect("Y");
+        assert_eq!(y.at_index(1), 9, "the seeded value survived a decoded zero");
+        assert_eq!(y.at_index(8), 1, "this pass's coefficient landed");
+        // The state the arm actually consulted after k = 1.
+        assert!(next_prev(false, 0, y.at_index(1)));
+        assert!(!next_prev(true, 0, y.at_index(1)));
     }
 
     #[test]
@@ -1796,10 +2063,9 @@ mod tests {
         // this is an Annex H divergence on specific content, of the same
         // family as the open modular sawtooth bug in HANDOFF.md, not a VarDCT
         // issue. Not `bits_per_sample`: probed at 1, 8, 16, 24 and 32, all
-        // fail identically. Un-ignore once the modular decode is fixed;
-        // nothing in this file needs to change.
-        #[ignore = "G.2.2 LfQuant (Annex H) fails its own ANS check on this \
-                    fixture, upstream of I.4"]
+        // fail identically. RESOLVED 2026-08-03: the upstream Annex H bug was
+        // H.5.2's clamp guard, which is XOR and not a product (every text
+        // transcription misread `^` as `*`); nothing in this file changed.
         fn fixture_54_rgb_nofilters_d1() {
             gate("54_vardct_mixed_rgb_128x128_nofilters_d1.jxl");
         }
@@ -1858,9 +2124,7 @@ mod tests {
         }
 
         #[test]
-        // Blocked upstream exactly as fixture 54 above; see that comment.
-        #[ignore = "G.2.2 LfQuant (Annex H) fails its own ANS check on this \
-                    fixture, upstream of I.4"]
+        // Was blocked upstream exactly as fixture 54 above; see that comment.
         fn fixture_57_rgb_filters_d4() {
             gate("57_vardct_mixed_rgb_128x128_filters_d4.jxl");
         }

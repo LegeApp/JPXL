@@ -344,43 +344,22 @@ fn gradient_260x10_rgb() {
 }
 
 // ---------------------------------------------------------------------------
-// Open bug: the H.5 weighted predictor on SelfCorrecting channels
+// H.5.2 clamp-guard regressions (the XOR guard)
 // ---------------------------------------------------------------------------
 
-/// # Divergence report (slice-8 modular hunt)
+/// Regression for H.5.2's XOR clamp guard on the `SelfCorrecting` path.
 ///
-/// * **Fixture**: `60_sawtooth_32x32_lossless.jxl`, 277 bytes, one 32x32 grey
-///   channel, no transforms. Source `v = (x*7 + y*3) mod 256`; `djxl`
-///   round-trips it byte-identically, so the stream is conformant.
-/// * **Tree**: one decision node, `property[15] > 0`, both leaves
-///   `SelfCorrecting` — so every sample is a direct readout of the H.5.2
-///   weighted prediction and property 15 is `max_error`.
-/// * **State**: samples 0..638 decode bit-exactly. The first and only
-///   directly wrong sample is `(31, 19)` — the last column of row 19;
-///   everything after it is corrupted by the desynchronised entropy stream.
-/// * **The contradiction at (31, 19)**: neighbours are `W 11, N 15, NW 8`,
-///   `NE` is substituted by `N` (last column), and all four `true_err` are
-///   `-56`. The encoder's context is 0, which needs `property[15] > 0`, but
-///   `max_error` is `-56` and no selection rule over four equal candidates
-///   can be positive. Solving for the tree threshold over the 639 clean
-///   samples yields `T < -56` and `T >= 0` at once — infeasible. The escape
-///   of clamping the prediction down to `hi = 120` (which would make context
-///   1 correct) requires firing the upper cap where the printed guard says
-///   not to, and every variant of that breaks 5 to 11 currently bit-exact
-///   fixtures.
-/// * **Not the cause** (each tested): the `err_sum` last-column term (all
-///   three readings fail identically here), a wider clamp bound set, a
-///   symmetric clamp with corrected weights, bit depth.
-/// * **Known-too-narrow**: the lower clamp gate. Adding
-///   `true_err_W < 0 && true_err_N < 0` to it is backed by 18 834 harvested
-///   binding decisions plus this fixture, regresses nothing, and reduces this
-///   fixture from 206 wrong samples to one — but it fixes no fixture end to
-///   end and so was deliberately not shipped.
+/// What it proves: fixture 60 is a 32x32 wrapping sawtooth whose MA tree has
+/// two `SelfCorrecting` leaves, so every sample reads the weighted prediction
+/// out directly. At (31,19) all four `true_err` are -56, so both XORs of
+/// H.5.2's guard are exactly zero, the guard fires, and the prediction is
+/// clamped from 142 down to `hi` 120. Read the guard as a product instead and
+/// it does not fire, that sample decodes wrong and the entropy stream
+/// desynchronises — so this fixture fails the instant the guard is misread.
+/// It was the sample that refuted two earlier models of the clause.
 ///
-/// Full forensics:
-/// `docs/experiments/2026-08-03-h52-clamp-lower-gate-and-sawtooth.md`.
+/// See `docs/experiments/2026-08-03-h52-clamp-xor-scan-resolution.md`.
 #[test]
-#[ignore = "TODO: open H.5 bug; see the divergence report above"]
 fn sawtooth_32x32() {
     check(&Case {
         name: "60_sawtooth_32x32_lossless.jxl",
@@ -392,31 +371,55 @@ fn sawtooth_32x32() {
     });
 }
 
-/// # Divergence report (slice-8 modular hunt)
+/// Regression for the same guard inside G.2.2 `LfQuant`.
 ///
-/// * **Fixture**: `61_vardct_gradient_128x128_nofilters_d1.jxl`, 644 bytes —
-///   the minimisation of VarDCT fixtures 54 and 57, which is what this bug
-///   actually blocks. It is a *lossy* stream, so this test only asserts that
-///   the decode gets far enough to fail the way 54/57 do; it is not a
-///   sample-accuracy test.
-/// * **Failure**: G.2.2 `LfQuant`'s own modular sub-bitstream fails the C.3.2
-///   terminal-state check.
-/// * **Same family as fixture 60**: `LfQuant`'s MA tree is
-///   `property[1] > 2 ? West : (property[15] > 0 ? .. : ..)` with both
-///   non-`West` leaves `SelfCorrecting`. Property 1 is the stream index,
-///   which is 1 here, so the `West` branch is never taken and every sample
-///   runs through the H.5 weighted predictor.
-/// * **Minimisation**: the checkerboard half of 54/57's source is irrelevant
-///   (a pure gradient fails, a pure checkerboard decodes); the size
-///   transition is between 112 (decodes) and 120 (fails), i.e. `LfQuant`
-///   channels of 14x14 versus 15x15, and non-square variants up to 128 in one
-///   axis all decode. The trigger is therefore the LF channel's size, not the
-///   content.
+/// What it proves: fixture 61 is the 644-byte minimisation of VarDCT fixtures
+/// 54/57, whose `LfQuant` modular sub-bitstream used to fail its own C.3.2
+/// terminal check. `LfQuant`'s MA tree runs every sample through the weighted
+/// predictor, so the misread guard corrupted the LF coefficients of any
+/// VarDCT frame whose LF channels were at least 15x15 — which is what blocked
+/// VarDCT acceptance. This is a lossy stream, so the assertion is that the
+/// decode completes, not that samples match.
 #[test]
-#[ignore = "TODO: open H.5 bug; blocks VarDCT 54/57. See the report above"]
 fn vardct_lf_quant_gradient_128x128() {
     let bytes = read_fixture("61_vardct_gradient_128x128_nofilters_d1.jxl");
     decode(&bytes, &Limits::default()).expect("LfQuant must decode");
+}
+
+/// Regression for the same guard on the `Gradient` path.
+///
+/// What it proves: fixture 62 is the smallest lossless stream in this family
+/// (305 bytes, minimal in both size and content) and the only one that fails
+/// on a channel whose MA leaves are `Gradient` rather than `SelfCorrecting` —
+/// there the weighted prediction is invisible in the sample values and only
+/// reaches the decode through property 15, so this is the subtlest of the
+/// three. cjxl palettes all three colour channels here, giving three 1-row
+/// palettes plus three 24x24 index channels over 11 leaves and 5 clusters.
+#[test]
+fn mixed_24x24() {
+    check(&Case {
+        name: "62_mixed_24x24_lossless.jxl",
+        width: 24,
+        height: 24,
+        channels: 3,
+        bits: 8,
+        sample: |x, y, c| {
+            let rgb = if x >= 12 {
+                if (x + y) % 2 == 1 {
+                    [255, 0, 255]
+                } else {
+                    [0, 255, 255]
+                }
+            } else {
+                [
+                    ((x * 255) / 11) as i32,
+                    ((y * 255) / 23) as i32,
+                    ((x + y) % 256) as i32,
+                ]
+            };
+            rgb[c]
+        },
+    });
 }
 
 // ---------------------------------------------------------------------------

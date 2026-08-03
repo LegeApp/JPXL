@@ -150,3 +150,94 @@ DCT128x256 varblock has been decoded end to end by anything in this tree.
   `i == 5`'s `((4,4),(8,8))` outside an 8x8 matrix, and the exclusive reading
   tiles the matrix exactly once with `(0,0)` left over. The tiling is asserted
   in `dct2_rectangles_tile_the_matrix_exactly`.
+
+---
+
+## Addendum, 2026-08-03 — I.2.4's RAW arm: wire format, derived
+
+*Appended after the fact; nothing above is edited. This addendum concerns
+I.2.4, not I.2.5, and is filed here because this is the report that covers the
+dequantization-matrix clause.*
+
+### Question
+
+Where does I.2.4's `encoding_mode == RAW` read its matrix from, and in what
+form?
+
+### Derivation, from the clause alone
+
+1. **Position.** The RAW arm is two sequential statements: `params.denominator =
+   F16();` then `params = /* read a 3-channel image from a modular sub-bitstream
+   of the same shape as the required quant matrix */;`. Nothing separates them,
+   and the enclosing `if/else if` chain is inside the loop over the 17
+   parameter sets. So the sub-bitstream begins at the bit immediately after the
+   `F16()`, inside `HfGlobal`.
+2. **Not a separate section.** G.3's section list (the one that also gives "one
+   section for HfGlobal") has no per-dequantization-table entry: it is
+   `LfGlobal`, one section per `LfGroup`, one for `HfGlobal`, and
+   `num_groups * num_passes` `PassGroup` sections. H.4.1 does assign the RAW
+   tables their own *stream index* — `1 + 3 * num_lf_groups + parameter_index` —
+   but a stream index is property 1 of the MA tree, not a section number. The
+   two are independent, and conflating them is what produced the original
+   deferred-resolution design.
+3. **Shape.** "the same shape as the required quant matrix" is Table I.4's
+   `(rows, columns)` for that parameters index — which, as the main report's
+   sibling test asserts, is exactly the transform's `(coeff_rows, coeff_cols)`.
+   Three channels, each at full resolution.
+4. **Value.** "For encoding mode RAW, the dequantization matrices are equal to
+   the params matrices multiplied by params.denominator." RAW is therefore the
+   one mode that is **not** reciprocated: for every other mode the
+   dequantization matrix is the element-wise reciprocal of a weights matrix,
+   here the decoded planes *are* the matrix, scaled.
+5. **Validity.** The sentence "None of the resulting values are non-positive or
+   infinity" closes the paragraph that covers both the RAW rule and the
+   reciprocal rule, so it is read as applying to RAW too. A decoded plane
+   containing a zero is a well-formed sub-bitstream carrying an ill-formed
+   matrix, and is rejected.
+
+### What the clause does not say
+
+* **Channel order.** "a 3-channel image", nothing more. Everything else in
+  I.2.4 indexes by the weights matrix's channel `c` in Table I.1's X, Y, B
+  numbering, and I.5.3 consumes the matrix under the same numbering, so X, Y, B
+  ships as `RAW_MATRIX_CHANNEL_ORDER_IS_XYB = true`. The alternative is not
+  idle: G.2.2's `LfQuant`, which also says only "three channels", turned out to
+  be Y, X, B (see `2026-08-03-lf-quant-channel-order-fixture-evidence.md`). The
+  distinction relied on is that I.4 states Y, X, B for HF *coefficients*, and a
+  dequantization table is a parameter table, not coefficients.
+* **Alignment.** No `ZeroPadToByte()` appears on either side of the
+  sub-bitstream. Annex B writes that primitive explicitly wherever it applies,
+  and the two other in-frame sub-bitstreams with a field in front of them
+  (G.2.2's `extra_precision`, G.2.4's `nb_blocks`) are unpadded and decode real
+  streams. `RAW_SUBBITSTREAM_IS_UNALIGNED = true` ships, consistent with the
+  E.4.1 ICC finding. RAW is the only construct in the frame where a modular
+  sub-bitstream is *followed* by more fields in the same section, so it is the
+  only thing that could decide this.
+
+### Evidence
+
+None from any real stream: no `cjxl` build emits `encoding_mode == 7`. The
+proof is a hand-built bitstream —
+`raw_matrices_decode_inline_and_keep_the_bundle_in_sync` — carrying three RAW
+tables (two 8x8 with different denominators, one 8x16) interleaved with a
+Hornuss set and closed by `num_hf_presets`. Its sub-bitstream writer is an
+independent encoder built from the Annex H tables, the same shape `vardct::lf`
+and `vardct::hf_meta` use for their own clauses and which real `cjxl` fixtures
+cross-validate. Decoding it recovers the Hornuss parameters and the preset count
+at the right bits, which is only possible if each sub-bitstream was consumed
+exactly. A companion test truncates one symbol and asserts the result is not
+silently accepted.
+
+This establishes that the shipped reading is self-consistent and
+sync-preserving. It does **not** establish the channel order or the alignment,
+and it is not evidence about any other implementation.
+
+### Consequences
+
+* `read_dequant_matrices_with` / `read_hf_global_params_with` take an optional
+  `RawMatrixContext { options, tree_source, geometry }`; the old three-argument
+  entry points delegate with `None` and refuse RAW at the bit where the
+  sub-bitstream starts, so a caller without frame context cannot desynchronise.
+* `DequantMatrices::set_raw_matrix` is deleted. `raw_requests()` survives as an
+  always-empty compatibility shim for the pre-fix `decode.rs` guard and should
+  go with it.

@@ -1,0 +1,75 @@
+Fixture: 62_mixed_24x24_lossless.jxl
+24x24 RGB, gradient | 1-pixel checkerboard, mathematically lossless, effort 7
+-- OPEN BUG REPRODUCER, and the one that localises it
+
+Purpose
+-------
+The smallest LOSSLESS stream in the open H.5 weighted-predictor family, and
+the first that fails on a channel whose MA leaves are `Gradient` rather than
+`SelfCorrecting`. It is the same source shape as VarDCT fixtures 54/57 --
+half smooth gradient, half 1-pixel magenta/cyan checkerboard -- shrunk until
+minimal:
+
+  * 23x23 decodes bit-exactly; 24x24 fails. 20/21/22 also decode.
+  * Every content simplification tested at 24x24 decodes bit-exactly:
+    checkerboard only, gradient only, flat right half, black/white
+    checkerboard, and greyscale. Both halves and the 1-pixel period are
+    required.
+
+cjxl palettes all three colour channels, so the coded image is three 1-row
+palette meta-channels (36, 24 and 12 entries) followed by three 24x24 index
+channels, with an 11-leaf MA tree over 5 entropy clusters that branches on
+property 15 (`max_error`) at five nodes.
+
+What it establishes
+-------------------
+All three palettes and the entire first index channel (576 samples) decode
+bit-exactly. The second index channel diverges at (11, 5) -- the last column
+of the gradient half, i.e. the sample whose `NE` neighbour is the first
+checkerboard sample. There:
+
+  W3 40  N3 32  NE3 184   subpred = [192, 108, 55, 69]   our prediction 151
+  required prediction is in [37, 44]  (the decoded residual is 0 and the
+  correct sample is 5, so `(prediction + 3) >> 3` must be 5)
+
+and 233 forced-context checkpoints pass before it, so the entropy stream is
+still synchronised. The required prediction is **unreachable**: any weighted
+average of the sub-predictions lies in [55, 192], and the clamp can only
+additionally yield `min(W3,N3,NE3) = 32` or `max(W3,N3,NE3) = 184`. That
+rules out the weights, `err_sum`, the clamp gating, the clamp bounds and the
+`max_error` selection all at once, and points at the sub-predictor formulas
+themselves (or the `true_err` values feeding them). See
+docs/experiments/2026-08-03-h52-subpredictor-localisation.md.
+
+Provenance
+----------
+  Encoder:      cjxl v0.13.0 196a43d9 [_AVX2_,SSE4,SSE2] {GNU 15.2.0}
+  libjxl rev:   196a43d996aa6ed33ebf98812a7c6d43b2b6d01b (v0.12-snapshot-2-g196a43d9)
+  cjxl flags:   -d 0 -e 7
+  Built by:     tools/setup-oracles.sh (flags recorded in
+                tools/oracle-bin/PINNED_REVISIONS.txt)
+  Regenerate:   tools/make-debug-fixtures.sh
+
+  Source image: tests/fixtures/generated/src_mixed_24x24.ppm  (1741 bytes)
+                sha256 878b8001ef13b4430a0ee4cd19a3406b50026b78ba28eafcf4b4d4734a35b757
+                Synthetic, written by the Python snippet inside
+                tools/make-debug-fixtures.sh -- no third-party image was used,
+                converted, or consulted. 24x24 8-bit RGB (PPM P6):
+                  x <  12: R = x * 255 / 11, G = y * 255 / 23,
+                           B = (x + y) mod 256          smooth gradient
+                  x >= 12: magenta (255,0,255) / cyan (0,255,255),
+                           alternating every pixel by (x + y) parity
+
+  Fixture:      305 bytes
+                sha256 1c854b52969d541eb13ee56350fdac21271dd3632a6d52e1e3318a7024ff1504
+
+Verification
+------------
+djxl decodes it to a PPM byte-identical to the source (checked on every run of
+tools/make-debug-fixtures.sh), so the stream is conformant and the divergence
+is JPXL's.
+
+cjxl is used strictly as a BLACK BOX: it emits conformant streams for JPXL to
+parse. libjxl's source is never read. If a rebuild at a different libjxl
+revision changes these digests, that is the point of recording them -- do not
+silently update them; note the revision change.

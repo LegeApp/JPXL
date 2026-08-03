@@ -78,6 +78,15 @@ write_ppm("src_bands_24x24.ppm", 24, 24, lambda x, y: COLOURS[(x // 4) % 6])
 #     clamp gating. Encoded -e 3 (not -e 7) because that is what the original
 #     report used and what selects the SelfCorrecting-only MA tree.
 #
+# 62: the smallest LOSSLESS stream in the same H.5 family, and the first one
+#     that fails on a channel whose MA leaves are `Gradient` rather than
+#     `SelfCorrecting`. 24x24: left half the usual gradient, right half a
+#     1-pixel magenta/cyan checkerboard. cjxl palettes all three colour
+#     channels, so the coded image is three 1-row palettes plus three 24x24
+#     index channels. Every simplification tested (checkerboard only, gradient
+#     only, flat right half, black/white, greyscale) decodes bit-exactly, and
+#     23x23 decodes, so this is minimal in both content and size.
+
 # 61: the smallest VarDCT stream whose G.2.2 LfQuant modular sub-bitstream
 #     trips the C.3.2 terminal check. Found by bisecting fixtures 54/57's
 #     128x128 mixed source: the checkerboard half is irrelevant (a plain
@@ -113,6 +122,17 @@ write_ppm(
     128,
     lambda x, y: ((x * 255) // 127, (y * 255) // 127, (x + y) % 256),
 )
+
+
+# 62: gradient | 1px checkerboard, 24x24. The same source shape as fixtures
+#     54/57, shrunk until it is minimal.
+def _mixed_24(x, y):
+    if x >= 12:
+        return (255, 0, 255) if (x + y) & 1 else (0, 255, 255)
+    return ((x * 255) // 11, (y * 255) // 23, (x + y) % 256)
+
+
+write_ppm("src_mixed_24x24.ppm", 24, 24, _mixed_24)
 PY
 
 encode() {
@@ -150,6 +170,7 @@ encode src_gradient_260x10.ppm 21_gradient_260x10_lossless.jxl             -e 7
 # yet, so the djxl round-trip check inside encode() is the only verification
 # they get, and tests/e2e_lossless.rs carries them as #[ignore]d forensics.
 encode src_sawtooth_32x32.pgm  60_sawtooth_32x32_lossless.jxl              -e 3
+encode src_mixed_24x24.ppm     62_mixed_24x24_lossless.jxl                 -e 7
 encode_lossy src_gradient_128x128.ppm \
     61_vardct_gradient_128x128_nofilters_d1.jxl -d 1.0 --gaborish=0 --epf=0 -e 7
 
@@ -160,7 +181,8 @@ log "digests (paste into the .txt sidecars)"
     20_modular_palette_bands_24x24_lossless.jxl \
     21_gradient_260x10_lossless.jxl \
     60_sawtooth_32x32_lossless.jxl \
-    61_vardct_gradient_128x128_nofilters_d1.jxl )
+    61_vardct_gradient_128x128_nofilters_d1.jxl \
+    62_mixed_24x24_lossless.jxl )
 ( cd "${generated}" && wc -c src_bands_24x24.ppm src_gradient_260x10.ppm )
 ( cd "${handmade}" && wc -c \
     20_modular_palette_bands_24x24_lossless.jxl \
