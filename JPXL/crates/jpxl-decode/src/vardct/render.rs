@@ -34,8 +34,10 @@ use jpxl_core::color::OpsinInverse;
 use jpxl_core::limits::AllocGuard;
 use jpxl_core::varblock::{CoeffMatrix, SampleBlock, TransformType, llf_from_lf};
 
+use crate::decode::ReferenceFrame;
 use crate::error::{DecodeError, Result};
 use crate::frame::gaborish::{GaborKernel, PlaneDims};
+use crate::frame::patches::{PatchBlendMode, PatchDictionary, blend as patch_blend};
 use crate::frame::restoration::RestorationFilter;
 use crate::frame::{SigmaField, epf, gaborish_into, vardct_sigma};
 use crate::vardct::cfl;
@@ -502,6 +504,88 @@ pub fn apply_restoration(
     Ok(())
 }
 
+/// K.3.2: blends the patch dictionary onto the frame's planes.
+///
+/// Runs after Annex J and before Annex L, on the same XYB planes — see the
+/// [`patches`](crate::frame::patches) module documentation for the two places
+/// the standard pins that position.
+///
+/// `num_extra` is the image's extra-channel count. Only the colour group
+/// (K.3.2's `c == 0`, which "iterates over the three colour channels") is
+/// blended here: extra channels are not carried on these planes at all, so a
+/// dictionary that touches them is refused rather than silently dropped.
+///
+/// # Errors
+///
+/// [`DecodeError::Unsupported`] for a blend mode that needs an alpha channel
+/// (no alpha exists on these planes) or for a dictionary with extra-channel
+/// blend rules; [`DecodeError::FieldOutOfRange`] for a patch naming an
+/// unwritten reference slot or reading outside it.
+pub fn apply_patches(
+    planes: &mut ColourPlanes,
+    dictionary: &PatchDictionary,
+    references: &[Option<ReferenceFrame>],
+    num_extra: usize,
+) -> Result<()> {
+    if dictionary.patches.is_empty() {
+        return Ok(());
+    }
+    if num_extra != 0 {
+        return Err(DecodeError::Unsupported {
+            feature: "patches on a frame with extra channels",
+            clause: "18181-1 K.3.2",
+        });
+    }
+
+    for patch in &dictionary.patches {
+        let slot = usize::try_from(patch.reference).unwrap_or(usize::MAX);
+        let reference = references
+            .get(slot)
+            .and_then(Option::as_ref)
+            .ok_or_else(|| {
+                DecodeError::out_of_range(
+                    "patch reference slot",
+                    "K.3.1",
+                    u64::from(patch.reference),
+                )
+            })?;
+
+        for position in &patch.positions {
+            // K.3.2: index 0 of `blending` governs the three colour channels
+            // together. With no extra channels it is the only entry.
+            let rule = position.blending.first().copied().unwrap_or_default();
+            if rule.mode.uses_alpha() {
+                return Err(DecodeError::Unsupported {
+                    feature: "an alpha-blending patch mode without an alpha channel",
+                    clause: "18181-1 K.3.2",
+                });
+            }
+            if rule.mode == PatchBlendMode::None {
+                continue;
+            }
+
+            for iy in 0..patch.height {
+                for ix in 0..patch.width {
+                    // K.3.1 already proved (x, y) + (width, height) is inside
+                    // the frame, so no clipping is needed here; `ColourPlanes`
+                    // still ignores an out-of-frame write, which keeps a
+                    // future caller honest rather than silently corrupting.
+                    let (dx, dy) = (position.x + ix, position.y + iy);
+                    for c in 0..NUM_CHANNELS {
+                        let new_sample = reference.get(c, patch.x0 + ix, patch.y0 + iy);
+                        let old_sample = planes.get(c, dx, dy);
+                        // No alpha reaches here: `uses_alpha` modes are
+                        // refused above, and the rest ignore the argument.
+                        let blended = patch_blend(rule.mode, old_sample, new_sample, 0.0);
+                        planes.set(c, dx, dy, blended);
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// L.2.2: converts the frame's XYB planes to linear sRGB in place.
 pub fn to_linear_srgb(planes: &mut ColourPlanes, opsin: &OpsinInverse) {
     let [x, y, b] = &mut planes.planes;
@@ -662,6 +746,215 @@ mod tests {
                 }
             }
         }
+    }
+
+    // ------------------------------------------------------------------
+    // K.3.2 — patch rendering
+    // ------------------------------------------------------------------
+
+    fn one_slot(reference: ReferenceFrame) -> [Option<ReferenceFrame>; 4] {
+        [Some(reference), None, None, None]
+    }
+
+    /// A 2x2 reference at the canvas origin whose three planes are constants.
+    fn flat_reference(x: f32, y: f32, b: f32) -> ReferenceFrame {
+        ReferenceFrame {
+            origin_x: 0,
+            origin_y: 0,
+            width: 2,
+            height: 2,
+            planes: [vec![x; 4], vec![y; 4], vec![b; 4]],
+        }
+    }
+
+    fn dictionary(mode: PatchBlendMode, at: (u32, u32)) -> PatchDictionary {
+        PatchDictionary {
+            patches: vec![crate::frame::patches::Patch {
+                reference: 0,
+                x0: 0,
+                y0: 0,
+                width: 2,
+                height: 2,
+                positions: vec![crate::frame::patches::PatchPosition {
+                    x: at.0,
+                    y: at.1,
+                    blending: vec![crate::frame::patches::PatchBlending {
+                        mode,
+                        alpha_channel: 0,
+                        clamp: false,
+                    }],
+                }],
+            }],
+        }
+    }
+
+    #[test]
+    fn a_patch_lands_only_on_its_own_rectangle() {
+        // The blit's bounds are the whole geometry of K.3.2: a patch that
+        // leaked one row or column would still look plausible on a flat
+        // canvas, so the assertion is per-sample over the entire plane.
+        let limits = Limits::default();
+        let mut guard = AllocGuard::new(&limits);
+        let mut planes = ColourPlanes::zeros(5, 4, &mut guard).unwrap();
+        let refs = one_slot(flat_reference(0.5, 0.25, -0.125));
+
+        apply_patches(
+            &mut planes,
+            &dictionary(PatchBlendMode::Replace, (1, 2)),
+            &refs,
+            0,
+        )
+        .unwrap();
+
+        for y in 0..4 {
+            for x in 0..5 {
+                let inside = (1..3).contains(&x) && (2..4).contains(&y);
+                let want = if inside {
+                    [0.5, 0.25, -0.125]
+                } else {
+                    [0.0; 3]
+                };
+                for (c, w) in want.into_iter().enumerate() {
+                    assert_eq!(planes.get(c, x, y), w, "channel {c} at ({x}, {y})");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_patch_reads_its_own_origin_in_the_reference() {
+        // patch.x0/y0 index the reference; position.x/y index the canvas.
+        // Swapping the two pairs is invisible when both are zero, so the test
+        // makes them different.
+        let limits = Limits::default();
+        let mut guard = AllocGuard::new(&limits);
+        let mut planes = ColourPlanes::zeros(4, 4, &mut guard).unwrap();
+
+        // A 4x4 reference whose Y plane is its raster index.
+        let reference = ReferenceFrame {
+            origin_x: 0,
+            origin_y: 0,
+            width: 4,
+            height: 4,
+            planes: [
+                vec![0.0; 16],
+                (0..16).map(|i| i as f32).collect(),
+                vec![0.0; 16],
+            ],
+        };
+        let dict = PatchDictionary {
+            patches: vec![crate::frame::patches::Patch {
+                reference: 0,
+                x0: 2,
+                y0: 1,
+                width: 2,
+                height: 2,
+                positions: vec![crate::frame::patches::PatchPosition {
+                    x: 0,
+                    y: 0,
+                    blending: vec![crate::frame::patches::PatchBlending {
+                        mode: PatchBlendMode::Replace,
+                        alpha_channel: 0,
+                        clamp: false,
+                    }],
+                }],
+            }],
+        };
+        apply_patches(&mut planes, &dict, &one_slot(reference), 0).unwrap();
+
+        // Reference rows 1 and 2, columns 2 and 3: indices 6, 7, 10, 11.
+        assert_eq!(planes.get(1, 0, 0), 6.0);
+        assert_eq!(planes.get(1, 1, 0), 7.0);
+        assert_eq!(planes.get(1, 0, 1), 10.0);
+        assert_eq!(planes.get(1, 1, 1), 11.0);
+    }
+
+    #[test]
+    fn every_alpha_free_blend_mode_reaches_the_canvas() {
+        // kAdd is the mode real encoders emit (all 94 of bike_5's patches use
+        // it), but the other three cost nothing to pin.
+        let limits = Limits::default();
+        let mut guard = AllocGuard::new(&limits);
+        let refs = one_slot(flat_reference(0.5, 0.5, 0.5));
+
+        for (mode, want) in [
+            (PatchBlendMode::None, 0.25),
+            (PatchBlendMode::Replace, 0.5),
+            (PatchBlendMode::Add, 0.75),
+            (PatchBlendMode::Mul, 0.125),
+        ] {
+            let mut planes = ColourPlanes::zeros(2, 2, &mut guard).unwrap();
+            for plane in &mut planes.planes {
+                plane.fill(0.25);
+            }
+            apply_patches(&mut planes, &dictionary(mode, (0, 0)), &refs, 0).unwrap();
+            assert_eq!(planes.get(1, 0, 0), want, "{mode:?}");
+        }
+    }
+
+    #[test]
+    fn an_unwritten_reference_slot_is_rejected_not_ignored() {
+        // A patch naming a slot no frame filled is a malformed stream; a
+        // decoder that silently blitted zeros would produce plausible-looking
+        // holes instead of an error.
+        let limits = Limits::default();
+        let mut guard = AllocGuard::new(&limits);
+        let mut planes = ColourPlanes::zeros(2, 2, &mut guard).unwrap();
+        let empty: [Option<ReferenceFrame>; 4] = [None, None, None, None];
+        assert!(
+            apply_patches(
+                &mut planes,
+                &dictionary(PatchBlendMode::Add, (0, 0)),
+                &empty,
+                0
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn alpha_modes_and_extra_channels_are_refused_not_guessed() {
+        // These planes carry no alpha, so an alpha-blending mode has nothing
+        // to read. Refusing is the difference between "not implemented" and
+        // "wrong pixels".
+        let limits = Limits::default();
+        let mut guard = AllocGuard::new(&limits);
+        let mut planes = ColourPlanes::zeros(2, 2, &mut guard).unwrap();
+        let refs = one_slot(flat_reference(0.5, 0.5, 0.5));
+        for mode in [
+            PatchBlendMode::BlendAbove,
+            PatchBlendMode::BlendBelow,
+            PatchBlendMode::MulAddAbove,
+            PatchBlendMode::MulAddBelow,
+        ] {
+            assert!(
+                apply_patches(&mut planes, &dictionary(mode, (0, 0)), &refs, 0).is_err(),
+                "{mode:?}"
+            );
+        }
+        assert!(
+            apply_patches(
+                &mut planes,
+                &dictionary(PatchBlendMode::Add, (0, 0)),
+                &refs,
+                1
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn an_empty_dictionary_is_a_no_op() {
+        let limits = Limits::default();
+        let mut guard = AllocGuard::new(&limits);
+        let mut planes = ColourPlanes::zeros(3, 3, &mut guard).unwrap();
+        for plane in &mut planes.planes {
+            plane.fill(0.5);
+        }
+        let before = planes.clone();
+        let empty: [Option<ReferenceFrame>; 4] = [None, None, None, None];
+        apply_patches(&mut planes, &PatchDictionary::default(), &empty, 0).unwrap();
+        assert_eq!(planes, before);
     }
 
     #[test]

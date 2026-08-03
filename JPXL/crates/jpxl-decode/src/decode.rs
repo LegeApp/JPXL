@@ -190,6 +190,95 @@ impl DecodedImage {
     }
 }
 
+/// Number of reference slots F.2's `save_as_reference` can name.
+///
+/// The field is a `u(2)`, so four; slot 0 is a real slot, not "none" (F.2
+/// distinguishes "not saved" by `can_reference` being false, not by the
+/// index).
+pub const NUM_REFERENCE_SLOTS: usize = 4;
+
+/// **Flip point — what `Reference[ref]`'s coordinates mean (K.3.1).**
+///
+/// K.3.1 says a patch sample is "the sample from channel c at the position
+/// `(x0 + x, y0 + y)` in `Reference[ref]`". A reference frame may carry a crop
+/// (F.2), so its own rectangle need not start at the canvas origin, and the
+/// clause never says which of the two `Reference[ref]` is.
+///
+/// `true` (shipped): `Reference[ref]` is canvas-sized, so `(x0 + x, y0 + y)`
+/// is a canvas coordinate and a cropped reference contributes only its own
+/// rectangle, zero elsewhere. This is the reading that makes "Reference" mean
+/// the same thing here as it does for frame blending (F.2), where a reference
+/// is unambiguously something composited onto the canvas.
+///
+/// `false`: coordinates are relative to the reference frame's own crop origin.
+///
+/// **Unexercised.** Every reference frame available has crop origin `(0, 0)`,
+/// where the two readings coincide exactly. `bike`/`bike_5`/`progressive` all
+/// carry a 22x20 or 29x28 reference at `(0, 0)`.
+pub const PATCH_REFERENCE_IS_CANVAS_COORDINATES: bool = true;
+
+/// A stored reference frame (F.2 `save_as_reference`), as K.3 reads it.
+///
+/// Held in the colour space *before* the inverse colour transform — XYB for an
+/// `xyb_encoded` image — because that is where K.3.2 blends: "the sample
+/// values `new_sample` are in the colour space before the inverse colour
+/// transforms from L.2, L.3 and L.4 are applied". Storing display-space RGB
+/// here and converting back would be lossy and, for the `kModular` reference
+/// frames real encoders emit, circular.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReferenceFrame {
+    /// Canvas x of the stored rectangle's left edge (F.2 `x0`).
+    pub origin_x: i32,
+    /// Canvas y of the stored rectangle's top edge (F.2 `y0`).
+    pub origin_y: i32,
+    /// Rectangle width in samples.
+    pub width: u32,
+    /// Rectangle height in samples.
+    pub height: u32,
+    /// The three colour planes, raster order, `width * height` each.
+    pub planes: [Vec<f32>; 3],
+}
+
+impl ReferenceFrame {
+    /// The sample at a **canvas** coordinate, or `0.0` outside the stored
+    /// rectangle.
+    ///
+    /// See [`PATCH_REFERENCE_IS_CANVAS_COORDINATES`] for why the argument is a
+    /// canvas coordinate rather than a rectangle-relative one.
+    #[must_use]
+    pub fn get(&self, channel: usize, x: u32, y: u32) -> f32 {
+        let (ox, oy) = if PATCH_REFERENCE_IS_CANVAS_COORDINATES {
+            (self.origin_x, self.origin_y)
+        } else {
+            (0, 0)
+        };
+        let Some(lx) = i64::from(x).checked_sub(i64::from(ox)) else {
+            return 0.0;
+        };
+        let Some(ly) = i64::from(y).checked_sub(i64::from(oy)) else {
+            return 0.0;
+        };
+        if lx < 0 || ly < 0 || lx >= i64::from(self.width) || ly >= i64::from(self.height) {
+            return 0.0;
+        }
+        // Both are in `0..width`/`0..height` after the range test above, so
+        // the conversions cannot fail on any target.
+        let (lx, ly) = (
+            usize::try_from(lx).unwrap_or(0),
+            usize::try_from(ly).unwrap_or(0),
+        );
+        let idx = ly * self.width as usize + lx;
+        self.planes
+            .get(channel)
+            .and_then(|p| p.get(idx))
+            .copied()
+            .unwrap_or(0.0)
+    }
+}
+
+/// The four `save_as_reference` slots of F.2.
+type ReferenceSlots = [Option<ReferenceFrame>; NUM_REFERENCE_SLOTS];
+
 /// Decodes a JPEG XL file or naked codestream.
 ///
 /// Accepts either a naked codestream (starting `FF 0A`) or a Part 2 container,
@@ -233,6 +322,7 @@ pub fn decode(data: &[u8], limits: &Limits) -> Result<DecodedImage> {
         .map_err(|_| unsupported("a codestream larger than the address space", "18181-1 A.1"))?;
 
     let mut decoded: Option<DecodedImage> = None;
+    let mut references: ReferenceSlots = [None, None, None, None];
     let mut frames = 0u32;
     loop {
         frames += 1;
@@ -285,9 +375,34 @@ pub fn decode(data: &[u8], limits: &Limits) -> Result<DecodedImage> {
                 &geometry,
                 &header,
                 &headers,
+                &references,
                 limits,
                 &mut guard,
             )?);
+        } else if header.frame_type == FrameType::ReferenceOnly {
+            // F.2: a kReferenceOnly frame is not part of the displayed
+            // sequence; it exists to be read back by K.3 patches or by a later
+            // frame's blending. Decode it and park it in its slot.
+            let frame = decode_reference_frame(
+                codestream,
+                section_base,
+                &toc,
+                &geometry,
+                &header,
+                &headers,
+                limits,
+                &mut guard,
+            )?;
+            let slot = usize::try_from(header.save_as_reference).unwrap_or(usize::MAX);
+            *references
+                .get_mut(slot)
+                .ok_or_else(|| unsupported("a reference slot past three", "18181-1 F.2"))? =
+                Some(frame);
+        } else {
+            return Err(unsupported(
+                "kLFFrame and kSkipProgressive frames",
+                "18181-1 F.2",
+            ));
         }
 
         let total = usize::try_from(toc.total_size())
@@ -396,15 +511,17 @@ const fn shifted_ceil(value: u32, shift: u32) -> u32 {
 ///
 /// Split from the per-encoding checks so that a construct is rejected in
 /// exactly one place: everything here is orthogonal to `encoding`.
-fn check_supported_common(header: &FrameHeader) -> Result<()> {
+fn check_supported_common(header: &FrameHeader, purpose: FramePurpose) -> Result<()> {
+    if header.have_crop && purpose == FramePurpose::Displayed {
+        // A cropped *displayed* frame has to be blended onto the canvas
+        // (F.2); a cropped reference frame just occupies its rectangle.
+        return Err(unsupported("cropped frames", "18181-1 F.2"));
+    }
     if header.do_ycbcr {
         return Err(unsupported("do_YCbCr colour reconstruction", "18181-1 L.3"));
     }
     if header.upsampling != 1 {
         return Err(unsupported("frame upsampling", "18181-1 J.2"));
-    }
-    if header.flags.patches() {
-        return Err(unsupported("patches", "18181-1 K.3"));
     }
     if header.flags.splines() {
         return Err(unsupported("splines", "18181-1 K.4"));
@@ -415,16 +532,28 @@ fn check_supported_common(header: &FrameHeader) -> Result<()> {
     if header.flags.use_lf_frame() {
         return Err(unsupported("kUseLfFrame", "18181-1 G.2.2"));
     }
-    if header.have_crop {
-        return Err(unsupported("cropped frames", "18181-1 F.2"));
-    }
     Ok(())
 }
 
 /// Rejects every frame construct outside the modular scope of this slice.
-fn check_supported_modular(header: &FrameHeader, metadata: &ImageMetadata) -> Result<()> {
-    check_supported_common(header)?;
-    if metadata.xyb_encoded {
+fn check_supported_modular(
+    header: &FrameHeader,
+    metadata: &ImageMetadata,
+    purpose: FramePurpose,
+) -> Result<()> {
+    check_supported_common(header, purpose)?;
+    if header.flags.patches() {
+        // K.3.1's dictionary is the first bundle of LfGlobal for every
+        // encoding, and the modular path does not read it — so this is a
+        // bit-position guard, not only a feature gate. K.3.2 for a modular
+        // frame would also have to blend in the modular sample space.
+        return Err(unsupported("patches in a kModular frame", "18181-1 K.3"));
+    }
+    if metadata.xyb_encoded && purpose == FramePurpose::Displayed {
+        // A displayed modular frame in an XYB image would need L.2.2's
+        // kModular pre-step and then the whole of L.2. A reference frame stops
+        // before L.2 by definition, so it only needs the pre-step, which
+        // `decode_reference_frame` applies.
         return Err(unsupported(
             "xyb_encoded colour reconstruction",
             "18181-1 L.2",
@@ -435,7 +564,7 @@ fn check_supported_modular(header: &FrameHeader, metadata: &ImageMetadata) -> Re
 
 /// Rejects every frame construct outside the `kVarDCT` scope of slice 8.
 fn check_supported_vardct(header: &FrameHeader, metadata: &ImageMetadata) -> Result<()> {
-    check_supported_common(header)?;
+    check_supported_common(header, FramePurpose::Displayed)?;
     if !metadata.xyb_encoded {
         // A kVarDCT frame that is not XYB-encoded would need L.2 skipped and
         // the samples interpreted directly in the signalled colour encoding.
@@ -476,15 +605,161 @@ fn decode_frame(
     geometry: &FrameGeometry,
     header: &FrameHeader,
     headers: &ImageHeaders,
+    references: &ReferenceSlots,
     limits: &Limits,
     guard: &mut AllocGuard,
 ) -> Result<DecodedImage> {
     if header.encoding == Encoding::VarDct {
-        return decode_vardct_frame(codestream, base, toc, geometry, header, headers, guard);
+        return decode_vardct_frame(
+            codestream, base, toc, geometry, header, headers, references, guard,
+        );
     }
     decode_modular_frame(
-        codestream, base, toc, geometry, header, headers, limits, guard,
+        codestream,
+        base,
+        toc,
+        geometry,
+        header,
+        headers,
+        FramePurpose::Displayed,
+        limits,
+        guard,
     )
+    .map(|(image, _)| image)
+}
+
+/// Why a frame is being decoded, which is what decides how strict the
+/// feature checks are.
+///
+/// A `kReferenceOnly` frame is never displayed: it is read back by K.3
+/// patches or by a later frame's blending, in the colour space *before* the
+/// inverse colour transform. That makes two constructs harmless for it which
+/// are real work for a displayed frame — a crop, because the reference simply
+/// occupies that rectangle of the canvas, and `xyb_encoded`, because L.2 is
+/// exactly the step a reference is stored ahead of.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FramePurpose {
+    /// The frame the file decodes to.
+    Displayed,
+    /// A `kReferenceOnly` frame headed for a `save_as_reference` slot.
+    Reference,
+}
+
+/// Decodes a `kReferenceOnly` frame into a [`ReferenceFrame`] (18181-1 F.2).
+///
+/// The stored samples are in the colour space *before* the inverse colour
+/// transform, which is what K.3.2 blends in. For an `xyb_encoded` image and a
+/// `kModular` reference frame — the shape every real encoder emits, and the
+/// one `bike`/`bike_5`/`progressive` use — that means applying L.2.2's
+/// `kModular` pre-step and stopping:
+///
+/// ```text
+/// X = x' * m_x_lf_unscaled
+/// Y = y' * m_y_lf_unscaled
+/// B = (B' + Y') * m_b_lf_unscaled
+/// ```
+///
+/// Note the channel order L.2.2 states for those "values in the first three
+/// channels": **y', x', B'**. Channel 0 is luma, not X — the same Y, X, B
+/// ordering `LfQuant` turned out to use (G.2.2). Reading them as X, Y, B
+/// swaps the two chroma-carrying planes of every patch.
+///
+/// # Errors
+///
+/// As [`decode_modular_frame`], plus [`DecodeError::Unsupported`] for a
+/// `kVarDCT` reference frame (no available stream emits one) and for extra
+/// channels in a reference frame.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the same frame-layer inputs decode_frame takes"
+)]
+fn decode_reference_frame(
+    codestream: &[u8],
+    base: usize,
+    toc: &Toc,
+    geometry: &FrameGeometry,
+    header: &FrameHeader,
+    headers: &ImageHeaders,
+    limits: &Limits,
+    guard: &mut AllocGuard,
+) -> Result<ReferenceFrame> {
+    if header.encoding != Encoding::VarDct {
+        // The common case: a small kModular rectangle holding the patch atlas.
+        let (image, lf_dequant) = decode_modular_frame(
+            codestream,
+            base,
+            toc,
+            geometry,
+            header,
+            headers,
+            FramePurpose::Reference,
+            limits,
+            guard,
+        )?;
+        return reference_from_modular(&image, &lf_dequant, &headers.metadata, header);
+    }
+    Err(unsupported("a kVarDCT reference frame", "18181-1 F.2"))
+}
+
+/// L.2.2's `kModular` pre-step, turning a decoded modular reference frame into
+/// the XYB planes K.3.2 blends.
+fn reference_from_modular(
+    image: &DecodedImage,
+    lf_dequant: &crate::vardct::quantizer::LfChannelDequantization,
+    metadata: &ImageMetadata,
+    header: &FrameHeader,
+) -> Result<ReferenceFrame> {
+    if !metadata.xyb_encoded {
+        // A non-XYB image needs no pre-step: the samples are already in the
+        // space K.3.2 names. Nothing available exercises it, and guessing the
+        // scale a patch would then be in is worse than refusing.
+        return Err(unsupported(
+            "a reference frame in a non-XYB image",
+            "18181-1 L.2.2",
+        ));
+    }
+    if image.num_colour_channels != 3 {
+        return Err(unsupported(
+            "a greyscale reference frame in an XYB image",
+            "18181-1 L.2.2",
+        ));
+    }
+    let [m_x, m_y, m_b] = lf_dequant.unscaled();
+    let (width, height) = (image.width, image.height);
+    let cells = width as usize * height as usize;
+
+    let mut planes = [
+        vec![0.0f32; cells],
+        vec![0.0f32; cells],
+        vec![0.0f32; cells],
+    ];
+    for y in 0..height {
+        for x in 0..width {
+            let idx = y as usize * width as usize + x as usize;
+            // L.2.2's own channel naming: the first three channels are
+            // y', x', B'.
+            let y_prime = image.planes.first().map_or(0, |p| p.get(x, y)) as f32;
+            let x_prime = image.planes.get(1).map_or(0, |p| p.get(x, y)) as f32;
+            let b_prime = image.planes.get(2).map_or(0, |p| p.get(x, y)) as f32;
+            if let Some(slot) = planes.first_mut().and_then(|p| p.get_mut(idx)) {
+                *slot = x_prime * m_x;
+            }
+            if let Some(slot) = planes.get_mut(1).and_then(|p| p.get_mut(idx)) {
+                *slot = y_prime * m_y;
+            }
+            if let Some(slot) = planes.get_mut(2).and_then(|p| p.get_mut(idx)) {
+                *slot = (b_prime + y_prime) * m_b;
+            }
+        }
+    }
+
+    Ok(ReferenceFrame {
+        origin_x: if header.have_crop { header.x0 } else { 0 },
+        origin_y: if header.have_crop { header.y0 } else { 0 },
+        width,
+        height,
+        planes,
+    })
 }
 
 /// Decodes one modular frame's sections into planes.
@@ -500,11 +775,15 @@ fn decode_modular_frame(
     geometry: &FrameGeometry,
     header: &FrameHeader,
     headers: &ImageHeaders,
+    purpose: FramePurpose,
     limits: &Limits,
     guard: &mut AllocGuard,
-) -> Result<DecodedImage> {
+) -> Result<(
+    DecodedImage,
+    crate::vardct::quantizer::LfChannelDequantization,
+)> {
     let metadata = &headers.metadata;
-    check_supported_modular(header, metadata)?;
+    check_supported_modular(header, metadata, purpose)?;
 
     let (specs, num_colour) = initial_channels(header, metadata, geometry)?;
     let group_dim = geometry.group_dim();
@@ -522,7 +801,7 @@ fn decode_modular_frame(
     let mut single_reader = BitReader::new(whole);
 
     // ---- LfGlobal (G.1) --------------------------------------------------
-    let (global_tree, mut partial) = {
+    let (lf_dequant, global_tree, mut partial) = {
         let mut owned;
         let reader: &mut BitReader<'_> = if single {
             &mut single_reader
@@ -534,7 +813,7 @@ fn decode_modular_frame(
         // G.1.2 LfChannelDequantization is present for every encoding. Modular
         // mode never uses the weights, but the bits are still there, and the
         // typed reader is the one place their layout is asserted.
-        crate::vardct::quantizer::read_lf_channel_dequantization(reader)?;
+        let lf_dequant = crate::vardct::quantizer::read_lf_channel_dequantization(reader)?;
 
         // G.1.3 GlobalModular.
         let have_global_tree = reader.read_bool()?;
@@ -552,7 +831,7 @@ fn decode_modular_frame(
             ChannelStop::GlobalModular { group_dim },
             guard,
         )?;
-        (global_tree, partial)
+        (lf_dequant, global_tree, partial)
     };
 
     let first_undecoded = partial.first_undecoded();
@@ -658,13 +937,14 @@ fn decode_modular_frame(
     // ---- H.6 inverse transforms over the completed image -----------------
     options.stream_index = 0;
     let image = partial.into_image(&options, guard)?;
-    assemble(
+    let assembled = assemble(
         image.into_channels(),
         metadata,
         geometry,
         num_colour,
         limits,
-    )
+    )?;
+    Ok((assembled, lf_dequant))
 }
 
 /// Decodes one LF-group or pass-group modular sub-bitstream and copies the
@@ -854,6 +1134,11 @@ struct GroupState {
               the one thing a reader needs to see, which is the order the \
               sections are consumed in"
 )]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the frame layer needs all of this; a bundle struct would only \
+              move the argument list somewhere less visible"
+)]
 fn decode_vardct_frame(
     codestream: &[u8],
     base: usize,
@@ -861,6 +1146,7 @@ fn decode_vardct_frame(
     geometry: &FrameGeometry,
     header: &FrameHeader,
     headers: &ImageHeaders,
+    references: &ReferenceSlots,
     guard: &mut AllocGuard,
 ) -> Result<DecodedImage> {
     use crate::vardct::cfl::CflFactors;
@@ -887,13 +1173,27 @@ fn decode_vardct_frame(
     let mut single_reader = BitReader::new(whole);
 
     // ---- LfGlobal (G.1) --------------------------------------------------
-    let (lf_dequant, vardct, global_tree) = {
+    let (patches, lf_dequant, vardct, global_tree) = {
         let mut owned;
         let reader: &mut BitReader<'_> = if single {
             &mut single_reader
         } else {
             owned = BitReader::new(section_slice(codestream, base, toc, 0)?);
             &mut owned
+        };
+        // K.3.1 is the FIRST row of Table G.1, ahead of everything else in
+        // LfGlobal. Reading it late shifts every subsequent field.
+        let patches = if header.flags.patches() {
+            crate::frame::patches::read_patches(
+                reader,
+                metadata.num_extra(),
+                geometry.width(),
+                geometry.height(),
+                crate::frame::patches::max_num_patches(geometry.width(), geometry.height()),
+                guard,
+            )?
+        } else {
+            crate::frame::patches::PatchDictionary::default()
         };
         let lf_dequant = read_lf_channel_dequantization(reader)?;
         let vardct = read_lf_global_vardct(reader, guard)?;
@@ -907,7 +1207,7 @@ fn decode_vardct_frame(
         } else {
             None
         };
-        (lf_dequant, vardct, global_tree)
+        (patches, lf_dequant, vardct, global_tree)
     };
 
     let multipliers = vardct.quantizer.lf_multipliers(&lf_dequant);
@@ -1219,8 +1519,13 @@ fn decode_vardct_frame(
         }
     }
 
-    // ---- Annex J, then L.2 ----------------------------------------------
+    // ---- Annex J, then Annex K, then Annex L -----------------------------
+    //
+    // Clause 4 fixes this order: frame data (G), restoration filters (J),
+    // image features (K), and "finally ... colour transforms as specified in
+    // Annex L". K.3.2 repeats it from its own side.
     render::apply_restoration(&mut planes, filter, &sigma)?;
+    render::apply_patches(&mut planes, &patches, references, metadata.num_extra())?;
     render::to_linear_srgb(&mut planes, &opsin_inverse(metadata));
     apply_transfer_function(&mut planes, metadata)?;
 

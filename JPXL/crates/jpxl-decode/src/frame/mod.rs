@@ -39,6 +39,7 @@ pub mod gaborish;
 pub mod geometry;
 pub mod header;
 pub mod passes;
+pub mod patches;
 pub mod restoration;
 pub mod stream_index;
 pub mod toc;
@@ -56,6 +57,10 @@ pub use header::{
     DURATION_NEXT_PAGE, Encoding, FrameFlags, FrameHeader, FrameType, read_frame_header,
 };
 pub use passes::{Passes, read_passes};
+pub use patches::{
+    Patch, PatchBlendMode, PatchBlending, PatchDictionary, PatchPosition, max_num_patches,
+    read_patches,
+};
 pub use restoration::{EpfParams, GaborWeights, RestorationFilter, read_restoration_filter};
 pub use toc::{Toc, get_context, lehmer_to_permutation, read_permutation, read_toc};
 
