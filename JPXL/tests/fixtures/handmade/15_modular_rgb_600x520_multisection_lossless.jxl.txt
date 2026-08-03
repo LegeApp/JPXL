@@ -1,0 +1,74 @@
+Fixture: 15_modular_rgb_600x520_multisection_lossless.jxl
+600x520 RGB, mathematically lossless -- multi-section TOC, RGB variant of 14
+
+Purpose
+-------
+Targets slice 7's unproven multi-section path (Annex G / F.3), same as
+14_modular_gray_600x520_multisection_lossless.jxl.txt -- see that sidecar for
+the full rationale on why 07-13 never reach `num_sections > 1` and why
+600x520 does. This fixture is the RGB counterpart: same canvas, same
+gradient formula as 09/11/13 (R ramps x, G ramps y, B is a diagonal
+sawtooth), so it exercises multi-section tiling TOGETHER WITH the RCT
+(reversible colour transform) and per-group entropy-decoder state across
+three colour channels and 9 groups -- 14 deliberately keeps those concerns
+separate (single channel, no RCT) to isolate multi-section handling first;
+this fixture is the "both at once" check.
+
+This gradient compresses far better than the diagonal-ramp grayscale content
+of 14 (smooth per-channel ramps vs. a mod-256 sawtooth on chroma), which is
+why the fixture is only ~1.3 KB despite covering the same pixel count as 14
+(18.8 KB) -- effort/entropy-coding behaviour, not a different image size.
+
+Provenance
+----------
+  Encoder:      cjxl v0.13.0 196a43d9 [_AVX2_,SSE4,SSE2] {GNU 15.2.0}
+  libjxl rev:   196a43d996aa6ed33ebf98812a7c6d43b2b6d01b (v0.12-snapshot-2-g196a43d9)
+  cjxl flags:   -d 0 -e 7
+  Built by:     tools/setup-oracles.sh (flags recorded in
+                tools/oracle-bin/PINNED_REVISIONS.txt)
+  Regenerate:   tools/make-modular-fixtures.sh
+                That script IS the recipe; it rewrites the source and re-encodes.
+
+  Source image: tests/fixtures/generated/src_rgb_600x520.ppm  (936015 bytes)
+                sha256 7c3659b222731015fa351feb88c1e3c1b9c176ea23a8ad785b4f2f110f832876
+                Synthetic, written by the Python snippet inside
+                tools/make-modular-fixtures.sh -- no third-party image was
+                used, converted, or consulted. 600x520 8-bit RGB (PPM P6):
+                  R = x * 255 / 599     ramp along x
+                  G = y * 255 / 519     ramp along y
+                  B = (x + y) mod 256   diagonal sawtooth
+                Same gradient family as 09/11/13.
+
+  Fixture:      1252 bytes
+                sha256 e823e05801b0dd97973ef8407a6f99a7c6964587f7df4a1ec6a4dfb94bb987b4
+
+Verification
+------------
+djxl decodes it to a PPM byte-identical to the source (checked on every run
+of tools/make-modular-fixtures.sh). Classified by `jpxl info` (jpxl-cli) as
+a recognized "naked codestream", 1252 bytes.
+
+Independently, this crate's own `FrameGeometry::from_header` + `read_toc`
+report `group_dim = 256`, `num_groups = 9`, `num_sections = 12` for this
+fixture, same geometry as 14 (identical canvas size) -- see
+tests/e2e_multisection.rs.
+
+Modular features engaged
+-------------------------
+Multi-section tiling, same as 14 (2 header sections + 1 LF group + 9 pass
+groups), forced by the 600x520 dimensions -- confirmed by our own TOC
+parser, not something that needs deeper oracle introspection. On top of
+that, three colour channels give the RCT real cross-channel correlation to
+find, same as 09/11's rationale, now spread across 9 groups instead of one.
+cjxl printed nothing transform-specific at encode time; jxlinfo is not built
+in this checkout; djxl -v / -v -v print no per-feature detail for this
+stream. See 07_modular_gray_8x8_lossless.jxl.txt for the general caveat on
+feature-introspection limits.
+
+cjxl is used strictly as a BLACK BOX: it emits conformant streams for JPXL to
+parse. libjxl's source is never read. If a rebuild at a different libjxl
+revision changes these digests, that is the point of recording them -- do not
+silently update them; note the revision change. As with 14, a different
+group_dim heuristic in a future libjxl revision could make this fixture
+single-section again -- tests/e2e_multisection.rs asserts `num_sections > 1`
+so that regression is caught, not silently passed.

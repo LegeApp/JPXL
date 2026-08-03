@@ -1,0 +1,90 @@
+Fixture: 14_modular_gray_600x520_multisection_lossless.jxl
+600x520 grayscale, mathematically lossless -- forces a multi-SECTION TOC
+(not just multi-group)
+
+Purpose
+-------
+Targets slice 7's unproven path: the multi-section codestream layout (Annex
+G -- separate LfGlobal / LfGroup / HfGlobal / per-group per-pass sections
+located via the TOC, F.3). Every fixture 07-13 is multi-GROUP at most:
+12_modular_gray_300x200_lossless.jxl is 300x200, which crosses one 256x256
+group boundary in x, but the encoder chose `group_size_shift = 2`
+(`group_dim = 512`) for it, so the whole image still fits in ONE group and
+F.3.1 collapses `num_sections` to 1 (`num_groups == 1 && num_passes == 1`).
+None of 07-13 exceeds 512px in either dimension, and empirically (see below)
+that is exactly the threshold at which this cjxl build's group_dim heuristic
+stays at 512. 600x520 exceeds 512 in BOTH dimensions, which forces
+`group_dim = 256` and a 3x3 group grid -- 9 groups, all with partial
+right/bottom edges except the top-left. `num_sections` is therefore
+`2 (LfGlobal + HfGlobal) + num_lf_groups (1) + num_groups (9) * num_passes
+(1) = 12`, confirmed by decoding this fixture's TOC with this crate's own
+`FrameGeometry`/`read_toc` (see tests/e2e_multisection.rs, which asserts
+`num_sections > 1` so a future cjxl regenerating this fixture single-section
+fails loudly rather than silently proving nothing).
+
+Single channel (no RCT/palette), mirroring 12's rationale: isolate
+multi-section TOC/group-copy handling in G.2.3/G.4.2 from transform
+selection, which 09-11 already cover at single-group sizes.
+
+There is no cjxl flag to force a smaller group_dim directly -- checked with
+`tools/oracle-bin/cjxl -v -v --help` (permitted: cjxl run as a black box per
+AGENTS.md section 2, its source never read). The full ~126-line option list
+has no `--modular_group_size`, `--group_dim` or similar (same conclusion
+13's sidecar reached for a per-predictor flag). The only available lever is
+image size, which is what this fixture (and 15) use; 16 uses a size-based
+trick to get multi-section at a much smaller byte count.
+
+Provenance
+----------
+  Encoder:      cjxl v0.13.0 196a43d9 [_AVX2_,SSE4,SSE2] {GNU 15.2.0}
+  libjxl rev:   196a43d996aa6ed33ebf98812a7c6d43b2b6d01b (v0.12-snapshot-2-g196a43d9)
+  cjxl flags:   -d 0 -e 7
+  Built by:     tools/setup-oracles.sh (flags recorded in
+                tools/oracle-bin/PINNED_REVISIONS.txt)
+  Regenerate:   tools/make-modular-fixtures.sh
+                That script IS the recipe; it rewrites the source and re-encodes.
+
+  Source image: tests/fixtures/generated/src_gray_600x520.pgm  (312015 bytes)
+                sha256 85024a9e25e0713ba4302b1fd673045e113c3919ffe649bb7ae15d3087436d2a
+                Synthetic, written by the Python snippet inside
+                tools/make-modular-fixtures.sh -- no third-party image was
+                used, converted, or consulted. 600x520 8-bit grayscale (PGM
+                P5):
+                  v(x, y) = (x + y) * 255 / 1118     diagonal ramp, 0..255
+                Same diagonal-ramp family as 07/08/12, sized to force
+                multi-section rather than only multi-group.
+
+  Fixture:      18754 bytes
+                sha256 5f7821caa94216462bf34ff1fe8d5ed3d60262ceedd3ebe571157fb33bc11880
+
+Verification
+------------
+djxl decodes it to a PGM byte-identical to the source (checked on every run
+of tools/make-modular-fixtures.sh). Classified by `jpxl info` (jpxl-cli) as
+a recognized "naked codestream", 18754 bytes.
+
+Independently, this crate's own `FrameGeometry::from_header` + `read_toc`
+report `group_dim = 256`, `num_groups = 9`, `num_sections = 12` for this
+fixture (checked while building this fixture set; see
+tests/e2e_multisection.rs for the assertion that keeps this fact tested
+going forward).
+
+Modular features engaged
+-------------------------
+Multi-section tiling (2 header sections + 1 LF group + 9 pass groups) is
+structurally forced by the 600x520 dimensions exceeding 512px in both axes,
+combined with this cjxl build's observed group_dim heuristic -- this is
+geometry, confirmed by our own TOC parser, not something that needs deeper
+oracle introspection. Beyond that, cjxl printed nothing transform-specific at
+encode time; jxlinfo is not built in this checkout; djxl -v / -v -v print no
+per-feature detail for this stream. See 07_modular_gray_8x8_lossless.jxl.txt
+for the general caveat on feature-introspection limits.
+
+cjxl is used strictly as a BLACK BOX: it emits conformant streams for JPXL to
+parse. libjxl's source is never read. If a rebuild at a different libjxl
+revision changes these digests, that is the point of recording them -- do not
+silently update them; note the revision change. In particular, a different
+libjxl revision's group_dim heuristic could pick a different value and make
+this fixture single-section again -- tests/e2e_multisection.rs asserts
+`num_sections > 1` specifically so that regression is caught, not silently
+passed.

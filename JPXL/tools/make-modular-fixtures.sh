@@ -190,6 +190,61 @@ write(
         ),
     ),
 )
+
+# ---------------------------------------------------------------------------
+# 14-16: multi-SECTION fixtures (Annex G's LfGlobal/LfGroup/HfGlobal/PassGroup
+# split via the TOC), as opposed to 09-13 which are multi-group in the sense
+# AGENTS.md means for header/geometry coverage but still land in ONE TOC
+# section (F.3.1: num_sections collapses to 1 whenever num_groups == 1 AND
+# num_passes == 1, and cjxl's own group_dim heuristic chose 512 for every
+# fixture <=512px in both dimensions -- see 12's sidecar and HANDOFF). There
+# is no cjxl flag to force a smaller group_dim (checked with
+# `cjxl -v -v --help`, same ~126-line option list documented in 13's
+# sidecar: no `--modular_group_size` or similar). The only available lever is
+# an image exceeding 512px in some dimension, which is what 14/15 do; probing
+# `cjxl` (permitted -- it is run as a black box, never read, see AGENTS.md
+# section 2) showed group_dim also drops to 256 for some images *under* 512px
+# in one axis provided the other axis is very small, which 16 uses for a
+# fast, tiny smoke fixture. All three were confirmed multi-section by
+# decoding them with this crate's own frame/TOC parser (num_sections > 1)
+# before being adopted -- see tests/e2e_multisection.rs.
+
+# 14: 600x520 grayscale -- exceeds 512 in BOTH dimensions, forcing group_dim
+# 256 and a 3x3 group grid (partial groups on the right AND bottom edges).
+# Single channel like 07/08/12, to isolate multi-section TOC/group-copy
+# handling from RCT/palette transform selection.
+write(
+    out / "src_gray_600x520.pgm",
+    gray8(600, 520, lambda x, y: ((x + y) * 255) // (600 + 520 - 2)),
+)
+
+# 15: 600x520 RGB -- same canvas as 14, RGB variant, same gradient formula as
+# 09/11/13. Exercises multi-section together with the RCT and per-group
+# entropy state across three colour channels.
+write(
+    out / "src_rgb_600x520.ppm",
+    rgb8(
+        600,
+        520,
+        lambda x, y: (
+            (x * 255) // 599,
+            (y * 255) // 519,
+            (x + y) % 256,
+        ),
+    ),
+)
+
+# 16: 511x8 grayscale -- a fast multi-section smoke fixture. 511px alone (well
+# under 512) is enough to make cjxl pick group_dim 256 here (empirically,
+# black-box), giving 2 groups on the single row (256 + 255, a partial right
+# edge) and therefore num_sections > 1, at a tiny fraction of 14/15's size.
+# This does not replace the >=256x256 rule in AGENTS.md section 6 -- 14/15
+# satisfy that -- it is a cheap regression fixture for the same TOC/group-copy
+# path, useful for a fast CI smoke test.
+write(
+    out / "src_gray_511x8.pgm",
+    gray8(511, 8, lambda x, y: ((x + y) * 255) // (511 + 8 - 2)),
+)
 PY
 
 # ------------------------------------------------------------ encoding ------
@@ -209,6 +264,9 @@ encode "${generated}/src_palette_128x128.ppm"   "${handmade}/10_modular_palette_
 encode "${generated}/src_gradient_256x256.ppm"  "${handmade}/11_modular_gradient_256x256_lossless.jxl"  -d 0 -e 7
 encode "${generated}/src_gray_300x200.pgm"      "${handmade}/12_modular_gray_300x200_lossless.jxl"      -d 0 -e 7
 encode "${generated}/src_rgb_16x16.ppm"         "${handmade}/13_modular_rgb_16x16_lossless.jxl"         -d 0 -m 1 -e 7
+encode "${generated}/src_gray_600x520.pgm"      "${handmade}/14_modular_gray_600x520_multisection_lossless.jxl" -d 0 -e 7
+encode "${generated}/src_rgb_600x520.ppm"       "${handmade}/15_modular_rgb_600x520_multisection_lossless.jxl"  -d 0 -e 7
+encode "${generated}/src_gray_511x8.pgm"        "${handmade}/16_modular_gray_511x8_multisection_lossless.jxl"   -d 0 -e 7
 
 # ---------------------------------------------------------- verification ----
 
@@ -231,6 +289,9 @@ verify "${handmade}/10_modular_palette_128x128_lossless.jxl"  "${generated}/src_
 verify "${handmade}/11_modular_gradient_256x256_lossless.jxl" "${generated}/src_gradient_256x256.ppm" ppm
 verify "${handmade}/12_modular_gray_300x200_lossless.jxl"     "${generated}/src_gray_300x200.pgm"     pgm
 verify "${handmade}/13_modular_rgb_16x16_lossless.jxl"        "${generated}/src_rgb_16x16.ppm"        ppm
+verify "${handmade}/14_modular_gray_600x520_multisection_lossless.jxl" "${generated}/src_gray_600x520.pgm" pgm
+verify "${handmade}/15_modular_rgb_600x520_multisection_lossless.jxl"  "${generated}/src_rgb_600x520.ppm"  ppm
+verify "${handmade}/16_modular_gray_511x8_multisection_lossless.jxl"   "${generated}/src_gray_511x8.pgm"   pgm
 
 # ------------------------------------------------------ feature probing -----
 #
@@ -243,7 +304,10 @@ log "djxl -v traces (informational; see sidecars for the authoritative record):"
 for f in 07_modular_gray_8x8_lossless 08_modular_gray16_32x32_lossless \
          09_modular_rgb_64x64_lossless 10_modular_palette_128x128_lossless \
          11_modular_gradient_256x256_lossless 12_modular_gray_300x200_lossless \
-         13_modular_rgb_16x16_lossless; do
+         13_modular_rgb_16x16_lossless \
+         14_modular_gray_600x520_multisection_lossless \
+         15_modular_rgb_600x520_multisection_lossless \
+         16_modular_gray_511x8_multisection_lossless; do
   printf -- '--- %s ---\n' "${f}.jxl"
   "${djxl}" -v "${handmade}/${f}.jxl" "${generated}/${f}.trace.probe.ppm" 2>&1 \
     | grep -Ei 'modular|palette|squeeze|predictor|rct|transform|group' || true
@@ -251,15 +315,16 @@ for f in 07_modular_gray_8x8_lossless 08_modular_gray16_32x32_lossless \
 done
 
 log "digests (record these in the .txt sidecars):"
-( cd "${handmade}" && sha256sum 0[7-9]_*.jxl 1[0-3]_*.jxl )
+( cd "${handmade}" && sha256sum 0[7-9]_*.jxl 1[0-6]_*.jxl )
 ( cd "${generated}" && sha256sum src_gray_8x8.pgm src_gray16_32x32.pgm \
     src_rgb_64x64.ppm src_palette_128x128.ppm src_gradient_256x256.ppm \
-    src_gray_300x200.pgm src_rgb_16x16.ppm )
+    src_gray_300x200.pgm src_rgb_16x16.ppm src_gray_600x520.pgm \
+    src_rgb_600x520.ppm src_gray_511x8.pgm )
 
 log "classification (jpxl-cli, if built):"
 jpxl_bin="${jpxl_root}/target/debug/jpxl"
 if [[ -x "${jpxl_bin}" ]]; then
-  for f in "${handmade}"/0[7-9]_*.jxl "${handmade}"/1[0-3]_*.jxl; do
+  for f in "${handmade}"/0[7-9]_*.jxl "${handmade}"/1[0-6]_*.jxl; do
     "${jpxl_bin}" info "${f}" || true
   done
 else

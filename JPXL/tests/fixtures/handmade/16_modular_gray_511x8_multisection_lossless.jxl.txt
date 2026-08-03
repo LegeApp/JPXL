@@ -1,0 +1,73 @@
+Fixture: 16_modular_gray_511x8_multisection_lossless.jxl
+511x8 grayscale, mathematically lossless -- tiny multi-section smoke fixture
+
+Purpose
+-------
+A cheap regression companion to 14/15 (see those sidecars for the full
+multi-section rationale). 14/15 are the fixtures that satisfy AGENTS.md
+section 6's "any path that can see more than one group gets a >=256x256
+fixture" rule; this one does NOT (511x8 is nowhere near 256 tall) and is not
+meant to. Its only job is to exercise the same TOC/group-copy code path
+(F.3, G.2.3, G.4.2) at a small fraction of the byte count, for a fast test
+that still fails loudly if that path regresses.
+
+511x8 was found by probing cjxl empirically (permitted -- running the binary
+as a black box, never reading its source, per AGENTS.md section 2): images
+narrower than the 512px threshold that makes 12_modular_gray_300x200 pick
+`group_dim = 512` can still get `group_dim = 256` from this cjxl build when
+one dimension is very small (8px here). This is a black-box behavioural
+observation about one cjxl build, not a documented or guaranteed encoder
+rule -- if a future oracle rebuild changes it and this fixture stops being
+multi-section, tests/e2e_multisection.rs's `num_sections > 1` assertion
+catches that (see the note on 14's sidecar making the same point). 511 (not
+512) was chosen deliberately: at 512 wide this build already picks
+`group_dim = 256` too in some configurations, but 511 keeps the image
+strictly under the "exceeds 512" lever that 14/15 use, so this fixture
+demonstrates the second, independent behaviour rather than duplicating it.
+
+Provenance
+----------
+  Encoder:      cjxl v0.13.0 196a43d9 [_AVX2_,SSE4,SSE2] {GNU 15.2.0}
+  libjxl rev:   196a43d996aa6ed33ebf98812a7c6d43b2b6d01b (v0.12-snapshot-2-g196a43d9)
+  cjxl flags:   -d 0 -e 7
+  Built by:     tools/setup-oracles.sh (flags recorded in
+                tools/oracle-bin/PINNED_REVISIONS.txt)
+  Regenerate:   tools/make-modular-fixtures.sh
+                That script IS the recipe; it rewrites the source and re-encodes.
+
+  Source image: tests/fixtures/generated/src_gray_511x8.pgm  (4101 bytes)
+                sha256 8504dad3065b4390cc0464fd5f18e35b870b17efbdcbdb65fb17af397d7dfd27
+                Synthetic, written by the Python snippet inside
+                tools/make-modular-fixtures.sh -- no third-party image was
+                used, converted, or consulted. 511x8 8-bit grayscale (PGM
+                P5):
+                  v(x, y) = (x + y) * 255 / 517     diagonal ramp, 0..255
+                Same diagonal-ramp family as 07/08/12/14.
+
+  Fixture:      121 bytes
+                sha256 f5584ec393d86c8d90961986de87c740e17059aca573367ad751564b59621ffc
+
+Verification
+------------
+djxl decodes it to a PGM byte-identical to the source (checked on every run
+of tools/make-modular-fixtures.sh). Classified by `jpxl info` (jpxl-cli) as
+a recognized "naked codestream", 121 bytes.
+
+Independently, this crate's own `FrameGeometry::from_header` + `read_toc`
+report `group_dim = 256`, `num_groups = 2` (a 2x1 grid: one full 256-wide
+group and one 255-wide partial right-edge group, both 8 tall), `num_sections
+= 5` (2 header sections + 1 LF group + 2 pass groups) for this fixture --
+see tests/e2e_multisection.rs.
+
+Modular features engaged
+-------------------------
+Multi-section tiling with a partial right-edge group, at minimal size. cjxl
+printed nothing transform-specific at encode time; jxlinfo is not built in
+this checkout; djxl -v / -v -v print no per-feature detail for this stream.
+See 07_modular_gray_8x8_lossless.jxl.txt for the general caveat on
+feature-introspection limits.
+
+cjxl is used strictly as a BLACK BOX: it emits conformant streams for JPXL to
+parse. libjxl's source is never read. If a rebuild at a different libjxl
+revision changes these digests, that is the point of recording them -- do not
+silently update them; note the revision change.
