@@ -7,7 +7,10 @@
 //! overwriting this one.
 
 pub mod block_ctx;
+pub mod cfl;
 pub mod dequant_matrix;
+pub mod hf_coeff;
 pub mod hf_meta;
 pub mod lf;
+pub mod order;
 pub mod quantizer;
