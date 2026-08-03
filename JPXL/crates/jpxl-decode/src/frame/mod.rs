@@ -33,7 +33,9 @@
 //! for the slice-7 follow-up.
 
 pub mod blending;
+pub mod epf;
 pub mod error;
+pub mod gaborish;
 pub mod geometry;
 pub mod header;
 pub mod passes;
@@ -43,7 +45,9 @@ pub mod toc;
 use jpxl_core::limits::{AllocGuard, Limits};
 
 pub use blending::{BlendMode, BlendingInfo, read_blending_info};
+pub use epf::{EpfStep, SigmaField, epf, epf_step, epf_steps, epf_weight, vardct_sigma};
 pub use error::{FrameError, Result};
+pub use gaborish::{GaborKernel, PlaneDims, gaborish, gaborish_into, gaborish_planes, mirror1d};
 pub use geometry::{
     FrameGeometry, GroupLayout, MAX_NUM_PASSES, Rect, SectionKind, scale_frame_dimensions,
 };
