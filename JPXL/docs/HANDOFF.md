@@ -13,6 +13,69 @@ Keep this file small. Entries whose content has landed in `PLAN.md`,
 
 ---
 
+## 2026-08-03 (wave 4) — THE MODULAR BUG IS DEAD: `^` misread as `*`; slice 9; patches; RAW fixed
+
+**Root cause of the project's oldest open bug — one character.** The original
+image scan (printed p.50) shows H.5.2's clamp guard as
+`((true_err_N ^ true_err_W) | (true_err_N ^ true_err_NW)) <= 0` — XOR,
+sign-bit arithmetic matching its own comment. ALL THREE transcriptions
+misread `^` as `*`; they descend from one scan and share one glyph
+confusion, so their agreement corroborated nothing. **Both previously
+claimed H.5.2 "standard defects" are WITHDRAWN** — the published standard
+is correct; `weighted.rs` now has one symmetric clamp behind the literal
+guard (`EXPERIMENT_CLAMP_SYMMETRIC` and the asymmetric complex deleted).
+Fixed at once: sawtooth (60), LfQuant repros (61/62), fixtures 54/57 (8C
+gates un-ignored, green), the silent-corruption case, and the corpus
+blockage. All 11 lossless fixtures stay bit-exact; e2e_lossless 19/19,
+zero ignores. Scan-verified defect tally now: I.8 ScaleF divide-by-zero
+(confirmed at scan) and Table I.6 index-16 bases (candidate, scan-read).
+
+**Slice 9 (container) done.** `BoxTree::parse` (clause-8 framing) separate
+from `validate` (clause-9 shalls); order-VALIDATING jxlp reassembly
+(sorting hid corruption), proven vs independent jxlc reference and both
+external decoders; `jpxl boxes` subcommand; jxlinfo as box oracle (build
+via `cmake --build libjxl/build --target jxlinfo`, not in setup script
+yet). brob stays compressed (typed Unsupported; Brotli dependency is a
+PLAN decision); jbrd unparsed pending scan cross-check. Trap: a final box
+whose declared length overruns the file is REJECTED; jxlinfo lists
+nonexistent bytes — do not loosen to match. Container errors ride
+`JpxlError::InvalidHeader` because `FieldOutOfRange` hard-codes 18181-1.
+
+**Patches (K.3) done.** Dictionary is the FIRST row of Table G.1 (proven
+by exact LfGlobal exhaustion on bike_5, 12293/12296 bits); rendering on
+XYB planes between Annex J and Annex L; kReferenceOnly kModular reference
+frames in four slots via L.2.2's kModular pre-step. Traps: L.2.2 kModular
+channel order is y',x',B' (luma first — XYB reading swaps patch chroma);
+a missing LfGlobal bundle reports itself hundreds of bytes downstream
+under an unrelated error — measure section exhaustion to localise.
+
+**RAW dequant matrices decode (Trap removed)**: I.2.4 reads the 3-channel
+modular sub-bitstream INLINE; HfGlobal is one section, H.4.1's formula is
+a stream index. `read_*_with(…, Option<&RawMatrixContext>, …)`;
+context-less callers refuse at the sub-bitstream's first bit. `PREV` flip
+point's false arm now really consults the accumulator (do not "simplify"
+`next_prev` back — the point is the `ucoeff=0, accumulated≠0` case).
+
+**Open — one B-channel divergence on corpus bike/bike_5** (now decoding
+END TO END): peak 0.2466 on B only, X/Y ≈0.017, RMSEs near-passing.
+`#[ignore]`d with forensics in e2e_vardct.rs. Probe already done:
+`DCT8X4_HALF_INDEX_IS_LOW_COORDINATE` is CONFIRMED and now DISCRIMINATED
+(flipping fails all channels at 1.1 — bike contains DCT8x4). Suspects:
+B-channel dequant of a rare transform (Hornuss/AFV/DCT4x4 have zero pixel
+coverage), per-tile B CfL, B-specific I.5.3 terms.
+
+**METHODOLOGICAL TRAP (permanent):** when every available transcription
+agrees on something that reads as nonsense, that is evidence about the
+transcription pipeline, not the standard. The AGENTS.md §2 chain works
+only if followed TO THE IMAGE SCAN; three sessions modelled the nonsense
+instead. Any "defect in the standard" claim requires a scan read first.
+
+**Next candidates:** the bike B-channel divergence; kLFFrame + multi-pass
+(progressive corpus cases); extra channels in kVarDCT + alpha patch blends
+(alpha corpus cases); jxli/jbrd parsing (scan first); Brotli decision.
+
+---
+
 ## 2026-08-03 (VarDCT wave 3) — 8F assembly: VarDCT DECODES END TO END; slice 8 core complete
 
 **Every acceptance rung passes, 2–3 orders of magnitude inside its class:**
@@ -600,10 +663,13 @@ codes, rANS, hybrid-uint, LZ77, clustering). Slice 3 unblocks slices 4, 5, and
   (2026-08-03). It is a truthful claim about decoder working buffers (D.3);
   the paired consequence is the `jxll` level-10 box in container output
   (Annex M). Do not "restore the Table D.3 default".
-- **Sawtooth 32×32 `-e 3` decode bug is real and open** (2026-08-03): grey
-  `x*7 + y*3` via `cjxl -d 0 -e 3` fails with an out-of-bounds bit read at
-  position 2112, independent of ICC, present at 26d8df3. Do not loosen the
-  bounds check — the bug is upstream in modular/frame decoding.
+- ~~Sawtooth 32×32 decode bug~~ **RESOLVED 2026-08-03** (corrected in
+  place): root cause was H.5.2's clamp guard OCR'd as `*` instead of `^` in
+  every transcription. Fixed in `weighted.rs`; fixtures 60/61/62 are the
+  regression tests. Replacement trap: **when every transcription agrees on
+  nonsense, suspect the transcription pipeline, not the standard — escalate
+  to the image scan before claiming a standard defect.** Three sessions
+  modelled the OCR artifact instead of reading one scan page.
 - **Annex H OCR corruptions, resolved 2026-08-02 — do not re-transcribe from
   the corrupted source:** Table H.4 rows 4/5 are `abs(N)`/`abs(W)` (both
   sources garble one each); `kDeltaPalette[4]` is `{0,-12,0}` (LaTeX's
