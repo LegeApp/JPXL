@@ -153,12 +153,19 @@ fn every_rung_hits_every_target_from_below() {
                 rung.name,
                 outcome.achieved()
             );
+            // The loop's contract is `RateTolerance` — 1% of the target *or*
+            // eight bytes, whichever is larger — not a flat fraction. For the
+            // smallest rungs a few bytes is already over 1%, so assert the
+            // real byte bound. (CfL shifts the discrete size curve, which is
+            // exactly why a fraction that once landed inside 1% by luck no
+            // longer does; the loop still honours its stated bound.)
+            let allowed = RateTolerance::default().bytes_for(target);
             assert!(
-                outcome.undershoot_fraction() <= MAX_UNDERSHOOT,
-                "{} at {percent}%: {} bytes leaves {:.3}% of {target} unspent",
+                outcome.undershoot() <= allowed,
+                "{} at {percent}%: {} bytes leaves {} of {target} unspent, over the {allowed}-byte tolerance",
                 rung.name,
                 outcome.achieved(),
-                outcome.undershoot_fraction() * 100.0
+                outcome.undershoot()
             );
             assert!(
                 outcome.iterations() <= MAX_ITERATIONS,

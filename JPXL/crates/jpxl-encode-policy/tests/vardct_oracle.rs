@@ -42,7 +42,10 @@ use std::path::{Path, PathBuf};
 use jpxl_conformance::{Image as PnmImage, OracleKind, OutputFormat, oracle};
 use jpxl_core::limits::Limits;
 use jpxl_decode::decode::decode;
-use jpxl_encode_policy::{EncodeRequest, RateTarget, encode_srgb8_to_target, encode_srgb8_vardct};
+use jpxl_encode_policy::{
+    EncodeRequest, PreparedFrame, RateTarget, encode_srgb8_to_target, encode_srgb8_vardct,
+    plan_frame,
+};
 
 /// A distinct directory per test, so parallel runs cannot collide.
 fn scratch(tag: &str) -> PathBuf {
@@ -159,9 +162,29 @@ fn error(a: &[u8], b: &[u8]) -> (u32, f64) {
 /// Encodes one case and writes the codestream, returning it and the source.
 fn encode_case(case: &Case, dir: &Path) -> (Vec<u8>, Vec<u8>, PathBuf) {
     let source = test_image(case.width, case.height, case.grey);
-    let codestream =
-        encode_srgb8_vardct(case.width, case.height, &source, &EncodeRequest::defaults())
-            .unwrap_or_else(|e| panic!("{}: encode failed: {e}", case.name));
+    let frame = PreparedFrame::from_srgb8(case.width, case.height, &source)
+        .unwrap_or_else(|e| panic!("{}: prepare failed: {e}", case.name));
+    let plan = plan_frame(&frame, &EncodeRequest::defaults())
+        .unwrap_or_else(|e| panic!("{}: plan failed: {e}", case.name));
+    if !case.grey {
+        let non_neutral_lf = plan.plan().spatial.lf.correlation.x_factor_lf != 128
+            || plan.plan().spatial.lf.correlation.b_factor_lf != 128;
+        let non_neutral_hf = plan.plan().spatial.lf_groups.iter().any(|group| {
+            group
+                .cfl
+                .x_from_y()
+                .iter()
+                .chain(group.cfl.b_from_y())
+                .any(|factor| factor.get() != 0)
+        });
+        assert!(
+            non_neutral_lf || non_neutral_hf,
+            "{}: the oracle fixture must put non-neutral CfL on the wire",
+            case.name
+        );
+    }
+    let codestream = jpxl_encode::vardct::write_codestream(&plan)
+        .unwrap_or_else(|e| panic!("{}: encode failed: {e}", case.name));
     let jxl = dir.join(format!("{}.jxl", case.name));
     std::fs::write(&jxl, &codestream).expect("write");
     (codestream, source, jxl)

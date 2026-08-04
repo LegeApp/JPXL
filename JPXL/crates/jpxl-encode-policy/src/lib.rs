@@ -49,9 +49,9 @@
 //!   every candidate through the real writer. Without a
 //!   [`RateTarget`](request::RateTarget) the caller still sets the scalars and
 //!   nothing searches;
-//! * **no chroma-from-luma estimation** — the signalled factors stay at their
-//!   neutral zero, and I.2.3's fixed `base_correlation_b == 1.0` is
-//!   compensated for arithmetically rather than searched (milestone 5);
+//! * ~~no chroma-from-luma estimation~~ — **milestone 5 landed**: frame-wide
+//!   LF and per-64x64 HF factors are regressed, then refined over the exact
+//!   integer representation I.6 consumes;
 //! * **no entropy search** — [`cluster_of`] is a fixed six-way split and the
 //!   coefficient orders are I.3.2's natural ones (milestone 8);
 //! * **no filter planning** — gaborish and EPF are off (milestone 9).
@@ -73,16 +73,19 @@ use jpxl_core::forward::{
 };
 use jpxl_core::varblock::TransformType;
 use jpxl_encode::vardct::headers::{NEUTRAL_QM_SCALE, VARDCT_GROUP_SIZE_SHIFT};
-use jpxl_encode::vardct::ids::{ClusterId, LfGroupId, PreContextId, PresetId};
+use jpxl_encode::vardct::ids::{CflFactor, ClusterId, LfGroupId, PreContextId, PresetId};
 use jpxl_encode::vardct::plan::{
     CflGrid, EmissionPlan, EntropyModelPlan, EntropyPlan, FrameDecision, HfBlockContextPlan,
-    HfPassEntropyPlan, HistogramPlan, HybridUintPlan, LfDecision, LfGroupPlan, LfQuantPlanes,
-    OrderSet, QuantizedFrameIr, QuantizedLfGroup, QuantizerDecision, RestorationDecision,
-    SectionLayout, SharpnessGrid, SpatialPlan, VarblockCoefficients,
+    HfPassEntropyPlan, HistogramPlan, HybridUintPlan, LfCorrelationDecision, LfDecision,
+    LfGroupPlan, LfQuantPlanes, OrderSet, QuantizedFrameIr, QuantizedLfGroup, QuantizerDecision,
+    RestorationDecision, SectionLayout, SharpnessGrid, SpatialPlan, VarblockCoefficients,
 };
 use jpxl_encode::vardct::{ValidatedEmissionPlan, VardctGeometry, census_frame, validate};
 
-use quantize::{DCT8X8_CELLS, HfQuantizer, LfQuantizer, NUM_CHANNELS, neutral_cfl_factors};
+use quantize::{
+    CflAccumulator, DCT8X8_CELLS, DEFAULT_COLOUR_FACTOR, HfQuantizer, LfQuantizer, NUM_CHANNELS,
+    cfl_multiplier,
+};
 
 pub use analysis::{AnalysisAtlas, AtomGrid};
 pub use error::{PolicyError, Result};
@@ -102,6 +105,15 @@ const COEFFICIENT_CONTEXTS: u64 = 458;
 
 /// How many entropy clusters [`cluster_of`] produces.
 const NUM_CLUSTERS: usize = 6;
+
+/// The interoperable range of G.2.4's HF correlation samples.
+///
+/// Although the syntax is a Modular sample, a black-box boundary probe against
+/// `djxl` established that `-128` and `127` round-trip consistently while
+/// `-129` and `128` do not. Keep the policy inside the common range accepted
+/// identically by all three oracle decoders.
+const HF_FACTOR_MIN: i32 = -128;
+const HF_FACTOR_MAX: i32 = 127;
 
 /// Plans one VarDCT frame and hands back a plan the writer will accept.
 ///
@@ -164,6 +176,21 @@ pub(crate) fn plan_at(
     request: &EncodeRequest,
     quantizer: QuantizerChoice,
 ) -> Result<ValidatedEmissionPlan> {
+    plan_at_with_cfl(frame, atlas, request, quantizer, true)
+}
+
+/// [`plan_at`] with the Slice-15 search switch exposed for regression tests.
+///
+/// Production always enables CfL. The disabled arm exists only to preserve a
+/// byte-for-byte pre-slice-15 baseline for the exit evidence; it is not a
+/// public encoder knob.
+fn plan_at_with_cfl(
+    frame: &PreparedFrame,
+    atlas: &AnalysisAtlas,
+    request: &EncodeRequest,
+    quantizer: QuantizerChoice,
+    enable_cfl: bool,
+) -> Result<ValidatedEmissionPlan> {
     let decision = FrameDecision {
         width: frame.width(),
         height: frame.height(),
@@ -193,6 +220,7 @@ pub(crate) fn plan_at(
         NEUTRAL_QM_SCALE,
         NEUTRAL_QM_SCALE,
     )?;
+    let cfl = estimate_cfl(frame, &geometry, &lf_quant, &hf_quant, enable_cfl)?;
 
     let mut lf_groups = Vec::new();
     let mut quantized = Vec::new();
@@ -203,11 +231,6 @@ pub(crate) fn plan_at(
             .ok_or(PolicyError::Unsupported {
                 what: "an LF group outside the frame's grid",
             })?;
-        let tiles = geometry
-            .lf_group_cfl_tiles(id)
-            .ok_or(PolicyError::Unsupported {
-                what: "an LF group outside the frame's grid",
-            })?;
         let rect = geometry.lf_group_rect(id).ok_or(PolicyError::Unsupported {
             what: "an LF group outside the frame's grid",
         })?;
@@ -215,16 +238,26 @@ pub(crate) fn plan_at(
         let varblocks = match request.budget.cover_mode {
             CoverMode::FixedDct8x8 => block::fixed_dct8x8(blocks, quantizer.hf_mul)?,
         };
-        let quantized_group =
-            quantize_lf_group(frame, &lf_quant, &hf_quant, rect.x0, rect.y0, blocks)?;
+        let group_cfl = cfl
+            .groups
+            .get(usize::try_from(index).unwrap_or(usize::MAX))
+            .ok_or(PolicyError::Unsupported {
+                what: "a missing CfL grid for an LF group",
+            })?;
+        let quantized_group = quantize_lf_group(
+            frame,
+            &lf_quant,
+            &hf_quant,
+            &cfl.correlation,
+            group_cfl,
+            (rect.x0, rect.y0),
+            blocks,
+        )?;
 
         lf_groups.push(LfGroupPlan {
             id,
             blocks: varblocks.into_boxed_slice(),
-            // I.6's searchable factors stay at their neutral zero; the fixed
-            // `base_correlation_b == 1.0` term is compensated for inside
-            // `quantize_lf_group`, not signalled away.
-            cfl: CflGrid::zeros(tiles),
+            cfl: group_cfl.clone(),
             sharpness: SharpnessGrid::zeros(blocks),
         });
         quantized.push(QuantizedLfGroup {
@@ -234,13 +267,15 @@ pub(crate) fn plan_at(
         });
     }
 
+    let mut lf = LfDecision::vardct_neutral();
+    lf.correlation = cfl.correlation;
     let spatial = SpatialPlan {
         frame: decision,
         quantizer: QuantizerDecision {
             global_scale: quantizer.global_scale,
             quant_lf: quantizer.quant_lf,
         },
-        lf: LfDecision::vardct_neutral(),
+        lf,
         restoration: RestorationDecision::default(),
         lf_groups: lf_groups.into_boxed_slice(),
     };
@@ -301,6 +336,393 @@ pub(crate) fn plan_at(
     Ok(validate(plan)?)
 }
 
+/// The frame-wide LF factors and one HF factor grid per LF group.
+struct CflEstimate {
+    correlation: LfCorrelationDecision,
+    groups: Vec<CflGrid>,
+}
+
+/// One coefficient sample used by the integer refinement.
+#[derive(Debug, Clone, Copy)]
+struct CflSample {
+    source: f32,
+    reconstructed_y: f32,
+    cell: usize,
+}
+
+/// Regression sums plus the exact samples needed to score neighbouring wire
+/// factors through the quantizer's decoder-side arithmetic.
+#[derive(Debug, Default)]
+struct CflSamples {
+    regression: CflAccumulator,
+    samples: Vec<CflSample>,
+}
+
+impl CflSamples {
+    fn push(&mut self, source: f32, regression_y: f32, reconstructed_y: f32, cell: usize) {
+        self.regression.add(regression_y, source);
+        self.samples.push(CflSample {
+            source,
+            reconstructed_y,
+            cell,
+        });
+    }
+}
+
+/// The samples of one LF group's 64x64 CfL tiles.
+struct HfCflSamples {
+    tiles: jpxl_encode::vardct::BlockGrid,
+    x: Vec<CflSamples>,
+    b: Vec<CflSamples>,
+}
+
+/// Regression first, then integer refinement in exactly the factor space I.6
+/// consumes.
+///
+/// The least-squares seed is trained in the unquantized coefficient domain,
+/// `Σ(Y·C) / Σ(Y²)`, separately for LF and each HF tile. Its integer seed is
+/// then refined over nearby stored factors using reconstructed `dY`, the value
+/// the decoder actually adds back, and quantizing the chroma residual through
+/// [`LfQuantizer`] or [`HfQuantizer`] (including I.5.3's quantization bias).
+/// Grayscale is a hard source-domain no-op so its pre-slice-15 stream is
+/// byte-identical rather than merely visually identical.
+fn estimate_cfl(
+    frame: &PreparedFrame,
+    geometry: &VardctGeometry,
+    lf_quant: &LfQuantizer,
+    hf_quant: &HfQuantizer,
+    enabled: bool,
+) -> Result<CflEstimate> {
+    if !enabled || frame.is_grayscale() {
+        let groups = (0..geometry.num_lf_groups())
+            .filter_map(|index| {
+                let id = LfGroupId::new(u32::try_from(index).ok()?);
+                geometry.lf_group_cfl_tiles(id).map(CflGrid::zeros)
+            })
+            .collect();
+        return Ok(CflEstimate {
+            correlation: LfCorrelationDecision::default(),
+            groups,
+        });
+    }
+
+    let mut lf_x = CflSamples::default();
+    let mut lf_b = CflSamples::default();
+    let mut hf_groups = Vec::new();
+    let mut scratch = TransformScratch::for_transform(TransformType::Dct8x8);
+    let mut samples = [0.0f32; DCT8X8_CELLS];
+    let mut coeffs: [[f32; DCT8X8_CELLS]; NUM_CHANNELS] = [[0.0; DCT8X8_CELLS]; NUM_CHANNELS];
+
+    for index in 0..geometry.num_lf_groups() {
+        let id = LfGroupId::new(u32::try_from(index).unwrap_or(u32::MAX));
+        let blocks = geometry
+            .lf_group_blocks(id)
+            .ok_or(PolicyError::Unsupported {
+                what: "an LF group outside the frame's grid",
+            })?;
+        let tiles = geometry
+            .lf_group_cfl_tiles(id)
+            .ok_or(PolicyError::Unsupported {
+                what: "an LF group outside the frame's grid",
+            })?;
+        let rect = geometry.lf_group_rect(id).ok_or(PolicyError::Unsupported {
+            what: "an LF group outside the frame's grid",
+        })?;
+        let tile_count = usize::try_from(tiles.area()).unwrap_or(0);
+        let mut group = HfCflSamples {
+            tiles,
+            x: (0..tile_count).map(|_| CflSamples::default()).collect(),
+            b: (0..tile_count).map(|_| CflSamples::default()).collect(),
+        };
+
+        for by in 0..blocks.height {
+            for bx in 0..blocks.width {
+                transform_block(
+                    frame,
+                    rect.x0 + bx * 8,
+                    rect.y0 + by * 8,
+                    &mut samples,
+                    &mut coeffs,
+                    &mut scratch,
+                )?;
+
+                let y_lf = lf_target_of(&coeffs, 1, &mut scratch)?;
+                let q_y_lf = lf_quant.quantize(y_lf, 1)?;
+                let d_y_lf = lf_quant.reconstruct(q_y_lf, 1);
+                lf_x.push(lf_target_of(&coeffs, 0, &mut scratch)?, y_lf, d_y_lf, 0);
+                lf_b.push(lf_target_of(&coeffs, 2, &mut scratch)?, y_lf, d_y_lf, 0);
+
+                let tile_index =
+                    usize::try_from(u64::from(by / 8) * u64::from(tiles.width) + u64::from(bx / 8))
+                        .unwrap_or(usize::MAX);
+                for cell in 1..DCT8X8_CELLS {
+                    let y = coeffs
+                        .get(1)
+                        .and_then(|plane| plane.get(cell))
+                        .copied()
+                        .unwrap_or(0.0);
+                    let q_y = hf_quant.choose(y, 1, cell)?;
+                    let d_y = hf_quant.reconstruct(q_y, 1, cell);
+                    if let Some(tile) = group.x.get_mut(tile_index) {
+                        tile.push(
+                            coeffs
+                                .first()
+                                .and_then(|plane| plane.get(cell))
+                                .copied()
+                                .unwrap_or(0.0),
+                            y,
+                            d_y,
+                            cell,
+                        );
+                    }
+                    if let Some(tile) = group.b.get_mut(tile_index) {
+                        tile.push(
+                            coeffs
+                                .get(2)
+                                .and_then(|plane| plane.get(cell))
+                                .copied()
+                                .unwrap_or(0.0),
+                            y,
+                            d_y,
+                            cell,
+                        );
+                    }
+                }
+            }
+        }
+        hf_groups.push(group);
+    }
+
+    let (x_factor, b_factor) = refine_lf_factors(&lf_x, &lf_b, lf_quant)?;
+    let x_factor_lf = u8::try_from(x_factor + 128).map_err(|_| PolicyError::Unsupported {
+        what: "an LF X correlation factor outside u8",
+    })?;
+    let b_factor_lf = u8::try_from(b_factor + 128).map_err(|_| PolicyError::Unsupported {
+        what: "an LF B correlation factor outside u8",
+    })?;
+    let correlation = LfCorrelationDecision {
+        colour_factor: DEFAULT_COLOUR_FACTOR,
+        base_correlation_x: 0.0,
+        base_correlation_b: 1.0,
+        x_factor_lf,
+        b_factor_lf,
+    };
+
+    let mut groups = Vec::with_capacity(hf_groups.len());
+    for group in hf_groups {
+        let mut x = Vec::with_capacity(group.x.len());
+        let mut b = Vec::with_capacity(group.b.len());
+        for tile in &group.x {
+            x.push(CflFactor::new(refine_hf_factor(tile, 0.0, 0, hf_quant)?));
+        }
+        for tile in &group.b {
+            b.push(CflFactor::new(refine_hf_factor(tile, 1.0, 2, hf_quant)?));
+        }
+        groups.push(CflGrid::new(group.tiles, x, b)?);
+    }
+    Ok(CflEstimate {
+        correlation,
+        groups,
+    })
+}
+
+fn transform_block(
+    frame: &PreparedFrame,
+    x0: u32,
+    y0: u32,
+    samples: &mut [f32; DCT8X8_CELLS],
+    coeffs: &mut [[f32; DCT8X8_CELLS]; NUM_CHANNELS],
+    scratch: &mut TransformScratch,
+) -> Result<()> {
+    for channel in 0..NUM_CHANNELS {
+        gather_block(frame, channel, x0, y0, samples);
+        let (Some(view), Some(mut out)) = (
+            SampleView::contiguous(samples, 8, 8),
+            coeffs
+                .get_mut(channel)
+                .and_then(|plane| CoeffViewMut::contiguous(plane, 8, 8)),
+        ) else {
+            return Err(PolicyError::Unsupported {
+                what: "an 8x8 block view",
+            });
+        };
+        forward_varblock_into(TransformType::Dct8x8, &view, &mut out, scratch);
+    }
+    Ok(())
+}
+
+/// The candidate integer factors to score: a small window around the
+/// least-squares seed, always including the neutral factor `0`.
+fn factor_candidates(seed: i32, lo: i32, hi: i32) -> Vec<i32> {
+    let mut out = Vec::with_capacity(10);
+    for delta in -4i32..=4 {
+        let candidate = seed.saturating_add(delta).clamp(lo, hi);
+        if !out.contains(&candidate) {
+            out.push(candidate);
+        }
+    }
+    if !out.contains(&0) {
+        out.push(0);
+    }
+    out
+}
+
+/// A crude but monotone bit-cost of one quantized residual.
+///
+/// CfL does not change the reconstructed value materially — the quantizer
+/// re-targets the residual either way — so the axis that actually moves with
+/// the factor is *rate*, not distortion. This proxy is the magnitude class of
+/// the coefficient: zero is free (it is the overwhelming symbol and the
+/// context model prices a run of them near nothing), and a non-zero costs its
+/// bit length plus a sign. Minimizing its sum is minimizing residual entropy
+/// in the only currency slice 15 can spend without a full re-encode per
+/// candidate.
+fn residual_bits(q: i32) -> u64 {
+    if q == 0 {
+        0
+    } else {
+        u64::from(32 - q.unsigned_abs().leading_zeros()) + 1
+    }
+}
+
+/// The signaling cost of one stored factor, in the same currency.
+///
+/// A neutral factor is free: `0` is the default Modular sample, predicts
+/// exactly, and (for LF) keeps the whole I.2.3 bundle at its one-bit
+/// `all_default`. A non-zero factor must pay its own magnitude, so a tile whose
+/// residual saving does not clear that price stays neutral — which is what
+/// keeps CfL from ever enlarging weakly-correlated content.
+fn factor_bits(factor: i32) -> u64 {
+    if factor == 0 {
+        0
+    } else {
+        u64::from(32 - factor.unsigned_abs().leading_zeros()) + 2
+    }
+}
+
+/// The residual bit-cost of one candidate LF factor over a channel's DC.
+fn lf_residual_cost(
+    samples: &CflSamples,
+    base: f32,
+    factor: i32,
+    channel: usize,
+    quantizer: &LfQuantizer,
+) -> Result<u64> {
+    let k = cfl_multiplier(base, factor, DEFAULT_COLOUR_FACTOR);
+    let mut bits = 0u64;
+    for sample in &samples.samples {
+        let q = quantizer.quantize(sample.source - k * sample.reconstructed_y, channel)?;
+        bits = bits.saturating_add(residual_bits(q));
+    }
+    Ok(bits)
+}
+
+/// Joint LF refinement: the two factors share one I.2.3 bundle, so charging
+/// them independently would adopt a tiny win that cannot repay the bundle's
+/// fixed fields.
+fn refine_lf_factors(
+    x: &CflSamples,
+    b: &CflSamples,
+    quantizer: &LfQuantizer,
+) -> Result<(i32, i32)> {
+    // Explicit I.2.3 costs 51 bits at the defaults used here:
+    // all_default=false (1), colour_factor's selector (2), two F16s (32), and
+    // the two biased factors (16). The all-default form costs one bit, hence a
+    // non-neutral pair must save at least 50 residual bits before it is useful.
+    const LF_BUNDLE_EXTRA_BITS: u64 = 50;
+
+    let x_seed = x
+        .regression
+        .best_factor(0.0, DEFAULT_COLOUR_FACTOR, -128, 127);
+    let b_seed = b
+        .regression
+        .best_factor(1.0, DEFAULT_COLOUR_FACTOR, -128, 127);
+    let x_candidates = factor_candidates(x_seed, -128, 127);
+    let b_candidates = factor_candidates(b_seed, -128, 127);
+
+    let neutral_cost = lf_residual_cost(x, 0.0, 0, 0, quantizer)?
+        .saturating_add(lf_residual_cost(b, 1.0, 0, 2, quantizer)?);
+    let mut best = (0i32, 0i32);
+    let mut best_cost = neutral_cost;
+    for &x_factor in &x_candidates {
+        let x_cost = lf_residual_cost(x, 0.0, x_factor, 0, quantizer)?;
+        for &b_factor in &b_candidates {
+            let mut cost = x_cost.saturating_add(lf_residual_cost(b, 1.0, b_factor, 2, quantizer)?);
+            if x_factor != 0 || b_factor != 0 {
+                cost = cost
+                    .saturating_add(LF_BUNDLE_EXTRA_BITS)
+                    .saturating_add(factor_bits(x_factor))
+                    .saturating_add(factor_bits(b_factor));
+            }
+            let magnitude = x_factor.unsigned_abs() + b_factor.unsigned_abs();
+            let best_magnitude = best.0.unsigned_abs() + best.1.unsigned_abs();
+            if cost < best_cost || (cost == best_cost && magnitude < best_magnitude) {
+                best = (x_factor, b_factor);
+                best_cost = cost;
+            }
+        }
+    }
+    Ok(best)
+}
+
+/// The residual bit-cost of one candidate HF factor over a tile.
+fn hf_residual_cost(
+    samples: &CflSamples,
+    base: f32,
+    factor: i32,
+    channel: usize,
+    quantizer: &HfQuantizer,
+) -> Result<u64> {
+    let k = cfl_multiplier(base, factor, DEFAULT_COLOUR_FACTOR);
+    let mut bits = 0u64;
+    for sample in &samples.samples {
+        let q = quantizer.choose(
+            sample.source - k * sample.reconstructed_y,
+            channel,
+            sample.cell,
+        )?;
+        bits = bits.saturating_add(residual_bits(q));
+    }
+    Ok(bits)
+}
+
+/// The best HF factor for one 64x64 tile: the candidate whose residual-plus-
+/// signaling bits are lowest, ties resolved toward the neutral factor so an
+/// unhelpful tile costs nothing and stays byte-neutral.
+fn refine_hf_factor(
+    samples: &CflSamples,
+    base: f32,
+    channel: usize,
+    quantizer: &HfQuantizer,
+) -> Result<i32> {
+    // G.2.4's `XFromY`/`BFromY` are Modular samples, so *our* decoder reads any
+    // `i32`. The reference decoder does not: `djxl` (libjxl) stores these as
+    // signed bytes, and a factor outside `[-128, 127]` decodes to a different
+    // value there than in `jpxl-decode` or `jxl-oxide` — a genuine
+    // interoperability constraint, not a coding-cost heuristic. It was pinned
+    // with a single-tile boundary probe against `djxl`: `+127`/`-128` agree,
+    // `+128`/`-129` diverge. The search space is therefore exactly the wire
+    // range the reference honours.
+    let seed =
+        samples
+            .regression
+            .best_factor(base, DEFAULT_COLOUR_FACTOR, HF_FACTOR_MIN, HF_FACTOR_MAX);
+    let mut best_factor = 0i32;
+    let mut best_cost = hf_residual_cost(samples, base, 0, channel, quantizer)?;
+    for factor in factor_candidates(seed, HF_FACTOR_MIN, HF_FACTOR_MAX) {
+        if factor == 0 {
+            continue;
+        }
+        let cost = hf_residual_cost(samples, base, factor, channel, quantizer)?
+            .saturating_add(factor_bits(factor));
+        if cost < best_cost || (cost == best_cost && factor.abs() < best_factor.abs()) {
+            best_cost = cost;
+            best_factor = factor;
+        }
+    }
+    Ok(best_factor)
+}
+
 /// One LF group's quantized integers.
 struct QuantizedGroup {
     lf: LfQuantPlanes,
@@ -316,11 +738,22 @@ fn quantize_lf_group(
     frame: &PreparedFrame,
     lf_quant: &LfQuantizer,
     hf_quant: &HfQuantizer,
-    x0: u32,
-    y0: u32,
+    correlation: &LfCorrelationDecision,
+    cfl: &CflGrid,
+    origin: (u32, u32),
     blocks: jpxl_encode::vardct::BlockGrid,
 ) -> Result<QuantizedGroup> {
-    let (k_x, k_b) = neutral_cfl_factors();
+    let (x0, y0) = origin;
+    let k_x_lf = cfl_multiplier(
+        correlation.base_correlation_x,
+        i32::from(correlation.x_factor_lf) - 128,
+        correlation.colour_factor,
+    );
+    let k_b_lf = cfl_multiplier(
+        correlation.base_correlation_b,
+        i32::from(correlation.b_factor_lf) - 128,
+        correlation.colour_factor,
+    );
     let cells = usize::try_from(blocks.area()).unwrap_or(0);
     let mut lf_planes: [Vec<i32>; NUM_CHANNELS] = core::array::from_fn(|_| vec![0i32; cells]);
     let mut coefficients = Vec::with_capacity(cells);
@@ -331,20 +764,14 @@ fn quantize_lf_group(
 
     for by in 0..blocks.height {
         for bx in 0..blocks.width {
-            for channel in 0..NUM_CHANNELS {
-                gather_block(frame, channel, x0 + bx * 8, y0 + by * 8, &mut samples);
-                let (Some(view), Some(mut out)) = (
-                    SampleView::contiguous(&samples, 8, 8),
-                    coeffs
-                        .get_mut(channel)
-                        .and_then(|c| CoeffViewMut::contiguous(c, 8, 8)),
-                ) else {
-                    return Err(PolicyError::Unsupported {
-                        what: "an 8x8 block view",
-                    });
-                };
-                forward_varblock_into(TransformType::Dct8x8, &view, &mut out, &mut scratch);
-            }
+            transform_block(
+                frame,
+                x0 + bx * 8,
+                y0 + by * 8,
+                &mut samples,
+                &mut coeffs,
+                &mut scratch,
+            )?;
 
             let cell_index =
                 usize::try_from(u64::from(by) * u64::from(blocks.width) + u64::from(bx))
@@ -374,10 +801,34 @@ fn quantize_lf_group(
                 }
             }
 
+            let tile_index = usize::try_from(
+                u64::from(by / 8) * u64::from(cfl.tiles().width) + u64::from(bx / 8),
+            )
+            .unwrap_or(usize::MAX);
+            let k_x_hf = cfl_multiplier(
+                correlation.base_correlation_x,
+                cfl.x_from_y()
+                    .get(tile_index)
+                    .copied()
+                    .unwrap_or_default()
+                    .get(),
+                correlation.colour_factor,
+            );
+            let k_b_hf = cfl_multiplier(
+                correlation.base_correlation_b,
+                cfl.b_from_y()
+                    .get(tile_index)
+                    .copied()
+                    .unwrap_or_default()
+                    .get(),
+                correlation.colour_factor,
+            );
+
             // --- X and B: I.6 reconstructs X = dX + kX*dY, B = dB + kB*dY ---
             for &channel in &[0usize, 2usize] {
-                let k = if channel == 0 { k_x } else { k_b };
-                let lf_target = lf_target_of(&coeffs, channel, &mut scratch)? - k * d_y_lf;
+                let k_lf = if channel == 0 { k_x_lf } else { k_b_lf };
+                let k_hf = if channel == 0 { k_x_hf } else { k_b_hf };
+                let lf_target = lf_target_of(&coeffs, channel, &mut scratch)? - k_lf * d_y_lf;
                 let q_lf = lf_quant.quantize(lf_target, channel)?;
                 if let Some(slot) = lf_planes
                     .get_mut(channel)
@@ -391,7 +842,7 @@ fn quantize_lf_group(
                         .and_then(|c| c.get(cell))
                         .copied()
                         .unwrap_or(0.0)
-                        - k * reconstructed_y.get(cell).copied().unwrap_or(0.0);
+                        - k_hf * reconstructed_y.get(cell).copied().unwrap_or(0.0);
                     let q = hf_quant.choose(target, channel, cell)?;
                     if let Some(slot) = quant.get_mut(channel).and_then(|c| c.get_mut(cell)) {
                         *slot = q;
@@ -607,11 +1058,80 @@ pub fn encode_srgb8_to_target(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use jpxl_core::limits::Limits;
+    use jpxl_decode::decode::decode;
 
     fn grey_frame(width: u32, height: u32) -> PreparedFrame {
         let n = (width * height) as usize;
         PreparedFrame::from_linear_srgb(width, height, vec![0.4; n], vec![0.4; n], vec![0.4; n])
             .expect("legal frame")
+    }
+
+    fn synthetic_rgb(width: u32, height: u32, grayscale: bool) -> Vec<u8> {
+        let mut out = Vec::with_capacity(
+            usize::try_from(u64::from(width) * u64::from(height) * 3).unwrap_or(0),
+        );
+        for y in 0..height {
+            for x in 0..width {
+                let ramp = (x * 170 / width.max(1)) + (y * 70 / height.max(1));
+                let checker = if (x / 16 + y / 16).is_multiple_of(2) {
+                    12
+                } else {
+                    0
+                };
+                let luma = u8::try_from((20 + ramp + checker).min(255)).unwrap_or(255);
+                if grayscale {
+                    out.extend_from_slice(&[luma, luma, luma]);
+                } else {
+                    // A fixed chromaticity under a natural-photo-like mixture
+                    // of broad gradients and low-frequency texture: all three
+                    // XYB channels vary with the same luminance field, which is
+                    // exactly the content CfL should compact.
+                    out.extend_from_slice(&[
+                        luma,
+                        u8::try_from(u16::from(luma) * 4 / 5).unwrap_or(255),
+                        u8::try_from(u16::from(luma) * 3 / 5).unwrap_or(255),
+                    ]);
+                }
+            }
+        }
+        out
+    }
+
+    fn encode_with_cfl(frame: &PreparedFrame, enabled: bool) -> Vec<u8> {
+        let request = EncodeRequest::defaults();
+        let atlas = AnalysisAtlas::analyze(frame);
+        let plan = plan_at_with_cfl(
+            frame,
+            &atlas,
+            &request,
+            QuantizerChoice::from_request(&request),
+            enabled,
+        )
+        .expect("a legal plan");
+        jpxl_encode::vardct::write_codestream(&plan).expect("encodes")
+    }
+
+    fn decoded_rgb(bytes: &[u8]) -> Vec<u8> {
+        let image = decode(bytes, &Limits::default()).expect("decodes");
+        let count = usize::try_from(u64::from(image.width) * u64::from(image.height)).unwrap_or(0);
+        let mut out = Vec::with_capacity(count * 3);
+        for i in 0..count {
+            for plane in image.planes.iter().take(3) {
+                let sample = plane.samples.get(i).copied().unwrap_or(0);
+                out.push(u8::try_from(sample.clamp(0, 255)).unwrap_or(0));
+            }
+        }
+        out
+    }
+
+    fn rmse(a: &[u8], b: &[u8]) -> f64 {
+        assert_eq!(a.len(), b.len());
+        let sum = a.iter().zip(b).fold(0.0, |sum, (&x, &y)| {
+            let error = f64::from(x) - f64::from(y);
+            sum + error * error
+        });
+        sum / a.len().max(1) as f64
     }
 
     #[test]
@@ -651,5 +1171,67 @@ mod tests {
         // The last LF group is clipped: 4200 - 4096 = 104 samples wide.
         let last = plan.plan().spatial.lf_groups.get(2).expect("third group");
         assert_eq!(last.nb_blocks(), 13 * 5);
+    }
+
+    #[test]
+    fn grayscale_is_byte_identical_to_the_neutral_cfl_baseline() {
+        let rgb = synthetic_rgb(256, 256, true);
+        let frame = PreparedFrame::from_srgb8(256, 256, &rgb).expect("frame");
+        let enabled = encode_with_cfl(&frame, true);
+        let neutral = encode_with_cfl(&frame, false);
+        assert_eq!(
+            enabled, neutral,
+            "CfL estimation must be an exact no-op for grayscale"
+        );
+    }
+
+    #[test]
+    fn cfl_reduces_size_at_equal_quality_on_correlated_colour() {
+        let rgb = synthetic_rgb(256, 256, false);
+        let frame = PreparedFrame::from_srgb8(256, 256, &rgb).expect("frame");
+        let request = EncodeRequest::defaults();
+        let atlas = AnalysisAtlas::analyze(&frame);
+        let plan = plan_at_with_cfl(
+            &frame,
+            &atlas,
+            &request,
+            QuantizerChoice::from_request(&request),
+            true,
+        )
+        .expect("a legal plan");
+        let non_neutral_lf = plan.plan().spatial.lf.correlation != LfCorrelationDecision::default();
+        let non_neutral_hf = plan.plan().spatial.lf_groups.iter().any(|group| {
+            group
+                .cfl
+                .x_from_y()
+                .iter()
+                .chain(group.cfl.b_from_y())
+                .any(|factor| factor.get() != 0)
+        });
+        assert!(
+            non_neutral_lf || non_neutral_hf,
+            "the correlated fixture must exercise non-neutral CfL on the wire"
+        );
+        let enabled = jpxl_encode::vardct::write_codestream(&plan).expect("encodes");
+        let neutral = encode_with_cfl(&frame, false);
+        let enabled_rmse = rmse(&decoded_rgb(&enabled), &rgb).sqrt();
+        let neutral_rmse = rmse(&decoded_rgb(&neutral), &rgb).sqrt();
+        eprintln!(
+            "correlated colour: CfL {} B / RMSE {:.4}; neutral {} B / RMSE {:.4}",
+            enabled.len(),
+            enabled_rmse,
+            neutral.len(),
+            neutral_rmse
+        );
+        assert!(
+            enabled.len() < neutral.len(),
+            "CfL {} B must beat neutral {} B",
+            enabled.len(),
+            neutral.len()
+        );
+        assert!(
+            enabled_rmse <= neutral_rmse + 0.05,
+            "CfL RMSE {enabled_rmse} regressed from neutral {neutral_rmse}"
+        );
     }
 }

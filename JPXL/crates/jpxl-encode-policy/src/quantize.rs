@@ -36,9 +36,9 @@
 //! are not neutral: `base_correlation_b` is `1.0`, so a decoder reconstructs
 //! `B = dB + 1.0 * dY` whatever this encoder intends. The signalled factors
 //! `XFromY`, `BFromY`, `x_factor_lf` and `b_factor_lf` are the *searchable*
-//! part, and this slice leaves them at their neutral zero — but the fixed
-//! `base_correlation_b` term still has to be subtracted on the way in, from the
-//! **reconstructed** `dY`, not from the source Y. Getting this wrong does not
+//! part. Slice 15 estimates them, but the rule is unchanged: the resulting
+//! whole `kB` still has to be subtracted on the way in, from the
+//! **reconstructed** `dY`, not from source Y. Getting this wrong does not
 //! produce a subtle error: it doubles the blue-yellow axis.
 //!
 //! `base_correlation_x` is `0.0`, so `kX` really is neutral and X passes
@@ -301,6 +301,119 @@ pub const fn neutral_cfl_factors() -> (f32, f32) {
     (BASE_CORRELATION_X, BASE_CORRELATION_B)
 }
 
+/// I.2.3's default `colour_factor`: the divisor I.6 turns a stored factor into
+/// a correlation coefficient with. Slice 15 keeps it at the default so the
+/// searched quantity is the biased factor alone, in a space every decoder
+/// reads the same way.
+pub const DEFAULT_COLOUR_FACTOR: u32 = 84;
+
+/// I.6's `k = base_correlation + factor / colour_factor`, computed the way the
+/// decoder computes it: the division is done in `f32`, from the same integer
+/// the wire carries, so the encoder's `k` is bit-identical to the one the
+/// decoder will apply.
+#[must_use]
+pub fn cfl_multiplier(base: f32, factor: i32, colour_factor: u32) -> f32 {
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "colour_factor and the searched factor stay far inside f32's \
+                  exact-integer range, mirroring the decoder's own widening"
+    )]
+    let ratio = factor as f32 / colour_factor as f32;
+    base + ratio
+}
+
+/// The least-squares seed of one channel against luma, as sufficient
+/// statistics of the unquantized residual `C - k*Y`
+/// (`Encoder-plan1.md` §8).
+///
+/// The residual energy of a candidate correlation coefficient `k` is
+/// `Σ(C - k·Y)² = ΣC² - 2k·ΣYC + k²·ΣY²`, so the three running sums are all a
+/// seed calculation needs: every candidate is then an `O(1)` parabola
+/// evaluation, not a re-scan of the coefficients. The policy layer follows
+/// this regression with a separate integer refinement through reconstructed
+/// `dY` and the exact quantizer arithmetic.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct CflAccumulator {
+    s_yy: f64,
+    s_yc: f64,
+    s_cc: f64,
+}
+
+impl CflAccumulator {
+    /// Adds one `(unquantized Y, unquantized channel coefficient)` pair.
+    pub fn add(&mut self, y: f32, coeff: f32) {
+        let y = f64::from(y);
+        let c = f64::from(coeff);
+        self.s_yy += y * y;
+        self.s_yc += y * c;
+        self.s_cc += c * c;
+    }
+
+    /// Residual energy `Σ(C - k·Y)²` at a given `k`.
+    fn residual_energy(&self, k: f64) -> f64 {
+        self.s_cc - 2.0 * k * self.s_yc + k * k * self.s_yy
+    }
+
+    /// The integer factor in `[lo, hi]` whose correlation coefficient
+    /// minimizes the residual energy, refining in the wire's representable
+    /// space rather than rounding a float.
+    ///
+    /// The energy is convex in `k`, and `k` is affine in the factor, so the
+    /// least-squares optimum's integer neighbours bracket the best factor;
+    /// the neutral factor `0` is always among the candidates and wins every
+    /// tie. That tie rule is what makes an already-decorrelated channel —
+    /// grayscale's `X ≡ 0` and `B ≡ Y` — degenerate to exactly the neutral
+    /// factor, byte for byte.
+    #[must_use]
+    pub fn best_factor(&self, base: f32, colour_factor: u32, lo: i32, hi: i32) -> i32 {
+        if self.s_yy <= 0.0 {
+            // No luma energy to correlate against: nothing to subtract.
+            return 0;
+        }
+        let k_ls = self.s_yc / self.s_yy;
+        let star = (k_ls - f64::from(base)) * f64::from(colour_factor);
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "star is finite here (s_yy > 0), and the result is clamped \
+                      into [lo, hi] before use"
+        )]
+        let centre = star.round() as i64;
+        let mut best: Option<(i32, f64)> = None;
+        // The floor/ceil of the continuous optimum bracket the best integer;
+        // widen by one on each side against float slack, and always weigh the
+        // neutral factor so the degenerate case cannot drift off zero.
+        for delta in [-2i64, -1, 0, 1, 2] {
+            let cand = centre.saturating_add(delta);
+            let cand = i32::try_from(cand.clamp(i64::from(lo), i64::from(hi))).unwrap_or(0);
+            consider(&mut best, cand, self, base, colour_factor);
+        }
+        consider(&mut best, 0, self, base, colour_factor);
+        best.map_or(0, |(factor, _)| factor)
+    }
+}
+
+/// Keeps the lower-energy candidate, breaking ties toward the smaller
+/// magnitude and then toward zero (the neutral factor).
+fn consider(
+    best: &mut Option<(i32, f64)>,
+    cand: i32,
+    acc: &CflAccumulator,
+    base: f32,
+    colour_factor: u32,
+) {
+    let k = f64::from(cfl_multiplier(base, cand, colour_factor));
+    let energy = acc.residual_energy(k);
+    let better = match *best {
+        None => true,
+        Some((factor, best_energy)) => {
+            energy < best_energy || (energy == best_energy && cand.abs() < factor.abs())
+        }
+    };
+    if better {
+        *best = Some((cand, energy));
+    }
+}
+
 /// Rounds to the nearest integer and rejects anything past [`MAX_QUANT`].
 fn clamp_round(v: f32) -> Result<i32> {
     if !v.is_finite() {
@@ -439,5 +552,25 @@ mod tests {
         // kX is genuinely zero; kB is *one*, which is why B has to be
         // decorrelated on the way in.
         assert_eq!(neutral_cfl_factors(), (0.0, 1.0));
+    }
+
+    #[test]
+    fn cfl_regression_refines_in_the_integer_wire_space() {
+        let mut acc = CflAccumulator::default();
+        // C = 0.5 * Y, and colour_factor = 84, so factor 42 is exact.
+        for y in [-2.0f32, -1.0, 0.5, 3.0] {
+            acc.add(y, 0.5 * y);
+        }
+        assert_eq!(acc.best_factor(0.0, DEFAULT_COLOUR_FACTOR, -128, 127), 42);
+        assert_eq!(cfl_multiplier(0.0, 42, DEFAULT_COLOUR_FACTOR), 0.5);
+    }
+
+    #[test]
+    fn a_degenerate_cfl_regression_stays_neutral() {
+        let mut acc = CflAccumulator::default();
+        for value in [-3.0f32, 0.0, 8.0] {
+            acc.add(0.0, value);
+        }
+        assert_eq!(acc.best_factor(1.0, DEFAULT_COLOUR_FACTOR, -128, 127), 0);
     }
 }

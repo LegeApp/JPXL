@@ -81,6 +81,7 @@ pub struct PreparedFrame {
     height: u32,
     xyb: XybPlanes,
     intensity_target: f32,
+    grayscale: bool,
 }
 
 impl PreparedFrame {
@@ -110,6 +111,15 @@ impl PreparedFrame {
                 return Err(PolicyError::SampleCountMismatch { expected, found });
             }
         }
+        // Preserve this source-domain fact before the irreversible RGB -> XYB
+        // conversion. Slice 15 uses it as a hard no-op gate: a true grayscale
+        // input must retain the pre-CfL codestream byte for byte, rather than
+        // relying on near-zero floating-point regression to rediscover that.
+        let grayscale = r
+            .iter()
+            .zip(&g)
+            .zip(&b)
+            .all(|((&red, &green), &blue)| red == green && green == blue);
         linear_srgb_to_xyb_planes(&mut r, &mut g, &mut b);
         Ok(Self {
             width,
@@ -120,6 +130,7 @@ impl PreparedFrame {
                 b: PlaneStore::resident(b),
             },
             intensity_target: jpxl_core::color::NOMINAL_INTENSITY_TARGET,
+            grayscale,
         })
     }
 
@@ -187,6 +198,18 @@ impl PreparedFrame {
     pub const fn intensity_target(&self) -> f32 {
         self.intensity_target
     }
+
+    /// Whether the source RGB planes were exactly identical before conversion
+    /// to XYB.
+    ///
+    /// This is deliberately a source-domain property. Testing XYB after the
+    /// opsin transform would make the grayscale gate depend on floating-point
+    /// cancellation and could turn a byte-identical no-op into a searched CfL
+    /// stream on another target.
+    #[must_use]
+    pub const fn is_grayscale(&self) -> bool {
+        self.grayscale
+    }
 }
 
 #[cfg(test)]
@@ -203,6 +226,7 @@ mod tests {
         // Neutral grey has (near) zero X.
         let x = frame.xyb().x.at(0, 0, 2).expect("in range");
         assert!(x.abs() < 1e-3, "grey should decorrelate to X ~= 0, got {x}");
+        assert!(frame.is_grayscale());
     }
 
     #[test]

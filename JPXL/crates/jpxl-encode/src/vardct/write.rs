@@ -55,7 +55,9 @@ use crate::vardct::headers::{
 };
 use crate::vardct::ids::{ClusterId, LfGroupId, PreContextId};
 use crate::vardct::modular_out::{OutChannel, write_modular_stream};
-use crate::vardct::plan::{EmissionPlan, HfBlockContextPlan, LfDecision, NUM_CHANNELS};
+use crate::vardct::plan::{
+    EmissionPlan, HfBlockContextPlan, LfCorrelationDecision, LfDecision, NUM_CHANNELS,
+};
 use crate::vardct::sink::{CensusSink, HfEventSink};
 use crate::vardct::size::{CodestreamSizing, Emission, SectionSize};
 use crate::vardct::validate::ValidatedEmissionPlan;
@@ -91,6 +93,17 @@ const QUANT_LF_SPEC: U32Spec = U32Spec::new([
     U32Dist::BitsOffset {
         bits: 16,
         offset: 1,
+    },
+]);
+
+/// 18181-1 I.2.3: `U32(84, 256, 2 + u(8), 258 + u(16))`.
+const COLOUR_FACTOR_SPEC: U32Spec = U32Spec::new([
+    U32Dist::Val(84),
+    U32Dist::Val(256),
+    U32Dist::BitsOffset { bits: 8, offset: 2 },
+    U32Dist::BitsOffset {
+        bits: 16,
+        offset: 258,
     },
 ]);
 
@@ -130,10 +143,22 @@ pub fn check_supported(plan: &EmissionPlan) -> Result<()> {
     if spatial.frame.num_passes != 1 {
         return Err(EncodeError::unsupported("more than one pass", "F.6"));
     }
-    if spatial.lf != LfDecision::vardct_neutral() {
+    let neutral_lf = LfDecision::vardct_neutral();
+    if spatial.lf.extra_precision != neutral_lf.extra_precision
+        || spatial.lf.channel_dequant != neutral_lf.channel_dequant
+        || spatial.lf.adaptive_smoothing != neutral_lf.adaptive_smoothing
+    {
         return Err(EncodeError::unsupported(
-            "non-default LF dequantization, LF correlation or adaptive smoothing",
+            "non-default LF dequantization or adaptive smoothing",
             "G.1.2",
+        ));
+    }
+    let corr = spatial.lf.correlation;
+    if corr.colour_factor != 84 || corr.base_correlation_x != 0.0 || corr.base_correlation_b != 1.0
+    {
+        return Err(EncodeError::unsupported(
+            "a non-default CfL divisor or base correlation",
+            "I.2.3",
         ));
     }
     if spatial.restoration.gaborish || spatial.restoration.epf_iters != 0 {
@@ -172,12 +197,16 @@ pub fn check_supported(plan: &EmissionPlan) -> Result<()> {
                 "I.1",
             ));
         }
-        if group.cfl.x_from_y().iter().any(|f| f.get() != 0)
-            || group.cfl.b_from_y().iter().any(|f| f.get() != 0)
+        if group
+            .cfl
+            .x_from_y()
+            .iter()
+            .chain(group.cfl.b_from_y())
+            .any(|factor| !(-128..=127).contains(&factor.get()))
         {
             return Err(EncodeError::unsupported(
-                "non-zero HF chroma-from-luma factors",
-                "I.6",
+                "an HF chroma-from-luma factor outside the interoperable signed-byte range",
+                "G.2.4",
             ));
         }
     }
@@ -342,8 +371,21 @@ fn write_lf_global(plan: &EmissionPlan, w: &mut BitWriter) -> Result<()> {
     // I.2.2 HF block context: the leading u(1) selects the default map.
     w.write_bits(1, 1)?;
 
-    // I.2.3 LfChannelCorrelation: all-default.
-    w.write_bool(true);
+    // I.2.3 LfChannelCorrelation. Slice 15 searches the two biased u8 factors
+    // while keeping the divisor and base correlations at their defaults. The
+    // latter therefore have exact binary16 spellings: +0 is 0x0000 and +1 is
+    // 0x3c00. `check_supported` rejects any other base before bits are written.
+    let corr = plan.spatial.lf.correlation;
+    if corr == LfCorrelationDecision::default() {
+        w.write_bool(true);
+    } else {
+        w.write_bool(false);
+        w.write_u32(&COLOUR_FACTOR_SPEC, corr.colour_factor)?;
+        w.write_bits(16, 0x0000)?;
+        w.write_bits(16, 0x3c00)?;
+        w.write_bits(8, u32::from(corr.x_factor_lf))?;
+        w.write_bits(8, u32::from(corr.b_factor_lf))?;
+    }
 
     // G.1.3 GlobalModular: the leading Bool() is read whatever the channel
     // count, and then a sub-bitstream over `num_extra == 0` channels, which
