@@ -22,3 +22,6 @@ target/
 # Locally built oracle binaries (PINNED_REVISIONS.txt IS committed)
 /JPXL/tools/oracle-bin/*
 !/JPXL/tools/oracle-bin/PINNED_REVISIONS.txt
+
+# Claude Code personal settings
+.claude/settings.local.json
