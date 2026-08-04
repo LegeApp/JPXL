@@ -12,6 +12,10 @@ license.workspace = true
 [dependencies]
 jpxl-core.workspace = true
 jpxl-encode.workspace = true
+# Slice 18: the entropy trainer tokenizes census values with the exact C.2.3
+# hybrid-uint arithmetic the writer will use. In-workspace, same clean-room
+# boundary; the one-way policy/encoder edge above is unaffected.
+jpxl-entropy.workspace = true
 
 # Peer oracles, tests only. `jpxl-decode` must never appear in [dependencies]:
 # an encoder bug its paired decoder happens to accept would prove itself

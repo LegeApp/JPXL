@@ -61,6 +61,7 @@
 
 pub mod analysis;
 pub mod block;
+mod entropy;
 pub mod error;
 pub mod field;
 pub mod quantize;
@@ -76,7 +77,7 @@ use jpxl_core::geometry::LfBlockPos;
 use jpxl_core::varblock::TransformType;
 use jpxl_encode::vardct::headers::{NEUTRAL_QM_SCALE, VARDCT_GROUP_SIZE_SHIFT};
 use jpxl_encode::vardct::ids::{
-    CflFactor, ClusterId, GlobalScale, HfMul, LfGroupId, PreContextId, PresetId, QuantLf,
+    CflFactor, ClusterId, GlobalScale, HfMul, LfGroupId, PresetId, QuantLf,
 };
 use jpxl_encode::vardct::plan::{
     CflGrid, EmissionPlan, EntropyModelPlan, EntropyPlan, FrameDecision, HfBlockContextPlan,
@@ -325,41 +326,16 @@ fn plan_at_with_cfl(
     };
     let census = census_frame(&provisional, &geometry)?;
 
-    let nb_block_ctx = HfBlockContextPlan::Default.nb_block_ctx();
-    let mut counts = vec![Vec::<u32>::new(); NUM_CLUSTERS];
-    for ctx in 0..census.len() {
-        let id = PreContextId::new(u32::try_from(ctx).unwrap_or(u32::MAX));
-        let Some(histogram) = census.histogram(id) else {
-            continue;
-        };
-        let cluster = usize::from(cluster_of(ctx as u64, nb_block_ctx));
-        let Some(slot) = counts.get_mut(cluster) else {
-            continue;
-        };
-        for (value, count) in histogram.iter() {
-            let index = usize::try_from(value).unwrap_or(usize::MAX);
-            if index >= slot.len() {
-                slot.resize(index + 1, 0);
-            }
-            if let Some(cell) = slot.get_mut(index) {
-                *cell = cell.saturating_add(count);
-            }
-        }
-    }
-    let histograms = counts
-        .into_iter()
-        .map(|mut c| {
-            // A cluster the frame never used still needs a legal distribution:
-            // C.2.5 has no encoding for "no mass anywhere".
-            if c.iter().all(|&v| v == 0) {
-                c = vec![1u32];
-            }
-            HistogramPlan::new(c)
-        })
-        .collect::<jpxl_encode::vardct::PlanResult<Vec<_>>>()?;
+    // Slice 18: the context map, the per-cluster hybrid-uint configurations
+    // and the distributions are trained from the census (§9.2 steps 2–5,
+    // §9.3). One census is exact — the event stream depends on the block
+    // context model and the coefficient orders, not on anything the trainer
+    // chooses — so there is no refinement iteration to bound; see
+    // `entropy::train`.
+    let model = entropy::train(&census)?;
 
     let plan = EmissionPlan {
-        entropy: entropy_plan(&geometry, histograms)?,
+        entropy: trained_entropy_plan(&geometry, model)?,
         ..provisional
     };
     Ok(validate(plan)?)
@@ -1539,8 +1515,35 @@ fn select_blocks(
     Ok(blocks)
 }
 
-/// The entropy model: I.2.2's default block contexts, natural orders, one
-/// preset, and [`cluster_of`]'s six clusters.
+/// The trained model as a full [`EntropyPlan`]: I.2.2's default block
+/// contexts (a trained map needs its writer first), natural orders, one
+/// preset, and the trainer's map, configurations and distributions.
+fn trained_entropy_plan(
+    geometry: &VardctGeometry,
+    model: entropy::TrainedModel,
+) -> Result<EntropyPlan> {
+    let num_groups = usize::try_from(geometry.num_groups()).unwrap_or(0);
+    let distributions = EntropyModelPlan {
+        context_map: model.context_map.into_boxed_slice(),
+        histograms: model.histograms.into_boxed_slice(),
+        hybrid_uint: model.hybrid_uint.into_boxed_slice(),
+    };
+    let pass = HfPassEntropyPlan {
+        orders: OrderSet::natural(),
+        distributions,
+        group_presets: vec![PresetId::new(0); num_groups].into_boxed_slice(),
+    };
+    Ok(EntropyPlan {
+        block_context: HfBlockContextPlan::Default,
+        num_hf_presets: 1,
+        passes: vec![pass].into_boxed_slice(),
+    })
+}
+
+/// The provisional entropy model the census pass walks with: I.2.2's default
+/// block contexts, natural orders, one preset, and [`cluster_of`]'s six
+/// clusters. Nothing it carries reaches the wire — slice 18's trained model
+/// replaces it before validation.
 fn entropy_plan(geometry: &VardctGeometry, histograms: Vec<HistogramPlan>) -> Result<EntropyPlan> {
     let block_context = HfBlockContextPlan::Default;
     let nb_block_ctx = block_context.nb_block_ctx();
@@ -2215,6 +2218,35 @@ mod tests {
         assert!(
             masking_flat < off_flat,
             "masking must refine the flat half ({off_flat:.3} -> {masking_flat:.3})"
+        );
+    }
+
+    #[test]
+    fn the_trained_entropy_model_beats_the_fixed_six_cluster_baseline() {
+        // Baselines measured immediately before slice 18 on this machine with
+        // [`cluster_of`]'s fixed six clusters and the frame-wide (4, 2, 0)
+        // hybrid-uint configuration. The trained model changes no symbol —
+        // the pixels are identical — so the whole delta is entropy density,
+        // and slice 18's exit criterion asks exactly for that. Measured with
+        // the trained model: 1984 and 10221 bytes (-14.8% / -17.6%); the
+        // assertion keeps a margin so the trainer can evolve without
+        // byte-pinning.
+        let flat = vec![128u8; 256 * 256 * 3];
+        let flat_bytes =
+            encode_srgb8_vardct(256, 256, &flat, &EncodeRequest::defaults()).expect("encodes");
+        assert!(
+            (flat_bytes.len() as u64) < 2329 * 95 / 100,
+            "flat grey: {} B must undercut the fixed-model 2329 B by 5%",
+            flat_bytes.len()
+        );
+
+        let noise = half_flat_half_noise(256, 256);
+        let noise_bytes =
+            encode_srgb8_vardct(256, 256, &noise, &EncodeRequest::defaults()).expect("encodes");
+        assert!(
+            (noise_bytes.len() as u64) < 12408 * 95 / 100,
+            "half noise: {} B must undercut the fixed-model 12408 B by 5%",
+            noise_bytes.len()
         );
     }
 
