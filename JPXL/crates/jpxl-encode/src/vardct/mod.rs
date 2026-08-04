@@ -25,10 +25,14 @@ pub mod dump;
 pub mod emit;
 pub mod error;
 pub mod geometry;
+pub mod headers;
 pub mod ids;
+pub mod modular_out;
 pub mod plan;
 pub mod sink;
 pub mod validate;
+pub mod walk;
+pub mod write;
 
 pub use dump::dump;
 pub use error::{PlanError, PlanResult};
@@ -41,3 +45,5 @@ pub use plan::{
 };
 pub use sink::{CensusSink, HfEventSink, SymbolSink};
 pub use validate::{ValidatedEmissionPlan, validate};
+pub use walk::{OrderTables, PassGroupWalk, WalkVarblock, pre_context_count, walk_pass_group};
+pub use write::{census_frame, check_supported, plan_pre_contexts, walk_frame, write_codestream};

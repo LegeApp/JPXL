@@ -9,6 +9,7 @@ use core::fmt;
 
 use jpxl_bitstream::BitstreamError;
 use jpxl_core::JpxlError;
+use jpxl_entropy::EntropyError;
 
 use crate::vardct::error::PlanError;
 
@@ -24,6 +25,12 @@ pub enum EncodeError {
     Core(JpxlError),
     /// A plan violated a structural invariant, so it never reached the writer.
     Plan(PlanError),
+    /// The entropy layer refused a symbol, a table or a configuration.
+    ///
+    /// Reaching this from the VarDCT writer means the census the histograms
+    /// were trained on and the symbols the replay pass produced disagree —
+    /// always a bug on this side, never in the caller's image.
+    Entropy(EntropyError),
     /// The image is outside the subset this encoder produces.
     ///
     /// `clause` names where the restriction comes from, so the message says
@@ -65,6 +72,7 @@ impl fmt::Display for EncodeError {
             Self::Bitstream(err) => write!(f, "bitstream: {err}"),
             Self::Core(err) => write!(f, "{err}"),
             Self::Plan(err) => write!(f, "plan rejected: {err}"),
+            Self::Entropy(err) => write!(f, "entropy: {err}"),
             Self::Unsupported { what, clause } => {
                 write!(f, "unsupported: {what} (18181-1 {clause})")
             }
@@ -85,6 +93,7 @@ impl std::error::Error for EncodeError {
             Self::Bitstream(err) => Some(err),
             Self::Core(err) => Some(err),
             Self::Plan(err) => Some(err),
+            Self::Entropy(err) => Some(err),
             _ => None,
         }
     }
@@ -99,6 +108,12 @@ impl From<BitstreamError> for EncodeError {
 impl From<JpxlError> for EncodeError {
     fn from(err: JpxlError) -> Self {
         Self::Core(err)
+    }
+}
+
+impl From<EntropyError> for EncodeError {
+    fn from(err: EntropyError) -> Self {
+        Self::Entropy(err)
     }
 }
 

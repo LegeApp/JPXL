@@ -119,6 +119,26 @@ impl RawHistogram {
             })
     }
 
+    /// Every counted value and its count, in ascending value order.
+    ///
+    /// The bridge to `jpxl-entropy`'s own census type: a histogram that cannot
+    /// be enumerated can only be queried about values the caller already
+    /// guessed, which is not enough to build a code.
+    pub fn iter(&self) -> impl Iterator<Item = (u32, u32)> + '_ {
+        self.small
+            .iter()
+            .enumerate()
+            .filter(|&(_, &c)| c != 0)
+            .map(|(v, &c)| (u32::try_from(v).unwrap_or(u32::MAX), c))
+            .chain(self.tail.iter().copied())
+    }
+
+    /// The largest value counted, if any.
+    #[must_use]
+    pub fn max_value(&self) -> Option<u32> {
+        self.iter().map(|(v, _)| v).last()
+    }
+
     /// Total number of symbols counted.
     #[must_use]
     pub fn total(&self) -> u64 {

@@ -44,8 +44,21 @@ pub struct EncodeRequest {
 }
 
 impl EncodeRequest {
-    /// A request with the quantizer at its mid-range default and the
-    /// VarDCT-typical 256x256 pass group.
+    /// A request at a mid-quality quantizer.
+    ///
+    /// **`global_scale` runs the opposite way from intuition.** I.2.1 divides
+    /// by it — `mDC = (1 << 16) * w / (global_scale * quant_lf)` and
+    /// `Mul = (1 << 16) / (global_scale * HfMul)` — so a *larger*
+    /// `global_scale` is a *finer* quantizer and a bigger file. The value below
+    /// is roughly the middle of the `U32(1 + u(11), ...)` range's useful part.
+    ///
+    /// There is no distance or bits-per-pixel target here, because there is no
+    /// rate loop yet: choosing `global_scale` from a byte budget is milestone 4
+    /// (`docs/PLAN.md` slice 14). Until then the caller sets the scalar.
+    ///
+    /// `group_size_shift` is carried for the modular track's benefit and is
+    /// **ignored** by the VarDCT planner: F.2 does not signal the field outside
+    /// kModular, so a kVarDCT frame's `group_dim` is always 256.
     ///
     /// # Panics
     ///
@@ -54,7 +67,7 @@ impl EncodeRequest {
     #[must_use]
     pub fn defaults() -> Self {
         Self {
-            global_scale: GlobalScale::new(4096).unwrap_or(GlobalScale::MIN),
+            global_scale: GlobalScale::new(32_768).unwrap_or(GlobalScale::MIN),
             quant_lf: QuantLf::new(16).unwrap_or(QuantLf::MIN),
             hf_mul: HfMul::new(1).unwrap_or(HfMul::MIN),
             group_size_shift: 1,
@@ -70,7 +83,7 @@ mod tests {
     #[test]
     fn default_request_is_representable() {
         let request = EncodeRequest::defaults();
-        assert_eq!(request.global_scale.get(), 4096);
+        assert_eq!(request.global_scale.get(), 32_768);
         assert_eq!(request.quant_lf.get(), 16);
         assert_eq!(request.hf_mul.get(), 1);
         assert_eq!(request.group_size_shift, 1);

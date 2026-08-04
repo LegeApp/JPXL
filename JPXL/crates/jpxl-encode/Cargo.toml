@@ -9,13 +9,14 @@ license.workspace = true
 [dependencies]
 jpxl-bitstream.workspace = true
 jpxl-core.workspace = true
+# The write side of Annex C (slice 11.5). The read side of the same crate is a
+# peer, not a layer: nothing here calls it, and the round-trip tests are what
+# prove the two agree.
+jpxl-entropy.workspace = true
 
 [dev-dependencies]
 jpxl-conformance.workspace = true
 jpxl-decode.workspace = true
-# Decode-side reference for the entropy round-trip tests only: the encoder
-# itself must not share an implementation with what validates it.
-jpxl-entropy.workspace = true
 
 [lints]
 workspace = true

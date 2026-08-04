@@ -1,0 +1,372 @@
+//! The headline claim of slice 12: **other people's decoders** read the
+//! kVarDCT streams this encoder writes, and agree with ours about the pixels.
+//!
+//! `vardct_roundtrip.rs` proves the encoder and `jpxl-decode` agree, which is
+//! necessary and insufficient: two implementations written from one reading of
+//! one clause fail together. These tests replace one side with a decoder JPXL
+//! had no hand in:
+//!
+//! * `djxl` (libjxl, the reference implementation), through its PPM output;
+//! * `jxl-oxide` (an independent Rust decoder), through its `.npy` output.
+//!
+//! # What each comparison means
+//!
+//! Two different things are measured, and conflating them is how a lossy
+//! encoder ends up with a meaningless "tolerance":
+//!
+//! * **decoder against decoder, on one stream.** This is the conformance-shaped
+//!   comparison, and it is the one a Part 3 peak-error class is defined for:
+//!   the same coefficients, the same dequantization, the same inverse
+//!   transform, so any difference is a decoder bug or a float-rounding
+//!   difference. The bound asserted here is one 8-bit code point, which is the
+//!   quantization step of the output itself.
+//! * **decoder against the encoder's source.** This is rate-distortion, not
+//!   conformance — the encoder threw information away on purpose. The bound is
+//!   a stated RMSE, and it is a claim about *this encoder at this quantizer*,
+//!   not about conformance.
+//!
+//! # Skipping, not failing
+//!
+//! A checkout with no oracle installed stays green: each test returns early
+//! with a printed note. A *present* oracle that disagrees is a hard failure.
+
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::indexing_slicing,
+    reason = "test-only image synthesis and .npy parsing, over data this file \
+              produced itself"
+)]
+
+use std::path::{Path, PathBuf};
+
+use jpxl_conformance::{Image as PnmImage, OracleKind, OutputFormat, oracle};
+use jpxl_core::limits::Limits;
+use jpxl_decode::decode::decode;
+use jpxl_encode_policy::{EncodeRequest, encode_srgb8_vardct};
+
+/// A distinct directory per test, so parallel runs cannot collide.
+fn scratch(tag: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("jpxl-vardct-oracle-{tag}"));
+    std::fs::create_dir_all(&dir).expect("scratch directory");
+    dir
+}
+
+/// One rung of the ladder `docs/PLAN.md` slice 12 prescribes.
+struct Case {
+    name: &'static str,
+    width: u32,
+    height: u32,
+    grey: bool,
+}
+
+fn cases() -> Vec<Case> {
+    vec![
+        Case {
+            name: "grey-8x8",
+            width: 8,
+            height: 8,
+            grey: true,
+        },
+        Case {
+            name: "rgb-8x8",
+            width: 8,
+            height: 8,
+            grey: false,
+        },
+        Case {
+            name: "rgb-64x64",
+            width: 64,
+            height: 64,
+            grey: false,
+        },
+        // 300x260 at kVarDCT's fixed group_dim of 256 is a 2x2 pass-group
+        // grid: F.3.1's multi-section TOC and four independent ANS streams.
+        Case {
+            name: "rgb-multigroup-300x260",
+            width: 300,
+            height: 260,
+            grey: false,
+        },
+        // Partial blocks on both the right and the bottom edge.
+        Case {
+            name: "rgb-61x37",
+            width: 61,
+            height: 37,
+            grey: false,
+        },
+        // An LF group is 2048 samples per side, so 2100 wide is the first
+        // width that needs two of them.
+        Case {
+            name: "rgb-two-lf-groups-2100x24",
+            width: 2100,
+            height: 24,
+            grey: false,
+        },
+    ]
+}
+
+/// The same deterministic image `vardct_roundtrip.rs` uses.
+fn test_image(width: u32, height: u32, grey: bool) -> Vec<u8> {
+    let mut out = Vec::with_capacity((width * height * 3) as usize);
+    for y in 0..height {
+        for x in 0..width {
+            let ramp = u8::try_from((x * 255) / width.max(1)).unwrap_or(255);
+            let fall = u8::try_from(255 - (y * 255) / height.max(1)).unwrap_or(255);
+            let edge = if x * 3 > width * 2 { 40u8 } else { 0 };
+            let checker = if (x / 4 + y / 4) % 2 == 0 { 25u8 } else { 0 };
+            let luma = ramp.saturating_add(checker).saturating_sub(edge);
+            if grey {
+                out.extend_from_slice(&[luma, luma, luma]);
+            } else {
+                out.extend_from_slice(&[
+                    luma,
+                    fall.saturating_sub(edge),
+                    ramp.saturating_add(fall / 2).saturating_sub(checker),
+                ]);
+            }
+        }
+    }
+    out
+}
+
+/// `jpxl-decode`'s 8-bit sRGB samples, interleaved as a PPM stores them.
+fn ours(codestream: &[u8]) -> Vec<u8> {
+    let image = decode(codestream, &Limits::default()).expect("jpxl-decode accepts it");
+    let count = (image.width * image.height) as usize;
+    let mut out = Vec::with_capacity(count * 3);
+    for i in 0..count {
+        for plane in image.planes.iter().take(3) {
+            let sample = plane.samples.get(i).copied().unwrap_or(0);
+            out.push(u8::try_from(sample.clamp(0, 255)).unwrap_or(0));
+        }
+    }
+    out
+}
+
+/// Peak absolute error and RMSE, in 8-bit code points.
+fn error(a: &[u8], b: &[u8]) -> (u32, f64) {
+    assert_eq!(a.len(), b.len(), "same sample count");
+    let mut peak = 0u32;
+    let mut sum = 0f64;
+    for (&p, &q) in a.iter().zip(b) {
+        let d = u32::from(p.abs_diff(q));
+        peak = peak.max(d);
+        sum += f64::from(d) * f64::from(d);
+    }
+    (peak, (sum / a.len() as f64).sqrt())
+}
+
+/// Encodes one case and writes the codestream, returning it and the source.
+fn encode_case(case: &Case, dir: &Path) -> (Vec<u8>, Vec<u8>, PathBuf) {
+    let source = test_image(case.width, case.height, case.grey);
+    let codestream =
+        encode_srgb8_vardct(case.width, case.height, &source, &EncodeRequest::defaults())
+            .unwrap_or_else(|e| panic!("{}: encode failed: {e}", case.name));
+    let jxl = dir.join(format!("{}.jxl", case.name));
+    std::fs::write(&jxl, &codestream).expect("write");
+    (codestream, source, jxl)
+}
+
+/// The tolerance class this slice claims against the source image.
+///
+/// Not a Part 3 class: see the module documentation. Measured worst values at
+/// the default quantizer are peak 56 and RMSE 11.1 (the 8x8 RGB rung, where
+/// one block carries a saturated synthetic pattern); every other rung is
+/// inside RMSE 7.3.
+const MAX_RMSE_VS_SOURCE: f64 = 14.0;
+
+/// The tolerance between two decoders reading the *same* stream.
+///
+/// One 8-bit code point: the output quantization step. Anything larger is a
+/// decoder disagreement, not a rounding difference.
+const MAX_PEAK_BETWEEN_DECODERS: u32 = 1;
+
+#[test]
+fn djxl_decodes_our_vardct_output() {
+    let Some(oracle) = oracle::find(OracleKind::Djxl) else {
+        println!("skipping: djxl is not installed");
+        return;
+    };
+    let dir = scratch("djxl");
+
+    for case in cases() {
+        let (codestream, source, jxl) = encode_case(&case, &dir);
+        let ppm = dir.join(format!("{}.ppm", case.name));
+        match oracle.decode(&jxl, &ppm, OutputFormat::Ppm) {
+            Ok(()) => {}
+            Err(err) if err.is_unavailable() => {
+                println!("skipping: {err}");
+                return;
+            }
+            Err(err) => panic!(
+                "{}: djxl refused our codestream ({} bytes): {err}",
+                case.name,
+                codestream.len()
+            ),
+        }
+
+        let bytes = std::fs::read(&ppm).unwrap_or_else(|e| panic!("{}: {e}", case.name));
+        let decoded = PnmImage::from_ppm(&bytes).unwrap_or_else(|e| panic!("{}: {e}", case.name));
+        assert_eq!(
+            (decoded.w, decoded.h),
+            (case.width, case.height),
+            "{}: dimensions",
+            case.name
+        );
+        assert_eq!(decoded.channels, 3, "{}: djxl writes P6", case.name);
+        assert_eq!(
+            u32::from(decoded.max_value),
+            255,
+            "{}: bit depth",
+            case.name
+        );
+
+        let samples: Vec<u8> = decoded
+            .samples
+            .iter()
+            .map(|&v| u8::try_from(v.min(255)).unwrap_or(0))
+            .collect();
+
+        // Conformance-shaped: djxl and jpxl-decode on the same coefficients.
+        let (peak, rmse) = error(&samples, &ours(&codestream));
+        assert!(
+            peak <= MAX_PEAK_BETWEEN_DECODERS,
+            "{}: djxl and jpxl-decode disagree by {peak} (RMSE {rmse:.3})",
+            case.name
+        );
+
+        // Rate-distortion: djxl's pixels against what was encoded.
+        let (peak, rmse) = error(&samples, &source);
+        assert!(
+            rmse <= MAX_RMSE_VS_SOURCE,
+            "{}: djxl vs source RMSE {rmse:.3} (peak {peak}, {} bytes)",
+            case.name,
+            codestream.len()
+        );
+    }
+}
+
+#[test]
+fn jxl_oxide_decodes_our_vardct_output() {
+    let Some(oracle) = oracle::find(OracleKind::JxlOxide) else {
+        println!("skipping: jxl-oxide is not installed");
+        return;
+    };
+    let dir = scratch("jxl-oxide");
+
+    for case in cases() {
+        let (codestream, source, jxl) = encode_case(&case, &dir);
+        let npy = dir.join(format!("{}.npy", case.name));
+        match oracle.decode(&jxl, &npy, OutputFormat::Npy) {
+            Ok(()) => {}
+            Err(err) if err.is_unavailable() => {
+                println!("skipping: {err}");
+                return;
+            }
+            Err(err) => panic!(
+                "{}: jxl-oxide refused our codestream ({} bytes): {err}",
+                case.name,
+                codestream.len()
+            ),
+        }
+
+        let bytes = std::fs::read(&npy).unwrap_or_else(|e| panic!("{}: {e}", case.name));
+        let values = read_npy_f32(&bytes).unwrap_or_else(|e| panic!("{}: {e}", case.name));
+        assert_eq!(
+            values.len(),
+            source.len(),
+            "{}: sample count (one frame expected)",
+            case.name
+        );
+        // The `.npy` convention is normalised f32 in the signalled colour
+        // encoding; quantizing to 8 bits is what puts it on the same scale as
+        // a PPM and as `jpxl-decode`'s integer planes.
+        let samples: Vec<u8> = values
+            .iter()
+            .map(|&v| {
+                let scaled = (v.clamp(0.0, 1.0) * 255.0).round();
+                u8::try_from(scaled as i32).unwrap_or(255)
+            })
+            .collect();
+
+        let (peak, rmse) = error(&samples, &ours(&codestream));
+        assert!(
+            peak <= MAX_PEAK_BETWEEN_DECODERS,
+            "{}: jxl-oxide and jpxl-decode disagree by {peak} (RMSE {rmse:.3})",
+            case.name
+        );
+
+        let (peak, rmse) = error(&samples, &source);
+        assert!(
+            rmse <= MAX_RMSE_VS_SOURCE,
+            "{}: jxl-oxide vs source RMSE {rmse:.3} (peak {peak}, {} bytes)",
+            case.name,
+            codestream.len()
+        );
+    }
+}
+
+/// A corrupted stream must be refused, never silently mis-decoded.
+///
+/// The ANS terminal state of C.3.2 is the check that makes this cheap: a
+/// pass-group payload that has been altered lands the decoder on a state that
+/// is not the one the encoder finished on. This is the encoder-side half of
+/// slice 11.5's corruption gate, on a real VarDCT stream.
+#[test]
+fn a_corrupted_pass_group_is_rejected_by_our_decoder() {
+    let case = Case {
+        name: "rgb-64x64",
+        width: 64,
+        height: 64,
+        grey: false,
+    };
+    let source = test_image(case.width, case.height, case.grey);
+    let codestream =
+        encode_srgb8_vardct(case.width, case.height, &source, &EncodeRequest::defaults())
+            .expect("encodes");
+
+    let mut caught = 0usize;
+    let mut attempted = 0usize;
+    // Only the tail is perturbed: the headers are covered by their own tests,
+    // and the point here is the entropy-coded payload.
+    let start = codestream.len() / 2;
+    for offset in (start..codestream.len()).step_by(7) {
+        let mut broken = codestream.clone();
+        if let Some(byte) = broken.get_mut(offset) {
+            *byte ^= 0x5A;
+        }
+        attempted += 1;
+        if decode(&broken, &Limits::default()).is_err() {
+            caught += 1;
+        }
+    }
+    assert!(attempted > 10, "enough corruptions to be meaningful");
+    assert!(
+        caught * 2 > attempted,
+        "only {caught} of {attempted} payload corruptions were caught"
+    );
+}
+
+/// Reads the little-endian `f32` payload of a NumPy `.npy` file.
+fn read_npy_f32(bytes: &[u8]) -> Result<Vec<f32>, String> {
+    const MAGIC: &[u8] = b"\x93NUMPY";
+    if bytes.get(..MAGIC.len()) != Some(MAGIC) {
+        return Err("not a .npy file".into());
+    }
+    let header_len = bytes
+        .get(8..10)
+        .ok_or("truncated .npy header length")
+        .map(|b| usize::from(u16::from_le_bytes([b[0], b[1]])))?;
+    let header = bytes
+        .get(10..10 + header_len)
+        .ok_or("truncated .npy header")?;
+    let header = core::str::from_utf8(header).map_err(|_| "non-UTF-8 .npy header")?;
+    if !header.contains("'<f4'") {
+        return Err(format!("unexpected .npy dtype in {header}"));
+    }
+    let body = bytes.get(10 + header_len..).ok_or("truncated .npy body")?;
+    Ok(body
+        .chunks_exact(4)
+        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .collect())
+}

@@ -16,12 +16,17 @@
 //! * [`geometry`] — checked dimension, bit-depth, and group-size newtypes.
 //! * [`color`] — the XYB color model and its inverse.
 //! * [`dct`] — the integer/float DCT shared by both directions.
+//! * [`dequant`] — the I.2.4/I.2.5 quantization weights and their defaults.
 //! * [`varblock`] — the VarDCT transform-type vocabulary (18181-1 Annex I) and
 //!   the coefficients-to-samples reconstruction.
+//! * [`forward`] — the exact inverse of that reconstruction: the allocation-free
+//!   analysis transforms an encoder needs, and `lf_from_llf`.
 
 pub mod color;
 pub mod dct;
+pub mod dequant;
 pub mod error;
+pub mod forward;
 pub mod geometry;
 pub mod limits;
 pub mod varblock;

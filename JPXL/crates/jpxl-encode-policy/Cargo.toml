@@ -13,5 +13,12 @@ license.workspace = true
 jpxl-core.workspace = true
 jpxl-encode.workspace = true
 
+# Peer oracles, tests only. `jpxl-decode` must never appear in [dependencies]:
+# an encoder bug its paired decoder happens to accept would prove itself
+# correct. `tests/boundary.rs` enforces exactly that distinction.
+[dev-dependencies]
+jpxl-conformance.workspace = true
+jpxl-decode.workspace = true
+
 [lints]
 workspace = true

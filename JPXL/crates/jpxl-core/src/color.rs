@@ -217,6 +217,33 @@ pub fn linear_to_srgb(v: f32) -> f32 {
     if v < 0.0 { -encoded } else { encoded }
 }
 
+/// The inverse of [`linear_to_srgb`]: the IEC 61966-2-1 electro-optical
+/// transfer function.
+///
+/// An encoder starts where a decoder stops. A PNG or Netpbm sample is in the
+/// signalled colour encoding, and L.2's forward direction wants linear light,
+/// so this is the first stage of any encode from 8-bit sRGB.
+///
+/// It is written as the algebraic inverse of [`linear_to_srgb`], branch for
+/// branch and constant for constant, including the negative extension: with
+/// [`NEGATIVES_TAKE_THE_LINEAR_SEGMENT`] entry 0 false the sRGB curve is odd,
+/// so this one is too. `srgb_to_linear(linear_to_srgb(v)) == v` to `f32`
+/// rounding for every finite `v`, which is what
+/// [`tests::the_srgb_transfer_pair_round_trips`] asserts.
+#[must_use]
+pub fn srgb_to_linear(v: f32) -> f32 {
+    if NEGATIVES_TAKE_THE_LINEAR_SEGMENT[0] && v <= 12.92 * 0.003_130_8 {
+        return v / 12.92;
+    }
+    let a = v.abs();
+    let decoded = if a <= 12.92 * 0.003_130_8 {
+        a / 12.92
+    } else {
+        ((a + 0.055) / 1.055).powf(2.4)
+    };
+    if v < 0.0 { -decoded } else { decoded }
+}
+
 /// The ITU-R BT.709-6 opto-electronic transfer function.
 ///
 /// `E' = 4.5 E` below `0.018` and `1.099 E^0.45 - 0.099` above. This is the
@@ -261,6 +288,28 @@ pub fn linear_to_gamma(v: f32, exponent: f32) -> f32 {
 // ---------------------------------------------------------------------------
 // L.2.2 — the signalled inverse XYB transform
 // ---------------------------------------------------------------------------
+
+/// Table L.1's default `quant_bias`, the small-coefficient shrink of I.5.3.
+///
+/// I.5.3 adjusts every quantized HF coefficient before dequantizing it:
+/// `|q| <= 1` is multiplied by `quant_bias[channel]`, everything else has
+/// `quant_bias_numerator / q` subtracted. Both directions need the same
+/// numbers — a decoder to reconstruct, an encoder to *choose* the integer whose
+/// reconstruction is nearest its target — so they live here rather than only on
+/// the read side.
+///
+/// The printed defaults are the expressions `1 - 0.05465007330715401`,
+/// `1 - 0.07005449891748593` and `1 - 0.049935103337343655`; both OCR
+/// conversions collapsed the leading `1 -` into an ambiguous glyph, and the
+/// values below are the evaluated results of the scan-verified expressions.
+/// `jpxl-decode`'s `headers::opsin` carries the same three constants for the
+/// signalled-bundle path, and the encoder's test suite asserts the two agree —
+/// see `crates/jpxl-encode/tests/vardct_roundtrip.rs`.
+pub const DEFAULT_QUANT_BIAS: [f32; 3] =
+    [1.0 - 0.054_650_073, 1.0 - 0.070_054_5, 1.0 - 0.049_935_103];
+
+/// Table L.1's default `quant_bias_numerator`. See [`DEFAULT_QUANT_BIAS`].
+pub const DEFAULT_QUANT_BIAS_NUMERATOR: f32 = 0.145;
 
 /// The nominal display intensity, in nits, that L.2.2's `itscale` normalises
 /// against: `itscale = 255 / intensity_target`.
@@ -625,6 +674,37 @@ mod tests {
         assert!((below - above).abs() < 1e-5, "{below} vs {above}");
         // The mid-grey landmark: 0.5 encoded is about 0.2140 linear.
         assert!((linear_to_srgb(0.214_041_14) - 0.5).abs() < 1e-4);
+    }
+
+    /// The encode-side EOTF must undo the decode-side OETF exactly, including
+    /// below zero and outside `[0, 1]`, or an 8-bit sRGB encode starts from
+    /// the wrong linear values and every later measurement is off by a
+    /// constant nobody can localise.
+    #[test]
+    fn the_srgb_transfer_pair_round_trips() {
+        let mut worst = 0.0f32;
+        for i in -200i32..=400 {
+            let v = i as f32 / 200.0;
+            let back = srgb_to_linear(linear_to_srgb(v));
+            worst = worst.max((back - v).abs());
+            assert!(
+                (back - v).abs() < 1e-5 * v.abs().max(1.0),
+                "linear {v} -> {} -> {back}",
+                linear_to_srgb(v)
+            );
+        }
+        assert!(worst < 1e-4, "worst sRGB round-trip error {worst}");
+
+        // Landmarks: 0, 1 and mid-grey, from the encoded side.
+        assert_eq!(srgb_to_linear(0.0), 0.0);
+        assert!((srgb_to_linear(1.0) - 1.0).abs() < 1e-6);
+        assert!((srgb_to_linear(0.5) - 0.214_041_14).abs() < 1e-5);
+        // Every 8-bit code point survives the trip back and forth.
+        for code in 0..=255u16 {
+            let encoded = f32::from(code) / 255.0;
+            let back = linear_to_srgb(srgb_to_linear(encoded));
+            assert!((back - encoded).abs() < 1e-6, "code {code}");
+        }
     }
 
     /// The BT.709 curve must differ measurably from sRGB — if it did not,

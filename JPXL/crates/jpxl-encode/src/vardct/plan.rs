@@ -167,8 +167,33 @@ impl Default for LfDecision {
             extra_precision: 0,
             channel_dequant: [1.0 / 32.0, 1.0 / 4.0, 1.0 / 2.0],
             correlation: LfCorrelationDecision::default(),
-            adaptive_smoothing: true,
+            adaptive_smoothing: false,
         }
+    }
+}
+
+impl LfDecision {
+    /// The G.1.2 / I.2.3 defaults with I.5.2's adaptive smoothing **declined**.
+    ///
+    /// This is what the milestone-2 writer emits, and the only `LfDecision` it
+    /// accepts. Two of the three parts are the one-bit `all_default` encodings
+    /// of Table G.2 and Table I.3; the third is the frame header's
+    /// `kSkipAdaptiveLFSmoothing` flag.
+    ///
+    /// Declining the smoothing pass is the load-bearing choice. I.5.2's pass is
+    /// a data-gated 3x3 weighted average over the whole frame's LF image; an
+    /// encoder that left it on would have to invert a global non-linear filter
+    /// to know what its LF integers reconstruct to. With it off, LF
+    /// quantization is `round(target * (1 << extra_precision) / mDC)` and the
+    /// inverse is exact.
+    ///
+    /// It is also why [`LfDecision::default`] has `adaptive_smoothing: false`:
+    /// the field is the encoder's intent, not the decoder's default, and an
+    /// encoder that has not decided otherwise has not decided to invert a
+    /// filter.
+    #[must_use]
+    pub fn vardct_neutral() -> Self {
+        Self::default()
     }
 }
 

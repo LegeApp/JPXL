@@ -216,6 +216,32 @@ impl VardctGeometry {
         })
     }
 
+    /// The sample rectangle of pass group `index`, clipped at the frame edge.
+    ///
+    /// The pass group is F.3.1's "group": `group_dim` samples per side, the
+    /// unit one `PassGroup` section covers.
+    #[must_use]
+    pub fn group_rect(&self, index: u64) -> Option<Rect> {
+        let (x0, y0, width, height) = self.base.group_rect(index)?;
+        Some(Rect {
+            x0,
+            y0,
+            width,
+            height,
+        })
+    }
+
+    /// The LF group that contains pass group `index`.
+    #[must_use]
+    pub fn lf_group_of(&self, index: u64) -> Option<LfGroupId> {
+        let rect = self.group_rect(index)?;
+        let dim = self.lf_group_dim();
+        let per_row = u64::from(self.lf_groups_x());
+        let gx = u64::from(rect.x0) / dim;
+        let gy = u64::from(rect.y0) / dim;
+        u32::try_from(gy * per_row + gx).ok().map(LfGroupId::new)
+    }
+
     /// The 8x8-block grid of LF group `id` — G.2.4's `blocks_w x blocks_h`.
     #[must_use]
     pub fn lf_group_blocks(&self, id: LfGroupId) -> Option<BlockGrid> {

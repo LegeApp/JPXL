@@ -123,6 +123,47 @@ impl PreparedFrame {
         })
     }
 
+    /// Converts an 8-bit sRGB image, interleaved RGB, to XYB.
+    ///
+    /// The two stages a decoder runs in reverse: the IEC 61966-2-1 EOTF turns
+    /// each code point into linear light, and L.2's forward opsin transform
+    /// turns linear light into XYB. `intensity_target` stays nominal, so
+    /// L.2.2's `itscale` is exactly 1 and the decoder's inverse is the exact
+    /// inverse of this.
+    ///
+    /// # Errors
+    ///
+    /// [`PolicyError::Unsupported`] for a zero dimension and
+    /// [`PolicyError::SampleCountMismatch`] if `rgb` is not
+    /// `width * height * 3` long.
+    pub fn from_srgb8(width: u32, height: u32, rgb: &[u8]) -> Result<Self> {
+        if width == 0 || height == 0 {
+            return Err(PolicyError::Unsupported {
+                what: "a zero frame dimension",
+            });
+        }
+        let expected = u64::from(width) * u64::from(height) * 3;
+        let found = rgb.len() as u64;
+        if found != expected {
+            return Err(PolicyError::SampleCountMismatch { expected, found });
+        }
+        let pixels = rgb.len() / 3;
+        let mut r = Vec::with_capacity(pixels);
+        let mut g = Vec::with_capacity(pixels);
+        let mut b = Vec::with_capacity(pixels);
+        for i in 0..pixels {
+            let code = |c: usize| {
+                jpxl_core::color::srgb_to_linear(
+                    f32::from(rgb.get(i * 3 + c).copied().unwrap_or(0)) / 255.0,
+                )
+            };
+            r.push(code(0));
+            g.push(code(1));
+            b.push(code(2));
+        }
+        Self::from_linear_srgb(width, height, r, g, b)
+    }
+
     /// Frame width in samples.
     #[must_use]
     pub const fn width(&self) -> u32 {

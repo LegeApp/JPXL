@@ -4,10 +4,14 @@
 
 use core::fmt;
 
+use jpxl_encode::EncodeError;
 use jpxl_encode::vardct::PlanError;
 
 /// Everything that can go wrong while planning.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Not `PartialEq`: [`EncodeError`] wraps errors that have no equality. Tests
+/// match on the variant.
+#[derive(Debug)]
 pub enum PolicyError {
     /// The plan this policy built was rejected by `jpxl-encode`.
     ///
@@ -19,6 +23,11 @@ pub enum PolicyError {
         /// What the caller asked for.
         what: &'static str,
     },
+    /// The writer refused the plan, or a bit could not be written.
+    ///
+    /// Reaching this means the plan validated but the milestone-2 writer has
+    /// no encoding for some part of it — see `jpxl_encode::vardct::write`.
+    Encode(EncodeError),
     /// The source planes and the declared dimensions disagree.
     SampleCountMismatch {
         /// How many samples the dimensions call for.
@@ -32,6 +41,7 @@ impl fmt::Display for PolicyError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Plan(err) => write!(f, "{err}"),
+            Self::Encode(err) => write!(f, "{err}"),
             Self::Unsupported { what } => write!(f, "unsupported: {what}"),
             Self::SampleCountMismatch { expected, found } => write!(
                 f,
@@ -45,8 +55,15 @@ impl std::error::Error for PolicyError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Plan(err) => Some(err),
+            Self::Encode(err) => Some(err),
             _ => None,
         }
+    }
+}
+
+impl From<EncodeError> for PolicyError {
+    fn from(err: EncodeError) -> Self {
+        Self::Encode(err)
     }
 }
 

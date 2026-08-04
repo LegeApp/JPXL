@@ -55,7 +55,9 @@ dependencies = [
 name = "jpxl-encode-policy"
 version = "0.1.0"
 dependencies = [
+ "jpxl-conformance",
  "jpxl-core",
+ "jpxl-decode",
  "jpxl-encode",
 ]
 
