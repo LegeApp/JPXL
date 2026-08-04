@@ -13,6 +13,66 @@ Keep this file small. Entries whose content has landed in `PLAN.md`,
 
 ---
 
+## 2026-08-04 (wave 10) — encoder slices 12–14: lossy VarDCT encoding is real
+
+**Slice 13 (768f1fb):** `jpxl_core::forward` — allocation-free forward
+forms for all 27 transform types + `lf_from_llf`, exact inverses of
+the in-tree I.7.2 kernels (worst pair error 5.4e-7, flat across
+sizes). Proofs: pair tests both directions, full impulse sweep
+against the PROVEN inverse (kills shared 1/√s errors the roundtrip
+alone hides), AFV corner discriminators separating all four variants
+(the composition test alone was measured blind to flip_x — the
+wave-8 involution lesson recurring). No new flip points: forward
+algebra inherits every decision by reference (shared `scale_f`,
+shared half-index constant).
+
+**Slice 12 (d5937d4): all three decoders accept our lossy output.**
+Full vertical slice: policy plan → validated plan → header/LfGlobal/
+LfGroup/HfGlobal/PassGroup writers → ANS. Ladder 8×8 grey →
+multi-section 300×260 → non-multiple-of-8 → two LF groups; djxl and
+jxl-oxide agree with jpxl-decode within 1 8-bit code point on every
+rung. Non-obvious clause facts: kVarDCT frames signal NO
+group_size_shift (group_dim fixed 256); I.2.3 `base_correlation_b`
+defaults to 1.0 so "neutral" CfL still adds Y into B — encoder
+quantizes Y first, targets `B − 1.0·dY_recon` (flat grey → peak 0).
+Gated mechanical move: I.2.4/I.2.5 dequant tables →
+`jpxl-core/src/dequant.rs` verbatim (flip points intact, decoder
+suite green = proof). Policy boundary test rescoped to the real
+`[dependencies]` table; peer oracle allowed as dev-dependency.
+
+**Slice 14 (ff6c84d): exact rate control.** Pricing IS the writer
+(`emit_codestream` → bytes + sizing; a parallel size model is
+rejected in-doc as a paired-bug shape); sizing partitions the stream
+byte-exactly. Rate loop over wire-representable rungs (global_scale
+ladder extended by HfMul>1 past the I.2.1 ceiling): bracket →
+bisect → discrete fill probing past infeasible notches. Contract:
+never over target, ≤1% undershoot; measured worst 0.57% at ≤16
+prices. Size is genuinely non-monotone in global_scale (16
+decreases across 60 consecutive scales — regression-tested);
+injected-sawtooth test proves the loop finds the brute-force
+optimum. `quant_lf` measured to be a distortion knob, not a rate
+knob — held fixed, slice 17 owns it. First HfMul>1 stream on the
+wire; oracles accept.
+
+**R-D baseline for slices 15–18 to beat:** 300×260 mixed content:
+ours 10748 B / RMSE 6.46 (default quantizer) vs `cjxl -d 1` 4165 B /
+2.73. Gap drivers, in expected order: no CfL (15), fixed 8×8 (16),
+constant HfMul (17), untrained entropy (18).
+
+**Known debt, scheduled:** two census types
+(`vardct::sink::CensusSink` vs `jpxl_entropy::encode::TokenCensus`)
+and the placeholder `SymbolSink` trait — unify/delete in slice 18;
+`x_qm_scale`/`b_qm_scale` written neutral 2 — slice 17; tolerance
+stop can settle one rung coarse at equal bytes in size-flat regions
+— milestone-7 R-D question. No jpxl-cli VarDCT wiring yet.
+
+**Next:** slice 15 (CfL estimation), 16 (hierarchical block
+selector), 17 (adaptive quant) per PLAN. Decoder side unchanged this
+wave (corpus stays 30/39; `cafe` via J.2 and the two probed-failing
+cases remain the decoder candidates).
+
+---
+
 ## 2026-08-04 (wave 9) — noise + kModular gaps + YCbCr; corpus 30/39; encoder slices 11 + 11.5 landed
 
 **Decoder: corpus 18 → 30 of 39.** Three tracks, in order:
