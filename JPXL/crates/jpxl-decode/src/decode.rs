@@ -369,6 +369,23 @@ pub struct LfFrame {
 /// The `LFFrame[]` slots of F.2.
 type LfFrameSlots = [Option<LfFrame>; NUM_LF_FRAME_SLOTS];
 
+/// K.5.2's noise seed inputs for one frame: `vis_frame_idx` and
+/// `invis_frame_idx`, computed by the frame loop (see its definition) and
+/// threaded down to [`crate::frame::noise::synthesize_noise_channels`]'s
+/// `seed0`.
+#[derive(Debug, Clone, Copy)]
+struct NoiseFrameSeed {
+    vis_frame_idx: u64,
+    invis_frame_idx: u64,
+}
+
+impl NoiseFrameSeed {
+    /// `seed0 = (vis_frame_idx << 32) + invis_frame_idx` (K.5.2).
+    const fn seed0(self) -> u64 {
+        (self.vis_frame_idx << 32) + self.invis_frame_idx
+    }
+}
+
 /// Decodes a JPEG XL file or naked codestream.
 ///
 /// Accepts either a naked codestream (starting `FF 0A`) or a Part 2 container,
@@ -422,6 +439,15 @@ pub fn decode(data: &[u8], limits: &Limits) -> Result<DecodedImage> {
     let mut canvases: CanvasSlots = [None, None, None, None];
     let mut lf_frames: LfFrameSlots = [None, None, None, None];
     let mut frames = 0u32;
+    // K.5.2's `vis_frame_idx`/`invis_frame_idx` noise seed: a "visible" frame
+    // is a normal frame (kRegularFrame/kSkipProgressive) with duration > 0 or
+    // is_last; an "invisible" one is everything else (kLFFrame,
+    // kReferenceOnly, or a zero-duration non-final normal frame).
+    // `vis_frame_idx` counts visible frames decoded so far, `invis_frame_idx`
+    // counts invisible ones since the last visible frame — both *including*
+    // the current frame if it matches that arm.
+    let mut vis_frame_idx: u64 = 0;
+    let mut invis_frame_idx: u64 = 0;
     loop {
         frames += 1;
         if u64::from(frames) > u64::from(limits.max_frames) {
@@ -459,6 +485,19 @@ pub fn decode(data: &[u8], limits: &Limits) -> Result<DecodedImage> {
             + usize::try_from(frame_reader.total_bits_read() / 8)
                 .map_err(|_| unsupported("an oversized TOC", "18181-1 F.3.3"))?;
 
+        let frame_is_visible =
+            header.frame_type.is_normal_frame() && (header.duration != 0 || header.is_last);
+        if frame_is_visible {
+            vis_frame_idx += 1;
+            invis_frame_idx = 0;
+        } else {
+            invis_frame_idx += 1;
+        }
+        let frame_seed = NoiseFrameSeed {
+            vis_frame_idx,
+            invis_frame_idx,
+        };
+
         if header.frame_type == FrameType::RegularFrame {
             // F.2 makes the composition of several regular frames into one
             // image conditional: "if duration is zero and !is_last, the
@@ -488,6 +527,7 @@ pub fn decode(data: &[u8], limits: &Limits) -> Result<DecodedImage> {
                 &headers,
                 &references,
                 &lf_frames,
+                frame_seed,
                 limits,
                 &mut guard,
             )?;
@@ -1340,14 +1380,8 @@ const fn shifted_ceil(value: u32, shift: u32) -> u32 {
 /// Split from the per-encoding checks so that a construct is rejected in
 /// exactly one place: everything here is orthogonal to `encoding`.
 fn check_supported_common(header: &FrameHeader) -> Result<()> {
-    if header.do_ycbcr {
-        return Err(unsupported("do_YCbCr colour reconstruction", "18181-1 L.3"));
-    }
     if header.flags.splines() {
         return Err(unsupported("splines", "18181-1 K.4"));
-    }
-    if header.flags.noise() {
-        return Err(unsupported("noise synthesis", "18181-1 K.5"));
     }
     Ok(())
 }
@@ -1359,6 +1393,15 @@ fn check_supported_modular(
     purpose: FramePurpose,
 ) -> Result<()> {
     check_supported_common(header)?;
+    if header.do_ycbcr {
+        // L.3 is wired only into the kVarDCT tail (`ycbcr_to_rgb` in
+        // `vardct::render`); nothing available emits a do_YCbCr kModular
+        // frame to test the same conversion on raw integers.
+        return Err(unsupported(
+            "do_YCbCr colour reconstruction in a kModular frame",
+            "18181-1 L.3",
+        ));
+    }
     // K.2 produces fractional samples, and a kModular frame's output is its
     // integers — there is no float stage to put them in. Upsampling one would
     // mean building the whole float pipeline the kVarDCT path already has.
@@ -1382,20 +1425,37 @@ fn check_supported_modular(
             "18181-1 G.2.2",
         ));
     }
-    if header.flags.patches() {
+    if header.flags.patches() && purpose != FramePurpose::Displayed {
         // K.3.1's dictionary is the first bundle of LfGlobal for every
-        // encoding, and the modular path does not read it — so this is a
-        // bit-position guard, not only a feature gate. K.3.2 for a modular
-        // frame would also have to blend in the modular sample space.
-        return Err(unsupported("patches in a kModular frame", "18181-1 K.3"));
-    }
-    if metadata.xyb_encoded && purpose == FramePurpose::Displayed {
-        // A displayed modular frame in an XYB image would need L.2.2's
-        // kModular pre-step and then the whole of L.2. A reference frame stops
-        // before L.2 by definition, so it only needs the pre-step, which
-        // `decode_reference_frame` applies.
+        // encoding — `decode_modular_frame` always reads it when the flag is
+        // set (a bit-position requirement, not only a feature gate) — but
+        // K.3.2 blending is only wired for a *displayed* kModular frame
+        // (`modular_displayed_pipeline`); a kModular frame that is itself an
+        // LF frame or a reference blending its own patches is untested.
         return Err(unsupported(
-            "xyb_encoded colour reconstruction",
+            "patches in a non-displayed kModular frame",
+            "18181-1 K.3",
+        ));
+    }
+    if header.flags.noise() {
+        // K.5.1's LUT is the third bundle of LfGlobal for every encoding (a
+        // bit-position guard, like patches above), and K.5.2 modulates the
+        // XYB X/Y/B samples the kVarDCT float pipeline has and a kModular
+        // frame's raw integers do not.
+        return Err(unsupported(
+            "noise synthesis in a kModular frame",
+            "18181-1 K.5",
+        ));
+    }
+    if metadata.xyb_encoded
+        && purpose == FramePurpose::Displayed
+        && metadata.colour_encoding.is_grey()
+    {
+        // L.2.2's kModular pre-step (`modular_displayed_pipeline`) needs all
+        // three X/Y/B channels; `xyb_encoded` implies three colour channels
+        // in every available stream, but nothing rules out a greyscale one.
+        return Err(unsupported(
+            "a greyscale xyb_encoded kModular displayed frame",
             "18181-1 L.2",
         ));
     }
@@ -1405,20 +1465,25 @@ fn check_supported_modular(
 /// Rejects every frame construct outside the `kVarDCT` scope of slice 8.
 fn check_supported_vardct(header: &FrameHeader, metadata: &ImageMetadata) -> Result<()> {
     check_supported_common(header)?;
-    if !metadata.xyb_encoded {
-        // A kVarDCT frame that is not XYB-encoded would need L.2 skipped and
-        // the samples interpreted directly in the signalled colour encoding.
-        // cjxl does not emit one; refusing is better than guessing.
+    if !metadata.xyb_encoded && !header.do_ycbcr {
+        // A kVarDCT frame that is neither XYB-encoded nor do_YCbCr would need
+        // L.2 skipped and the samples interpreted directly in the signalled
+        // colour encoding (L.1's third case). Nothing available emits one;
+        // refusing is better than guessing.
         return Err(unsupported(
-            "a kVarDCT frame that is not xyb_encoded",
-            "18181-1 L.2",
+            "a kVarDCT frame that is neither xyb_encoded nor do_YCbCr",
+            "18181-1 L.1",
         ));
     }
     check_supported_extra_channels(header, metadata)?;
     if header.jpeg_upsampling != [0, 0, 0] {
+        // J.2's triangle-filter chroma upsampling — a subsampled channel
+        // gets its own, smaller group/LF-group grid (F.2's block-count
+        // division by the per-channel subsampling factor), which nothing in
+        // this decoder's geometry or coefficient placement is wired for yet.
         return Err(unsupported(
             "chroma subsampling in a kVarDCT frame",
-            "18181-1 G.2.2",
+            "18181-1 J.2",
         ));
     }
     Ok(())
@@ -1461,15 +1526,17 @@ fn decode_frame(
     headers: &ImageHeaders,
     references: &ReferenceSlots,
     lf_frames: &LfFrameSlots,
+    frame_seed: NoiseFrameSeed,
     limits: &Limits,
     guard: &mut AllocGuard,
 ) -> Result<DecodedImage> {
     if header.encoding == Encoding::VarDct {
         return decode_vardct_frame(
-            codestream, base, toc, geometry, header, headers, references, lf_frames, guard,
+            codestream, base, toc, geometry, header, headers, references, lf_frames, frame_seed,
+            guard,
         );
     }
-    decode_modular_frame(
+    let (image, lf_dequant, patches) = decode_modular_frame(
         codestream,
         base,
         toc,
@@ -1479,8 +1546,102 @@ fn decode_frame(
         FramePurpose::Displayed,
         limits,
         guard,
+    )?;
+    if !header.flags.patches() && !headers.metadata.xyb_encoded {
+        // The ordinary lossless-modular path: no float stage needed, no
+        // rounding introduced. Unchanged from before this wave.
+        return Ok(image);
+    }
+    modular_displayed_pipeline(
+        image,
+        &lf_dequant,
+        &patches,
+        header,
+        &headers.metadata,
+        references,
+        geometry,
+        guard,
     )
-    .map(|(image, _)| image)
+}
+
+/// L.2.2's `kModular` pre-step (when `xyb_encoded`) and/or K.3.2 patch
+/// blending, for a **displayed** `kModular` frame — the two gaps `bicycles`
+/// (XYB, no patches) and `patches_lossless` (patches, non-XYB) each exercise
+/// one half of.
+///
+/// Unlike the `kVarDCT` tail this never runs Annex J (`gab`/`epf` are
+/// refused if signalled — see the call site's guard) or K.2 upsampling
+/// (`check_supported_modular` refuses `upsampling != 1`), so the only
+/// Annex K/L stages are patches and, when `xyb_encoded`, the inverse XYB
+/// transform and transfer function. A non-`xyb_encoded` frame stays in the
+/// signalled colour encoding per L.1 — no colour transform at all, only the
+/// patch blend.
+///
+/// # Errors
+///
+/// [`DecodeError::Unsupported`] for a non-three-channel colour image (L.2.2's
+/// pre-step needs X/Y/B; nothing available exercises patches on a greyscale
+/// kModular frame either) or for a signalled restoration filter (Annex J is
+/// not wired for this path — every available stream has both off).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the same frame-layer inputs decode_frame takes"
+)]
+fn modular_displayed_pipeline(
+    image: DecodedImage,
+    lf_dequant: &crate::vardct::quantizer::LfChannelDequantization,
+    patches: &crate::frame::patches::PatchDictionary,
+    header: &FrameHeader,
+    metadata: &ImageMetadata,
+    references: &ReferenceSlots,
+    geometry: &FrameGeometry,
+    guard: &mut AllocGuard,
+) -> Result<DecodedImage> {
+    use crate::vardct::render;
+
+    if header.restoration_filter.gab || header.restoration_filter.epf.iters > 0 {
+        return Err(unsupported(
+            "a restoration filter on a displayed kModular frame",
+            "18181-1 J",
+        ));
+    }
+    if image.num_colour_channels != 3 {
+        return Err(unsupported(
+            "a non-RGB displayed kModular frame with xyb_encoded or patches",
+            "18181-1 L.2",
+        ));
+    }
+    let (width, height) = (image.width, image.height);
+    let mut planes = render::ColourPlanes::zeros(width, height, guard)?;
+    planes.planes = if metadata.xyb_encoded {
+        xyb_from_modular(&image, lf_dequant, metadata)?
+    } else {
+        // L.1: not xyb_encoded means the samples are already in the
+        // signalled colour encoding — no colour transform at all.
+        normalized_rgb_planes(&image, "18181-1 L.1")?
+    };
+
+    let num_extra = metadata.num_extra();
+    let mut extra = crate::vardct::render::ExtraPlanes::zeros(width, height, num_extra, guard)?;
+    for (c, plane) in image.planes.iter().skip(3).take(num_extra).enumerate() {
+        let max = plane.max_value() as f32;
+        if let Some(dst) = extra.planes.get_mut(c) {
+            for (slot, &v) in dst.iter_mut().zip(&plane.samples) {
+                *slot = v as f32 / max;
+            }
+        }
+    }
+
+    if header.flags.patches() {
+        render::apply_patches(&mut planes, &mut extra, patches, references)?;
+    }
+
+    if metadata.xyb_encoded {
+        render::to_linear_srgb(&mut planes, &opsin_inverse(metadata));
+        apply_transfer_function(&mut planes, metadata)?;
+    }
+
+    assemble_float(planes, extra, metadata, geometry)
 }
 
 /// Why a frame is being decoded, which is what decides how strict the
@@ -1534,7 +1695,7 @@ fn decode_lf_frame(
     if header.encoding == Encoding::VarDct {
         return Err(unsupported("a kVarDCT LF frame", "18181-1 F.2"));
     }
-    let (image, lf_dequant) = decode_modular_frame(
+    let (image, lf_dequant, _patches) = decode_modular_frame(
         codestream,
         base,
         toc,
@@ -1669,7 +1830,7 @@ fn decode_reference_frame(
 ) -> Result<ReferenceFrame> {
     if header.encoding != Encoding::VarDct {
         // The common case: a small kModular rectangle holding the patch atlas.
-        let (image, lf_dequant) = decode_modular_frame(
+        let (image, lf_dequant, _patches) = decode_modular_frame(
             codestream,
             base,
             toc,
@@ -1685,15 +1846,43 @@ fn decode_reference_frame(
     Err(unsupported("a kVarDCT reference frame", "18181-1 F.2"))
 }
 
-/// L.2.2's `kModular` pre-step, turning a decoded modular reference frame into
-/// the XYB planes K.3.2 blends.
+/// A decoded modular frame's first three colour channels, each scaled to
+/// `[0, 1]` by its own `max_value()` — L.1's "not `xyb_encoded`" reading: no
+/// colour transform at all, the samples stay in the signalled colour
+/// encoding. Used where [`xyb_from_modular`]'s L.2.2 pre-step would run for
+/// an `xyb_encoded` image (unlike that pre-step, there is no Y/X/B channel
+/// swap here — a non-XYB modular frame's channels are already R, G, B in
+/// order).
+fn normalized_rgb_planes(image: &DecodedImage, clause: &'static str) -> Result<[Vec<f32>; 3]> {
+    if image.num_colour_channels != 3 {
+        return Err(unsupported("a non-RGB modular frame", clause));
+    }
+    let mut out: [Vec<f32>; 3] = [Vec::new(), Vec::new(), Vec::new()];
+    for (c, dst) in out.iter_mut().enumerate() {
+        let plane = image
+            .planes
+            .get(c)
+            .ok_or_else(|| unsupported("a missing colour plane", clause))?;
+        let max = plane.max_value() as f32;
+        *dst = plane.samples.iter().map(|&v| v as f32 / max).collect();
+    }
+    Ok(out)
+}
+
+/// L.2.2's `kModular` pre-step (when `xyb_encoded`), or the identity scaling
+/// above (when not), turning a decoded modular reference frame into the
+/// planes K.3.2 blends.
 fn reference_from_modular(
     image: &DecodedImage,
     lf_dequant: &crate::vardct::quantizer::LfChannelDequantization,
     metadata: &ImageMetadata,
     header: &FrameHeader,
 ) -> Result<ReferenceFrame> {
-    let planes = xyb_from_modular(image, lf_dequant, metadata)?;
+    let planes = if metadata.xyb_encoded {
+        xyb_from_modular(image, lf_dequant, metadata)?
+    } else {
+        normalized_rgb_planes(image, "18181-1 K.3")?
+    };
     // The extra channels of a reference frame are not colour and so take no
     // part in L.2.2's pre-step: G.4.2's interpretation by `ec_info[i].
     // bit_depth` is all of it, which puts them on the same `[0, 1]` scale the
@@ -1737,6 +1926,7 @@ fn decode_modular_frame(
 ) -> Result<(
     DecodedImage,
     crate::vardct::quantizer::LfChannelDequantization,
+    crate::frame::patches::PatchDictionary,
 )> {
     let metadata = &headers.metadata;
     check_supported_modular(header, metadata, purpose)?;
@@ -1757,13 +1947,33 @@ fn decode_modular_frame(
     let mut single_reader = BitReader::new(whole);
 
     // ---- LfGlobal (G.1) --------------------------------------------------
-    let (lf_dequant, global_tree, mut partial) = {
+    let (patches, lf_dequant, global_tree, mut partial) = {
         let mut owned;
         let reader: &mut BitReader<'_> = if single {
             &mut single_reader
         } else {
             owned = BitReader::new(section_slice(codestream, base, toc, 0)?);
             &mut owned
+        };
+
+        // K.3.1 is the FIRST row of Table G.1 for every encoding —
+        // `check_supported_modular` only lets the flag through for a
+        // displayed frame, but the bundle itself must still be read whenever
+        // it is set, same as the kVarDCT path.
+        let patches = if header.flags.patches() {
+            crate::frame::patches::read_patches(
+                reader,
+                metadata.num_extra(),
+                geometry.upsampled_width(),
+                geometry.upsampled_height(),
+                crate::frame::patches::max_num_patches(
+                    geometry.upsampled_width(),
+                    geometry.upsampled_height(),
+                ),
+                guard,
+            )?
+        } else {
+            crate::frame::patches::PatchDictionary::default()
         };
 
         // G.1.2 LfChannelDequantization is present for every encoding. Modular
@@ -1787,7 +1997,7 @@ fn decode_modular_frame(
             ChannelStop::GlobalModular { group_dim },
             guard,
         )?;
-        (lf_dequant, global_tree, partial)
+        (patches, lf_dequant, global_tree, partial)
     };
 
     let first_undecoded = partial.first_undecoded();
@@ -1886,7 +2096,7 @@ fn decode_modular_frame(
         num_colour,
         limits,
     )?;
-    Ok((assembled, lf_dequant))
+    Ok((assembled, lf_dequant, patches))
 }
 
 /// Decodes one LF-group or pass-group modular sub-bitstream and copies the
@@ -2197,10 +2407,11 @@ fn decode_vardct_frame(
     headers: &ImageHeaders,
     references: &ReferenceSlots,
     lf_frames: &LfFrameSlots,
+    frame_seed: NoiseFrameSeed,
     guard: &mut AllocGuard,
 ) -> Result<DecodedImage> {
     use crate::vardct::cfl::CflFactors;
-    use crate::vardct::dequant_matrix::read_hf_global_params;
+    use crate::vardct::dequant_matrix::{RawMatrixContext, read_hf_global_params_with};
     use crate::vardct::hf_coeff::{
         HfCoefficients, HfGroupParams, HfVarblock, decode_hf_group, read_hf_passes,
     };
@@ -2231,7 +2442,7 @@ fn decode_vardct_frame(
     let group_dim = geometry.group_dim();
 
     // ---- LfGlobal (G.1) --------------------------------------------------
-    let (patches, lf_dequant, vardct, global_tree, mut ec_partial) = {
+    let (patches, noise_params, lf_dequant, vardct, global_tree, mut ec_partial) = {
         let mut owned;
         let reader: &mut BitReader<'_> = if single {
             &mut single_reader
@@ -2259,6 +2470,13 @@ fn decode_vardct_frame(
         } else {
             crate::frame::patches::PatchDictionary::default()
         };
+        // K.5.1 is the third row of Table G.1, after patches and (always
+        // refused here) splines — see `check_supported_common`.
+        let noise_params = if header.flags.noise() {
+            Some(crate::frame::noise::read_noise_params(reader)?)
+        } else {
+            None
+        };
         let lf_dequant = read_lf_channel_dequantization(reader)?;
         let vardct = read_lf_global_vardct(reader, guard)?;
         // G.1.3 GlobalModular: the leading Bool() is read whatever the channel
@@ -2279,7 +2497,14 @@ fn decode_vardct_frame(
             ChannelStop::GlobalModular { group_dim },
             guard,
         )?;
-        (patches, lf_dequant, vardct, global_tree, ec_partial)
+        (
+            patches,
+            noise_params,
+            lf_dequant,
+            vardct,
+            global_tree,
+            ec_partial,
+        )
     };
 
     let ec_first_undecoded = ec_partial.first_undecoded();
@@ -2428,14 +2653,16 @@ fn decode_vardct_frame(
             )?);
             &mut owned
         };
-        let params = read_hf_global_params(reader, num_groups, guard)?;
         // I.2.4 RAW mode reads its 3-channel matrix from a modular
-        // sub-bitstream *inline*, at this bit position. `read_dequant_matrices`
-        // does not consume it, so a RAW stream would desynchronise everything
-        // after it rather than merely lack a matrix. Refuse loudly.
-        if !params.matrices.raw_requests().is_empty() {
-            return Err(unsupported("RAW dequantization matrices", "18181-1 I.2.4"));
-        }
+        // sub-bitstream *inline*, at this bit position — not a separate
+        // section, so it has to be threaded into the parameter read itself
+        // (`RawMatrixContext`) rather than resolved afterwards.
+        let raw_ctx = RawMatrixContext {
+            options: modular_options,
+            tree_source: tree_source(global_tree.as_ref(), true),
+            geometry,
+        };
+        let params = read_hf_global_params_with(reader, num_groups, Some(&raw_ctx), guard)?;
         let passes = read_hf_passes(
             reader,
             header.passes.num_passes,
@@ -2721,8 +2948,29 @@ fn decode_vardct_frame(
     render::apply_restoration(&mut planes, filter, &sigma)?;
     upsample_colour(&mut planes, geometry, &weights, guard)?;
     render::apply_patches(&mut planes, &mut extra, &patches, references)?;
-    render::to_linear_srgb(&mut planes, &opsin_inverse(metadata));
-    apply_transfer_function(&mut planes, metadata)?;
+    // K.1: noise is the last image feature (after patches, splines — the
+    // latter always refused above), still before Annex L's colour
+    // transforms, and still on the XYB planes.
+    if let Some(noise_params) = &noise_params {
+        render::apply_noise(
+            &mut planes,
+            noise_params,
+            geometry,
+            &vardct.lf_chan_corr,
+            frame_seed.seed0(),
+            guard,
+        )?;
+    }
+    // L.1: xyb_encoded and do_YCbCr are mutually exclusive (the frame header
+    // only reads do_YCbCr when !xyb_encoded), and `check_supported_vardct`
+    // requires one of the two. Y'CbCr -> R'G'B' is already the final,
+    // gamma-encoded output — no transfer function afterwards.
+    if header.do_ycbcr {
+        render::ycbcr_to_rgb(&mut planes);
+    } else {
+        render::to_linear_srgb(&mut planes, &opsin_inverse(metadata));
+        apply_transfer_function(&mut planes, metadata)?;
+    }
 
     assemble_float(planes, extra, metadata, geometry)
 }

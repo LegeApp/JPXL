@@ -1121,8 +1121,18 @@ fn scale_all(rows: &mut [Vec<f64>; 3]) {
 ///
 /// RAW is the only place in the frame where a modular sub-bitstream is
 /// *followed* by more fields in the same section, so it is the only construct
-/// that can decide this — and no `cjxl` build emits RAW. Untested by any real
-/// stream.
+/// that can decide this.
+///
+/// **PROBED-CONFIRMED 2026-08-04.** `cjxl`'s JPEG-recompression path
+/// (`cjxl in.jpg out.jxl`) emits `encoding_mode == RAW` for every `do_YCbCr`
+/// stream this project has decoded — `bench_oriented_brg`/`grayscale_jpeg`
+/// and their `_5` variants all use it. Under `true`, all four decode and grade
+/// well inside their `test.json` budgets and match the pinned `djxl` to
+/// within 1 of 255 per 8-bit sample; a wrong alignment reading would
+/// desynchronise every field of `HfGlobal` after the sub-bitstream, not
+/// produce a near-exact match. See
+/// `docs/experiments/2026-08-03-vardct-flip-point-probe.md`'s 2026-08-04
+/// addendum and `crates/jpxl-decode/tests/e2e_ycbcr.rs`.
 pub const RAW_SUBBITSTREAM_IS_UNALIGNED: bool = true;
 
 /// Decodes the 3-channel modular image of I.2.4's RAW arm, inline.
@@ -1201,7 +1211,14 @@ fn read_raw_matrix(
 /// [`LF_QUANT_CHANNEL_ORDER_IS_XYB`](crate::vardct::lf::LF_QUANT_CHANNEL_ORDER_IS_XYB)).
 /// The difference is that I.4 states the Y, X, B order for HF *coefficients*
 /// explicitly, and a RAW dequantization table is a parameter table, not
-/// coefficients. Untestable until a stream uses RAW.
+/// coefficients.
+///
+/// **PROBED-CONFIRMED 2026-08-04**, the same way as
+/// [`RAW_SUBBITSTREAM_IS_UNALIGNED`]: the `do_YCbCr` corpus streams are the
+/// first to use RAW, and a wrong channel order among matrices this
+/// differently-shaped (X and B are typically near-identical chroma tables,
+/// Y is the sharp luma one) would show up as a large, structured error, not
+/// the sub-2e-6 peak these streams grade at.
 pub const RAW_MATRIX_CHANNEL_ORDER_IS_XYB: bool = true;
 
 /// Reads one parameter set of I.2.4.

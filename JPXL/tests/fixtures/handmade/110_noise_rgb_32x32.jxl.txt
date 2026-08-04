@@ -1,0 +1,69 @@
+Fixture: 110_noise_rgb_32x32.jxl
+32x32 RGB, VarDCT lossy d=1.0, kNoise set (--photon_noise_iso=3200)
+
+Purpose
+-------
+K.5 noise synthesis at its smallest expressible size. 32x32 with the default
+group_dim (256) is one group, one LF group, one TOC section: a wrong seed
+formula, a wrong XorShift128Plus state update, or a wrong group-tile boundary
+has nothing else to hide behind. `--photon_noise_iso` is cjxl's flag for
+setting frame_header.flags.kNoise and writing a K.5.1 NoiseParameters LUT;
+nothing else in the available oracle build exposes that flag.
+
+Frame structure, as parsed by JPXL itself:
+
+  frame 0  kRegularFrame  kVarDCT  frame 32x32 -> output 32x32
+           group_dim 256, 1 group, 1 LF group, 1 TOC section
+           upsampling 1; flags.kNoise set
+
+Source content is a smooth two-axis gradient (R = x ramp, G = y ramp, B =
+128 constant) so the K.5.2 strength LUT -- keyed off the pre-noise X/Y
+samples via in_R = (Y+X)/2, in_G = (Y-X)/2 -- sweeps through more than one
+LUT bucket across the image, rather than sampling the same strength
+everywhere a flat source would give.
+
+Grading (18181-3 4.2)
+---------------------
+Filters are left at cjxl's own choice (Annex A's ordinary error class):
+
+    Part 3 error class:  peak <= 0.02,  RMSE <= 1e-3   (filters enabled)
+
+The corpus `noise`/`noise_5` case is the primary evidence (500x606,
+multi-group, graded at its own tight test.json thresholds, peak <= 0.004 /
+RMSE <= 1e-4 -- effectively a bit-exactness contract per K.5.2's own NOTE1).
+This handmade fixture is the smallest-case debugging rung, not a replacement
+for it: see crates/jpxl-decode/tests/e2e_noise.rs.
+
+Provenance
+----------
+  Encoder:      cjxl v0.13.0 196a43d9 [_AVX2_,SSE4,SSE2] {GNU 15.2.0}
+  libjxl rev:   196a43d996aa6ed33ebf98812a7c6d43b2b6d01b (v0.12-snapshot-2-g196a43d9)
+  cjxl flags:   -d 1.0 -e 7 --photon_noise_iso=3200 --modular=0
+  Built by:     tools/setup-oracles.sh (flags recorded in
+                tools/oracle-bin/PINNED_REVISIONS.txt)
+  Regenerate:   tools/make-noise-fixtures.sh
+                That script IS the recipe; it rewrites the source and re-encodes.
+
+  Source image: tests/fixtures/generated/src_noise_rgb_32x32.ppm  (3095 bytes)
+                sha256 92c73a0c0ee7880a3184789718172c88d477d8166b31ffb4a3242d0297dc1fb5
+                Synthetic PPM, written by the Python snippet inside
+                tools/make-noise-fixtures.sh with nothing but the standard
+                library -- no third-party image was used, converted or
+                consulted, and no image library is involved.
+
+  Fixture:      180 bytes
+                sha256 6e9ac25eeca9a4d59478714bc5a7f6340321f3434b739299e769daac02a0d062
+
+  Reference decode (djxl --output_format npy):
+    110_noise_rgb_32x32.npy  (12366 bytes)
+    sha256 7f66b92b675df1de5e78c871d59a9af688be92c005b260a14235c8367dab9180
+    Committed alongside the fixture (< 100 KB).
+    Shape (1, 32, 32, 3) little-endian f32, per 18181-3 4.1.2. Readable with
+    jpxl_conformance::FloatImage::from_npy.
+    Regenerable at any time from the fixture with the pinned djxl build
+    (decode is deterministic per libjxl revision, see PINNED_REVISIONS.txt).
+
+cjxl/djxl are used strictly as BLACK BOXES: they emit/consume conformant
+streams for JPXL to parse. libjxl's source is never read. If a rebuild at a
+different libjxl revision changes these digests, that is the point of
+recording them -- do not silently update them; note the revision change.

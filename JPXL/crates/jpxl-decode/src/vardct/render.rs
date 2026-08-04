@@ -34,7 +34,7 @@ use jpxl_core::color::OpsinInverse;
 use jpxl_core::limits::AllocGuard;
 use jpxl_core::varblock::{CoeffMatrix, SampleBlock, TransformType, llf_from_lf};
 
-use crate::decode::ReferenceFrame;
+use crate::decode::{ReferenceFrame, unsupported};
 use crate::error::{DecodeError, Result};
 use crate::frame::gaborish::{GaborKernel, PlaneDims};
 use crate::frame::patches::{PatchBlendMode, PatchDictionary, blend as patch_blend};
@@ -705,6 +705,80 @@ pub fn apply_patches(
     Ok(())
 }
 
+/// K.5.2: synthesizes and modulates in film-grain-style noise onto the
+/// frame's XYB planes.
+///
+/// Runs after [`apply_patches`] and before [`to_linear_srgb`] — K.1 lists
+/// noise last of the three image features, still ahead of Annex L. See
+/// [`crate::frame::noise`] for the generator itself and the pipeline-position
+/// / group-grid notes.
+///
+/// # Errors
+///
+/// [`DecodeError::Unsupported`] if `frame_header.upsampling != 1` — nothing
+/// available exercises noise combined with K.2 upsampling, and this decoder
+/// refuses rather than guesses which grid K.5.2's "group" means in that case.
+/// [`DecodeError::Core`] if the noise channels exceed the allocation budget.
+pub fn apply_noise(
+    planes: &mut ColourPlanes,
+    params: &crate::frame::noise::NoiseParams,
+    geometry: &crate::frame::FrameGeometry,
+    lf_chan_corr: &crate::vardct::quantizer::LfChannelCorrelation,
+    seed0: u64,
+    guard: &mut AllocGuard,
+) -> Result<()> {
+    if geometry.upsampling() != 1 {
+        return Err(unsupported(
+            "noise synthesis combined with frame upsampling",
+            "18181-1 K.5",
+        ));
+    }
+    let dims = planes.dims();
+    guard.charge(dims.len() as u64 * 4 * 3)?;
+    let channels =
+        crate::frame::noise::synthesize_noise_channels(dims, seed0, geometry.num_groups(), |i| {
+            geometry.group_rect(i)
+        })
+        .ok_or_else(|| unsupported("a noise group index past the grid", "18181-1 G.2"))?;
+
+    let base_correlation_x = lf_chan_corr.base_correlation_x;
+    let base_correlation_b = lf_chan_corr.base_correlation_b;
+
+    let [r_channel, g_channel, b_channel] = &channels;
+    let channel_at = |channel: &[f32], idx: usize| channel.get(idx).copied().unwrap_or(0.0);
+
+    for y in 0..planes.height {
+        for x in 0..planes.width {
+            let idx = y as usize * planes.width as usize + x as usize;
+            let x_sample = planes.get(0, x, y);
+            let y_sample = planes.get(1, x, y);
+            let b_sample = planes.get(2, x, y);
+
+            // "AR, AG, AB denote the corresponding sample from each of the
+            // preceding pseudorandom channels ... further scaled by
+            // multiplication with 0.22."
+            let a_r = channel_at(r_channel, idx) * 0.22;
+            let a_g = channel_at(g_channel, idx) * 0.22;
+            let a_b = channel_at(b_channel, idx) * 0.22;
+
+            let (s_r, s_g) = crate::frame::noise::noise_strength(&params.lut, x_sample, y_sample);
+
+            let n_r = (1.0 / 128.0) * a_r * s_r + (127.0 / 128.0) * a_b * s_r;
+            let n_g = (1.0 / 128.0) * a_g * s_g + (127.0 / 128.0) * a_b * s_g;
+
+            planes.set(
+                0,
+                x,
+                y,
+                x_sample + base_correlation_x * (n_r + n_g) + n_r - n_g,
+            );
+            planes.set(1, x, y, y_sample + n_r + n_g);
+            planes.set(2, x, y, b_sample + base_correlation_b * (n_r + n_g));
+        }
+    }
+    Ok(())
+}
+
 /// **Flip point — whose alpha K.3.2 blends with.**
 ///
 /// Table K.1's alpha modes say "the alpha channel is the extra channel with
@@ -734,6 +808,28 @@ pub const PATCH_ALPHA_IS_THE_PATCHS_OWN: bool = true;
 pub fn to_linear_srgb(planes: &mut ColourPlanes, opsin: &OpsinInverse) {
     let [x, y, b] = &mut planes.planes;
     opsin.convert_planes(x, y, b);
+}
+
+/// L.3: converts the frame's Y'CbCr planes to R'G'B' in place.
+///
+/// "For every pixel position, the values `(Cb, Y, Cr)` are replaced by
+/// `(R, G, B)`" — channel 0 is Cb, channel 1 is Y, channel 2 is Cr, the same
+/// luma-in-the-middle convention `LfQuant`/L.2.2 use for X/Y/B (see
+/// `xyb_from_modular`'s doc). Unlike [`to_linear_srgb`] this produces the
+/// *final* display samples directly: Y'CbCr is already gamma-encoded video
+/// convention, so there is no linear-light intermediate and no transfer
+/// function to apply afterwards — the caller must skip
+/// `apply_transfer_function` for a `do_YCbCr` frame.
+pub fn ycbcr_to_rgb(planes: &mut ColourPlanes) {
+    /// L.3's `128.0 / 255` additive term, common to all three channels.
+    const HALF: f32 = 128.0 / 255.0;
+    let [cb_r, y_g, cr_b] = &mut planes.planes;
+    for ((cb_slot, y_slot), cr_slot) in cb_r.iter_mut().zip(y_g.iter_mut()).zip(cr_b.iter_mut()) {
+        let (cb, y, cr) = (*cb_slot, *y_slot, *cr_slot);
+        *cb_slot = y + HALF + 1.402 * cr;
+        *y_slot = y + HALF - 0.344_136 * cb - 0.714_136 * cr;
+        *cr_slot = y + HALF + 1.772 * cb;
+    }
 }
 
 #[cfg(test)]

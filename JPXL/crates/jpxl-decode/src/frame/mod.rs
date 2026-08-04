@@ -38,6 +38,7 @@ pub mod error;
 pub mod gaborish;
 pub mod geometry;
 pub mod header;
+pub mod noise;
 pub mod passes;
 pub mod patches;
 pub mod restoration;

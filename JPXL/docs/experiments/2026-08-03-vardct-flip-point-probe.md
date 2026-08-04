@@ -270,3 +270,43 @@ control stream is byte-identical under both arms.
 verdict table's reading of it are updated accordingly. Full method, numbers and
 two further flip points found in the same work are in
 `2026-08-04-lf-frame-and-multipass.md`.
+
+---
+
+## Addendum, 2026-08-04 — `RAW_MATRIX_CHANNEL_ORDER_IS_XYB` and `RAW_SUBBITSTREAM_IS_UNALIGNED` are PROBED-CONFIRMED `true`
+
+*Appended after the fact; nothing above is edited.*
+
+This report shipped both constants as `true` but marked them "untestable
+until a stream uses RAW" — no available `cjxl` build emitted `encoding_mode
+== RAW` at the time. The `do_YCbCr` corpus wave (2026-08-04) needed
+`decode.rs`'s call site wired to `read_hf_global_params_with` (it had been
+left calling the no-context wrapper, unconditionally refusing any RAW
+request) to get past a *different* gap — `bicycles`/`patches_lossless`'s
+kModular work was unrelated, but every `do_YCbCr` stream `cjxl`'s
+JPEG-recompression path produces turns out to set `encoding_mode == RAW` for
+its dequantization matrices (real JPEG quantization tables carried through
+unchanged). That is the first RAW-using stream this project has had.
+
+Wiring the existing `RawMatrixContext` machinery unchanged — no edit to
+either flip point, both still `true` — and decoding `bench_oriented_brg`
+(RGB, orientation 90°) and `grayscale_jpeg` (grey `colour_encoding`) against
+the pinned `djxl` gives:
+
+* `bench_oriented_brg`: max sample difference 1 of 255 (mean 0.25) against a
+  direct `jpxl decode`-vs-`djxl` PPM diff, and peak 1.9e-6 / RMSE ~2.5e-7
+  against the corpus's own `reference_image.npy` (budget peak 0.004 / RMSE
+  1e-5).
+* `grayscale_jpeg`: same comparison, max difference 1 of 255, peak 1.85e-6 /
+  RMSE 1.45e-7.
+
+Both numbers are consistent with independent float-rounding paths, not a
+wrong channel order or a misaligned sub-bitstream read — either error would
+desynchronise the rest of `HfGlobal` (wrong alignment) or produce a grossly
+wrong reconstruction (wrong channel order among X/Y/B-shaped matrices), not a
+sub-2e-6 peak. `bench_oriented_brg_5`/`grayscale_jpeg_5` (the same streams
+against the "with filters" budget) pass by the same margin.
+
+**Verdict: PROBED-CONFIRMED `true`** for both constants. See
+`crates/jpxl-decode/tests/e2e_ycbcr.rs` for the standing regression tests and
+`docs/CONFORMANCE.md`'s L.2.4/L.3 rows.
