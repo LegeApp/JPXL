@@ -13,6 +13,39 @@ Keep this file small. Entries whose content has landed in `PLAN.md`,
 
 ---
 
+## 2026-08-04 (wave 13) — encoder slice 18: trained entropy model
+
+**Slice 18 (0b493cd): §9.3 clustering + per-cluster hybrid-uint.**
+The fixed six-cluster `cluster_of` map and frame-wide (4,2,0) config
+are replaced by a census-trained model: agglomerative merge with
+exact token-Shannon data cost (jpxl-entropy is now a policy
+dependency for the C.2.3 tokenize arithmetic) + signaling estimates,
+fingerprint-windowed candidates, generation-stamped queue, 255-cap.
+Pure-entropy density win, identical pixels: −9% to −20% across the
+fixture set (flat 2329→1984, half-noise 12408→10221, masking/hier
+6161→5605). §9's refinement bound is **zero** at this scope — the
+event stream doesn't depend on anything the trainer chooses — and
+the clusterer terminates in ≤ n−1 merges.
+
+**New trap: LF dither cliffs in the rate ladder.** With HF this
+compressed, the LF modular section dominates coarse targets; a
+quantized ramp crossing a dither threshold moves LfGroup ~1.4 kB
+between *adjacent* gs rungs. Do not "fix" a missed undershoot bound
+by loosening the loop: the tests now accept either tolerance or the
+trace-proven cliff (every infeasible price overshoots the target).
+Real fix queued: `quant_lf` as a secondary fill knob at LF-dominated
+rates (it IS a rate knob there — the wave-10 "distortion knob"
+finding predates HF being this small).
+
+**Still queued from M8:** custom coefficient orders (needs the F.3.2
+permutation writer), trained block context (needs its writer), HF
+presets, census-type unification (`CensusSink` raw vs `TokenCensus`),
+and the production default flip (Hierarchical + Masking) — the
+BlockInfo DctSelect/mul rows are modular-coded, outside the HF model,
+so their pricing is still the untrained single-context tree.
+
+---
+
 ## 2026-08-04 (wave 12) — encoder slice 17: adaptive quantization
 
 **Slice 17 (5f2c8be): perceptual field + `HfMul` factorization.**
