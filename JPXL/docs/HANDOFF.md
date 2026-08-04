@@ -13,6 +13,47 @@ Keep this file small. Entries whose content has landed in `PLAN.md`,
 
 ---
 
+## 2026-08-04 (wave 7) — K.2 upsampling; THIRD scan-verified Part 1 defect (I.2.4 AFV transpose); corpus 15/39
+
+**`upsampling`/`upsampling_5` pass** (peak 4.3e-5 / 1.6e-2 vs 0.004 /
+0.06). Frame upsampling is **K.2**, not J.2 — J.2's triangle filter is
+only for `jpeg_upsampling` (still refused). Built `frame/upsampling.rs`:
+K.2 index formula, default tables (validated WITHOUT a scan read: all 84
+positions' 25 weights sum to 1 within 3e-8 — a digit slip cannot
+survive), 5×5 mirrored window with per-output [min,max] clamp, top-left
+crop, L.4's 8×-then-f/8 split, D.3 custom weights (unit-tested; no
+stream exercises `cw_mask != 0`). Pipeline order per K.1: Annex J at the
+STORED frame size → K.2 → patches → Annex L. Groups/modular channels
+stay on the downsampled frame grid. Flip settled by fixture:
+`EC_DIMS_INCLUDE_EC_UPSAMPLING=true` (F.2 cumulative; false desyncs
+fixture 94's modular stream). Fixtures 90–95 + `e2e_upsampling.rs`.
+
+**I.2.4 AFV weight placement is a PUBLISHED DEFECT (scan-verified,
+printed p.59): the text writes `weights(2*y, 2*x)` for `freqs[y*4+x]`,
+the transpose of the coefficient's actual position (I.9.8 puts basis
+`y*4+x` at column 2x, row 2y; the freqs table's four zero entries match
+the four skipped positions).** Shipped transposed as
+`AFV_FREQ_POSITION_IS_TRANSPOSED=true` with a directional unit test.
+Localisation was the proof: under the literal reading the four worst
+tiles on `upsampling` were AFV0–3 varblocks holding ~100% of the squared
+error while 94 DCT4x8/DCT8x4 blocks sharing the same IDCT were clean;
+transposing drops the corpus case 7.8e-2 → 4.3e-5 and a no-resampling
+control 8.7e-3 → 3.8e-5. Scan-verified Part 1 defect tally: I.8 ScaleF,
+Table I.6 index 16 (candidate), I.2.4 AFV — first AFV pixel coverage,
+closing part of the rare-transform gap.
+
+**Still open:** `bike` 2.48e-4 / `grayscale` 2.28e-4 residual family is
+NOT AFV (unchanged by the fix). Unexercised: custom upsampling weights,
+factors >8 beyond unit tests, `dim_shift > 0`, upsampling in kModular
+(typed refusal), J.2 chroma upsampling.
+
+**Next candidates:** cropped/oriented displayed frames + kBlack
+(unlocks spot/cmyk_layers/sunset_logo); animation (scope decision);
+Hornuss/DCT4x4/≥DCT128 pixel coverage; the 2.3e-4 grey-Y residual;
+jxli/jbrd (scan first); Brotli decision.
+
+---
+
 ## 2026-08-04 (wave 6) — extra channels + alpha + frame blending; corpus 6 → 13 cases green
 
 **Seven more corpus cases pass their test.json thresholds:**
