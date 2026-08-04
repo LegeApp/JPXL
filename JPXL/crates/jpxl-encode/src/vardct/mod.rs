@@ -30,6 +30,7 @@ pub mod ids;
 pub mod modular_out;
 pub mod plan;
 pub mod sink;
+pub mod size;
 pub mod validate;
 pub mod walk;
 pub mod write;
@@ -44,6 +45,10 @@ pub use plan::{
     SectionLayout, SharpnessGrid, SpatialPlan, VarblockCoefficients, VarblockDecision,
 };
 pub use sink::{CensusSink, HfEventSink, SymbolSink};
+pub use size::{CodestreamSizing, Emission, SectionSize};
 pub use validate::{ValidatedEmissionPlan, validate};
 pub use walk::{OrderTables, PassGroupWalk, WalkVarblock, pre_context_count, walk_pass_group};
-pub use write::{census_frame, check_supported, plan_pre_contexts, walk_frame, write_codestream};
+pub use write::{
+    census_frame, check_supported, emit_codestream, plan_pre_contexts, price_codestream,
+    walk_frame, write_codestream,
+};

@@ -1,0 +1,836 @@
+//! The exact rate loop (`docs/PLAN.md` slice 14, `Encoder-plan1.md` milestone
+//! 4): pick a quantizer that lands a byte target.
+//!
+//! # Three properties this loop is built around
+//!
+//! **1. Every candidate is priced exactly.** There is no size model. A
+//! candidate's size is [`jpxl_encode::vardct::price_codestream`], which is the
+//! real writer run into a scratch buffer — see that module for why a second
+//! implementation of "how big would this be" is a paired-bug shape. One
+//! iteration therefore costs one full encode, and the loop is written to spend
+//! as few of them as it can.
+//!
+//! **2. The search moves over wire-legal values only.** I.2.1's `global_scale`
+//! is a `U32()` field with a largest expressible value, `HfMul` is a Modular
+//! sample, and `quant_lf` has its own distribution; a search that moved a float
+//! and rounded at the end would evaluate points it cannot emit and report a
+//! size for a plan that does not exist. The search space here is
+//! [`Rung`] — an index into an enumerated ladder of **representable**
+//! quantizers, and the only thing the loop ever moves.
+//!
+//! **3. Monotonicity is bracketed, never assumed.** Size is *intended* to rise
+//! with the ladder, and mostly does; but the entropy coder can make a finer
+//! quantizer produce a smaller file — a histogram that clusters better, a token
+//! that falls into a cheaper bucket. The loop therefore
+//!
+//! * keeps `best` = the largest **feasible** size ever priced, not "wherever
+//!   the bisection stopped", so a non-monotone pocket cannot lose a candidate
+//!   that was already proved to fit;
+//! * terminates on a step count, never on a convergence predicate that a
+//!   non-monotone function could keep false forever;
+//! * finishes with a bounded linear probe above the bisection boundary, which
+//!   is exactly where a pocket hides.
+//!
+//! # The ladder, and the LF/HF coupling policy
+//!
+//! I.2.1 factors the quantizer: the HF step is `(1 << 16) / (global_scale *
+//! HfMul)` and the LF step is `(1 << 16) * w / (global_scale * quant_lf)`. So
+//! `global_scale` moves **both** planes together and the other two are ratios
+//! against it.
+//!
+//! The coupling policy of this slice is a **fixed ratio**: `quant_lf` is held
+//! at whatever the request names (16 by default, which is also the value
+//! I.2.1's first `U32()` distribution encodes in two bits), and the search
+//! moves `global_scale`. The LF step and the HF step then both scale as
+//! `1 / global_scale`, so the LF/HF *balance* chosen at one rate is the balance
+//! at every rate — the loop changes the rate without silently changing the
+//! character of the reconstruction.
+//!
+//! The alternative — sweeping `quant_lf` jointly with `global_scale` — was
+//! measured, not assumed away (`tests/rate_loop.rs`,
+//! `the_lf_hf_ratio_is_a_distortion_knob_the_loop_holds_fixed`). On the
+//! 300x260 rung at an 8000-byte target, moving `quant_lf` over an 8x range
+//! grows the `LfGroup` sections from about 3.3 kB to about 4.2 kB and the loop
+//! pays for it by coarsening `global_scale` from about 23000 to about 20100 —
+//! **every ratio still lands the same target**. That is the argument for the
+//! split: `quant_lf` decides *where the bits go*, which is a rate-distortion
+//! question and belongs to milestone 7's adaptive quantization, while this loop
+//! decides *how many there are*. Searching both here would have the loop
+//! silently choosing an image's LF/HF character while claiming only to be
+//! choosing its size.
+//!
+//! `HfMul` is **not** an independent rate axis at fixed blocks: `HfMul = 2` at
+//! `global_scale = g` is the same HF quantizer as `HfMul = 1` at
+//! `global_scale = 2g`. It earns its place at the top of the ladder, where
+//! `global_scale` has hit the largest value I.2.1 can express and `HfMul` is
+//! the only way to go finer. Per-varblock `HfMul` is milestone 7.
+
+use jpxl_encode::vardct::ids::{GlobalScale, HfMul, MAX_GLOBAL_SCALE, QuantLf};
+use jpxl_encode::vardct::size::CodestreamSizing;
+use jpxl_encode::vardct::{ValidatedEmissionPlan, emit_codestream};
+
+use crate::error::{PolicyError, Result};
+use crate::request::{EncodeRequest, RateSearchBudget, RateTarget, RateTolerance};
+
+/// How many `HfMul` rungs extend the ladder above `global_scale`'s ceiling.
+///
+/// Each one halves nothing and multiplies everything: rung `MAX_GLOBAL_SCALE +
+/// k` uses `HfMul = k + 2`, so the top of the ladder is an HF step 65 times
+/// finer than the finest `global_scale` alone can reach. Past that the
+/// coefficients are integers in the millions and the LF plane — which `HfMul`
+/// does not touch — is the accuracy floor anyway.
+pub const HF_MUL_RUNGS: u32 = 64;
+
+/// One past the last ladder index.
+pub const LADDER_LEN: u32 = MAX_GLOBAL_SCALE + HF_MUL_RUNGS;
+
+/// A position on the quantizer ladder: **larger is finer, and bigger**.
+///
+/// Not a bare `u32` on purpose (`AGENTS.md`): a rung, a `global_scale` and a
+/// byte count are three different things that are all small integers, and the
+/// loop below mixes all three.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Rung(u32);
+
+impl Rung {
+    /// The coarsest quantizer the ladder holds.
+    pub const FLOOR: Self = Self(0);
+    /// The finest quantizer the ladder holds.
+    pub const TOP: Self = Self(LADDER_LEN - 1);
+
+    /// Wraps an index, clamped into the ladder.
+    #[must_use]
+    pub const fn new(index: u32) -> Self {
+        if index >= LADDER_LEN {
+            return Self::TOP;
+        }
+        Self(index)
+    }
+
+    /// The index.
+    #[must_use]
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+
+    /// The rung whose `global_scale` is `scale` (and whose `HfMul` is one).
+    #[must_use]
+    pub const fn for_global_scale(scale: u32) -> Self {
+        if scale == 0 {
+            return Self::FLOOR;
+        }
+        Self::new(scale - 1)
+    }
+}
+
+/// A representable quantizer: the three wire fields, already range-checked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QuantizerChoice {
+    /// Where on the ladder this sits.
+    pub rung: Rung,
+    /// I.2.1's `global_scale`.
+    pub global_scale: GlobalScale,
+    /// The frame-constant `HfMul` (G.2.4).
+    pub hf_mul: HfMul,
+    /// I.2.1's `quant_lf`.
+    pub quant_lf: QuantLf,
+}
+
+impl QuantizerChoice {
+    /// The quantizer at `rung`, at the LF/HF ratio `quant_lf` names.
+    ///
+    /// # Errors
+    ///
+    /// [`PolicyError::Plan`] can only fire if [`LADDER_LEN`] and the fields'
+    /// own ranges disagree, which the `every_rung_is_representable` test pins.
+    pub fn at(rung: Rung, quant_lf: QuantLf) -> Result<Self> {
+        let (scale, mul) = if rung.get() < MAX_GLOBAL_SCALE {
+            (rung.get() + 1, 1)
+        } else {
+            (MAX_GLOBAL_SCALE, rung.get() - MAX_GLOBAL_SCALE + 2)
+        };
+        Ok(Self {
+            rung,
+            global_scale: GlobalScale::new(scale)?,
+            hf_mul: HfMul::new(mul)?,
+            quant_lf,
+        })
+    }
+
+    /// The quantizer a request names when it sets no target.
+    ///
+    /// The rung is the one whose `global_scale` matches; a request with a
+    /// non-unit `HfMul` has no exact rung, and gets the `global_scale` one,
+    /// which is only ever used as the search's starting point.
+    #[must_use]
+    pub fn from_request(request: &EncodeRequest) -> Self {
+        Self {
+            rung: Rung::for_global_scale(request.global_scale.get()),
+            global_scale: request.global_scale,
+            hf_mul: request.hf_mul,
+            quant_lf: request.quant_lf,
+        }
+    }
+}
+
+/// Which phase of the loop priced a candidate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RatePhase {
+    /// Geometric search for a feasible/infeasible pair around the target.
+    Bracket,
+    /// Bisection inside that pair.
+    Bisect,
+    /// The discrete budget fill: notches above the bisection boundary.
+    Fill,
+}
+
+/// One priced candidate. The trace is the loop's evidence, and the tests read
+/// it: an iteration count, a bracket, and where non-monotonicity showed up.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RateStep {
+    /// Which phase priced it.
+    pub phase: RatePhase,
+    /// The quantizer priced.
+    pub quantizer: QuantizerChoice,
+    /// Its exact emitted size.
+    pub bytes: u64,
+    /// Whether it fits the target.
+    pub feasible: bool,
+}
+
+/// What a completed search chose.
+#[derive(Debug, Clone)]
+pub struct RateOutcome {
+    /// The codestream at the chosen quantizer — emitted once, not re-emitted.
+    pub codestream: Vec<u8>,
+    /// The validated plan it came from.
+    pub plan: ValidatedEmissionPlan,
+    /// Its exact accounting.
+    pub sizing: CodestreamSizing,
+    /// The quantizer chosen.
+    pub chosen: QuantizerChoice,
+    /// The byte target the caller set.
+    pub target: u64,
+    /// Every candidate priced, in order.
+    pub trace: Vec<RateStep>,
+    /// Whether the finest ladder rung was still under target, i.e. the target
+    /// was unreachably generous and the loop returned the best it can express.
+    pub saturated: bool,
+}
+
+impl RateOutcome {
+    /// The achieved size.
+    #[must_use]
+    pub fn achieved(&self) -> u64 {
+        self.sizing.total
+    }
+
+    /// How many exact prices — i.e. full encodes — the search paid for.
+    #[must_use]
+    pub fn iterations(&self) -> usize {
+        self.trace.len()
+    }
+
+    /// Bytes left unspent under the target.
+    #[must_use]
+    pub fn undershoot(&self) -> u64 {
+        self.target.saturating_sub(self.achieved())
+    }
+
+    /// Unspent bytes as a fraction of the target.
+    #[must_use]
+    pub fn undershoot_fraction(&self) -> f64 {
+        if self.target == 0 {
+            return 0.0;
+        }
+        #[allow(
+            clippy::cast_precision_loss,
+            reason = "byte counts far below f64's exact integer range"
+        )]
+        let (under, target) = (self.undershoot() as f64, self.target as f64);
+        under / target
+    }
+
+    /// Priced pairs where the finer quantizer produced the smaller file — the
+    /// direct, measured evidence of a non-monotone pocket.
+    #[must_use]
+    pub fn non_monotone_pairs(&self) -> usize {
+        non_monotone_pairs(&self.trace)
+    }
+}
+
+/// Counts priced pairs that contradict "finer is bigger".
+///
+/// The loop does not need this — it is written not to care — but the slice's
+/// exit criterion says monotonicity is *bracketed, not assumed*, and this is
+/// the bracket: a number, from real prices, that says how often the assumption
+/// would have been wrong.
+#[must_use]
+pub fn non_monotone_pairs(trace: &[RateStep]) -> usize {
+    let mut count = 0usize;
+    for (index, a) in trace.iter().enumerate() {
+        for b in trace.iter().skip(index + 1) {
+            let (lower, higher) = if a.quantizer.rung <= b.quantizer.rung {
+                (a, b)
+            } else {
+                (b, a)
+            };
+            if lower.quantizer.rung < higher.quantizer.rung && higher.bytes < lower.bytes {
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+/// The result of a ladder search over an abstract size function.
+#[derive(Debug, Clone)]
+pub struct LadderSearch {
+    /// The chosen rung: the largest **feasible** size the search ever priced.
+    pub rung: Rung,
+    /// That candidate's size.
+    pub bytes: u64,
+    /// Every price, in order.
+    pub trace: Vec<RateStep>,
+    /// Whether [`Rung::TOP`] itself was feasible.
+    pub saturated: bool,
+}
+
+/// The generic search: bracket, bisect, fill — over any exact size function.
+///
+/// Separated from the encoder so that the loop's *control flow* can be tested
+/// against injected size functions, including deliberately non-monotone ones,
+/// without a single encode. The encoder path passes the real pricer.
+///
+/// # Errors
+///
+/// [`PolicyError::TargetUnreachable`] if even [`Rung::FLOOR`] is over budget,
+/// [`PolicyError::SearchBudgetExhausted`] if the price budget runs out before
+/// any feasible candidate is found, and whatever `price` returns.
+pub fn search_ladder(
+    start: Rung,
+    quant_lf: QuantLf,
+    target: u64,
+    tolerance: RateTolerance,
+    budget: RateSearchBudget,
+    price: impl FnMut(QuantizerChoice) -> Result<u64>,
+) -> Result<LadderSearch> {
+    let mut search = Search {
+        price,
+        quant_lf,
+        target,
+        max_prices: budget.max_prices.max(1),
+        trace: Vec::new(),
+        best: None,
+    };
+    search.run(start, tolerance, budget)
+}
+
+/// The search's mutable state; a struct because the price counter, the trace
+/// and the incumbent are all updated by the same one place.
+struct Search<F> {
+    price: F,
+    quant_lf: QuantLf,
+    target: u64,
+    max_prices: u32,
+    trace: Vec<RateStep>,
+    /// The largest feasible size ever priced, with its rung.
+    best: Option<(Rung, u64)>,
+}
+
+impl<F: FnMut(QuantizerChoice) -> Result<u64>> Search<F> {
+    /// Whether another price is affordable.
+    fn affordable(&self) -> bool {
+        u32::try_from(self.trace.len()).unwrap_or(u32::MAX) < self.max_prices
+    }
+
+    /// Prices one rung, records it, and updates the incumbent.
+    ///
+    /// The incumbent is the largest feasible size **ever seen**, not the last
+    /// one accepted: that single choice is what makes the loop indifferent to
+    /// the order the phases visit candidates in, and is what a non-monotone
+    /// pocket would otherwise cost. Equal sizes break towards the **finer**
+    /// quantizer, because two candidates that cost the same are not equally
+    /// good: the finer one spends the same bytes on a better reconstruction.
+    fn eval(&mut self, rung: Rung, phase: RatePhase) -> Result<u64> {
+        let quantizer = QuantizerChoice::at(rung, self.quant_lf)?;
+        let bytes = (self.price)(quantizer)?;
+        let feasible = bytes <= self.target;
+        self.trace.push(RateStep {
+            phase,
+            quantizer,
+            bytes,
+            feasible,
+        });
+        let better = self
+            .best
+            .is_none_or(|(best_rung, best)| bytes > best || (bytes == best && rung > best_rung));
+        if feasible && better {
+            self.best = Some((rung, bytes));
+        }
+        Ok(bytes)
+    }
+
+    fn run(
+        &mut self,
+        start: Rung,
+        tolerance: RateTolerance,
+        budget: RateSearchBudget,
+    ) -> Result<LadderSearch> {
+        let slack = tolerance.bytes_for(self.target);
+
+        // --- Phase 1: bracket, geometrically ---
+        //
+        // Doubling and halving the *scale* rather than stepping the index: the
+        // quantizer is a reciprocal of `global_scale`, so equal ratios are the
+        // equal steps, and a linear walk from the default would take thousands
+        // of encodes to reach a low-rate target.
+        let mut lo: Option<Rung> = None;
+        let mut hi: Option<(Rung, u64)> = None;
+        let mut floor_bytes = None;
+
+        let first = self.eval(start, RatePhase::Bracket)?;
+        if first <= self.target {
+            lo = Some(start);
+            let mut current = start;
+            while current < Rung::TOP && self.affordable() {
+                let next = Rung::new(current.get().saturating_mul(2).saturating_add(1));
+                if next <= current {
+                    break;
+                }
+                let bytes = self.eval(next, RatePhase::Bracket)?;
+                if bytes > self.target {
+                    hi = Some((next, bytes));
+                    break;
+                }
+                lo = Some(next);
+                current = next;
+            }
+        } else {
+            hi = Some((start, first));
+            let mut current = start;
+            loop {
+                if current == Rung::FLOOR {
+                    floor_bytes = Some(hi.map_or(first, |(_, b)| b));
+                    break;
+                }
+                if !self.affordable() {
+                    break;
+                }
+                // `current` is not the floor here, so `div_ceil` halves the
+                // *scale* — rung `r` is scale `r + 1`.
+                let next = Rung::new(current.get().div_ceil(2).saturating_sub(1));
+                let bytes = self.eval(next, RatePhase::Bracket)?;
+                if bytes <= self.target {
+                    lo = Some(next);
+                    break;
+                }
+                hi = Some((next, bytes));
+                current = next;
+            }
+        }
+
+        let Some(mut lo) = lo else {
+            if let Some(floor) = floor_bytes {
+                return Err(PolicyError::TargetUnreachable {
+                    target: self.target,
+                    floor,
+                });
+            }
+            return Err(PolicyError::SearchBudgetExhausted {
+                prices: self.trace.len(),
+            });
+        };
+
+        // --- Phase 2: bisect, on wire-legal indices ---
+        //
+        // The stop is a *bound on what is left*, not a convergence test: with
+        // `hi` priced, no candidate between `lo` and `hi` can be worth more
+        // than `hi - best` bytes, so once that gap is inside the tolerance the
+        // remaining encodes cannot buy the tolerance back.
+        while let Some((high, high_bytes)) = hi {
+            if high.get().saturating_sub(lo.get()) <= 1 || !self.affordable() {
+                break;
+            }
+            let best_bytes = self.best.map_or(0, |(_, b)| b);
+            if high_bytes.saturating_sub(best_bytes) <= slack {
+                break;
+            }
+            let mid = Rung::new(lo.get() + (high.get() - lo.get()) / 2);
+            let bytes = self.eval(mid, RatePhase::Bisect)?;
+            if bytes <= self.target {
+                lo = mid;
+            } else {
+                hi = Some((mid, bytes));
+            }
+        }
+
+        // --- Phase 3: the discrete budget fill ---
+        //
+        // Notch order: `+1, +2, ... +fill_probes` rungs above the incumbent,
+        // the finest representable increments there are, and every one of them
+        // is priced even after an infeasible one. Stepping past an infeasible
+        // notch is the entire point: that is what a non-monotone pocket looks
+        // like from inside the loop, and stopping at the first refusal would
+        // hand the pocket back.
+        if let Some((base, _)) = self.best {
+            for offset in 1..=budget.fill_probes {
+                if !self.affordable() {
+                    break;
+                }
+                let candidate = Rung::new(base.get().saturating_add(offset));
+                if candidate <= base {
+                    break;
+                }
+                // A notch bisection already priced costs nothing to skip and a
+                // whole encode to repeat.
+                if self.trace.iter().any(|s| s.quantizer.rung == candidate) {
+                    continue;
+                }
+                self.eval(candidate, RatePhase::Fill)?;
+            }
+        }
+
+        let (rung, bytes) = self.best.ok_or(PolicyError::SearchBudgetExhausted {
+            prices: self.trace.len(),
+        })?;
+        Ok(LadderSearch {
+            rung,
+            bytes,
+            trace: core::mem::take(&mut self.trace),
+            saturated: rung == Rung::TOP,
+        })
+    }
+}
+
+/// Runs the rate loop over a real frame and returns the chosen codestream.
+///
+/// The emission of every feasible candidate is kept until a better one
+/// replaces it, so the winner is never encoded twice: the bytes returned are
+/// the very bytes that were priced.
+///
+/// # Errors
+///
+/// As [`search_ladder`], plus anything the planner or writer refuses.
+pub fn search_frame(
+    frame: &crate::PreparedFrame,
+    atlas: &crate::AnalysisAtlas,
+    request: &EncodeRequest,
+    target: RateTarget,
+) -> Result<RateOutcome> {
+    let target_bytes = target.bytes_for(frame.width(), frame.height());
+    let start = QuantizerChoice::from_request(request).rung;
+
+    // The incumbent emission, kept across prices. `search_ladder` defines the
+    // winner as the largest feasible size ever priced, and so does this — one
+    // rule, so the cached bytes cannot belong to a different rung than the one
+    // the search returns.
+    let mut kept: Option<(Rung, ValidatedEmissionPlan, Vec<u8>, CodestreamSizing)> = None;
+
+    let search = search_ladder(
+        start,
+        request.quant_lf,
+        target_bytes,
+        request.tolerance,
+        request.budget.rate,
+        |quantizer| {
+            let plan = crate::plan_at(frame, atlas, request, quantizer)?;
+            let emission = emit_codestream(&plan)?;
+            let bytes = emission.sizing.total;
+            // The same incumbent rule as `Search::eval`, tie-break included:
+            // one rule, so the cached bytes can never belong to a rung other
+            // than the one the search returns.
+            let better = kept.as_ref().is_none_or(|&(rung, _, _, ref sizing)| {
+                bytes > sizing.total || (bytes == sizing.total && quantizer.rung > rung)
+            });
+            if bytes <= target_bytes && better {
+                kept = Some((quantizer.rung, plan, emission.bytes, emission.sizing));
+            }
+            Ok(bytes)
+        },
+    )?;
+
+    let (rung, plan, codestream, sizing) = kept.ok_or(PolicyError::TargetUnreachable {
+        target: target_bytes,
+        floor: search.bytes,
+    })?;
+    if rung != search.rung {
+        // Unreachable while both sides use "largest feasible ever priced";
+        // reported rather than papered over, because a silent mismatch would
+        // return a codestream that is not the one the trace describes.
+        return Err(PolicyError::Unsupported {
+            what: "a rate search whose incumbent and cached emission disagree",
+        });
+    }
+    Ok(RateOutcome {
+        codestream,
+        chosen: QuantizerChoice::at(rung, request.quant_lf)?,
+        sizing,
+        plan,
+        target: target_bytes,
+        trace: search.trace,
+        saturated: search.saturated,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn budget() -> RateSearchBudget {
+        RateSearchBudget::default()
+    }
+
+    fn quant_lf() -> QuantLf {
+        QuantLf::new(16).expect("legal")
+    }
+
+    #[test]
+    fn every_rung_is_representable_and_the_ladder_is_ordered() {
+        let lf = quant_lf();
+        for index in [
+            0u32,
+            1,
+            1000,
+            MAX_GLOBAL_SCALE - 1,
+            MAX_GLOBAL_SCALE,
+            LADDER_LEN - 1,
+        ] {
+            let q = QuantizerChoice::at(Rung::new(index), lf).expect("representable");
+            assert!(q.global_scale.get() >= 1 && q.global_scale.get() <= MAX_GLOBAL_SCALE);
+            assert!(q.hf_mul.get() >= 1);
+        }
+        // The HF step is `1 / (global_scale * HfMul)`: strictly finer with the
+        // rung, across the join between the two segments.
+        let mut previous = 0u64;
+        for index in [
+            0u32,
+            1,
+            MAX_GLOBAL_SCALE - 2,
+            MAX_GLOBAL_SCALE - 1,
+            MAX_GLOBAL_SCALE,
+            MAX_GLOBAL_SCALE + 1,
+            LADDER_LEN - 1,
+        ] {
+            let q = QuantizerChoice::at(Rung::new(index), lf).expect("representable");
+            let product = u64::from(q.global_scale.get()) * u64::from(q.hf_mul.get());
+            assert!(product > previous, "rung {index} did not go finer");
+            previous = product;
+        }
+    }
+
+    #[test]
+    fn a_rung_out_of_range_saturates_rather_than_wrapping() {
+        assert_eq!(Rung::new(u32::MAX), Rung::TOP);
+        assert_eq!(Rung::for_global_scale(0), Rung::FLOOR);
+        assert_eq!(Rung::for_global_scale(1), Rung::FLOOR);
+        assert_eq!(Rung::for_global_scale(32_768).get(), 32_767);
+    }
+
+    /// A smooth, strictly increasing size function: the easy case, and the one
+    /// that pins the tolerance claim.
+    fn smooth(q: QuantizerChoice) -> u64 {
+        let scale = u64::from(q.global_scale.get()) * u64::from(q.hf_mul.get());
+        100 + scale * 3
+    }
+
+    #[test]
+    fn the_loop_lands_under_a_target_and_close_to_it() {
+        for target in [200u64, 1_000, 50_000, 98_404] {
+            let result = search_ladder(
+                Rung::for_global_scale(32_768),
+                quant_lf(),
+                target,
+                RateTolerance::default(),
+                budget(),
+                |q| Ok(smooth(q)),
+            )
+            .expect("a feasible rung exists");
+            assert!(result.bytes <= target, "target {target}: {}", result.bytes);
+            let slack = RateTolerance::default().bytes_for(target);
+            assert!(
+                target - result.bytes <= slack.max(3),
+                "target {target}: landed {} ({} short, slack {slack})",
+                result.bytes,
+                target - result.bytes
+            );
+            assert!(
+                result.trace.len() <= budget().max_prices as usize,
+                "target {target}: {} prices",
+                result.trace.len()
+            );
+        }
+    }
+
+    #[test]
+    fn a_target_below_the_floor_is_refused_with_the_floor_in_the_error() {
+        let err = search_ladder(
+            Rung::for_global_scale(32_768),
+            quant_lf(),
+            50,
+            RateTolerance::default(),
+            budget(),
+            |q| Ok(smooth(q)),
+        )
+        .expect_err("103 bytes is the floor");
+        assert!(matches!(
+            err,
+            PolicyError::TargetUnreachable { floor: 103, .. }
+        ));
+    }
+
+    #[test]
+    fn a_target_above_the_ceiling_saturates_at_the_finest_rung() {
+        let result = search_ladder(
+            Rung::for_global_scale(32_768),
+            quant_lf(),
+            u64::MAX / 4,
+            RateTolerance::default(),
+            budget(),
+            |q| Ok(smooth(q)),
+        )
+        .expect("the ceiling is feasible");
+        assert!(result.saturated);
+        assert_eq!(result.rung, Rung::TOP);
+    }
+
+    /// **The bracketing test.** A size function with a deep, wide pocket: a
+    /// band of rungs below the target's crossing point prices *above* target,
+    /// and a band above it prices *below*. A loop that assumed monotonicity
+    /// would either return the pocket's coarse edge or fail to terminate.
+    ///
+    /// What is asserted is what the loop promises: it terminates inside the
+    /// price budget, it never returns an infeasible candidate, and it does at
+    /// least as well as the best candidate it actually priced.
+    #[test]
+    fn the_loop_survives_a_non_monotone_pocket() {
+        let target = 10_000u64;
+        // Base is smooth and crosses the target at global_scale == 3300.
+        // The pocket: rungs whose scale is in [2000, 4000) get 4000 bytes
+        // *added* if the scale is odd and 4000 *removed* if it is even, so the
+        // size sawtooths across the target line for two thousand consecutive
+        // representable values.
+        let price = |q: QuantizerChoice| -> u64 {
+            let scale = u64::from(q.global_scale.get()) * u64::from(q.hf_mul.get());
+            let base = 100 + scale * 3;
+            if (2_000..4_000).contains(&scale) {
+                if scale % 2 == 0 {
+                    base.saturating_sub(4_000)
+                } else {
+                    base + 4_000
+                }
+            } else {
+                base
+            }
+        };
+
+        let result = search_ladder(
+            Rung::for_global_scale(32_768),
+            quant_lf(),
+            target,
+            RateTolerance::default(),
+            budget(),
+            |q| Ok(price(q)),
+        )
+        .expect("feasible rungs exist");
+
+        assert!(result.bytes <= target, "returned {} bytes", result.bytes);
+        assert!(
+            result.trace.len() <= budget().max_prices as usize,
+            "{} prices",
+            result.trace.len()
+        );
+        // Never worse than the best candidate the loop actually looked at.
+        let best_seen = result
+            .trace
+            .iter()
+            .filter(|s| s.feasible)
+            .map(|s| s.bytes)
+            .max()
+            .expect("a feasible price");
+        assert_eq!(result.bytes, best_seen);
+
+        // It really did walk into the pocket: the prices it took contradict
+        // "finer is bigger" — which is the assumption a naive bisection would
+        // have made.
+        assert!(
+            non_monotone_pairs(&result.trace) > 0,
+            "the pocket was never entered: {:?}",
+            result.trace
+        );
+
+        // And, on this function, it found the *global* optimum: the largest
+        // feasible size anywhere on the ladder. Brute force is affordable here
+        // precisely because the size function is injected — which is the
+        // reason the search is generic over one.
+        let lf = quant_lf();
+        let optimum = (0..LADDER_LEN)
+            .filter_map(|index| QuantizerChoice::at(Rung::new(index), lf).ok())
+            .map(price)
+            .filter(|&bytes| bytes <= target)
+            .max()
+            .expect("a feasible rung");
+        assert_eq!(
+            result.bytes, optimum,
+            "the pocket cost the loop the optimum"
+        );
+    }
+
+    /// The fill phase must step *past* an infeasible notch, not stop at it.
+    #[test]
+    fn the_fill_recovers_a_notch_hidden_behind_an_infeasible_one() {
+        let target = 10_000u64;
+        // Flat below 5000 so bisection lands exactly there, then: +1 is over
+        // target, +2 is under it and larger. Only a fill that keeps probing
+        // after a refusal can find it.
+        let price = |q: QuantizerChoice| -> u64 {
+            match q.global_scale.get() {
+                s if s <= 5_000 => 9_000,
+                5_001 => 10_001,
+                5_002 => 9_500,
+                _ => 20_000,
+            }
+        };
+        let result = search_ladder(
+            Rung::for_global_scale(32_768),
+            quant_lf(),
+            target,
+            RateTolerance {
+                bytes: 0,
+                fraction: 0.0,
+            },
+            budget(),
+            |q| Ok(price(q)),
+        )
+        .expect("feasible");
+        assert_eq!(result.bytes, 9_500, "the fill missed the hidden notch");
+        assert_eq!(result.rung.get(), 5_001);
+    }
+
+    #[test]
+    fn the_price_budget_is_a_hard_cap() {
+        let mut prices = 0usize;
+        let budget = RateSearchBudget {
+            max_prices: 6,
+            fill_probes: 4,
+        };
+        let result = search_ladder(
+            Rung::for_global_scale(32_768),
+            quant_lf(),
+            10_000,
+            RateTolerance {
+                bytes: 0,
+                fraction: 0.0,
+            },
+            budget,
+            |q| {
+                prices += 1;
+                Ok(smooth(q))
+            },
+        )
+        .expect("a feasible rung was found inside the cap");
+        assert_eq!(prices, result.trace.len());
+        assert!(prices <= 6, "{prices} prices past a cap of 6");
+        assert!(result.bytes <= 10_000);
+    }
+}

@@ -28,6 +28,28 @@ pub enum PolicyError {
     /// Reaching this means the plan validated but the milestone-2 writer has
     /// no encoding for some part of it — see `jpxl_encode::vardct::write`.
     Encode(EncodeError),
+    /// No representable quantizer produces a stream this small.
+    ///
+    /// The coarsest rung of the rate ladder still exceeds the target, so the
+    /// answer is not "try harder" — it is that the frame's headers, TOC and
+    /// unavoidable structure already cost more than the caller allowed. The
+    /// floor is reported so the caller can raise the target to something
+    /// achievable.
+    TargetUnreachable {
+        /// The byte budget asked for.
+        target: u64,
+        /// The smallest stream any representable quantizer produces.
+        floor: u64,
+    },
+    /// The rate loop ran out of exact prices before finding any candidate that
+    /// fits.
+    ///
+    /// A budget this small is a caller decision, not a failure of the search;
+    /// the count is reported so the caller can see what it bought.
+    SearchBudgetExhausted {
+        /// How many candidates were priced.
+        prices: usize,
+    },
     /// The source planes and the declared dimensions disagree.
     SampleCountMismatch {
         /// How many samples the dimensions call for.
@@ -43,6 +65,15 @@ impl fmt::Display for PolicyError {
             Self::Plan(err) => write!(f, "{err}"),
             Self::Encode(err) => write!(f, "{err}"),
             Self::Unsupported { what } => write!(f, "unsupported: {what}"),
+            Self::TargetUnreachable { target, floor } => write!(
+                f,
+                "no representable quantizer reaches {target} bytes: the floor is {floor}"
+            ),
+            Self::SearchBudgetExhausted { prices } => write!(
+                f,
+                "the rate search budget ran out after {prices} exact prices \
+                 without a candidate under the target"
+            ),
             Self::SampleCountMismatch { expected, found } => write!(
                 f,
                 "sample count mismatch: {expected} expected, {found} supplied"

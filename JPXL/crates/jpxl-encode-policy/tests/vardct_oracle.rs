@@ -42,7 +42,7 @@ use std::path::{Path, PathBuf};
 use jpxl_conformance::{Image as PnmImage, OracleKind, OutputFormat, oracle};
 use jpxl_core::limits::Limits;
 use jpxl_decode::decode::decode;
-use jpxl_encode_policy::{EncodeRequest, encode_srgb8_vardct};
+use jpxl_encode_policy::{EncodeRequest, RateTarget, encode_srgb8_to_target, encode_srgb8_vardct};
 
 /// A distinct directory per test, so parallel runs cannot collide.
 fn scratch(tag: &str) -> PathBuf {
@@ -303,6 +303,179 @@ fn jxl_oxide_decodes_our_vardct_output() {
             case.name,
             codestream.len()
         );
+    }
+}
+
+/// Slice 14's streams are slice 12's streams: a codestream whose quantizer was
+/// chosen by the rate loop is decoded by both external decoders, and to the
+/// same pixels ours produces.
+///
+/// This is the gate that keeps rate control honest. The loop searches a ladder
+/// of `global_scale` and `HfMul` values that nothing else in the test suite
+/// visits — including quantizers far coarser and far finer than the default —
+/// and a value that only *our* decoder tolerates would otherwise sail through.
+#[test]
+fn both_oracles_decode_a_rate_targeted_stream() {
+    let case = Case {
+        name: "rate-targeted-300x260",
+        width: 300,
+        height: 260,
+        grey: false,
+    };
+    let source = test_image(case.width, case.height, case.grey);
+
+    for (tag, target) in [
+        ("tight", RateTarget::Bytes(4_000)),
+        ("moderate", RateTarget::Bytes(8_000)),
+        ("generous", RateTarget::BitsPerPixel(1.5)),
+    ] {
+        let outcome = encode_srgb8_to_target(
+            case.width,
+            case.height,
+            &source,
+            &EncodeRequest::defaults(),
+            target,
+        )
+        .unwrap_or_else(|e| panic!("{tag}: rate loop failed: {e}"));
+        assert!(outcome.achieved() <= outcome.target, "{tag}: over budget");
+
+        let dir = scratch("rate");
+        let jxl = dir.join(format!("{}-{tag}.jxl", case.name));
+        std::fs::write(&jxl, &outcome.codestream).expect("write");
+        let ours = ours(&outcome.codestream);
+
+        for kind in [OracleKind::Djxl, OracleKind::JxlOxide] {
+            let Some(oracle) = oracle::find(kind) else {
+                println!("skipping {kind:?}: not installed");
+                continue;
+            };
+            let (out, format) = match kind {
+                OracleKind::Djxl => (
+                    dir.join(format!("{}-{tag}.ppm", case.name)),
+                    OutputFormat::Ppm,
+                ),
+                _ => (
+                    dir.join(format!("{}-{tag}.npy", case.name)),
+                    OutputFormat::Npy,
+                ),
+            };
+            match oracle.decode(&jxl, &out, format) {
+                Ok(()) => {}
+                Err(err) if err.is_unavailable() => {
+                    println!("skipping {kind:?}: {err}");
+                    continue;
+                }
+                Err(err) => panic!(
+                    "{tag}: {kind:?} refused a rate-targeted stream ({} bytes, \
+                     global_scale {}, HfMul {}): {err}",
+                    outcome.achieved(),
+                    outcome.chosen.global_scale.get(),
+                    outcome.chosen.hf_mul.get()
+                ),
+            }
+            let bytes = std::fs::read(&out).unwrap_or_else(|e| panic!("{tag}: {e}"));
+            let samples: Vec<u8> = match kind {
+                OracleKind::Djxl => PnmImage::from_ppm(&bytes)
+                    .unwrap_or_else(|e| panic!("{tag}: {e}"))
+                    .samples
+                    .iter()
+                    .map(|&v| u8::try_from(v.min(255)).unwrap_or(0))
+                    .collect(),
+                _ => read_npy_f32(&bytes)
+                    .unwrap_or_else(|e| panic!("{tag}: {e}"))
+                    .iter()
+                    .map(|&v| {
+                        u8::try_from((v.clamp(0.0, 1.0) * 255.0).round() as i32).unwrap_or(255)
+                    })
+                    .collect(),
+            };
+            let (peak, rmse) = error(&samples, &ours);
+            assert!(
+                peak <= MAX_PEAK_BETWEEN_DECODERS,
+                "{tag}: {kind:?} and jpxl-decode disagree by {peak} (RMSE {rmse:.3})"
+            );
+        }
+    }
+}
+
+/// `HfMul > 1` is new wire content — G.2.4's `BlockInfo` second row stops being
+/// all zeros — and the rate ladder is the first thing that emits it. An
+/// external decoder is the only witness that says so correctly.
+#[test]
+fn both_oracles_decode_a_stream_from_the_hf_mul_segment() {
+    let (width, height) = (61u32, 37u32);
+    let source = test_image(width, height, false);
+    let mut request = EncodeRequest::defaults();
+    request.global_scale =
+        jpxl_encode::vardct::ids::GlobalScale::new(jpxl_encode::vardct::ids::GlobalScale::MAX)
+            .expect("legal");
+    let ceiling = encode_srgb8_vardct(width, height, &source, &request)
+        .expect("encodes")
+        .len() as u64;
+    let outcome = encode_srgb8_to_target(
+        width,
+        height,
+        &source,
+        &request,
+        RateTarget::Bytes(ceiling * 2),
+    )
+    .expect("reachable");
+    assert!(outcome.chosen.hf_mul.get() > 1, "not an HfMul stream");
+
+    let dir = scratch("hfmul");
+    let jxl = dir.join("hfmul.jxl");
+    std::fs::write(&jxl, &outcome.codestream).expect("write");
+    let ours = ours(&outcome.codestream);
+
+    if let Some(oracle) = oracle::find(OracleKind::Djxl) {
+        let ppm = dir.join("hfmul.ppm");
+        match oracle.decode(&jxl, &ppm, OutputFormat::Ppm) {
+            Ok(()) => {
+                let bytes = std::fs::read(&ppm).expect("read");
+                let decoded = PnmImage::from_ppm(&bytes).expect("ppm");
+                let samples: Vec<u8> = decoded
+                    .samples
+                    .iter()
+                    .map(|&v| u8::try_from(v.min(255)).unwrap_or(0))
+                    .collect();
+                let (peak, rmse) = error(&samples, &ours);
+                assert!(
+                    peak <= MAX_PEAK_BETWEEN_DECODERS,
+                    "djxl and jpxl-decode disagree by {peak} (RMSE {rmse:.3}) on HfMul {}",
+                    outcome.chosen.hf_mul.get()
+                );
+            }
+            Err(err) if err.is_unavailable() => println!("skipping djxl: {err}"),
+            Err(err) => panic!(
+                "djxl refused an HfMul {} stream: {err}",
+                outcome.chosen.hf_mul.get()
+            ),
+        }
+    }
+    if let Some(oracle) = oracle::find(OracleKind::JxlOxide) {
+        let npy = dir.join("hfmul.npy");
+        match oracle.decode(&jxl, &npy, OutputFormat::Npy) {
+            Ok(()) => {
+                let bytes = std::fs::read(&npy).expect("read");
+                let samples: Vec<u8> = read_npy_f32(&bytes)
+                    .expect("npy")
+                    .iter()
+                    .map(|&v| {
+                        u8::try_from((v.clamp(0.0, 1.0) * 255.0).round() as i32).unwrap_or(255)
+                    })
+                    .collect();
+                let (peak, rmse) = error(&samples, &ours);
+                assert!(
+                    peak <= MAX_PEAK_BETWEEN_DECODERS,
+                    "jxl-oxide and jpxl-decode disagree by {peak} (RMSE {rmse:.3})"
+                );
+            }
+            Err(err) if err.is_unavailable() => println!("skipping jxl-oxide: {err}"),
+            Err(err) => panic!(
+                "jxl-oxide refused an HfMul {} stream: {err}",
+                outcome.chosen.hf_mul.get()
+            ),
+        }
     }
 }
 

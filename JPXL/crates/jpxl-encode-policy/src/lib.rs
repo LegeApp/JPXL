@@ -34,6 +34,7 @@
 //! | [`block`] | §4 cover search | fixed DCT8x8 |
 //! | [`quantize`] | §7.3 quantize against the decoder | LF and HF, exact |
 //! | [`request`] | §12 budgets | the fields that exist |
+//! | [`rate`] | §12 rate control | exact rate loop, fixed blocks (M4) |
 //! | [`plan_frame`] | §16 orchestration | builds and validates a plan |
 //!
 //! # What milestone 2 does *not* do
@@ -43,8 +44,11 @@
 //! * **no block search** — one DCT8x8 per atom (milestone 6);
 //! * **no adaptive quantization** — one `global_scale` and a constant `HfMul`
 //!   for the whole frame (milestone 7);
-//! * **no rate control** — the caller sets `global_scale`; there is no byte
-//!   target and no distance parameter (milestone 4);
+//! * ~~no rate control~~ — **milestone 4 landed**: [`rate`] chooses
+//!   `global_scale`/`HfMul` against a byte or bits-per-pixel target, pricing
+//!   every candidate through the real writer. Without a
+//!   [`RateTarget`](request::RateTarget) the caller still sets the scalars and
+//!   nothing searches;
 //! * **no chroma-from-luma estimation** — the signalled factors stay at their
 //!   neutral zero, and I.2.3's fixed `base_correlation_b == 1.0` is
 //!   compensated for arithmetically rather than searched (milestone 5);
@@ -59,6 +63,7 @@ pub mod analysis;
 pub mod block;
 pub mod error;
 pub mod quantize;
+pub mod rate;
 pub mod request;
 pub mod source;
 
@@ -81,7 +86,12 @@ use quantize::{DCT8X8_CELLS, HfQuantizer, LfQuantizer, NUM_CHANNELS, neutral_cfl
 
 pub use analysis::{AnalysisAtlas, AtomGrid};
 pub use error::{PolicyError, Result};
-pub use request::{CoverMode, EncodeRequest, SearchBudget};
+pub use rate::{
+    LadderSearch, QuantizerChoice, RateOutcome, RatePhase, RateStep, Rung, search_frame,
+};
+pub use request::{
+    CoverMode, EncodeRequest, RateSearchBudget, RateTarget, RateTolerance, SearchBudget,
+};
 pub use source::PreparedFrame;
 
 /// I.4's per-block-context share of the `non_zeros` contexts.
@@ -113,13 +123,46 @@ pub fn plan_frame(frame: &PreparedFrame, request: &EncodeRequest) -> Result<Vali
 
 /// [`plan_frame`] with an atlas the caller already computed.
 ///
+/// If the request carries a [`RateTarget`], this runs the rate loop
+/// ([`rate::search_frame`]) and returns the plan it chose; otherwise the
+/// request's own quantizer scalars are used exactly as given.
+///
 /// # Errors
 ///
-/// As [`plan_frame`].
+/// As [`plan_frame`], plus [`PolicyError::TargetUnreachable`] if no
+/// representable quantizer fits the target.
 pub fn plan_frame_with_atlas(
     frame: &PreparedFrame,
     atlas: &AnalysisAtlas,
     request: &EncodeRequest,
+) -> Result<ValidatedEmissionPlan> {
+    if let Some(target) = request.target {
+        return Ok(rate::search_frame(frame, atlas, request, target)?.plan);
+    }
+    plan_at(
+        frame,
+        atlas,
+        request,
+        QuantizerChoice::from_request(request),
+    )
+}
+
+/// Plans one frame at an explicitly chosen, already-representable quantizer.
+///
+/// This is the function the rate loop calls once per exact price, and the one
+/// [`plan_frame_with_atlas`] calls when there is no target. Splitting it out is
+/// what keeps the loop from having to fabricate an [`EncodeRequest`] per
+/// candidate — and what guarantees the plan a price was taken on and the plan
+/// finally emitted are built by the same code.
+///
+/// # Errors
+///
+/// As [`plan_frame`].
+pub(crate) fn plan_at(
+    frame: &PreparedFrame,
+    atlas: &AnalysisAtlas,
+    request: &EncodeRequest,
+    quantizer: QuantizerChoice,
 ) -> Result<ValidatedEmissionPlan> {
     let decision = FrameDecision {
         width: frame.width(),
@@ -139,14 +182,14 @@ pub fn plan_frame_with_atlas(
     );
 
     let lf_quant = LfQuantizer::new(
-        request.global_scale.get(),
-        request.quant_lf.get(),
+        quantizer.global_scale.get(),
+        quantizer.quant_lf.get(),
         LfDecision::vardct_neutral().extra_precision,
     );
     let hf_quant = HfQuantizer::new(
         TransformType::Dct8x8,
-        request.global_scale.get(),
-        request.hf_mul.get(),
+        quantizer.global_scale.get(),
+        quantizer.hf_mul.get(),
         NEUTRAL_QM_SCALE,
         NEUTRAL_QM_SCALE,
     )?;
@@ -170,7 +213,7 @@ pub fn plan_frame_with_atlas(
         })?;
 
         let varblocks = match request.budget.cover_mode {
-            CoverMode::FixedDct8x8 => block::fixed_dct8x8(blocks, request.hf_mul)?,
+            CoverMode::FixedDct8x8 => block::fixed_dct8x8(blocks, quantizer.hf_mul)?,
         };
         let quantized_group =
             quantize_lf_group(frame, &lf_quant, &hf_quant, rect.x0, rect.y0, blocks)?;
@@ -194,8 +237,8 @@ pub fn plan_frame_with_atlas(
     let spatial = SpatialPlan {
         frame: decision,
         quantizer: QuantizerDecision {
-            global_scale: request.global_scale,
-            quant_lf: request.quant_lf,
+            global_scale: quantizer.global_scale,
+            quant_lf: quantizer.quant_lf,
         },
         lf: LfDecision::vardct_neutral(),
         restoration: RestorationDecision::default(),
@@ -516,7 +559,10 @@ pub fn cluster_of(ctx: u64, nb_block_ctx: u64) -> u8 {
 
 /// Encodes an 8-bit sRGB image as a naked kVarDCT codestream.
 ///
-/// The whole slice in one call: sRGB to XYB, plan, validate, emit.
+/// The whole slice in one call: sRGB to XYB, plan, validate, emit. With a
+/// [`RateTarget`] on the request this is [`encode_srgb8_to_target`] with the
+/// report thrown away — and it returns the very bytes the loop priced, not a
+/// re-encode of them.
 ///
 /// # Errors
 ///
@@ -528,9 +574,34 @@ pub fn encode_srgb8_vardct(
     rgb: &[u8],
     request: &EncodeRequest,
 ) -> Result<Vec<u8>> {
+    if let Some(target) = request.target {
+        return Ok(encode_srgb8_to_target(width, height, rgb, request, target)?.codestream);
+    }
     let frame = PreparedFrame::from_srgb8(width, height, rgb)?;
     let plan = plan_frame(&frame, request)?;
     Ok(jpxl_encode::vardct::write_codestream(&plan)?)
+}
+
+/// Encodes an 8-bit sRGB image to a byte or bits-per-pixel target.
+///
+/// Returns the chosen quantizer, the exact achieved size, the per-section
+/// accounting and the full iteration trace — the last of which is the loop's
+/// evidence, and what the tests and later milestones' telemetry read.
+///
+/// # Errors
+///
+/// As [`plan_frame`], plus [`PolicyError::TargetUnreachable`] if the target is
+/// below what any representable quantizer can produce.
+pub fn encode_srgb8_to_target(
+    width: u32,
+    height: u32,
+    rgb: &[u8],
+    request: &EncodeRequest,
+    target: RateTarget,
+) -> Result<RateOutcome> {
+    let frame = PreparedFrame::from_srgb8(width, height, rgb)?;
+    let atlas = AnalysisAtlas::analyze(&frame);
+    rate::search_frame(&frame, &atlas, request, target)
 }
 
 #[cfg(test)]

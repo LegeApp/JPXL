@@ -57,6 +57,7 @@ use crate::vardct::ids::{ClusterId, LfGroupId, PreContextId};
 use crate::vardct::modular_out::{OutChannel, write_modular_stream};
 use crate::vardct::plan::{EmissionPlan, HfBlockContextPlan, LfDecision, NUM_CHANNELS};
 use crate::vardct::sink::{CensusSink, HfEventSink};
+use crate::vardct::size::{CodestreamSizing, Emission, SectionSize};
 use crate::vardct::validate::ValidatedEmissionPlan;
 use crate::vardct::walk::{
     OrderTables, PassGroupWalk, WalkVarblock, pre_context_count, walk_pass_group,
@@ -187,21 +188,88 @@ pub fn check_supported(plan: &EmissionPlan) -> Result<()> {
 ///
 /// # Errors
 ///
+/// As [`emit_codestream`].
+pub fn write_codestream(plan: &ValidatedEmissionPlan) -> Result<Vec<u8>> {
+    Ok(emit_codestream(plan)?.bytes)
+}
+
+/// The exact size of the codestream `plan` emits, without keeping the bytes.
+///
+/// This is [`emit_codestream`] with the buffer dropped, and that is the whole
+/// design: see [`size`](crate::vardct::size) for why a rate loop must not have
+/// a second implementation of "how big would this be".
+///
+/// # Errors
+///
+/// As [`emit_codestream`].
+pub fn price_codestream(plan: &ValidatedEmissionPlan) -> Result<CodestreamSizing> {
+    Ok(emit_codestream(plan)?.sizing)
+}
+
+/// Encodes a validated plan, reporting where every byte went.
+///
+/// # Errors
+///
 /// [`EncodeError::Unsupported`] for a plan shape [`check_supported`] refuses,
 /// [`EncodeError::Entropy`] if the entropy layer rejects a symbol, and
 /// [`EncodeError::ValueOutOfRange`] for a field that cannot be expressed.
-pub fn write_codestream(plan: &ValidatedEmissionPlan) -> Result<Vec<u8>> {
+pub fn emit_codestream(plan: &ValidatedEmissionPlan) -> Result<Emission> {
     let inner = plan.plan();
     check_supported(inner)?;
     let geometry = inner.spatial.frame.geometry().map_err(EncodeError::Plan)?;
 
     let mut w = BitWriter::new();
     write_image_headers(&mut w, geometry.width(), geometry.height())?;
-    // F.1: every frame starts on a byte boundary.
+    // F.1: every frame starts on a byte boundary, so this division is exact.
     w.zero_pad_to_byte();
+    let image_headers = w.bit_len() / 8;
+
     write_frame_header(&mut w, NEUTRAL_QM_SCALE, NEUTRAL_QM_SCALE)?;
-    write_frame_body(inner, &geometry)?.write(&mut w)?;
-    Ok(w.into_bytes())
+    let frame_header_bits = w.bit_len() - image_headers * 8;
+
+    let store = write_frame_body(inner, &geometry)?;
+    let lengths = store.lengths();
+    let before_toc = w.bit_len();
+    store.write(&mut w)?;
+    // `write_toc` ends byte-aligned and every body is appended whole, so the
+    // table's own width is what is left after the bodies are subtracted. There
+    // is no second measurement of the bodies: `lengths` is the very array the
+    // TOC entries were written from.
+    let body_bits: u64 = lengths
+        .iter()
+        .map(|&n| u64::try_from(n).unwrap_or(u64::MAX).saturating_mul(8))
+        .sum();
+    let toc_bits = w
+        .bit_len()
+        .saturating_sub(before_toc)
+        .saturating_sub(body_bits);
+
+    if inner.sections.kinds.len() != lengths.len() {
+        return Err(EncodeError::unsupported(
+            "a section layout that does not match the sections written",
+            "F.3.1",
+        ));
+    }
+    let sections: Box<[SectionSize]> = inner
+        .sections
+        .kinds
+        .iter()
+        .zip(&lengths)
+        .map(|(&kind, &bytes)| SectionSize {
+            kind,
+            bytes: u64::try_from(bytes).unwrap_or(u64::MAX),
+        })
+        .collect();
+
+    let bytes = w.into_bytes();
+    let sizing = CodestreamSizing {
+        total: u64::try_from(bytes.len()).unwrap_or(u64::MAX),
+        image_headers,
+        frame_header_bits,
+        toc_bits,
+        sections,
+    };
+    Ok(Emission { bytes, sizing })
 }
 
 /// Builds every section of the frame, in F.3.1 order.
@@ -872,6 +940,49 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    /// The claim the whole rate loop rests on: the priced size **is** the
+    /// emitted size, because it is the same run of the same writer.
+    #[test]
+    fn a_priced_size_is_the_emitted_size_byte_for_byte() {
+        let plan = validate(tiny_plan()).expect("legal plan");
+        let emission = emit_codestream(&plan).expect("emits");
+        let sizing = price_codestream(&plan).expect("prices");
+        assert_eq!(sizing, emission.sizing);
+        assert_eq!(
+            sizing.total,
+            u64::try_from(emission.bytes.len()).expect("small"),
+            "the accounted total must be the buffer length"
+        );
+        assert_eq!(
+            write_codestream(&plan).expect("writes"),
+            emission.bytes,
+            "write_codestream is emit_codestream's bytes"
+        );
+    }
+
+    /// Every byte is attributed to exactly one of headers, TOC or a section.
+    #[test]
+    fn the_accounting_partitions_the_stream() {
+        let plan = validate(tiny_plan()).expect("legal plan");
+        let sizing = price_codestream(&plan).expect("prices");
+        // The frame header and the TOC share one alignment boundary: F.2 does
+        // not pad after the header, and F.3.3 pads inside the table.
+        let header_and_toc = (sizing.frame_header_bits + sizing.toc_bits).div_ceil(8);
+        assert_eq!(
+            sizing.image_headers + header_and_toc + sizing.section_bytes(),
+            sizing.total
+        );
+        assert_eq!(sizing.overhead(), sizing.image_headers + header_and_toc);
+        // One 8x8 frame is F.3.1's single-section form, and its one section
+        // carries the coefficients.
+        assert_eq!(sizing.sections.len(), 1);
+        assert_eq!(
+            sizing.sections.first().map(|s| s.kind),
+            Some(crate::vardct::geometry::SectionKind::Whole)
+        );
+        assert_eq!(sizing.coefficient_bytes(), sizing.section_bytes());
     }
 
     #[test]
