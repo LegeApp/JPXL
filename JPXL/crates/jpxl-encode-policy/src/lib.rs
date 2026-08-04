@@ -324,21 +324,45 @@ fn plan_at_with_cfl(
         entropy: entropy_plan(&geometry, placeholder_histograms())?,
         sections: SectionLayout::for_geometry(&geometry),
     };
-    let census = census_frame(&provisional, &geometry)?;
-
     // Slice 18: the context map, the per-cluster hybrid-uint configurations
     // and the distributions are trained from the census (§9.2 steps 2–5,
-    // §9.3). One census is exact — the event stream depends on the block
-    // context model and the coefficient orders, not on anything the trainer
-    // chooses — so there is no refinement iteration to bound; see
-    // `entropy::train`.
+    // §9.3). At fixed coefficient orders one census is exact — the event
+    // stream depends only on the block context model and the orders.
+    let census = census_frame(&provisional, &geometry)?;
     let model = entropy::train(&census)?;
+    let orders = entropy::candidate_orders(&provisional.spatial, &provisional.quantized)?;
+    let natural = validate(EmissionPlan {
+        entropy: trained_entropy_plan(&geometry, model, OrderSet::natural())?,
+        ..provisional.clone()
+    })?;
+    if orders.overrides().is_empty() {
+        return Ok(natural);
+    }
 
-    let plan = EmissionPlan {
-        entropy: trained_entropy_plan(&geometry, model)?,
-        ..provisional
-    };
-    Ok(validate(plan)?)
+    // Slice 18b, §9.4 + §9's ONE bounded refinement pass: the candidate
+    // orders change the event stream (contexts depend on order position), so
+    // the census is retaken under them and the model retrained — exactly
+    // once — and the reordered plan is adopted only when the writer's exact
+    // price says it is smaller. Ties keep the natural order: it signals no
+    // F.3.2 stream.
+    let mut reordered_walk = provisional;
+    if let Some(pass) = reordered_walk.entropy.passes.first_mut() {
+        pass.orders = orders.clone();
+    }
+    let census = census_frame(&reordered_walk, &geometry)?;
+    let model = entropy::train(&census)?;
+    let reordered = validate(EmissionPlan {
+        entropy: trained_entropy_plan(&geometry, model, orders)?,
+        ..reordered_walk
+    })?;
+
+    let natural_size = jpxl_encode::vardct::price_codestream(&natural)?.total;
+    let reordered_size = jpxl_encode::vardct::price_codestream(&reordered)?.total;
+    Ok(if reordered_size < natural_size {
+        reordered
+    } else {
+        natural
+    })
 }
 
 /// The frame-wide LF factors and one HF factor grid per LF group.
@@ -1521,6 +1545,7 @@ fn select_blocks(
 fn trained_entropy_plan(
     geometry: &VardctGeometry,
     model: entropy::TrainedModel,
+    orders: OrderSet,
 ) -> Result<EntropyPlan> {
     let num_groups = usize::try_from(geometry.num_groups()).unwrap_or(0);
     let distributions = EntropyModelPlan {
@@ -1529,7 +1554,7 @@ fn trained_entropy_plan(
         hybrid_uint: model.hybrid_uint.into_boxed_slice(),
     };
     let pass = HfPassEntropyPlan {
-        orders: OrderSet::natural(),
+        orders,
         distributions,
         group_presets: vec![PresetId::new(0); num_groups].into_boxed_slice(),
     };
@@ -2120,8 +2145,15 @@ mod tests {
         // be identical integers, not merely close.
         let rgb = half_flat_half_noise(256, 256);
         let frame = PreparedFrame::from_srgb8(256, 256, &rgb).expect("frame");
-        let off = plan_frame(&frame, &aq_request(AqMode::Off)).expect("plan");
-        let aq = plan_frame(&frame, &aq_request(AqMode::Masking)).expect("plan");
+        // The fixed cover isolates the factorization: under the hierarchical
+        // default the field also steers the *cover*, and merged transforms
+        // legitimately produce different LF integers via I.8.
+        let mut off_request = aq_request(AqMode::Off);
+        off_request.budget.cover_mode = CoverMode::FixedDct8x8;
+        let mut aq_on_request = aq_request(AqMode::Masking);
+        aq_on_request.budget.cover_mode = CoverMode::FixedDct8x8;
+        let off = plan_frame(&frame, &off_request).expect("plan");
+        let aq = plan_frame(&frame, &aq_on_request).expect("plan");
         // The factorization must actually be in play for this to prove
         // anything.
         assert_ne!(
@@ -2247,6 +2279,31 @@ mod tests {
             (noise_bytes.len() as u64) < 12408 * 95 / 100,
             "half noise: {} B must undercut the fixed-model 12408 B by 5%",
             noise_bytes.len()
+        );
+    }
+
+    #[test]
+    fn frequency_trained_orders_reach_the_wire_and_beat_the_natural_baseline() {
+        // Slice 18b: the half-noise fixture at defaults measured 10221 B with
+        // the trained model at natural orders; the §9.4 candidate is adopted
+        // (used_orders != 0) and prices below it (measured 10038 B). Adoption
+        // is exact-guarded inside plan_at, so this can never regress past the
+        // natural-order size.
+        let rgb = half_flat_half_noise(256, 256);
+        let frame = PreparedFrame::from_srgb8(256, 256, &rgb).expect("frame");
+        let plan = plan_frame(&frame, &EncodeRequest::defaults()).expect("plan");
+        let used = plan
+            .plan()
+            .entropy
+            .passes
+            .first()
+            .map_or(0, |pass| pass.orders.used_orders());
+        assert_ne!(used, 0, "the fixture must adopt a custom order");
+        let bytes = jpxl_encode::vardct::write_codestream(&plan).expect("encodes");
+        assert!(
+            (bytes.len() as u64) < 10221,
+            "custom orders must price below the natural-order 10221 B, got {}",
+            bytes.len()
         );
     }
 

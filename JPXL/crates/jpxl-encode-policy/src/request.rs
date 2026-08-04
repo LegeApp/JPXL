@@ -11,11 +11,17 @@ use jpxl_encode::vardct::ids::{GlobalScale, HfMul, QuantLf};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum CoverMode {
     /// One DCT8x8 per atom; no search at all (milestone 1 and 2).
-    #[default]
     FixedDct8x8,
     /// The quadtree solver over the square transforms (milestone 6): each
     /// aligned 32x32 region chooses between one transform and four
-    /// sub-quadrants by exact residual-bit comparison within the hierarchy.
+    /// sub-quadrants by §4.3's rate-distortion objective within the
+    /// hierarchy.
+    ///
+    /// The default since slice 18b: on smooth content it strictly dominates
+    /// the fixed cover at matched quality (the slice-16 exit evidence), on
+    /// busy content it declines to merge and ties it, and every stream shape
+    /// it emits has external-decoder parity evidence.
+    #[default]
     Hierarchical,
 }
 
@@ -247,7 +253,7 @@ mod tests {
         assert_eq!(request.quant_lf.get(), 16);
         assert_eq!(request.hf_mul.get(), 1);
         assert_eq!(request.group_size_shift, 1);
-        assert_eq!(request.budget.cover_mode, CoverMode::FixedDct8x8);
+        assert_eq!(request.budget.cover_mode, CoverMode::Hierarchical);
         assert_eq!(request.target, None, "the default path has no rate loop");
     }
 

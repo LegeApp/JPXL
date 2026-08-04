@@ -177,15 +177,6 @@ pub fn check_supported(plan: &EmissionPlan) -> Result<()> {
     if plan.entropy.num_hf_presets != 1 {
         return Err(EncodeError::unsupported("more than one HF preset", "I.2.6"));
     }
-    for pass in &plan.entropy.passes {
-        if !pass.orders.overrides().is_empty() {
-            return Err(EncodeError::unsupported(
-                "custom coefficient orders (their F.3.2 permutation stream is \
-                 not written yet)",
-                "I.3.1",
-            ));
-        }
-    }
     for group in &plan.spatial.lf_groups {
         // The square vocabulary is what has decoder-parity evidence today; the
         // walk and the writer are transform-generic, so widening this list is
@@ -521,14 +512,171 @@ fn write_hf_global(
     w.write_bits(bits, plan.entropy.num_hf_presets.saturating_sub(1))?;
 
     // I.3 HfPass, once per pass.
-    for _ in 0..plan.spatial.frame.num_passes {
-        // I.3.1: used_orders == 0 means the natural order of I.3.2 everywhere,
-        // and skips the permutation stream entirely.
-        w.write_u32(&USED_ORDERS_SPEC, 0)?;
+    for pass in 0..plan.spatial.frame.num_passes {
+        let entropy_pass = plan
+            .entropy
+            .passes
+            .get(usize::try_from(pass).unwrap_or(usize::MAX))
+            .or_else(|| plan.entropy.passes.first())
+            .ok_or_else(|| EncodeError::unsupported("a frame with no pass", "F.6"))?;
+        // I.3.1: used_orders, and the F.3.2 permutation stream when any Order
+        // ID carries a custom order.
+        write_hf_coeff_orders(entropy_pass, w)?;
         // I.3.3: the pre-clustered distributions, read here and used by every
         // pass group of this pass.
         tables.write_bundle(w)?;
     }
+    Ok(())
+}
+
+/// F.3.2's `GetContext(x) = min(7, ceil(log2(x + 1)))`.
+const fn permutation_context(x: u32) -> usize {
+    let bits = if x == 0 { 0 } else { 32 - x.leading_zeros() };
+    if bits > 7 { 7 } else { bits as usize }
+}
+
+/// Number of pre-clustered distributions of the F.3.2 permutation stream —
+/// the count `GetContext` can address. The decoder pins the same value in
+/// `jpxl-decode`'s `frame::toc`.
+const PERMUTATION_NUM_DIST: usize = 8;
+
+/// A permutation's Lehmer code: the exact inverse of F.3.2's reconstruction
+/// (`temp` starts as `[0, size)`; each step emits the index of the next
+/// element and removes it).
+///
+/// # Errors
+///
+/// [`EncodeError::Unsupported`] if `perm` is not a permutation of `0..len`.
+fn permutation_to_lehmer(perm: &[u32]) -> Result<Vec<u32>> {
+    let mut temp: Vec<u32> = (0..u32::try_from(perm.len()).unwrap_or(u32::MAX)).collect();
+    let mut lehmer = Vec::with_capacity(perm.len());
+    for &element in perm {
+        let Some(index) = temp.iter().position(|&t| t == element) else {
+            return Err(EncodeError::unsupported(
+                "a coefficient order that is not a permutation",
+                "F.3.2",
+            ));
+        };
+        lehmer.push(u32::try_from(index).unwrap_or(u32::MAX));
+        temp.remove(index);
+    }
+    Ok(lehmer)
+}
+
+/// Writes I.3.1's `used_orders` and, when non-zero, the shared F.3.2
+/// permutation stream the decoder consumes for every used `(Order ID,
+/// channel)` pair.
+///
+/// The stream mirrors `jpxl-decode`'s `read_hf_coeff_orders` exactly: one
+/// entropy stream (eight pre-clustered distributions, C.1) opened once,
+/// carrying per permutation an `end` symbol in context `GetContext(size)`
+/// followed by `end` Lehmer values, each in the context of its predecessor;
+/// permutations trim their trailing zero Lehmer entries and never permute the
+/// LLF prefix (`skip = size / 64`). An override on some channels of a used
+/// Order ID writes identity permutations (`end = 0`) for the others.
+fn write_hf_coeff_orders(
+    pass: &crate::vardct::plan::HfPassEntropyPlan,
+    w: &mut BitWriter,
+) -> Result<()> {
+    use jpxl_core::varblock::{NUM_ORDER_IDS, natural_coeff_order, order_id_dims};
+
+    let overrides = pass.orders.overrides();
+    let mut used = 0u32;
+    for over in overrides {
+        used |= 1u32 << u32::from(over.order_id.get());
+    }
+    w.write_u32(&USED_ORDERS_SPEC, used)?;
+    if used == 0 {
+        return Ok(());
+    }
+
+    // The symbol sequence, in exactly the order the decoder reads it.
+    let mut symbols: Vec<(usize, u32)> = Vec::new();
+    for order_id in 0..NUM_ORDER_IDS {
+        if (used >> order_id) & 1 == 0 {
+            continue;
+        }
+        let natural = order_id_dims(order_id)
+            .map(|(bw, bh)| natural_coeff_order(bw, bh))
+            .unwrap_or_default();
+        let size = u32::try_from(natural.len()).unwrap_or(u32::MAX);
+        let skip = size / 64;
+        // Cell -> natural-order position, for deriving `nat_ord_perm` from a
+        // stored order table (which holds cells).
+        let mut position_of = vec![u32::MAX; natural.len()];
+        for (position, &cell) in natural.iter().enumerate() {
+            if let Some(slot) = position_of.get_mut(usize::try_from(cell).unwrap_or(usize::MAX)) {
+                *slot = u32::try_from(position).unwrap_or(u32::MAX);
+            }
+        }
+
+        for channel in 0..3u8 {
+            let perm: Vec<u32> = match overrides
+                .iter()
+                .find(|o| usize::from(o.order_id.get()) == order_id && o.channel == channel)
+            {
+                None => (0..size).collect(),
+                Some(over) => over
+                    .table
+                    .iter()
+                    .map(|&cell| {
+                        position_of
+                            .get(usize::try_from(cell).unwrap_or(usize::MAX))
+                            .copied()
+                            .unwrap_or(u32::MAX)
+                    })
+                    .collect(),
+            };
+            let lehmer = permutation_to_lehmer(&perm)?;
+            if lehmer
+                .iter()
+                .take(usize::try_from(skip).unwrap_or(0))
+                .any(|&l| l != 0)
+            {
+                return Err(EncodeError::unsupported(
+                    "a coefficient order that permutes the LLF prefix",
+                    "F.3.2",
+                ));
+            }
+            let end = lehmer
+                .iter()
+                .rposition(|&l| l != 0)
+                .map_or(0, |last| last + 1)
+                .saturating_sub(usize::try_from(skip).unwrap_or(0));
+
+            symbols.push((
+                permutation_context(size),
+                u32::try_from(end).unwrap_or(u32::MAX),
+            ));
+            let mut previous = 0u32;
+            for index in 0..end {
+                let value = lehmer
+                    .get(usize::try_from(skip).unwrap_or(0) + index)
+                    .copied()
+                    .unwrap_or(0);
+                let context = permutation_context(if index > 0 { previous } else { 0 });
+                symbols.push((context, value));
+                previous = value;
+            }
+        }
+    }
+
+    // One self-contained stream: bundle, then the ANS payload — the encoder
+    // half of `SymbolDecoder::open` / `read_uint`* / `finish`.
+    let mut census = TokenCensus::new(PERMUTATION_NUM_DIST)?;
+    for &(context, value) in &symbols {
+        census.record(context, value)?;
+    }
+    let context_map = ContextMap::identity(PERMUTATION_NUM_DIST)?;
+    let configs = vec![HybridUintConfig::new(4, 2, 0)?; PERMUTATION_NUM_DIST];
+    let encoder_plan = EncoderPlan::clustered(context_map, CodingMode::Ans, configs)?;
+    let tables = EntropyTables::build(&encoder_plan, &census)?;
+    tables.write_bundle(w)?;
+    let mut encoder = SymbolEncoder::new(&tables);
+    for &(context, value) in &symbols {
+        encoder.push_uint(context, value)?;
+    }
+    encoder.write_stream(w)?;
     Ok(())
 }
 
@@ -903,6 +1051,66 @@ mod tests {
         }
     }
 
+    /// The composition-direction gate for the F.3.2 writer: two plans with
+    /// identical coefficients, one at natural orders and one with a custom
+    /// permutation, must produce different bytes and identical pixels — the
+    /// order sequences symbols, it never moves values between cells. The
+    /// decode side is `jpxl-decode`'s independent I.3.1 reader, so a writer
+    /// that stored the permutation the wrong way round (or composed it on the
+    /// wrong side) scrambles the coefficient array and fails the pixel
+    /// comparison immediately.
+    #[test]
+    #[allow(
+        clippy::indexing_slicing,
+        reason = "test-only fixture construction over containers built above"
+    )]
+    fn a_custom_coefficient_order_round_trips_to_the_same_pixels() {
+        use jpxl_core::varblock::{natural_coeff_order, order_id_dims};
+
+        let mut plan = tiny_plan();
+        let mut channels: [Vec<i32>; NUM_CHANNELS] = core::array::from_fn(|_| vec![0i32; 64]);
+        for (cell, value) in [(1usize, 3i32), (8, -2), (9, 1), (17, 5), (26, -4), (63, 1)] {
+            for (index, channel) in channels.iter_mut().enumerate() {
+                channel[cell] = value + i32::try_from(index).unwrap_or(0);
+            }
+        }
+        plan.quantized.lf_groups[0].coefficients =
+            vec![VarblockCoefficients::new(TransformType::Dct8x8, channels).expect("legal")]
+                .into_boxed_slice();
+
+        let natural =
+            write_codestream(&validate(plan.clone()).expect("legal")).expect("writes natural");
+
+        // Reverse the non-LLF tail of Order ID 0 (DCT8x8) for every channel:
+        // a maximally un-natural but legal permutation.
+        let dims = order_id_dims(0).expect("order 0");
+        let mut table = natural_coeff_order(dims.0, dims.1);
+        let skip = table.len() / 64;
+        table[skip..].reverse();
+        let mut orders = OrderSet::natural();
+        for channel in 0..3u8 {
+            orders = orders
+                .with_order(crate::vardct::ids::OrderId::new(0), channel, table.clone())
+                .expect("a legal permutation");
+        }
+        plan.entropy.passes[0].orders = orders;
+        let custom =
+            write_codestream(&validate(plan).expect("legal")).expect("writes custom order");
+
+        assert_ne!(natural, custom, "the permutation must reach the wire");
+
+        let limits = jpxl_core::limits::Limits::default();
+        let natural_image =
+            jpxl_decode::decode::decode(&natural, &limits).expect("natural decodes");
+        let custom_image = jpxl_decode::decode::decode(&custom, &limits).expect("custom decodes");
+        for (a, b) in natural_image.planes.iter().zip(custom_image.planes.iter()) {
+            assert_eq!(
+                a.samples, b.samples,
+                "a coefficient order must never move values between cells"
+            );
+        }
+    }
+
     #[test]
     fn the_smallest_legal_plan_emits_a_codestream() {
         let plan = validate(tiny_plan()).expect("legal plan");
@@ -968,21 +1176,32 @@ mod tests {
         ));
     }
 
+    /// F.3.2 forbids permuting the LLF prefix (`skip = size / 64`): those
+    /// coefficients are never coded by I.4, so an order that moves them has
+    /// no wire representation and must be refused, not silently repaired.
     #[test]
-    fn a_custom_coefficient_order_is_refused_until_its_permutation_writer_exists() {
+    fn an_order_permuting_the_llf_prefix_is_refused() {
+        use jpxl_core::varblock::{natural_coeff_order, order_id_dims};
+
         let mut plan = tiny_plan();
-        let natural = jpxl_core::varblock::natural_coeff_order(8, 8);
-        let mut swapped = natural.clone();
-        swapped.swap(3, 40);
+        // Order ID 2 is large enough to have a non-empty LLF prefix.
+        let dims = order_id_dims(2).expect("order 2");
+        let mut table = natural_coeff_order(dims.0, dims.1);
+        assert!(
+            table.len() / 64 >= 1,
+            "the fixture needs a non-empty prefix"
+        );
+        let last = table.len() - 1;
+        table.swap(0, last);
         if let Some(pass) = plan.entropy.passes.first_mut() {
             pass.orders = OrderSet::natural()
-                .with_order(crate::vardct::ids::OrderId::new(0), 1, swapped)
+                .with_order(crate::vardct::ids::OrderId::new(2), 1, table)
                 .expect("a permutation");
         }
         assert!(matches!(
-            check_supported(&plan),
+            write_codestream(&validate(plan).expect("legal")),
             Err(EncodeError::Unsupported {
-                clause: "I.3.1",
+                clause: "F.3.2",
                 ..
             })
         ));

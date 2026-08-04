@@ -34,8 +34,11 @@
 //! they steer merges, they are not prices, and the oracle suite verifies the
 //! streams the trained model produces.
 
-use jpxl_encode::vardct::ids::ClusterId;
-use jpxl_encode::vardct::plan::{HistogramPlan, HybridUintPlan};
+use jpxl_core::varblock::{NUM_ORDER_IDS, natural_coeff_order, order_id_dims};
+use jpxl_encode::vardct::ids::{ClusterId, OrderId};
+use jpxl_encode::vardct::plan::{
+    HistogramPlan, HybridUintPlan, OrderSet, QuantizedFrameIr, SpatialPlan,
+};
 use jpxl_encode::vardct::{CensusSink, PlanResult};
 use jpxl_entropy::HybridUintConfig;
 
@@ -493,6 +496,102 @@ fn token_histogram(values: &[(u32, u64)], config: (u32, u32, u32)) -> PlanResult
         counts = vec![1];
     }
     HistogramPlan::new(counts)
+}
+
+/// The fewest coded (non-LLF) coefficient positions an `(Order ID, channel)`
+/// pair must have seen before a custom order is proposed for it: below this,
+/// the F.3.2 stream costs more than any resequencing can save.
+const MIN_ORDER_SAMPLES: u64 = 512;
+
+/// §9.4's candidate coefficient orders, from the quantized IR's own
+/// per-position nonzero frequencies.
+///
+/// For every `(Order ID, channel)` the frame uses, the non-LLF tail of the
+/// natural order is stably re-sorted by descending nonzero frequency: runs of
+/// trailing zeros are what I.4's `non_zeros` countdown ends early on, so
+/// front-loading the positions that actually carry mass shortens every
+/// varblock's coded suffix. The LLF prefix (`skip = size / 64`) is never
+/// touched — F.3.2 cannot express it and I.4 never codes it. §9.4 warns that
+/// frequency sorting is a *candidate generator*, not the answer: the caller
+/// re-censuses under the candidate and adopts it only on an exact price win.
+pub(crate) fn candidate_orders(
+    spatial: &SpatialPlan,
+    quantized: &QuantizedFrameIr,
+) -> PlanResult<OrderSet> {
+    // counts[order_id][channel][position] over non-LLF positions.
+    let mut counts: Vec<[Vec<u64>; 3]> = (0..NUM_ORDER_IDS)
+        .map(|order_id| {
+            let cells = order_id_dims(order_id).map_or(0, |(w, h)| w * h);
+            core::array::from_fn(|_| vec![0u64; cells])
+        })
+        .collect();
+    let mut totals: Vec<u64> = vec![0; NUM_ORDER_IDS];
+
+    for (group, coefficients) in spatial.lf_groups.iter().zip(quantized.lf_groups.iter()) {
+        for (vb, coeff) in group.blocks.iter().zip(coefficients.coefficients.iter()) {
+            let order_id = vb.transform.order_id();
+            let Some(natural) = order_id_dims(order_id).map(|(w, h)| natural_coeff_order(w, h))
+            else {
+                continue;
+            };
+            let skip = natural.len() / 64;
+            if let Some(total) = totals.get_mut(order_id) {
+                *total += u64::try_from(natural.len() - skip).unwrap_or(0);
+            }
+            for channel in 0..3usize {
+                let Some(values) = coeff.channel(channel) else {
+                    continue;
+                };
+                let Some(slots) = counts.get_mut(order_id).and_then(|c| c.get_mut(channel)) else {
+                    continue;
+                };
+                for (position, &cell) in natural.iter().enumerate().skip(skip) {
+                    let nonzero = values
+                        .get(usize::try_from(cell).unwrap_or(usize::MAX))
+                        .copied()
+                        .unwrap_or(0)
+                        != 0;
+                    if nonzero && let Some(slot) = slots.get_mut(position) {
+                        *slot += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    let mut orders = OrderSet::natural();
+    for order_id in 0..NUM_ORDER_IDS {
+        if totals.get(order_id).copied().unwrap_or(0) < MIN_ORDER_SAMPLES {
+            continue;
+        }
+        let Some(natural) = order_id_dims(order_id).map(|(w, h)| natural_coeff_order(w, h)) else {
+            continue;
+        };
+        let skip = natural.len() / 64;
+        for channel in 0..3u8 {
+            let Some(slots) = counts
+                .get(order_id)
+                .and_then(|c| c.get(usize::from(channel)))
+            else {
+                continue;
+            };
+            // Stable sort keeps the natural sequence among equal frequencies,
+            // so an all-equal channel produces the identity and is skipped.
+            let mut positions: Vec<usize> = (skip..natural.len()).collect();
+            positions.sort_by_key(|&p| core::cmp::Reverse(slots.get(p).copied().unwrap_or(0)));
+            if positions.iter().enumerate().all(|(i, &p)| p == skip + i) {
+                continue;
+            }
+            let mut table: Vec<u32> = natural.get(..skip).unwrap_or_default().to_vec();
+            table.extend(positions.iter().filter_map(|&p| natural.get(p).copied()));
+            orders = orders.with_order(
+                OrderId::new(u8::try_from(order_id).unwrap_or(0)),
+                channel,
+                table,
+            )?;
+        }
+    }
+    Ok(orders)
 }
 
 #[cfg(test)]

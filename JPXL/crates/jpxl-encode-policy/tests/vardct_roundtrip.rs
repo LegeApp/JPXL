@@ -171,8 +171,13 @@ fn rung_6_an_image_spanning_several_lf_groups_round_trips() {
     // An LF group is 8 * group_dim == 2048 samples per side (G.2.3 NOTE), so
     // 2100 wide is the first width that needs two of them — and the first that
     // exercises the LF-group-relative to pass-group-relative rebasing the I.4
-    // walk depends on. Measured: peak 42, RMSE 5.42.
-    rung(2100, 24, false, 70, 9.0);
+    // walk depends on. Measured: peak 42, RMSE 5.42 at the fixed cover;
+    // peak 89, RMSE 7.07 under the slice-18b hierarchical default, where a
+    // merge straddling this fixture's hard vertical edge rings — §4.3's
+    // objective trades local error for rate and carries no edge term until
+    // slice 20's perceptual work. The bound is an R-D statement about the
+    // default encoder, not a conformance class (see the module doc).
+    rung(2100, 24, false, 96, 9.0);
 }
 
 #[test]

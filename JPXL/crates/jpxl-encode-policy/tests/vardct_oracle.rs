@@ -708,6 +708,83 @@ fn both_oracles_decode_an_adaptive_quantization_stream() {
     }
 }
 
+/// Slice 18b's new wire content: I.3.1 `used_orders != 0` with its F.3.2
+/// permutation stream — the first custom coefficient orders this encoder puts
+/// on the wire. The composition direction of the stored permutation is
+/// exactly the kind of two-readings ambiguity a paired encoder/decoder can
+/// agree on while both being wrong; only decoders JPXL had no hand in settle
+/// it.
+#[test]
+fn both_oracles_decode_a_custom_order_stream() {
+    let case = Case {
+        name: "orders-300x260",
+        width: 300,
+        height: 260,
+        grey: false,
+    };
+    // The mixed fixture adopts a custom order for DCT8x8 at defaults.
+    let source = test_image(case.width, case.height, case.grey);
+    let frame = PreparedFrame::from_srgb8(case.width, case.height, &source).expect("frame");
+    let plan = plan_frame(&frame, &EncodeRequest::defaults()).expect("a legal plan");
+    let used = plan
+        .plan()
+        .entropy
+        .passes
+        .first()
+        .map_or(0, |pass| pass.orders.used_orders());
+    assert_ne!(
+        used, 0,
+        "the oracle fixture must put a custom coefficient order on the wire"
+    );
+    let codestream = jpxl_encode::vardct::write_codestream(&plan).expect("encodes");
+
+    let dir = scratch("orders");
+    let jxl = dir.join(format!("{}.jxl", case.name));
+    std::fs::write(&jxl, &codestream).expect("write");
+    let ours = ours(&codestream);
+
+    for kind in [OracleKind::Djxl, OracleKind::JxlOxide] {
+        let Some(oracle) = oracle::find(kind) else {
+            println!("skipping {kind:?}: not installed");
+            continue;
+        };
+        let (out, format) = match kind {
+            OracleKind::Djxl => (dir.join(format!("{}.ppm", case.name)), OutputFormat::Ppm),
+            _ => (dir.join(format!("{}.npy", case.name)), OutputFormat::Npy),
+        };
+        match oracle.decode(&jxl, &out, format) {
+            Ok(()) => {}
+            Err(err) if err.is_unavailable() => {
+                println!("skipping {kind:?}: {err}");
+                continue;
+            }
+            Err(err) => panic!(
+                "{kind:?} refused a custom-order stream ({} bytes, used_orders {used:#x}): {err}",
+                codestream.len()
+            ),
+        }
+        let bytes = std::fs::read(&out).expect("read oracle output");
+        let samples: Vec<u8> = match kind {
+            OracleKind::Djxl => PnmImage::from_ppm(&bytes)
+                .expect("ppm")
+                .samples
+                .iter()
+                .map(|&v| u8::try_from(v.min(255)).unwrap_or(0))
+                .collect(),
+            _ => read_npy_f32(&bytes)
+                .expect("npy")
+                .iter()
+                .map(|&v| u8::try_from((v.clamp(0.0, 1.0) * 255.0).round() as i32).unwrap_or(255))
+                .collect(),
+        };
+        let (peak, rmse) = error(&samples, &ours);
+        assert!(
+            peak <= MAX_PEAK_BETWEEN_DECODERS,
+            "{kind:?} and jpxl-decode disagree by {peak} on a custom-order stream (RMSE {rmse:.3})"
+        );
+    }
+}
+
 /// A corrupted stream must be refused, never silently mis-decoded.
 ///
 /// The ANS terminal state of C.3.2 is the check that makes this cheap: a
