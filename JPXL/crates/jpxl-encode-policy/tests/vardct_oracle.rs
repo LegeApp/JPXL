@@ -502,6 +502,115 @@ fn both_oracles_decode_a_stream_from_the_hf_mul_segment() {
     }
 }
 
+/// Slice 16's new wire content: DctSelect values other than zero, and the HF
+/// coefficient walk of DCT16x16/DCT32x32 varblocks. Only a decoder JPXL had
+/// no hand in can say the placement, the LLF handling and the coefficient
+/// order of the merged transforms are the standard's and not merely our own.
+#[test]
+fn both_oracles_decode_a_hierarchical_stream() {
+    let mut request = EncodeRequest::defaults();
+    request.budget.cover_mode = jpxl_encode_policy::CoverMode::Hierarchical;
+
+    // A gradient over a multi-group frame with clipped edges: merges
+    // everywhere the grid allows them, boundary fallbacks where it does not.
+    let case = Case {
+        name: "hierarchical-300x260",
+        width: 300,
+        height: 260,
+        grey: false,
+    };
+    let mut source = Vec::new();
+    for y in 0..case.height {
+        for x in 0..case.width {
+            let luma = u8::try_from(40 + (x + y) * 160 / (case.width + case.height)).unwrap_or(255);
+            source.extend_from_slice(&[
+                luma,
+                u8::try_from(u16::from(luma) * 4 / 5).unwrap_or(255),
+                u8::try_from(u16::from(luma) * 3 / 5).unwrap_or(255),
+            ]);
+        }
+    }
+
+    let frame = PreparedFrame::from_srgb8(case.width, case.height, &source).expect("frame");
+    let plan = plan_frame(&frame, &request).expect("a legal plan");
+    let merged = plan
+        .plan()
+        .spatial
+        .lf_groups
+        .iter()
+        .flat_map(|g| g.blocks.iter())
+        .filter(|b| b.transform != jpxl_core::varblock::TransformType::Dct8x8)
+        .count();
+    assert!(
+        merged > 0,
+        "the oracle fixture must put a larger transform on the wire"
+    );
+    let codestream = jpxl_encode::vardct::write_codestream(&plan).expect("encodes");
+
+    let dir = scratch("hierarchical");
+    let jxl = dir.join(format!("{}.jxl", case.name));
+    std::fs::write(&jxl, &codestream).expect("write");
+    let ours = ours(&codestream);
+
+    for kind in [OracleKind::Djxl, OracleKind::JxlOxide] {
+        let Some(oracle) = oracle::find(kind) else {
+            println!("skipping {kind:?}: not installed");
+            continue;
+        };
+        let (out, format) = match kind {
+            OracleKind::Djxl => (dir.join(format!("{}.ppm", case.name)), OutputFormat::Ppm),
+            _ => (dir.join(format!("{}.npy", case.name)), OutputFormat::Npy),
+        };
+        match oracle.decode(&jxl, &out, format) {
+            Ok(()) => {}
+            Err(err) if err.is_unavailable() => {
+                println!("skipping {kind:?}: {err}");
+                continue;
+            }
+            Err(err) => panic!(
+                "{kind:?} refused a hierarchical stream ({} bytes, {merged} merged blocks): {err}",
+                codestream.len()
+            ),
+        }
+        let bytes = std::fs::read(&out).expect("read oracle output");
+        let samples: Vec<u8> = match kind {
+            OracleKind::Djxl => {
+                let decoded = PnmImage::from_ppm(&bytes).expect("ppm");
+                assert_eq!(
+                    (decoded.w, decoded.h),
+                    (case.width, case.height),
+                    "dimensions"
+                );
+                decoded
+                    .samples
+                    .iter()
+                    .map(|&v| u8::try_from(v.min(255)).unwrap_or(0))
+                    .collect()
+            }
+            _ => read_npy_f32(&bytes)
+                .expect("npy")
+                .iter()
+                .map(|&v| u8::try_from((v.clamp(0.0, 1.0) * 255.0).round() as i32).unwrap_or(255))
+                .collect(),
+        };
+
+        // Conformance-shaped: the same stream through two decoders.
+        let (peak, rmse) = error(&samples, &ours);
+        assert!(
+            peak <= MAX_PEAK_BETWEEN_DECODERS,
+            "{kind:?} and jpxl-decode disagree by {peak} on merged transforms (RMSE {rmse:.3})"
+        );
+
+        // Rate-distortion: the merged transforms must not wreck the pixels.
+        let (_, rmse) = error(&samples, &source);
+        assert!(
+            rmse <= MAX_RMSE_VS_SOURCE,
+            "{kind:?} vs source RMSE {rmse:.3} ({} bytes)",
+            codestream.len()
+        );
+    }
+}
+
 /// A corrupted stream must be refused, never silently mis-decoded.
 ///
 /// The ANS terminal state of C.3.2 is the check that makes this cheap: a

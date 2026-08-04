@@ -187,13 +187,17 @@ pub fn check_supported(plan: &EmissionPlan) -> Result<()> {
         }
     }
     for group in &plan.spatial.lf_groups {
-        if group
-            .blocks
-            .iter()
-            .any(|b| b.transform != TransformType::Dct8x8)
-        {
+        // The square vocabulary is what has decoder-parity evidence today; the
+        // walk and the writer are transform-generic, so widening this list is
+        // an evidence question, not a code change elsewhere.
+        if group.blocks.iter().any(|b| {
+            !matches!(
+                b.transform,
+                TransformType::Dct8x8 | TransformType::Dct16x16 | TransformType::Dct32x32
+            )
+        }) {
             return Err(EncodeError::unsupported(
-                "a transform other than DCT8x8",
+                "a transform outside the square DCT vocabulary (DCT8x8, DCT16x16, DCT32x32)",
                 "I.1",
             ));
         }

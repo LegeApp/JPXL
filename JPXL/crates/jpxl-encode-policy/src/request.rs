@@ -13,6 +13,10 @@ pub enum CoverMode {
     /// One DCT8x8 per atom; no search at all (milestone 1 and 2).
     #[default]
     FixedDct8x8,
+    /// The quadtree solver over the square transforms (milestone 6): each
+    /// aligned 32x32 region chooses between one transform and four
+    /// sub-quadrants by exact residual-bit comparison within the hierarchy.
+    Hierarchical,
 }
 
 /// How much of the file the caller is willing to spend.

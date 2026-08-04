@@ -71,14 +71,16 @@ use jpxl_core::forward::{
     CoeffView, CoeffViewMut, SampleView, SampleViewMut, TransformScratch, forward_varblock_into,
     lf_from_llf_into,
 };
+use jpxl_core::geometry::LfBlockPos;
 use jpxl_core::varblock::TransformType;
 use jpxl_encode::vardct::headers::{NEUTRAL_QM_SCALE, VARDCT_GROUP_SIZE_SHIFT};
-use jpxl_encode::vardct::ids::{CflFactor, ClusterId, LfGroupId, PreContextId, PresetId};
+use jpxl_encode::vardct::ids::{CflFactor, ClusterId, HfMul, LfGroupId, PreContextId, PresetId};
 use jpxl_encode::vardct::plan::{
     CflGrid, EmissionPlan, EntropyModelPlan, EntropyPlan, FrameDecision, HfBlockContextPlan,
     HfPassEntropyPlan, HistogramPlan, HybridUintPlan, LfCorrelationDecision, LfDecision,
     LfGroupPlan, LfQuantPlanes, OrderSet, QuantizedFrameIr, QuantizedLfGroup, QuantizerDecision,
     RestorationDecision, SectionLayout, SharpnessGrid, SpatialPlan, VarblockCoefficients,
+    VarblockDecision,
 };
 use jpxl_encode::vardct::{ValidatedEmissionPlan, VardctGeometry, census_frame, validate};
 
@@ -213,17 +215,14 @@ fn plan_at_with_cfl(
         quantizer.quant_lf.get(),
         LfDecision::vardct_neutral().extra_precision,
     );
-    let hf_quant = HfQuantizer::new(
-        TransformType::Dct8x8,
-        quantizer.global_scale.get(),
-        quantizer.hf_mul.get(),
-        NEUTRAL_QM_SCALE,
-        NEUTRAL_QM_SCALE,
-    )?;
-    let cfl = estimate_cfl(frame, &geometry, &lf_quant, &hf_quant, enable_cfl)?;
+    let hf_quants = HfQuantizers::new(quantizer.global_scale.get(), quantizer.hf_mul.get())?;
 
-    let mut lf_groups = Vec::new();
-    let mut quantized = Vec::new();
+    // The cover is selected before chroma-from-luma is estimated: the estimate
+    // regresses over the coefficients of the *selected* transforms, so the
+    // block map must exist first. Selection itself scores with neutral CfL —
+    // block choice is dominated by luma structure (see `block_cost`).
+    let mut group_shapes = Vec::new();
+    let mut maps = Vec::new();
     for index in 0..geometry.num_lf_groups() {
         let id = LfGroupId::new(u32::try_from(index).unwrap_or(u32::MAX));
         let blocks = geometry
@@ -234,22 +233,35 @@ fn plan_at_with_cfl(
         let rect = geometry.lf_group_rect(id).ok_or(PolicyError::Unsupported {
             what: "an LF group outside the frame's grid",
         })?;
-
         let varblocks = match request.budget.cover_mode {
             CoverMode::FixedDct8x8 => block::fixed_dct8x8(blocks, quantizer.hf_mul)?,
+            CoverMode::Hierarchical => select_blocks(
+                frame,
+                &hf_quants,
+                blocks,
+                (rect.x0, rect.y0),
+                quantizer.hf_mul,
+            )?,
         };
-        let group_cfl = cfl
-            .groups
-            .get(usize::try_from(index).unwrap_or(usize::MAX))
-            .ok_or(PolicyError::Unsupported {
-                what: "a missing CfL grid for an LF group",
-            })?;
-        let quantized_group = quantize_lf_group(
+        group_shapes.push((id, blocks, rect));
+        maps.push(varblocks);
+    }
+
+    let cfl = estimate_cfl(frame, &geometry, &maps, &lf_quant, &hf_quants, enable_cfl)?;
+
+    let mut lf_groups = Vec::new();
+    let mut quantized = Vec::new();
+    for (index, ((id, blocks, rect), varblocks)) in group_shapes.into_iter().zip(maps).enumerate() {
+        let group_cfl = cfl.groups.get(index).ok_or(PolicyError::Unsupported {
+            what: "a missing CfL grid for an LF group",
+        })?;
+        let quantized_group = quantize_group(
             frame,
             &lf_quant,
-            &hf_quant,
+            &hf_quants,
             &cfl.correlation,
             group_cfl,
+            &varblocks,
             (rect.x0, rect.y0),
             blocks,
         )?;
@@ -369,28 +381,410 @@ impl CflSamples {
     }
 }
 
-/// The samples of one LF group's 64x64 CfL tiles.
+/// The searchable HF factor samples of one LF group's 64x64 tiles.
 struct HfCflSamples {
     tiles: jpxl_encode::vardct::BlockGrid,
     x: Vec<CflSamples>,
     b: Vec<CflSamples>,
 }
 
-/// Regression first, then integer refinement in exactly the factor space I.6
-/// consumes.
+/// Milestone 6's square transform vocabulary: DCT8x8, DCT16x16, DCT32x32.
+///
+/// Rectangles and the special 8x8-footprint transforms are later milestones;
+/// squares alone are unambiguous in the LLF-to-LF mapping (block_rows equals
+/// block_cols, so no landscape/portrait orientation choice) and already earn
+/// the exit gate's win on smooth content.
+const SQUARE_TRANSFORMS: [TransformType; 3] = [
+    TransformType::Dct8x8,
+    TransformType::Dct16x16,
+    TransformType::Dct32x32,
+];
+
+/// The square transform whose footprint is `n` atoms per side, or `None`.
+const fn square_transform(n: u32) -> Option<TransformType> {
+    match n {
+        1 => Some(TransformType::Dct8x8),
+        2 => Some(TransformType::Dct16x16),
+        4 => Some(TransformType::Dct32x32),
+        _ => None,
+    }
+}
+
+/// The per-transform HF quantizers a frame needs, built once.
+///
+/// I.5.3's `Mul` and the dequantization matrices depend only on the transform,
+/// `global_scale` and `HfMul`; with a constant `HfMul` (adaptive quant is
+/// milestone 7) there is one quantizer per transform for the whole frame.
+struct HfQuantizers {
+    by_transform: Vec<(TransformType, HfQuantizer)>,
+    /// §4.3's Lagrange multiplier per channel, in bits per unit of squared
+    /// **sample-domain** error, from the DCT8x8 operating point: a uniform
+    /// quantizer at step `s` trades one bit for `s^2/16` of squared error
+    /// (halving the step costs one bit per coefficient and moves `s^2/12` to
+    /// `s^2/48`), so `lambda = 16 / mean(s^2)` over the non-LLF cells.
+    ///
+    /// The unit matters because the forward transforms are not Parseval: one
+    /// unit of squared coefficient error is `side^2` units of sample error
+    /// (measured, exactly, in `probe_parseval`-style tests), so distortion
+    /// must be brought into the common sample domain before transforms of
+    /// different sizes can be compared. The calibration therefore uses the
+    /// sample-domain step `8 * s`, and [`block_cost`] scales each candidate's
+    /// coefficient error by its own `side^2`.
+    lambda: [f64; NUM_CHANNELS],
+}
+
+impl HfQuantizers {
+    fn new(global_scale: u32, hf_mul: u32) -> Result<Self> {
+        let mut by_transform = Vec::with_capacity(SQUARE_TRANSFORMS.len());
+        for transform in SQUARE_TRANSFORMS {
+            by_transform.push((
+                transform,
+                HfQuantizer::new(
+                    transform,
+                    global_scale,
+                    hf_mul,
+                    NEUTRAL_QM_SCALE,
+                    NEUTRAL_QM_SCALE,
+                )?,
+            ));
+        }
+        let dct8 = &by_transform
+            .first()
+            .ok_or(PolicyError::Unsupported {
+                what: "an empty transform vocabulary",
+            })?
+            .1;
+        let mut lambda = [0.0f64; NUM_CHANNELS];
+        for (channel, slot) in lambda.iter_mut().enumerate() {
+            let mut sum = 0.0f64;
+            let mut count = 0u32;
+            for cell in 0..DCT8X8_CELLS {
+                if cell == 0 {
+                    continue;
+                }
+                let step = 8.0 * f64::from(dct8.step(channel, cell));
+                sum += step * step;
+                count += 1;
+            }
+            let mean = sum / f64::from(count.max(1));
+            *slot = if mean > 0.0 { 16.0 / mean } else { 0.0 };
+        }
+        Ok(Self {
+            by_transform,
+            lambda,
+        })
+    }
+
+    fn get(&self, transform: TransformType) -> Result<&HfQuantizer> {
+        self.by_transform
+            .iter()
+            .find(|(t, _)| *t == transform)
+            .map(|(_, q)| q)
+            .ok_or(PolicyError::Unsupported {
+                what: "an HF quantizer for a transform outside milestone 6",
+            })
+    }
+}
+
+/// Reusable per-varblock forward-transform buffers, sized for the largest
+/// square transform (DCT32x32).
+struct ForwardScratch {
+    transform: TransformScratch,
+    samples: Vec<f32>,
+    coeffs: [Vec<f32>; NUM_CHANNELS],
+}
+
+impl ForwardScratch {
+    fn new() -> Self {
+        let max = 32 * 32;
+        Self {
+            transform: TransformScratch::for_transform(TransformType::Dct32x32),
+            samples: vec![0.0; max],
+            coeffs: core::array::from_fn(|_| vec![0.0; max]),
+        }
+    }
+}
+
+/// Copies a `side x side` sample window out of one XYB plane, replicating the
+/// frame edge (see the DCT8x8 rationale: a hard zero edge would ring across the
+/// whole clipped margin; the replicated edge puts no energy in high
+/// frequencies).
+fn gather_square(
+    frame: &PreparedFrame,
+    channel: usize,
+    x0: u32,
+    y0: u32,
+    side: u32,
+    out: &mut [f32],
+) {
+    let (w, h) = (frame.width(), frame.height());
+    let plane = match channel {
+        0 => &frame.xyb().x,
+        1 => &frame.xyb().y,
+        _ => &frame.xyb().b,
+    };
+    for dy in 0..side {
+        for dx in 0..side {
+            let x = (x0 + dx).min(w.saturating_sub(1));
+            let y = (y0 + dy).min(h.saturating_sub(1));
+            if let Some(slot) = out.get_mut((dy * side + dx) as usize) {
+                *slot = plane.at(x, y, w).unwrap_or(0.0);
+            }
+        }
+    }
+}
+
+/// Forward-transforms all three channels of one square varblock at pixel
+/// `(px, py)` into `scratch.coeffs`, each a `side*side` row-major array.
+fn forward_square(
+    frame: &PreparedFrame,
+    transform: TransformType,
+    px: u32,
+    py: u32,
+    scratch: &mut ForwardScratch,
+) -> Result<usize> {
+    let side = transform.sample_cols();
+    let cells = side * side;
+    for channel in 0..NUM_CHANNELS {
+        gather_square(
+            frame,
+            channel,
+            px,
+            py,
+            u32::try_from(side).unwrap_or(0),
+            &mut scratch.samples,
+        );
+        let coeff = scratch
+            .coeffs
+            .get_mut(channel)
+            .ok_or(PolicyError::Unsupported {
+                what: "a coefficient channel",
+            })?;
+        let (Some(view), Some(mut out)) = (
+            SampleView::contiguous(scratch.samples.get(..cells).unwrap_or(&[]), side, side),
+            coeff
+                .get_mut(..cells)
+                .and_then(|c| CoeffViewMut::contiguous(c, side, side)),
+        ) else {
+            return Err(PolicyError::Unsupported {
+                what: "a varblock sample view",
+            });
+        };
+        forward_varblock_into(transform, &view, &mut out, &mut scratch.transform);
+    }
+    Ok(side)
+}
+
+/// I.8 inverted for a square transform: the varblock's `n x n` LF samples from
+/// the top-left `n x n` LLF sub-block of its coefficient array.
+fn lf_samples_of(
+    coeff: &[f32],
+    transform: TransformType,
+    n: usize,
+    side: usize,
+    scratch: &mut TransformScratch,
+    lf_out: &mut [f32],
+) -> Result<()> {
+    let (Some(llf), Some(mut out)) = (
+        CoeffView::new(coeff, n, n, side),
+        lf_out
+            .get_mut(..n * n)
+            .and_then(|o| SampleViewMut::contiguous(o, n, n)),
+    ) else {
+        return Err(PolicyError::Unsupported {
+            what: "an LLF view",
+        });
+    };
+    lf_from_llf_into(transform, &llf, &mut out, scratch);
+    Ok(())
+}
+
+/// Whether coefficient cell `(x, y)` of a square transform is an LLF cell
+/// (the top-left `n x n`, which the decoder overwrites from the LF image and
+/// the HF walk never codes).
+const fn is_llf_cell(cell: usize, side: usize, n: usize) -> bool {
+    let x = cell % side;
+    let y = cell / side;
+    x < n && y < n
+}
+
+/// The four chroma-from-luma multipliers a varblock applies: the frame-wide LF
+/// pair (I.2.3) and its own tile's HF pair (I.6).
+#[derive(Debug, Clone, Copy)]
+struct VarblockCfl {
+    k_x_lf: f32,
+    k_b_lf: f32,
+    k_x_hf: f32,
+    k_b_hf: f32,
+}
+
+/// Writes one LF plane cell, ignoring out-of-grid coordinates.
+fn set_lf(
+    planes: &mut [Vec<i32>; NUM_CHANNELS],
+    channel: usize,
+    bx: u32,
+    by: u32,
+    width: u32,
+    value: i32,
+) {
+    let index =
+        usize::try_from(u64::from(by) * u64::from(width) + u64::from(bx)).unwrap_or(usize::MAX);
+    if let Some(slot) = planes.get_mut(channel).and_then(|p| p.get_mut(index)) {
+        *slot = value;
+    }
+}
+
+/// Quantizes one square varblock: LF samples into `lf_planes`, HF coefficients
+/// returned. Y first, because X and B decorrelate against the reconstructed
+/// `dY` (I.6), never the source Y.
+#[allow(clippy::too_many_arguments)]
+fn quantize_square_varblock(
+    coeffs: &[Vec<f32>; NUM_CHANNELS],
+    transform: TransformType,
+    lf_quant: &LfQuantizer,
+    hf_quant: &HfQuantizer,
+    cfl: VarblockCfl,
+    scratch: &mut TransformScratch,
+    bx: u32,
+    by: u32,
+    lf_width: u32,
+    lf_planes: &mut [Vec<i32>; NUM_CHANNELS],
+) -> Result<VarblockCoefficients> {
+    let n = transform.block_dims().0;
+    let side = transform.sample_cols();
+    let cells = side * side;
+    let mut quant: [Vec<i32>; NUM_CHANNELS] = core::array::from_fn(|_| vec![0i32; cells]);
+    let mut d_y_lf = vec![0.0f32; n * n];
+    let mut d_y_hf = vec![0.0f32; cells];
+    let mut lf_scratch = vec![0.0f32; n * n];
+
+    // --- Y (channel 1): independent, and everything else needs it ---
+    let y_coeff = coeffs.get(1).ok_or(PolicyError::Unsupported {
+        what: "the Y coefficient channel",
+    })?;
+    lf_samples_of(y_coeff, transform, n, side, scratch, &mut lf_scratch)?;
+    for idx in 0..n * n {
+        let q = lf_quant.quantize(lf_scratch.get(idx).copied().unwrap_or(0.0), 1)?;
+        set_lf(
+            lf_planes,
+            1,
+            bx + u32::try_from(idx % n).unwrap_or(0),
+            by + u32::try_from(idx / n).unwrap_or(0),
+            lf_width,
+            q,
+        );
+        if let Some(slot) = d_y_lf.get_mut(idx) {
+            *slot = lf_quant.reconstruct(q, 1);
+        }
+    }
+    for cell in 0..cells {
+        if is_llf_cell(cell, side, n) {
+            continue;
+        }
+        let q = hf_quant.choose(y_coeff.get(cell).copied().unwrap_or(0.0), 1, cell)?;
+        if let Some(slot) = quant.get_mut(1).and_then(|c| c.get_mut(cell)) {
+            *slot = q;
+        }
+        if let Some(slot) = d_y_hf.get_mut(cell) {
+            *slot = hf_quant.reconstruct(q, 1, cell);
+        }
+    }
+
+    // --- X and B: X = dX + kX*dY, B = dB + kB*dY (I.6) ---
+    for &channel in &[0usize, 2usize] {
+        let (k_lf, k_hf) = if channel == 0 {
+            (cfl.k_x_lf, cfl.k_x_hf)
+        } else {
+            (cfl.k_b_lf, cfl.k_b_hf)
+        };
+        let coeff = coeffs.get(channel).ok_or(PolicyError::Unsupported {
+            what: "a chroma coefficient channel",
+        })?;
+        lf_samples_of(coeff, transform, n, side, scratch, &mut lf_scratch)?;
+        for idx in 0..n * n {
+            let target = lf_scratch.get(idx).copied().unwrap_or(0.0)
+                - k_lf * d_y_lf.get(idx).copied().unwrap_or(0.0);
+            let q = lf_quant.quantize(target, channel)?;
+            set_lf(
+                lf_planes,
+                channel,
+                bx + u32::try_from(idx % n).unwrap_or(0),
+                by + u32::try_from(idx / n).unwrap_or(0),
+                lf_width,
+                q,
+            );
+        }
+        for cell in 0..cells {
+            if is_llf_cell(cell, side, n) {
+                continue;
+            }
+            let target = coeff.get(cell).copied().unwrap_or(0.0)
+                - k_hf * d_y_hf.get(cell).copied().unwrap_or(0.0);
+            let q = hf_quant.choose(target, channel, cell)?;
+            if let Some(slot) = quant.get_mut(channel).and_then(|c| c.get_mut(cell)) {
+                *slot = q;
+            }
+        }
+    }
+
+    let [x, y, b] = quant;
+    Ok(VarblockCoefficients::new(transform, [x, y, b])?)
+}
+
+/// The tile (64x64) chroma-from-luma multipliers for a varblock at group-local
+/// atom `(bx, by)`. A milestone-6 varblock is at most 32 samples per side, so
+/// it lies inside a single tile and takes that tile's factor pair.
+fn varblock_cfl(
+    correlation: &LfCorrelationDecision,
+    cfl: &CflGrid,
+    bx: u32,
+    by: u32,
+) -> VarblockCfl {
+    let k_x_lf = cfl_multiplier(
+        correlation.base_correlation_x,
+        i32::from(correlation.x_factor_lf) - 128,
+        correlation.colour_factor,
+    );
+    let k_b_lf = cfl_multiplier(
+        correlation.base_correlation_b,
+        i32::from(correlation.b_factor_lf) - 128,
+        correlation.colour_factor,
+    );
+    let tile =
+        usize::try_from(u64::from(by / 8) * u64::from(cfl.tiles().width) + u64::from(bx / 8))
+            .unwrap_or(usize::MAX);
+    let k_x_hf = cfl_multiplier(
+        correlation.base_correlation_x,
+        cfl.x_from_y().get(tile).copied().unwrap_or_default().get(),
+        correlation.colour_factor,
+    );
+    let k_b_hf = cfl_multiplier(
+        correlation.base_correlation_b,
+        cfl.b_from_y().get(tile).copied().unwrap_or_default().get(),
+        correlation.colour_factor,
+    );
+    VarblockCfl {
+        k_x_lf,
+        k_b_lf,
+        k_x_hf,
+        k_b_hf,
+    }
+}
+
+/// Regression first, then integer refinement in the factor space I.6 consumes,
+/// over the **selected** varblock map.
 ///
 /// The least-squares seed is trained in the unquantized coefficient domain,
-/// `Σ(Y·C) / Σ(Y²)`, separately for LF and each HF tile. Its integer seed is
-/// then refined over nearby stored factors using reconstructed `dY`, the value
-/// the decoder actually adds back, and quantizing the chroma residual through
-/// [`LfQuantizer`] or [`HfQuantizer`] (including I.5.3's quantization bias).
-/// Grayscale is a hard source-domain no-op so its pre-slice-15 stream is
-/// byte-identical rather than merely visually identical.
+/// `Sum(Y*C) / Sum(Y^2)`, separately for LF and each HF tile. It is refined
+/// over nearby stored factors using reconstructed `dY`, quantizing the chroma
+/// residual through the exact quantizers (including I.5.3's bias). Grayscale is
+/// a hard source-domain no-op, so its stream is byte-identical to neutral CfL.
 fn estimate_cfl(
     frame: &PreparedFrame,
     geometry: &VardctGeometry,
+    maps: &[Vec<VarblockDecision>],
     lf_quant: &LfQuantizer,
-    hf_quant: &HfQuantizer,
+    hf_quants: &HfQuantizers,
     enabled: bool,
 ) -> Result<CflEstimate> {
     if !enabled || frame.is_grayscale() {
@@ -409,17 +803,10 @@ fn estimate_cfl(
     let mut lf_x = CflSamples::default();
     let mut lf_b = CflSamples::default();
     let mut hf_groups = Vec::new();
-    let mut scratch = TransformScratch::for_transform(TransformType::Dct8x8);
-    let mut samples = [0.0f32; DCT8X8_CELLS];
-    let mut coeffs: [[f32; DCT8X8_CELLS]; NUM_CHANNELS] = [[0.0; DCT8X8_CELLS]; NUM_CHANNELS];
+    let mut scratch = ForwardScratch::new();
 
     for index in 0..geometry.num_lf_groups() {
         let id = LfGroupId::new(u32::try_from(index).unwrap_or(u32::MAX));
-        let blocks = geometry
-            .lf_group_blocks(id)
-            .ok_or(PolicyError::Unsupported {
-                what: "an LF group outside the frame's grid",
-            })?;
         let tiles = geometry
             .lf_group_cfl_tiles(id)
             .ok_or(PolicyError::Unsupported {
@@ -434,59 +821,95 @@ fn estimate_cfl(
             x: (0..tile_count).map(|_| CflSamples::default()).collect(),
             b: (0..tile_count).map(|_| CflSamples::default()).collect(),
         };
+        let map = maps
+            .get(usize::try_from(index).unwrap_or(usize::MAX))
+            .ok_or(PolicyError::Unsupported {
+                what: "a missing block map for an LF group",
+            })?;
 
-        for by in 0..blocks.height {
-            for bx in 0..blocks.width {
-                transform_block(
-                    frame,
-                    rect.x0 + bx * 8,
-                    rect.y0 + by * 8,
-                    &mut samples,
-                    &mut coeffs,
-                    &mut scratch,
-                )?;
+        for vb in map {
+            let transform = vb.transform;
+            let n = transform.block_dims().0;
+            let side = forward_square(
+                frame,
+                transform,
+                rect.x0 + vb.origin.bx() * 8,
+                rect.y0 + vb.origin.by() * 8,
+                &mut scratch,
+            )?;
+            let cells = side * side;
+            let hf_quant = hf_quants.get(transform)?;
+            let tile = usize::try_from(
+                u64::from(vb.origin.by() / 8) * u64::from(tiles.width)
+                    + u64::from(vb.origin.bx() / 8),
+            )
+            .unwrap_or(usize::MAX);
 
-                let y_lf = lf_target_of(&coeffs, 1, &mut scratch)?;
-                let q_y_lf = lf_quant.quantize(y_lf, 1)?;
-                let d_y_lf = lf_quant.reconstruct(q_y_lf, 1);
-                lf_x.push(lf_target_of(&coeffs, 0, &mut scratch)?, y_lf, d_y_lf, 0);
-                lf_b.push(lf_target_of(&coeffs, 2, &mut scratch)?, y_lf, d_y_lf, 0);
+            // LF: the varblock's n*n LF samples, chroma against reconstructed dY.
+            let mut y_lf = vec![0.0f32; n * n];
+            let mut x_lf = vec![0.0f32; n * n];
+            let mut b_lf = vec![0.0f32; n * n];
+            lf_samples_of(
+                &scratch.coeffs[1],
+                transform,
+                n,
+                side,
+                &mut scratch.transform,
+                &mut y_lf,
+            )?;
+            lf_samples_of(
+                &scratch.coeffs[0],
+                transform,
+                n,
+                side,
+                &mut scratch.transform,
+                &mut x_lf,
+            )?;
+            lf_samples_of(
+                &scratch.coeffs[2],
+                transform,
+                n,
+                side,
+                &mut scratch.transform,
+                &mut b_lf,
+            )?;
+            for idx in 0..n * n {
+                let y = y_lf.get(idx).copied().unwrap_or(0.0);
+                let q = lf_quant.quantize(y, 1)?;
+                let d_y = lf_quant.reconstruct(q, 1);
+                lf_x.push(x_lf.get(idx).copied().unwrap_or(0.0), y, d_y, 0);
+                lf_b.push(b_lf.get(idx).copied().unwrap_or(0.0), y, d_y, 0);
+            }
 
-                let tile_index =
-                    usize::try_from(u64::from(by / 8) * u64::from(tiles.width) + u64::from(bx / 8))
-                        .unwrap_or(usize::MAX);
-                for cell in 1..DCT8X8_CELLS {
-                    let y = coeffs
-                        .get(1)
-                        .and_then(|plane| plane.get(cell))
-                        .copied()
-                        .unwrap_or(0.0);
-                    let q_y = hf_quant.choose(y, 1, cell)?;
-                    let d_y = hf_quant.reconstruct(q_y, 1, cell);
-                    if let Some(tile) = group.x.get_mut(tile_index) {
-                        tile.push(
-                            coeffs
-                                .first()
-                                .and_then(|plane| plane.get(cell))
-                                .copied()
-                                .unwrap_or(0.0),
-                            y,
-                            d_y,
-                            cell,
-                        );
-                    }
-                    if let Some(tile) = group.b.get_mut(tile_index) {
-                        tile.push(
-                            coeffs
-                                .get(2)
-                                .and_then(|plane| plane.get(cell))
-                                .copied()
-                                .unwrap_or(0.0),
-                            y,
-                            d_y,
-                            cell,
-                        );
-                    }
+            // HF: every non-LLF coefficient, into the varblock's tile. The
+            // sample's cell is folded onto the 8x8 frequency grid (identity
+            // for DCT8x8), because `refine_hf_factor` scores every tile with
+            // the DCT8x8 quantizer as the common scale and its matrix has no
+            // entries beyond 8x8.
+            let fold = side / 8;
+            for cell in 0..cells {
+                if is_llf_cell(cell, side, n) {
+                    continue;
+                }
+                let cell8 = (cell / side / fold.max(1)) * 8 + (cell % side / fold.max(1));
+                let y = scratch.coeffs[1].get(cell).copied().unwrap_or(0.0);
+                let q_y = hf_quant.choose(y, 1, cell)?;
+                let d_y = hf_quant.reconstruct(q_y, 1, cell);
+                if let Some(t) = group.x.get_mut(tile) {
+                    t.push(
+                        scratch.coeffs[0].get(cell).copied().unwrap_or(0.0),
+                        y,
+                        d_y,
+                        cell8,
+                    );
+                }
+                if let Some(t) = group.b.get_mut(tile) {
+                    t.push(
+                        scratch.coeffs[2].get(cell).copied().unwrap_or(0.0),
+                        y,
+                        d_y,
+                        cell8,
+                    );
                 }
             }
         }
@@ -513,10 +936,20 @@ fn estimate_cfl(
         let mut x = Vec::with_capacity(group.x.len());
         let mut b = Vec::with_capacity(group.b.len());
         for tile in &group.x {
-            x.push(CflFactor::new(refine_hf_factor(tile, 0.0, 0, hf_quant)?));
+            x.push(CflFactor::new(refine_hf_factor(
+                tile,
+                0.0,
+                0,
+                hf_quants.get(TransformType::Dct8x8)?,
+            )?));
         }
         for tile in &group.b {
-            b.push(CflFactor::new(refine_hf_factor(tile, 1.0, 2, hf_quant)?));
+            b.push(CflFactor::new(refine_hf_factor(
+                tile,
+                1.0,
+                2,
+                hf_quants.get(TransformType::Dct8x8)?,
+            )?));
         }
         groups.push(CflGrid::new(group.tiles, x, b)?);
     }
@@ -524,31 +957,6 @@ fn estimate_cfl(
         correlation,
         groups,
     })
-}
-
-fn transform_block(
-    frame: &PreparedFrame,
-    x0: u32,
-    y0: u32,
-    samples: &mut [f32; DCT8X8_CELLS],
-    coeffs: &mut [[f32; DCT8X8_CELLS]; NUM_CHANNELS],
-    scratch: &mut TransformScratch,
-) -> Result<()> {
-    for channel in 0..NUM_CHANNELS {
-        gather_block(frame, channel, x0, y0, samples);
-        let (Some(view), Some(mut out)) = (
-            SampleView::contiguous(samples, 8, 8),
-            coeffs
-                .get_mut(channel)
-                .and_then(|plane| CoeffViewMut::contiguous(plane, 8, 8)),
-        ) else {
-            return Err(PolicyError::Unsupported {
-                what: "an 8x8 block view",
-            });
-        };
-        forward_varblock_into(TransformType::Dct8x8, &view, &mut out, scratch);
-    }
-    Ok(())
 }
 
 /// The candidate integer factors to score: a small window around the
@@ -569,14 +977,13 @@ fn factor_candidates(seed: i32, lo: i32, hi: i32) -> Vec<i32> {
 
 /// A crude but monotone bit-cost of one quantized residual.
 ///
-/// CfL does not change the reconstructed value materially — the quantizer
-/// re-targets the residual either way — so the axis that actually moves with
-/// the factor is *rate*, not distortion. This proxy is the magnitude class of
-/// the coefficient: zero is free (it is the overwhelming symbol and the
-/// context model prices a run of them near nothing), and a non-zero costs its
-/// bit length plus a sign. Minimizing its sum is minimizing residual entropy
-/// in the only currency slice 15 can spend without a full re-encode per
-/// candidate.
+/// CfL and block choice barely move the reconstructed value — the quantizer
+/// re-targets either way — so the axis that actually moves is *rate*, not
+/// distortion. This proxy is the magnitude class of the coefficient: zero is
+/// free (the overwhelming symbol, priced near nothing by the context model),
+/// and a non-zero costs its bit length plus a sign. Minimizing its sum is
+/// minimizing residual entropy in the only currency a per-candidate search can
+/// spend without a full re-encode.
 fn residual_bits(q: i32) -> u64 {
     if q == 0 {
         0
@@ -586,12 +993,6 @@ fn residual_bits(q: i32) -> u64 {
 }
 
 /// The signaling cost of one stored factor, in the same currency.
-///
-/// A neutral factor is free: `0` is the default Modular sample, predicts
-/// exactly, and (for LF) keeps the whole I.2.3 bundle at its one-bit
-/// `all_default`. A non-zero factor must pay its own magnitude, so a tile whose
-/// residual saving does not clear that price stays neutral — which is what
-/// keeps CfL from ever enlarging weakly-correlated content.
 fn factor_bits(factor: i32) -> u64 {
     if factor == 0 {
         0
@@ -625,10 +1026,10 @@ fn refine_lf_factors(
     b: &CflSamples,
     quantizer: &LfQuantizer,
 ) -> Result<(i32, i32)> {
-    // Explicit I.2.3 costs 51 bits at the defaults used here:
-    // all_default=false (1), colour_factor's selector (2), two F16s (32), and
-    // the two biased factors (16). The all-default form costs one bit, hence a
-    // non-neutral pair must save at least 50 residual bits before it is useful.
+    // Explicit I.2.3 costs 51 bits at the defaults used here: all_default=false
+    // (1), colour_factor's selector (2), two F16s (32), the two biased factors
+    // (16). The all-default form costs one bit, so a non-neutral pair must save
+    // at least 50 residual bits to be worth it.
     const LF_BUNDLE_EXTRA_BITS: u64 = 50;
 
     let x_seed = x
@@ -689,20 +1090,18 @@ fn hf_residual_cost(
 /// The best HF factor for one 64x64 tile: the candidate whose residual-plus-
 /// signaling bits are lowest, ties resolved toward the neutral factor so an
 /// unhelpful tile costs nothing and stays byte-neutral.
+///
+/// The refinement scores with a DCT8x8 quantizer even for coefficients that
+/// came from larger transforms: the HF factor is a single per-tile value the
+/// decoder applies uniformly, and the DCT8x8 dequant step is the common scale
+/// the tile is judged on. The factor's own wire range is the interoperable
+/// signed byte `[-128, 127]` established in slice 15.
 fn refine_hf_factor(
     samples: &CflSamples,
     base: f32,
     channel: usize,
     quantizer: &HfQuantizer,
 ) -> Result<i32> {
-    // G.2.4's `XFromY`/`BFromY` are Modular samples, so *our* decoder reads any
-    // `i32`. The reference decoder does not: `djxl` (libjxl) stores these as
-    // signed bytes, and a factor outside `[-128, 127]` decodes to a different
-    // value there than in `jpxl-decode` or `jxl-oxide` — a genuine
-    // interoperability constraint, not a coding-cost heuristic. It was pinned
-    // with a single-tile boundary probe against `djxl`: `+127`/`-128` agree,
-    // `+128`/`-129` diverge. The search space is therefore exactly the wire
-    // range the reference honours.
     let seed =
         samples
             .regression
@@ -729,136 +1128,47 @@ struct QuantizedGroup {
     coefficients: Vec<VarblockCoefficients>,
 }
 
-/// Forward-transforms and quantizes every 8x8 block of one LF group.
-///
-/// The order of operations is forced by I.6: `Y` first, because `B`'s target is
-/// `B - kB * dY` against the **reconstructed** `dY`, not the source one. `X`
-/// has `kX == 0` and is independent.
-fn quantize_lf_group(
+/// Quantizes one LF group's **selected** varblocks, in their `BlockInfo` order.
+#[allow(clippy::too_many_arguments)]
+fn quantize_group(
     frame: &PreparedFrame,
     lf_quant: &LfQuantizer,
-    hf_quant: &HfQuantizer,
+    hf_quants: &HfQuantizers,
     correlation: &LfCorrelationDecision,
     cfl: &CflGrid,
+    varblocks: &[VarblockDecision],
     origin: (u32, u32),
     blocks: jpxl_encode::vardct::BlockGrid,
 ) -> Result<QuantizedGroup> {
     let (x0, y0) = origin;
-    let k_x_lf = cfl_multiplier(
-        correlation.base_correlation_x,
-        i32::from(correlation.x_factor_lf) - 128,
-        correlation.colour_factor,
-    );
-    let k_b_lf = cfl_multiplier(
-        correlation.base_correlation_b,
-        i32::from(correlation.b_factor_lf) - 128,
-        correlation.colour_factor,
-    );
     let cells = usize::try_from(blocks.area()).unwrap_or(0);
     let mut lf_planes: [Vec<i32>; NUM_CHANNELS] = core::array::from_fn(|_| vec![0i32; cells]);
-    let mut coefficients = Vec::with_capacity(cells);
+    let mut coefficients = Vec::with_capacity(varblocks.len());
+    let mut scratch = ForwardScratch::new();
 
-    let mut scratch = TransformScratch::for_transform(TransformType::Dct8x8);
-    let mut samples = [0.0f32; DCT8X8_CELLS];
-    let mut coeffs: [[f32; DCT8X8_CELLS]; NUM_CHANNELS] = [[0.0; DCT8X8_CELLS]; NUM_CHANNELS];
-
-    for by in 0..blocks.height {
-        for bx in 0..blocks.width {
-            transform_block(
-                frame,
-                x0 + bx * 8,
-                y0 + by * 8,
-                &mut samples,
-                &mut coeffs,
-                &mut scratch,
-            )?;
-
-            let cell_index =
-                usize::try_from(u64::from(by) * u64::from(blocks.width) + u64::from(bx))
-                    .unwrap_or(0);
-            let mut quant: [[i32; DCT8X8_CELLS]; NUM_CHANNELS] = [[0; DCT8X8_CELLS]; NUM_CHANNELS];
-            let mut reconstructed_y = [0.0f32; DCT8X8_CELLS];
-
-            // --- Y (channel 1): independent, and everything else needs it ---
-            let y_lf_target = lf_target_of(&coeffs, 1, &mut scratch)?;
-            let q_y_lf = lf_quant.quantize(y_lf_target, 1)?;
-            let d_y_lf = lf_quant.reconstruct(q_y_lf, 1);
-            if let Some(slot) = lf_planes.get_mut(1).and_then(|p| p.get_mut(cell_index)) {
-                *slot = q_y_lf;
-            }
-            for cell in 1..DCT8X8_CELLS {
-                let target = coeffs
-                    .get(1)
-                    .and_then(|c| c.get(cell))
-                    .copied()
-                    .unwrap_or(0.0);
-                let q = hf_quant.choose(target, 1, cell)?;
-                if let Some(slot) = quant.get_mut(1).and_then(|c| c.get_mut(cell)) {
-                    *slot = q;
-                }
-                if let Some(slot) = reconstructed_y.get_mut(cell) {
-                    *slot = hf_quant.reconstruct(q, 1, cell);
-                }
-            }
-
-            let tile_index = usize::try_from(
-                u64::from(by / 8) * u64::from(cfl.tiles().width) + u64::from(bx / 8),
-            )
-            .unwrap_or(usize::MAX);
-            let k_x_hf = cfl_multiplier(
-                correlation.base_correlation_x,
-                cfl.x_from_y()
-                    .get(tile_index)
-                    .copied()
-                    .unwrap_or_default()
-                    .get(),
-                correlation.colour_factor,
-            );
-            let k_b_hf = cfl_multiplier(
-                correlation.base_correlation_b,
-                cfl.b_from_y()
-                    .get(tile_index)
-                    .copied()
-                    .unwrap_or_default()
-                    .get(),
-                correlation.colour_factor,
-            );
-
-            // --- X and B: I.6 reconstructs X = dX + kX*dY, B = dB + kB*dY ---
-            for &channel in &[0usize, 2usize] {
-                let k_lf = if channel == 0 { k_x_lf } else { k_b_lf };
-                let k_hf = if channel == 0 { k_x_hf } else { k_b_hf };
-                let lf_target = lf_target_of(&coeffs, channel, &mut scratch)? - k_lf * d_y_lf;
-                let q_lf = lf_quant.quantize(lf_target, channel)?;
-                if let Some(slot) = lf_planes
-                    .get_mut(channel)
-                    .and_then(|p| p.get_mut(cell_index))
-                {
-                    *slot = q_lf;
-                }
-                for cell in 1..DCT8X8_CELLS {
-                    let target = coeffs
-                        .get(channel)
-                        .and_then(|c| c.get(cell))
-                        .copied()
-                        .unwrap_or(0.0)
-                        - k_hf * reconstructed_y.get(cell).copied().unwrap_or(0.0);
-                    let q = hf_quant.choose(target, channel, cell)?;
-                    if let Some(slot) = quant.get_mut(channel).and_then(|c| c.get_mut(cell)) {
-                        *slot = q;
-                    }
-                }
-            }
-
-            coefficients.push(VarblockCoefficients::new(
-                TransformType::Dct8x8,
-                [
-                    quant.first().copied().unwrap_or([0; DCT8X8_CELLS]).to_vec(),
-                    quant.get(1).copied().unwrap_or([0; DCT8X8_CELLS]).to_vec(),
-                    quant.get(2).copied().unwrap_or([0; DCT8X8_CELLS]).to_vec(),
-                ],
-            )?);
-        }
+    for vb in varblocks {
+        let transform = vb.transform;
+        let (bx, by) = (vb.origin.bx(), vb.origin.by());
+        forward_square(frame, transform, x0 + bx * 8, y0 + by * 8, &mut scratch)?;
+        let factors = varblock_cfl(correlation, cfl, bx, by);
+        let ForwardScratch {
+            transform: tscratch,
+            coeffs,
+            ..
+        } = &mut scratch;
+        let vc = quantize_square_varblock(
+            coeffs,
+            transform,
+            lf_quant,
+            hf_quants.get(transform)?,
+            factors,
+            tscratch,
+            bx,
+            by,
+            blocks.width,
+            &mut lf_planes,
+        )?;
+        coefficients.push(vc);
     }
 
     Ok(QuantizedGroup {
@@ -867,62 +1177,225 @@ fn quantize_lf_group(
     })
 }
 
-/// I.8's LF sample for one channel's DCT8x8 coefficient array.
-///
-/// The decoder does not code the LLF cells: it overwrites them from the LF
-/// image, through `llf_from_lf`. The encoder therefore has to go the other way
-/// — LLF coefficients to LF samples — and that map is `jpxl-core`'s
-/// [`lf_from_llf_into`], the proven inverse of the very function the decoder
-/// runs. For DCT8x8 it is the identity on a single cell, and calling it anyway
-/// is what keeps I.8's `ScaleF` flip point from being re-derived here when
-/// milestone 3 adds the larger transforms.
-fn lf_target_of(
-    coeffs: &[[f32; DCT8X8_CELLS]; NUM_CHANNELS],
-    channel: usize,
-    scratch: &mut TransformScratch,
-) -> Result<f32> {
-    let plane = coeffs.get(channel).ok_or(PolicyError::Unsupported {
-        what: "a coefficient channel",
-    })?;
-    let mut lf = [0.0f32; 1];
-    let (Some(llf), Some(mut out)) = (
-        // The LLF of a DCT8x8 is the single top-left cell of an 8-wide array.
-        CoeffView::new(plane, 1, 1, 8),
-        SampleViewMut::contiguous(&mut lf, 1, 1),
-    ) else {
-        return Err(PolicyError::Unsupported {
-            what: "an LLF view",
-        });
-    };
-    lf_from_llf_into(TransformType::Dct8x8, &llf, &mut out, scratch);
-    Ok(lf.first().copied().unwrap_or(0.0))
-}
+/// The share of §4.3's `metadata_bits` every varblock pays: its two
+/// `BlockInfo` Modular samples and three `non_zeros` symbols. Small, because
+/// under the current single-context entropy model a run of identical samples
+/// is nearly free.
+const PER_VARBLOCK_BITS: f64 = 2.0;
 
-/// Copies an 8x8 block out of one XYB plane, replicating the frame edge.
+/// The extra `metadata_bits` a non-DCT8x8 varblock pays: its DctSelect sample
+/// breaks the all-zeros run G.2.4's default map codes for free, twice (the
+/// gradient residual entering and leaving the value). Measured on the current
+/// coder at ~8 bits per merged block net; charged higher so a merge must be
+/// paid for by real coefficient savings, not a rounding whim. Re-derive when
+/// slice 18 trains the entropy model.
+const NON_DCT8X8_SIGNAL_BITS: f64 = 32.0;
+
+/// §4.3's objective `J = R + lambda * D + metadata_bits` for one square
+/// transform candidate, in bits: the residual bit proxy, plus each channel's
+/// squared reconstruction error at that channel's operating-point exchange
+/// rate. Scored with neutral chroma-from-luma (block choice is dominated by
+/// luma structure, and CfL is estimated once the map is fixed).
 ///
-/// The block grid is `ceil(width / 8) x ceil(height / 8)`, so the last column
-/// and row of blocks reach past the frame. The decoder reconstructs those
-/// samples and then crops them away, but what the encoder puts there still
-/// decides the coefficients of the visible part: zero-filling would put a hard
-/// edge into every partial block and ring across the whole right and bottom
-/// margin. Replicating the edge sample puts no energy in the high frequencies
-/// at all.
-fn gather_block(frame: &PreparedFrame, channel: usize, x0: u32, y0: u32, out: &mut [f32; 64]) {
-    let (w, h) = (frame.width(), frame.height());
-    let plane = match channel {
-        0 => &frame.xyb().x,
-        1 => &frame.xyb().y,
-        _ => &frame.xyb().b,
-    };
-    for dy in 0..8u32 {
-        for dx in 0..8u32 {
-            let x = (x0 + dx).min(w - 1);
-            let y = (y0 + dy).min(h - 1);
-            if let Some(slot) = out.get_mut((dy * 8 + dx) as usize) {
-                *slot = plane.at(x, y, w).unwrap_or(0.0);
-            }
+/// Without the distortion term the comparison is dishonest: a larger
+/// transform's dequant matrix has finer steps at the same `global_scale`, so
+/// it spends more bits to buy quality nobody asked for and a bits-only
+/// comparison mistakes that for compaction.
+#[allow(clippy::too_many_arguments)]
+fn block_cost(
+    frame: &PreparedFrame,
+    hf_quants: &HfQuantizers,
+    transform: TransformType,
+    px: u32,
+    py: u32,
+    scratch: &mut ForwardScratch,
+    d_y_hf: &mut [f32],
+) -> Result<f64> {
+    let side = forward_square(frame, transform, px, py, scratch)?;
+    let n = transform.block_dims().0;
+    let cells = side * side;
+    let hf_quant = hf_quants.get(transform)?;
+    // One squared coefficient unit is `side^2` squared sample units (the
+    // forward transforms are not Parseval; see [`HfQuantizers::lambda`]).
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "side is at most 32; exact in f64"
+    )]
+    let to_sample_domain = (side * side) as f64;
+    let mut bits = 0u64;
+    let mut weighted_sse = 0.0f64;
+    for cell in 0..cells {
+        if is_llf_cell(cell, side, n) {
+            continue;
+        }
+        let coeff = scratch.coeffs[1].get(cell).copied().unwrap_or(0.0);
+        let q = hf_quant.choose(coeff, 1, cell)?;
+        bits = bits.saturating_add(residual_bits(q));
+        let recon = hf_quant.reconstruct(q, 1, cell);
+        weighted_sse += hf_quants.lambda[1] * to_sample_domain * f64::from(recon - coeff).powi(2);
+        if let Some(slot) = d_y_hf.get_mut(cell) {
+            *slot = recon;
         }
     }
+    for &channel in &[0usize, 2usize] {
+        let k = if channel == 0 { 0.0 } else { 1.0 };
+        for cell in 0..cells {
+            if is_llf_cell(cell, side, n) {
+                continue;
+            }
+            let target = scratch
+                .coeffs
+                .get(channel)
+                .and_then(|c| c.get(cell))
+                .copied()
+                .unwrap_or(0.0)
+                - k * d_y_hf.get(cell).copied().unwrap_or(0.0);
+            let q = hf_quant.choose(target, channel, cell)?;
+            bits = bits.saturating_add(residual_bits(q));
+            let recon = hf_quant.reconstruct(q, channel, cell);
+            weighted_sse += hf_quants.lambda.get(channel).copied().unwrap_or(0.0)
+                * to_sample_domain
+                * f64::from(recon - target).powi(2);
+        }
+    }
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "bit counts stay far inside f64's exact integer range"
+    )]
+    Ok(bits as f64 + weighted_sse)
+}
+
+/// The quadtree cover of one aligned `size`-atom region, choosing at each level
+/// between one square transform and four sub-quadrants by exact R-D within the
+/// hierarchy. Clipped and pass-group-straddling regions are forced to split;
+/// aligned placement keeps every block inside one pass group.
+#[allow(clippy::too_many_arguments)]
+fn tile_region(
+    frame: &PreparedFrame,
+    hf_quants: &HfQuantizers,
+    grid: jpxl_encode::vardct::BlockGrid,
+    bx: u32,
+    by: u32,
+    size: u32,
+    hf_mul: HfMul,
+    x0: u32,
+    y0: u32,
+    scratch: &mut ForwardScratch,
+    d_y_hf: &mut [f32],
+) -> Result<(f64, Vec<VarblockDecision>)> {
+    if bx >= grid.width || by >= grid.height {
+        return Ok((0.0, Vec::new()));
+    }
+    if size == 1 {
+        let cost = block_cost(
+            frame,
+            hf_quants,
+            TransformType::Dct8x8,
+            x0 + bx * 8,
+            y0 + by * 8,
+            scratch,
+            d_y_hf,
+        )? + PER_VARBLOCK_BITS;
+        return Ok((
+            cost,
+            vec![VarblockDecision {
+                origin: LfBlockPos::new(bx, by),
+                transform: TransformType::Dct8x8,
+                hf_mul,
+            }],
+        ));
+    }
+
+    let half = size / 2;
+    let mut split_cost = 0.0f64;
+    let mut split_blocks = Vec::new();
+    for (qx, qy) in [
+        (bx, by),
+        (bx + half, by),
+        (bx, by + half),
+        (bx + half, by + half),
+    ] {
+        let (c, mut b) = tile_region(
+            frame, hf_quants, grid, qx, qy, half, hf_mul, x0, y0, scratch, d_y_hf,
+        )?;
+        split_cost += c;
+        split_blocks.append(&mut b);
+    }
+
+    let fits = bx + size <= grid.width && by + size <= grid.height;
+    let single = match square_transform(size) {
+        Some(transform) if fits => {
+            let cost = block_cost(
+                frame,
+                hf_quants,
+                transform,
+                x0 + bx * 8,
+                y0 + by * 8,
+                scratch,
+                d_y_hf,
+            )? + PER_VARBLOCK_BITS
+                + NON_DCT8X8_SIGNAL_BITS;
+            Some((
+                cost,
+                vec![VarblockDecision {
+                    origin: LfBlockPos::new(bx, by),
+                    transform,
+                    hf_mul,
+                }],
+            ))
+        }
+        _ => None,
+    };
+
+    // Ties keep the split: four DCT8x8s are the cheaper signal and the safer
+    // reconstruction, so a merge must strictly earn its place.
+    Ok(match single {
+        Some(single) if single.0 < split_cost => single,
+        _ => (split_cost, split_blocks),
+    })
+}
+
+/// Selects one LF group's varblock tiling by the hierarchical quadtree solver,
+/// returned in `BlockInfo` (greedy earliest-uncovered raster) order.
+fn select_blocks(
+    frame: &PreparedFrame,
+    hf_quants: &HfQuantizers,
+    grid: jpxl_encode::vardct::BlockGrid,
+    origin: (u32, u32),
+    hf_mul: HfMul,
+) -> Result<Vec<VarblockDecision>> {
+    let (x0, y0) = origin;
+    let mut scratch = ForwardScratch::new();
+    let mut d_y_hf = vec![0.0f32; 32 * 32];
+    let mut blocks = Vec::new();
+    let mut sby = 0u32;
+    while sby < grid.height {
+        let mut sbx = 0u32;
+        while sbx < grid.width {
+            let (_, mut region) = tile_region(
+                frame,
+                hf_quants,
+                grid,
+                sbx,
+                sby,
+                4,
+                hf_mul,
+                x0,
+                y0,
+                &mut scratch,
+                &mut d_y_hf,
+            )?;
+            blocks.append(&mut region);
+            sbx += 4;
+        }
+        sby += 4;
+    }
+    // G.2.4's greedy walk places each varblock at the earliest uncovered atom
+    // in raster order; a quadtree's blocks, sorted by their top-left atom's
+    // raster index, are exactly that sequence (each origin is the minimum
+    // raster atom of its footprint, and the cover is exact and non-overlapping).
+    blocks.sort_by_key(|b| (b.origin.by(), b.origin.bx()));
+    Ok(blocks)
 }
 
 /// The entropy model: I.2.2's default block contexts, natural orders, one
@@ -1232,6 +1705,205 @@ mod tests {
         assert!(
             enabled_rmse <= neutral_rmse + 0.05,
             "CfL RMSE {enabled_rmse} regressed from neutral {neutral_rmse}"
+        );
+    }
+
+    fn hierarchical_request() -> EncodeRequest {
+        let mut request = EncodeRequest::defaults();
+        request.budget.cover_mode = CoverMode::Hierarchical;
+        request
+    }
+
+    /// Broad smooth gradients over most of the frame — the content larger
+    /// transforms exist for — with one noise-textured corner the solver must
+    /// keep splitting. The corner is hash noise, not a checkerboard: a perfect
+    /// pixel checker is a *single* DCT basis function at every transform size,
+    /// so it merges compactly and proves nothing about detail handling.
+    fn mixed_detail_rgb(width: u32, height: u32) -> Vec<u8> {
+        let mut out = Vec::with_capacity(
+            usize::try_from(u64::from(width) * u64::from(height) * 3).unwrap_or(0),
+        );
+        for y in 0..height {
+            for x in 0..width {
+                let smooth = (x * 160 / width.max(1)) + (y * 60 / height.max(1));
+                let busy_corner = x < width / 4 && y < height / 4;
+                let texture = if busy_corner {
+                    let hash = (x.wrapping_mul(0x9E37).wrapping_add(y.wrapping_mul(0x79B9)))
+                        .wrapping_mul(0x85EB_CA6B);
+                    (hash >> 24) & 0x5F
+                } else {
+                    0
+                };
+                let luma = u8::try_from((30 + smooth + texture).min(255)).unwrap_or(255);
+                out.extend_from_slice(&[
+                    luma,
+                    u8::try_from(u16::from(luma) * 4 / 5).unwrap_or(255),
+                    u8::try_from(u16::from(luma) * 3 / 5).unwrap_or(255),
+                ]);
+            }
+        }
+        out
+    }
+
+    /// A broad diagonal gradient: the all-smooth extreme of the corpus.
+    fn gradient_rgb(width: u32, height: u32) -> Vec<u8> {
+        let mut out = Vec::with_capacity(
+            usize::try_from(u64::from(width) * u64::from(height) * 3).unwrap_or(0),
+        );
+        for y in 0..height {
+            for x in 0..width {
+                let luma =
+                    u8::try_from(40 + (x + y) * 160 / (width + height).max(1)).unwrap_or(255);
+                out.extend_from_slice(&[
+                    luma,
+                    u8::try_from(u16::from(luma) * 4 / 5).unwrap_or(255),
+                    u8::try_from(u16::from(luma) * 3 / 5).unwrap_or(255),
+                ]);
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn the_hierarchical_cover_is_exact_and_in_blockinfo_order() {
+        // 300x260 is 38x33 atoms: clipped on both edges, so the solver must
+        // fall back to smaller squares against the frame boundary.
+        let rgb = mixed_detail_rgb(300, 260);
+        let frame = PreparedFrame::from_srgb8(300, 260, &rgb).expect("frame");
+        let plan = plan_frame(&frame, &hierarchical_request()).expect("a legal plan");
+        let geometry = plan.geometry().expect("geometry");
+
+        for group in &plan.plan().spatial.lf_groups {
+            let grid = geometry.lf_group_blocks(group.id).expect("grid");
+            let cells = usize::try_from(grid.area()).expect("small");
+            let mut covered = vec![false; cells];
+            let mut last_raster = None;
+            for vb in &group.blocks {
+                let (rows, cols) = vb.transform.block_dims();
+                let (bx, by) = (vb.origin.bx(), vb.origin.by());
+                let raster = u64::from(by) * u64::from(grid.width) + u64::from(bx);
+                assert!(
+                    last_raster < Some(raster),
+                    "varblock origins must be strictly increasing in raster order"
+                );
+                last_raster = Some(raster);
+                for dy in 0..u32::try_from(rows).expect("small") {
+                    for dx in 0..u32::try_from(cols).expect("small") {
+                        let (x, y) = (bx + dx, by + dy);
+                        assert!(x < grid.width && y < grid.height, "footprint clipped");
+                        let cell = usize::try_from(y * grid.width + x).expect("small");
+                        let slot = covered.get_mut(cell).expect("inside the grid");
+                        assert!(!*slot, "atom ({x},{y}) covered twice");
+                        *slot = true;
+                    }
+                }
+            }
+            assert!(
+                covered.iter().all(|&c| c),
+                "every atom covered exactly once"
+            );
+        }
+    }
+
+    #[test]
+    fn smooth_content_merges_and_dominates_fixed_dct8x8_at_matched_quality() {
+        // The exit criterion is a *matched-quality* size win, so the fixed
+        // baseline is measured at a finer quantizer chosen to close the
+        // quality gap the merges open. The claim proved: the hierarchical
+        // point lies strictly below the fixed R-D curve — smaller AND better
+        // than a fixed encoding that spends more bytes trying to catch up.
+        let rgb = gradient_rgb(256, 256);
+        let frame = PreparedFrame::from_srgb8(256, 256, &rgb).expect("frame");
+        let atlas = AnalysisAtlas::analyze(&frame);
+
+        let request = hierarchical_request();
+        let plan = plan_at(
+            &frame,
+            &atlas,
+            &request,
+            QuantizerChoice::from_request(&request),
+        )
+        .expect("a legal plan");
+        let merged = plan
+            .plan()
+            .spatial
+            .lf_groups
+            .iter()
+            .flat_map(|g| g.blocks.iter())
+            .filter(|b| b.transform != TransformType::Dct8x8)
+            .count();
+        assert!(
+            merged > 0,
+            "the smooth fixture must put a larger transform on the wire"
+        );
+
+        let hierarchical = jpxl_encode::vardct::write_codestream(&plan).expect("encodes");
+        let hierarchical_rmse = rmse(&decoded_rgb(&hierarchical), &rgb).sqrt();
+
+        // Fixed DCT8x8 at a finer global_scale: measured 3321 B / RMSE 0.4615
+        // against the hierarchical 3303 B / RMSE 0.3786 — dominated on both
+        // axes, and the fixed curve flattens (60000 gives RMSE 0.4590 at
+        // 3382 B), so no fixed point reaches the hierarchical quality at all.
+        let mut fine = EncodeRequest::defaults();
+        fine.global_scale = jpxl_encode::vardct::ids::GlobalScale::new(45_000).expect("legal");
+        let fixed = encode_srgb8_vardct(256, 256, &rgb, &fine).expect("encodes");
+        let fixed_rmse = rmse(&decoded_rgb(&fixed), &rgb).sqrt();
+        eprintln!(
+            "hierarchical {} B / RMSE {:.4} ({merged} merged); fixed(gs=45000) {} B / RMSE {:.4}",
+            hierarchical.len(),
+            hierarchical_rmse,
+            fixed.len(),
+            fixed_rmse
+        );
+        assert!(
+            hierarchical.len() < fixed.len() && hierarchical_rmse < fixed_rmse,
+            "hierarchical ({} B, RMSE {hierarchical_rmse:.4}) must dominate \
+             fixed at the matched-quality quantizer ({} B, RMSE {fixed_rmse:.4})",
+            hierarchical.len(),
+            fixed.len()
+        );
+    }
+
+    #[test]
+    fn detail_keeps_small_blocks_where_the_content_needs_them() {
+        let rgb = mixed_detail_rgb(256, 256);
+        let frame = PreparedFrame::from_srgb8(256, 256, &rgb).expect("frame");
+        let plan = plan_frame(&frame, &hierarchical_request()).expect("a legal plan");
+        let blocks: Vec<_> = plan
+            .plan()
+            .spatial
+            .lf_groups
+            .iter()
+            .flat_map(|g| g.blocks.iter())
+            .collect();
+        // The noisy corner (atoms x,y < 8) must stay predominantly at DCT8x8
+        // and never reach DCT32x32; an occasional 16x16 merge over noise is a
+        // legitimate marginal R-D trade, a 32x32 there would mean the
+        // distortion term is broken. The smooth remainder must contain merges.
+        let corner: Vec<_> = blocks
+            .iter()
+            .filter(|b| b.origin.bx() < 8 && b.origin.by() < 8)
+            .collect();
+        assert!(
+            corner
+                .iter()
+                .all(|b| b.transform != TransformType::Dct32x32),
+            "the noise corner must not merge to DCT32x32"
+        );
+        let small = corner
+            .iter()
+            .filter(|b| b.transform == TransformType::Dct8x8)
+            .count();
+        assert!(
+            small * 2 > corner.len(),
+            "the noise corner must stay predominantly DCT8x8 ({small} of {})",
+            corner.len()
+        );
+        assert!(
+            blocks
+                .iter()
+                .any(|b| b.transform == TransformType::Dct32x32),
+            "the smooth region must merge to DCT32x32"
         );
     }
 }

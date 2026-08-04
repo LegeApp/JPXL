@@ -245,6 +245,20 @@ impl HfQuantizer {
         self.bias_adjust(q, channel) * self.scale.get(channel).copied().unwrap_or(0.0) * m
     }
 
+    /// I.5.3's quantization step for one cell: `Mul * qm * dequant_matrix`.
+    ///
+    /// Zero for a cell outside the matrix; the block solver reads it to price
+    /// distortion in the same units [`Self::choose`] quantizes in.
+    #[must_use]
+    pub fn step(&self, channel: usize, cell: usize) -> f32 {
+        let (x, y) = (cell % self.cols.max(1), cell / self.cols.max(1));
+        let m = self
+            .matrices
+            .get(channel)
+            .map_or(0.0, |matrix| matrix.at(x, y));
+        self.scale.get(channel).copied().unwrap_or(0.0) * m
+    }
+
     /// The integer whose reconstruction is nearest `target`.
     ///
     /// Candidates come from the linear estimate — the bias adjustment is a
