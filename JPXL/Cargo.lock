@@ -52,6 +52,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "jpxl-encode-policy"
+version = "0.1.0"
+dependencies = [
+ "jpxl-core",
+ "jpxl-encode",
+]
+
+[[package]]
 name = "jpxl-entropy"
 version = "0.1.0"
 dependencies = [

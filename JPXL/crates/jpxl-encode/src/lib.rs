@@ -44,19 +44,35 @@
 //! # Ok::<(), jpxl_encode::EncodeError>(())
 //! ```
 
+//! # The policy boundary (slice 11)
+//!
+//! From slice 11 this crate is the **normative lowering and emission** half of
+//! a one-way split (`docs/PLAN.md`, `docs/Encoder-plan1.md`): it defines what a
+//! plan is, checks that a plan is structurally legal, and turns a legal plan
+//! into bits. It does not search. The search half — block tiling, adaptive
+//! quantization, chroma-from-luma, entropy clustering, rate control — is
+//! `jpxl-encode-policy`, which depends on this crate and is never depended on
+//! by it.
+//!
+//! * [`vardct`] holds the VarDCT plan IR, its validator and its writer gate.
+//! * [`lossless`] holds the modular track's plan, whose (three-line) policy
+//!   half moves to `jpxl-encode-policy` in slice 19.
+
 pub mod container;
 pub mod entropy;
 pub mod error;
 pub mod frame;
 pub mod headers;
+pub mod lossless;
 pub mod modular;
 pub mod section;
+pub mod vardct;
 
 use jpxl_bitstream::BitWriter;
 
-use entropy::{FlatCode, pack_signed};
 use frame::Geometry;
 use headers::ColourShape;
+use lossless::ValidatedLosslessPlan;
 use modular::{ModularSource, Plane, Rect};
 use section::SectionStore;
 
@@ -306,13 +322,11 @@ pub fn encode(image: &Image, options: &EncodeOptions) -> Result<Vec<u8>> {
 }
 
 /// Encodes the naked codestream, whatever [`EncodeOptions::container`] says.
+///
+/// Two steps, in this order and no other: **choose a plan**, then **emit it**.
+/// The choosing is [`lossless::plan_for`] (policy, slice 19); the emitting is
+/// [`encode_codestream_with_plan`], which decides nothing.
 fn encode_codestream(image: &Image, options: &EncodeOptions) -> Result<Vec<u8>> {
-    let (width, height) = (image.width(), image.height());
-    let shift = options
-        .group_size_shift
-        .unwrap_or(frame::DEFAULT_GROUP_SIZE_SHIFT);
-    let geometry = Geometry::new(width, height, shift)?;
-
     // H.6.3 is declared in the transform list, so the samples written are the
     // transformed ones and the decoder inverts them after the last group.
     let mut planes = image.planes().to_vec();
@@ -321,13 +335,33 @@ fn encode_codestream(image: &Image, options: &EncodeOptions) -> Result<Vec<u8>> 
         modular::apply_rct(&mut planes)?;
     }
 
-    let code = FlatCode::for_max_value(max_packed_residual(&planes))?;
+    let plan = lossless::plan_for(&planes, rct, options)?;
+    encode_codestream_with_plan(image, &planes, &plan)
+}
+
+/// Emits the codestream a validated plan describes.
+///
+/// `planes` are the already-transformed planes the plan was chosen for.
+///
+/// # Errors
+///
+/// [`EncodeError::ValueOutOfRange`] if a residual or a section is outside the
+/// range its field can carry, and any error from the layers below.
+pub fn encode_codestream_with_plan(
+    image: &Image,
+    planes: &[Plane],
+    plan: &ValidatedLosslessPlan,
+) -> Result<Vec<u8>> {
+    let (width, height) = (image.width(), image.height());
+    let plan = plan.plan();
+    let geometry = Geometry::new(width, height, plan.group_size_shift)?;
+
     let source = ModularSource {
         width,
         height,
-        planes: &planes,
-        rct,
-        code,
+        planes,
+        rct: plan.rct,
+        code: plan.code,
     };
 
     let store = build_sections(&source, &geometry)?;
@@ -378,33 +412,10 @@ fn build_sections(source: &ModularSource<'_>, geometry: &Geometry) -> Result<Sec
     Ok(store)
 }
 
-/// An upper bound on `PackSigned(sample - prediction)` over every plane.
-///
-/// H.3's gradient prediction is a clamp between two neighbours, so it lies
-/// inside the plane's own value range everywhere except the first sample,
-/// where the substitutions make it zero. The residual is therefore bounded by
-/// the wider of the plane's span and its distance from zero.
-fn max_packed_residual(planes: &[Plane]) -> u32 {
-    let mut worst = 0u32;
-    for plane in planes {
-        let (mut lo, mut hi) = (0i64, 0i64);
-        for &s in plane {
-            let s = i64::from(s);
-            lo = lo.min(s);
-            hi = hi.max(s);
-        }
-        let bound = (hi - lo).max(hi.abs()).max(lo.abs());
-        let packed = pack_signed(i32::try_from(bound).unwrap_or(i32::MAX));
-        // PackSigned is not monotone in the sign, so both directions count.
-        let packed = packed.max(pack_signed(i32::try_from(-bound).unwrap_or(i32::MIN)));
-        worst = worst.max(packed);
-    }
-    worst
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use entropy::FlatCode;
 
     #[test]
     fn rejects_degenerate_images() {
@@ -463,16 +474,6 @@ mod tests {
             image.planes().get(2).map(|p| p.as_slice()),
             Some(&[2i32, 5, 8, 11, 14, 17, 20, 23][..])
         );
-    }
-
-    #[test]
-    fn the_residual_bound_covers_the_widest_plane() {
-        assert_eq!(max_packed_residual(&[vec![0, 0, 0]]), 0);
-        // PackSigned doubles a positive residual, so a span of n bounds at 2n.
-        assert_eq!(max_packed_residual(&[vec![0, 255]]), 510);
-        assert_eq!(max_packed_residual(&[vec![0, 65535]]), 131_070);
-        // Negative chroma from the RCT widens the span in both directions.
-        assert_eq!(max_packed_residual(&[vec![-300, 300]]), 1200);
     }
 
     #[test]

@@ -1,0 +1,17 @@
+[package]
+name = "jpxl-encode-policy"
+description = "JPEG XL encoder policy: analysis, search and rate-distortion decisions"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# One-way boundary: policy depends on the normative encoder for its plan types.
+# `jpxl-encode` must never gain a dependency on this crate — that direction is
+# what keeps heuristics out of the writer (docs/Encoder-plan1.md §1).
+[dependencies]
+jpxl-core.workspace = true
+jpxl-encode.workspace = true
+
+[lints]
+workspace = true

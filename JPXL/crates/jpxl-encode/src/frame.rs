@@ -147,6 +147,18 @@ impl Geometry {
         })
     }
 
+    /// Frame width in samples.
+    #[must_use]
+    pub const fn width(&self) -> u32 {
+        self.width
+    }
+
+    /// Frame height in samples.
+    #[must_use]
+    pub const fn height(&self) -> u32 {
+        self.height
+    }
+
     /// `group_size_shift` as written in the frame header.
     #[must_use]
     pub const fn group_size_shift(&self) -> u32 {

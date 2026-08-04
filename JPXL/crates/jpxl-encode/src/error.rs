@@ -10,6 +10,8 @@ use core::fmt;
 use jpxl_bitstream::BitstreamError;
 use jpxl_core::JpxlError;
 
+use crate::vardct::error::PlanError;
+
 /// Everything that can go wrong while encoding.
 ///
 /// Not `PartialEq`: [`JpxlError`] carries an `std::io::Error`, which has no
@@ -20,6 +22,8 @@ pub enum EncodeError {
     Bitstream(BitstreamError),
     /// A shared-layer error (dimension or limit validation).
     Core(JpxlError),
+    /// A plan violated a structural invariant, so it never reached the writer.
+    Plan(PlanError),
     /// The image is outside the subset this encoder produces.
     ///
     /// `clause` names where the restriction comes from, so the message says
@@ -60,6 +64,7 @@ impl fmt::Display for EncodeError {
         match self {
             Self::Bitstream(err) => write!(f, "bitstream: {err}"),
             Self::Core(err) => write!(f, "{err}"),
+            Self::Plan(err) => write!(f, "plan rejected: {err}"),
             Self::Unsupported { what, clause } => {
                 write!(f, "unsupported: {what} (18181-1 {clause})")
             }
@@ -79,6 +84,7 @@ impl std::error::Error for EncodeError {
         match self {
             Self::Bitstream(err) => Some(err),
             Self::Core(err) => Some(err),
+            Self::Plan(err) => Some(err),
             _ => None,
         }
     }
@@ -93,6 +99,12 @@ impl From<BitstreamError> for EncodeError {
 impl From<JpxlError> for EncodeError {
     fn from(err: JpxlError) -> Self {
         Self::Core(err)
+    }
+}
+
+impl From<PlanError> for EncodeError {
+    fn from(err: PlanError) -> Self {
+        Self::Plan(err)
     }
 }
 
