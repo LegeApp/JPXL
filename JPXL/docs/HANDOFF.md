@@ -13,6 +13,50 @@ Keep this file small. Entries whose content has landed in `PLAN.md`,
 
 ---
 
+## 2026-08-04 (wave 11) — encoder slices 15–16: CfL and the block selector
+
+**Slice 15 (d7b9b59): CfL estimation.** Real I.6 factors: frame-wide
+LF pair (I.2.3) + per-64×64-tile HF pair (G.2.4), least-squares seed
+refined over nearby wire integers by scoring residuals through the
+exact quantizers (incl. I.5.3 quant_bias). Adopt-only-if-it-nets-a-
+saving objective; grayscale is a hard no-op (byte-identity tested).
+Boundary probe: HF factors interoperate at `[-128, 127]` — `-129`/
+`128` decode inconsistently across oracles; writer rejects outside
+the range (`docs/experiments/2026-08-04-i6-cfl-sign-and-wire-range`).
+
+**Slice 16 (b82e7bc): hierarchical block selector, squares only.**
+Estimation/quantization core is transform-generic and varblock-list-
+driven; `CoverMode::Hierarchical` runs a quadtree per aligned 32×32-
+atom region over DCT8x8/16x16/32x32 with §4.3's `J = R + λ·D +
+metadata_bits`. Non-obvious facts, each paid for in debugging: the
+forward transforms are **not Parseval** — one squared coefficient
+unit is `side²` squared sample units, so cross-transform distortion
+must be sample-domain or merges buy invisible quality; λ per channel
+from the DCT8x8 operating point (1 bit ⇌ s²/16); a non-DCT8x8
+varblock costs ~8 real bits of DctSelect signal under the current
+single-context modular coder (charged 32, re-derive in slice 18).
+CfL HF refinement folds larger-transform cells onto the 8×8 grid
+(identity for 8×8; no non-LLF cell folds to DC). Writer admits the
+square vocabulary only; rectangles/special transforms still refused
+(no parity evidence). **Default cover mode stays FixedDct8x8** —
+flipping production to Hierarchical is a slice-17 decision, with
+adaptive quant in hand. Exit evidence in the lib tests: exact cover
+in strict BlockInfo raster order on a clipped multi-group frame;
+gradient at defaults (3303 B / RMSE 0.379) strictly dominates fixed
+at matched-quality gs=45000 (3321 B / RMSE 0.462, curve flattens at
+~0.459); both external oracles decode a merged-transform stream
+within 1 code point. A perfect pixel checkerboard is a *single* DCT
+basis function at every size — useless as a "detail" fixture; the
+detail test uses hash noise.
+
+**Scope note:** PLAN's slice-16 row says "DCT8/16/32 + common
+rectangles"; rectangles were deliberately deferred — squares are
+unambiguous in the LLF mapping (no orientation choice) and already
+earn the exit gate. Rectangles join a later milestone with their own
+oracle evidence.
+
+---
+
 ## 2026-08-04 (wave 10) — encoder slices 12–14: lossy VarDCT encoding is real
 
 **Slice 13 (768f1fb):** `jpxl_core::forward` — allocation-free forward
