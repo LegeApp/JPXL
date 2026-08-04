@@ -29,6 +29,14 @@ pub enum EntropyError {
     /// Every stub in this crate returns this rather than panicking or silently
     /// producing wrong symbols.
     Unsupported(String),
+    /// The *encoder* was asked for something it cannot emit.
+    ///
+    /// This is a caller error, not a stream error: a value outside the range a
+    /// hybrid-uint configuration can express, a token with no probability mass
+    /// in its cluster's histogram, a clustering that is not dense. The message
+    /// names the clause whose invariant would be violated. Text is for humans
+    /// and is not stable.
+    Encode(String),
 }
 
 impl fmt::Display for EntropyError {
@@ -38,6 +46,7 @@ impl fmt::Display for EntropyError {
             Self::Core(e) => write!(f, "{e}"),
             Self::Malformed(msg) => write!(f, "malformed entropy stream: {msg}"),
             Self::Unsupported(msg) => write!(f, "unsupported entropy feature: {msg}"),
+            Self::Encode(msg) => write!(f, "cannot encode entropy stream: {msg}"),
         }
     }
 }
@@ -47,7 +56,7 @@ impl std::error::Error for EntropyError {
         match self {
             Self::Bitstream(e) => Some(e),
             Self::Core(e) => Some(e),
-            Self::Malformed(_) | Self::Unsupported(_) => None,
+            Self::Malformed(_) | Self::Unsupported(_) | Self::Encode(_) => None,
         }
     }
 }
@@ -75,6 +84,15 @@ macro_rules! malformed {
 }
 
 pub(crate) use malformed;
+
+/// Builds an [`EntropyError::Encode`] with a formatted message.
+macro_rules! encode_error {
+    ($($arg:tt)*) => {
+        $crate::error::EntropyError::Encode(format!($($arg)*))
+    };
+}
+
+pub(crate) use encode_error;
 
 #[cfg(test)]
 mod tests {

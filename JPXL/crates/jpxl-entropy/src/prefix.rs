@@ -34,16 +34,16 @@ pub const MAX_CODE_LENGTH: usize = 15;
 
 /// Size of the code-length alphabet of RFC 7932 section 3.5: lengths 0..=15
 /// plus the two repeat codes 16 and 17.
-const CODE_LENGTH_ALPHABET: usize = 18;
+pub(crate) const CODE_LENGTH_ALPHABET: usize = 18;
 
 /// Order in which code-length-alphabet lengths appear (RFC 7932 section 3.5).
-const CODE_LENGTH_ORDER: [usize; CODE_LENGTH_ALPHABET] =
+pub(crate) const CODE_LENGTH_ORDER: [usize; CODE_LENGTH_ALPHABET] =
     [1, 2, 3, 4, 0, 5, 17, 6, 16, 7, 8, 9, 10, 11, 12, 13, 14, 15];
 
 /// Code lengths of the fixed code used to read the code-length alphabet
 /// (RFC 7932 section 3.5). Canonicalizing these reproduces the table printed
 /// in the RFC; see the module-level note on bit order.
-const CODE_LENGTH_CODE_LENGTHS: [u8; 6] = [2, 4, 3, 2, 2, 4];
+pub(crate) const CODE_LENGTH_CODE_LENGTHS: [u8; 6] = [2, 4, 3, 2, 2, 4];
 
 /// Repeat-previous-length code of the code-length alphabet.
 const REPEAT_PREVIOUS: usize = 16;

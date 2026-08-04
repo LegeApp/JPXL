@@ -22,7 +22,7 @@ use crate::error::{Result, malformed};
 ///
 /// C.2.3 writes the field widths as `ceil(log2(x + 1))`; that is exactly the
 /// bit width of `x`, which avoids a floating-point logarithm in the decoder.
-const fn bit_width(n: u32) -> u32 {
+pub(crate) const fn bit_width(n: u32) -> u32 {
     u32::BITS - n.leading_zeros()
 }
 

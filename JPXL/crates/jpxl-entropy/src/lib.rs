@@ -1,4 +1,4 @@
-//! Entropy decoding for JPEG XL — ISO/IEC 18181-1 Annex C.
+//! Entropy coding for JPEG XL — ISO/IEC 18181-1 Annex C.
 //!
 //! A JPEG XL codestream carries many independently entropy-coded streams. Each
 //! opens with a *distribution bundle* describing how its symbols are coded,
@@ -40,6 +40,15 @@
 //!
 //! [`dist`] reads the context-to-cluster mapping (C.2.2) and [`decoder`]
 //! assembles everything into the bundle of C.2.1.
+//!
+//! # Encoding
+//!
+//! [`encode`] is the write side: a two-pass entropy compiler (census the raw
+//! values, build tables, replay and emit) covering rANS emission, histogram
+//! serialization, prefix-code construction, hybrid-uint token building and
+//! context maps. It shares this crate's *tables* and *types* with the decoder
+//! but none of its control flow, so the round-trip tests are a real check
+//! rather than one implementation agreeing with itself.
 //!
 //! # Bit-exactness
 //!
@@ -88,6 +97,7 @@
 pub mod ans;
 pub mod decoder;
 pub mod dist;
+pub mod encode;
 pub mod error;
 pub mod hybrid;
 pub mod lz77;
@@ -96,6 +106,10 @@ pub mod prefix;
 pub use ans::{AnsDistribution, AnsState};
 pub use decoder::SymbolDecoder;
 pub use dist::{ClusterMap, inverse_move_to_front, read_cluster_map};
+pub use encode::{
+    CodingMode, ContextMap, ContextMapForm, EncoderPlan, EntropyTables, Histogram, PrefixEncoder,
+    SymbolEncoder, TokenCensus,
+};
 pub use error::{EntropyError, Result};
 pub use hybrid::HybridUintConfig;
 pub use lz77::{Lz77Params, Lz77Window};
