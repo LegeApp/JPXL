@@ -565,16 +565,25 @@ pub fn idct_1d(v: &mut [f32]) {
 #[must_use]
 pub fn transpose(src: &[f32], rows: usize, cols: usize) -> Vec<f32> {
     let mut dst = vec![0.0f32; rows * cols];
-    if src.len() < rows * cols {
-        debug_assert!(false, "transpose source is too short");
-        return dst;
+    transpose_into(src, &mut dst, rows, cols);
+    dst
+}
+
+/// [`transpose`] into a caller-provided buffer; the allocation-free form.
+///
+/// `dst[..rows * cols]` receives the `cols x rows` transpose. Buffers that are
+/// too short leave `dst` untouched (in a debug build, they assert).
+pub fn transpose_into(src: &[f32], dst: &mut [f32], rows: usize, cols: usize) {
+    let n = rows * cols;
+    if src.len() < n || dst.len() < n {
+        debug_assert!(false, "transpose buffers are too short");
+        return;
     }
     for r in 0..rows {
         for c in 0..cols {
             dst[c * rows + r] = src[r * cols + c];
         }
     }
-    dst
 }
 
 /// `ColumnDCT` of I.7.3: the 1-D forward DCT down each column of a row-major
@@ -625,9 +634,107 @@ pub const fn coeff_dims(rows: usize, cols: usize) -> (usize, usize) {
     }
 }
 
+/// Is `(rows, cols)` a shape `DCT_2D` / `IDCT_2D` can handle, and is `buf` long
+/// enough to hold a matrix of that many cells?
+fn shape_is_ok(buf_len: usize, rows: usize, cols: usize) -> bool {
+    is_supported_length(rows) && is_supported_length(cols) && buf_len >= rows * cols
+}
+
+/// `DCT_2D` of 18181-1 I.7.3, in place on a caller-provided buffer.
+///
+/// On entry `work[..rows * cols]` holds the row-major `rows x cols` samples; on
+/// exit it holds the landscape coefficient matrix described by [`coeff_dims`]
+/// (the same cell count, a possibly different shape). `scratch` is clobbered
+/// and must be at least as long.
+///
+/// This is the allocation-free entry point and the single implementation of
+/// I.7.3's forward direction; [`dct_2d_into`] and [`dct_2d_raw`] wrap it.
+pub fn dct_2d_in_place(work: &mut [f32], scratch: &mut [f32], rows: usize, cols: usize) {
+    let n = rows * cols;
+    if !shape_is_ok(work.len(), rows, cols) || scratch.len() < n {
+        debug_assert!(false, "bad DCT_2D shape {rows}x{cols}");
+        return;
+    }
+    column_dct(work, rows, cols);
+    transpose_into(work, scratch, rows, cols);
+    // `scratch` is `cols x rows` from here on.
+    column_dct(scratch, cols, rows);
+    if cols > rows {
+        transpose_into(scratch, work, cols, rows);
+    } else {
+        work[..n].copy_from_slice(&scratch[..n]);
+    }
+}
+
+/// `IDCT_2D` of 18181-1 I.7.3, in place on a caller-provided buffer.
+///
+/// On entry `work[..rows * cols]` holds the landscape coefficient matrix of
+/// [`coeff_dims`]; on exit it holds the row-major `rows x cols` samples.
+/// `scratch` is clobbered.
+pub fn idct_2d_in_place(work: &mut [f32], scratch: &mut [f32], rows: usize, cols: usize) {
+    let n = rows * cols;
+    if !shape_is_ok(work.len(), rows, cols) || scratch.len() < n {
+        debug_assert!(false, "bad IDCT_2D shape {rows}x{cols}");
+        return;
+    }
+    // `scratch` is `cols x rows` here, whichever branch produced it.
+    if cols > rows {
+        transpose_into(work, scratch, rows, cols);
+    } else {
+        scratch[..n].copy_from_slice(&work[..n]);
+    }
+    column_idct(scratch, cols, rows);
+    transpose_into(scratch, work, cols, rows);
+    column_idct(work, rows, cols);
+}
+
+/// `DCT_2D` of 18181-1 I.7.3, into caller-provided buffers.
+///
+/// `out[..rows * cols]` receives the landscape coefficient matrix described by
+/// [`coeff_dims`]; `scratch` is clobbered. Both buffers must hold at least
+/// `rows * cols` values.
+pub fn dct_2d_into(
+    samples: &[f32],
+    rows: usize,
+    cols: usize,
+    out: &mut [f32],
+    scratch: &mut [f32],
+) {
+    let n = rows * cols;
+    if samples.len() != n || !shape_is_ok(out.len(), rows, cols) || scratch.len() < n {
+        debug_assert!(false, "bad DCT_2D shape {rows}x{cols}");
+        out.iter_mut().take(n).for_each(|s| *s = 0.0);
+        return;
+    }
+    out[..n].copy_from_slice(samples);
+    dct_2d_in_place(out, scratch, rows, cols);
+}
+
+/// `IDCT_2D` of 18181-1 I.7.3, into caller-provided buffers.
+///
+/// `out[..rows * cols]` receives the `rows x cols` samples; `scratch` is
+/// clobbered. `coeffs` is the landscape matrix of [`coeff_dims`].
+pub fn idct_2d_into(
+    coeffs: &[f32],
+    rows: usize,
+    cols: usize,
+    out: &mut [f32],
+    scratch: &mut [f32],
+) {
+    let n = rows * cols;
+    if coeffs.len() != n || !shape_is_ok(out.len(), rows, cols) || scratch.len() < n {
+        debug_assert!(false, "bad IDCT_2D shape {rows}x{cols}");
+        out.iter_mut().take(n).for_each(|s| *s = 0.0);
+        return;
+    }
+    out[..n].copy_from_slice(coeffs);
+    idct_2d_in_place(out, scratch, rows, cols);
+}
+
 /// `DCT_2D` of 18181-1 I.7.3 on a row-major `rows x cols` sample matrix.
 ///
 /// Returns the landscape coefficient matrix described by [`coeff_dims`].
+/// Owning wrapper around [`dct_2d_into`].
 #[must_use]
 pub fn dct_2d_raw(samples: &[f32], rows: usize, cols: usize) -> Vec<f32> {
     let (cr, cc) = coeff_dims(rows, cols);
@@ -635,37 +742,27 @@ pub fn dct_2d_raw(samples: &[f32], rows: usize, cols: usize) -> Vec<f32> {
         debug_assert!(false, "bad DCT_2D shape {rows}x{cols}");
         return vec![0.0f32; cr * cc];
     }
-    let mut dct1 = samples.to_vec();
-    column_dct(&mut dct1, rows, cols);
-    let mut dct2 = transpose(&dct1, rows, cols);
-    column_dct(&mut dct2, cols, rows);
-    if cols > rows {
-        transpose(&dct2, cols, rows)
-    } else {
-        dct2
-    }
+    let mut out = vec![0.0f32; rows * cols];
+    let mut scratch = vec![0.0f32; rows * cols];
+    dct_2d_into(samples, rows, cols, &mut out, &mut scratch);
+    out
 }
 
 /// `IDCT_2D` of 18181-1 I.7.3: landscape coefficients to `rows x cols` samples.
 ///
 /// `coeffs` must be laid out as [`coeff_dims`] says, i.e. row-major
-/// `min(rows, cols) x max(rows, cols)`.
+/// `min(rows, cols) x max(rows, cols)`. Owning wrapper around
+/// [`idct_2d_into`].
 #[must_use]
 pub fn idct_2d_raw(coeffs: &[f32], rows: usize, cols: usize) -> Vec<f32> {
     if !is_supported_length(rows) || !is_supported_length(cols) || coeffs.len() != rows * cols {
         debug_assert!(false, "bad IDCT_2D shape {rows}x{cols}");
         return vec![0.0f32; rows * cols];
     }
-    // `dct2` is always `cols x rows` here, whichever branch produced it.
-    let mut dct2 = if cols > rows {
-        transpose(coeffs, rows, cols)
-    } else {
-        coeffs.to_vec()
-    };
-    column_idct(&mut dct2, cols, rows);
-    let mut dct1 = transpose(&dct2, cols, rows);
-    column_idct(&mut dct1, rows, cols);
-    dct1
+    let mut out = vec![0.0f32; rows * cols];
+    let mut scratch = vec![0.0f32; rows * cols];
+    idct_2d_into(coeffs, rows, cols, &mut out, &mut scratch);
+    out
 }
 
 // ---------------------------------------------------------------------------

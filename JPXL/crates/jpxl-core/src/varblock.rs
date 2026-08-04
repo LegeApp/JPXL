@@ -672,8 +672,11 @@ pub fn natural_coeff_order(bwidth: usize, bheight: usize) -> Vec<u32> {
 ///
 /// `lf_count` is the printed argument (`cx` or `cy`, a count of LF samples).
 /// See [`LLF_SCALEF_ARG_IS_VARBLOCK_DIMENSION`] for why it is multiplied by 8.
+/// Crate-visible so the forward direction ([`crate::forward::lf_from_llf`]) can
+/// divide by the very same factor rather than transcribing it a second time —
+/// a second copy would be free to drift away from the flip point above.
 #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
-fn scale_f(c: usize, lf_count: usize) -> f32 {
+pub(crate) fn scale_f(c: usize, lf_count: usize) -> f32 {
     let b = if LLF_SCALEF_ARG_IS_VARBLOCK_DIMENSION {
         lf_count * 8
     } else {
