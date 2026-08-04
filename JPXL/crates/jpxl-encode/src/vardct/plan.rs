@@ -796,7 +796,7 @@ mod tests {
             .max()
             .expect("nonempty");
         assert_eq!(u64::from(max) + 1, DEFAULT_NB_BLOCK_CTX);
-        assert!(DEFAULT_NB_BLOCK_CTX <= MAX_NB_BLOCK_CTX);
+        const { assert!(DEFAULT_NB_BLOCK_CTX <= MAX_NB_BLOCK_CTX) };
         // Rows 2 and 3 (X and B) share their values; row 1 (Y) does not.
         assert_eq!(
             DEFAULT_BLOCK_CTX_MAP.get(13..26),

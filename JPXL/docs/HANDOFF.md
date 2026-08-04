@@ -13,6 +13,65 @@ Keep this file small. Entries whose content has landed in `PLAN.md`,
 
 ---
 
+## 2026-08-04 (wave 9) — noise + kModular gaps + YCbCr; corpus 30/39; encoder slices 11 + 11.5 landed
+
+**Decoder: corpus 18 → 30 of 39.** Three tracks, in order:
+noise (K.5 — LUT parse in LfGlobal, XorShift128Plus/SplitMix64,
+zero-sum Laplacian, applied between patches and Annex L;
+`noise`/`noise_5` peak 4.9e-5); kModular displayed-frame gaps
+(`bicycles` xyb_encoded kModular and `patches_lossless` via
+`modular_displayed_pipeline`, reusing the existing
+ColourPlanes/patches/Annex-L machinery); do_YCbCr with
+`jpeg_upsampling == [0,0,0]` (L.3 linear formula, (Cb,Y,Cr) order;
+`bench_oriented_brg`/`_5` + `grayscale_jpeg`/`_5`, peaks 1.9e-6).
+YCbCr wiring finally exercised the I.2.4 RAW dequant-matrix path —
+`RAW_MATRIX_CHANNEL_ORDER_IS_XYB` and `RAW_SUBBITSTREAM_IS_UNALIGNED`
+are now PROBED-CONFIRMED true (addendum in the vardct flip-point
+probe entry). **Bonus: four cases were passing all along, ungraded**
+— `delta_palette`, `lz77_flower`, `opsin_inverse`/`_5`
+(`e2e_previously_unattempted_corpus.rs`).
+
+**Noise PRNG pseudocode `*` is a `^` OCR misread** (same systemic
+class as the documented H.5.2 bug), triangulated by exact structural
+match to Vigna's public-domain XorShift128+/SplitMix64 plus
+pixel-exact corpus behaviour — NOT claimed as a standard defect, so
+no scan read was required; entry:
+`docs/experiments/2026-08-04-noise-xorshift-ocr-reading.md`. If
+anyone later suspects the printed text itself, read the scan first.
+
+**Remaining 9:** animation ×5 (user decision 2026-08-04: **deferred
+forever**); `cafe`/`_5` (needs J.2 chroma-subsampled group grid);
+`lossless_pfm` (peak 1.75 vs 0.0 — probed, failing, unexplored);
+`grayscale_public_university` (peak 0.27 vs 9.8e-4 — probed, failing,
+unexplored). jbrd/JPEG reconstruction: user decision — not wanted.
+
+**Encoder slices 11 + 11.5 landed** (commits 1244a4d, 4b7628b):
+`jpxl-encode-policy` split with manifest-tested one-way boundary;
+VarDCT plan IR + validate() (41 typed-rejection tests, exact-cover /
+LF- and pass-group containment / context-map density / F.3.1 layout);
+ANS encoder in jpxl-entropy (backward rANS with C.3.2 terminal state,
+all four C.2.5 histogram forms, hybrid-uint, context maps ±MTF, full
+prefix path; LZ77 emission deferred to slice 19). Exit gate: seeded
+roundtrip matrix through our proven decoder, exact bit consumption,
+24/24 payload corruptions caught. Two derived constraints, enforced
+and tested: an ANS `log_alphabet_size` must exceed a cluster's
+`split_exponent` by one when the config has in-token bits (C.2.3
+stops reading at equality); probability exactly 4096 collides with
+C.2.5's `logcounts == 13` run-length escape — full mass must use the
+one-symbol form. Deliberate deviations from Encoder-plan1.md recorded
+in-source: PreContextId is u32 (I.3.3 exceeds u16 at nine presets);
+context map lives per-pass not per-preset (I.4 indexing); added
+pass-group containment (encoder-only strictness).
+
+**Next candidates (decoder):** `cafe` via J.2; the two probed-failing
+cases (`lossless_pfm` first — a lossless miss of peak 1.75 smells
+like a wholesale misinterpretation, likely cheap to localise);
+grey-Y 2.3e-4 residual; rare-transform pixel coverage. **Next
+(encoder):** slice 12, the fixed-DCT8×8 vertical slice integrating
+11 + 11.5 (exit: JPXL + djxl + jxl-oxide all decode).
+
+---
+
 ## 2026-08-04 (wave 8) — cropped frames + orientation + kBlack; corpus 18/39; encoder phase planned
 
 **`spot`/`cmyk_layers`/`sunset_logo` pass** (peaks 6e-8/1.2e-7/4.8e-7,
