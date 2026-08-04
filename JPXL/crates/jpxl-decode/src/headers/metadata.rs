@@ -133,6 +133,53 @@ impl Orientation {
             Self::Transpose | Self::Rotate90Cw | Self::AntiTranspose | Self::Rotate90Ccw
         )
     }
+
+    /// The displayed dimensions of a sample grid stored as `width x height`.
+    ///
+    /// F.2 is explicit that a frame's `width` and `height` "are interpreted
+    /// according to the sample grid before taking `metadata.orientation` into
+    /// account", so `SizeHeader` and every frame rectangle are pre-orientation
+    /// and only the final image is turned.
+    #[must_use]
+    pub const fn displayed_size(self, width: u32, height: u32) -> (u32, u32) {
+        if self.swaps_axes() {
+            (height, width)
+        } else {
+            (width, height)
+        }
+    }
+
+    /// The stored sample that lands at displayed position `(x, y)`.
+    ///
+    /// `width` and `height` are the **stored** dimensions; `(x, y)` indexes
+    /// the displayed image, whose dimensions are
+    /// [`displayed_size`](Self::displayed_size).
+    ///
+    /// Table D.4 gives each orientation as a "first row"/"first column" pair:
+    /// stored row `r` becomes the displayed edge named by "first row" and
+    /// stored column `c` the edge named by "first column". Inverting that pair
+    /// for each of the eight rows gives the map below — for the transposing
+    /// four the two arguments genuinely swap roles, which is the whole reason
+    /// this is a lookup rather than two independent flips.
+    ///
+    /// Returns `(0, 0)` for a displayed position outside the grid, which
+    /// cannot happen for a caller that iterates `displayed_size`.
+    #[must_use]
+    pub const fn source_of(self, x: u32, y: u32, width: u32, height: u32) -> (u32, u32) {
+        // Saturating so the function is total; every in-range call subtracts
+        // from a strictly larger bound.
+        let (fx, fy) = (width.saturating_sub(1), height.saturating_sub(1));
+        match self {
+            Self::Identity => (x, y),
+            Self::FlipHorizontal => (fx.saturating_sub(x), y),
+            Self::Rotate180 => (fx.saturating_sub(x), fy.saturating_sub(y)),
+            Self::FlipVertical => (x, fy.saturating_sub(y)),
+            Self::Transpose => (y, x),
+            Self::Rotate90Cw => (y, fy.saturating_sub(x)),
+            Self::AntiTranspose => (fx.saturating_sub(y), fy.saturating_sub(x)),
+            Self::Rotate90Ccw => (fx.saturating_sub(y), x),
+        }
+    }
 }
 
 /// Custom upsampling weights, when signalled by `cw_mask` (18181-1 D.3).

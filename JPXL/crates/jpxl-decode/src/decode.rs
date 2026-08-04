@@ -54,7 +54,7 @@ use crate::frame::{
     PlaneDims, Rect, Toc, UpsamplingWeightSet, read_frame_header, read_toc,
     stream_index as stream_index_of,
 };
-use crate::headers::{ImageHeaders, ImageMetadata, decode_image_headers_metered};
+use crate::headers::{ImageHeaders, ImageMetadata, Orientation, decode_image_headers_metered};
 use crate::modular::{
     Channel, ChannelSpec, ChannelStop, GlobalTree, ModularOptions, TreeSource,
     decode_sub_bitstream_partial, decode_sub_bitstream_with, read_global_tree,
@@ -501,8 +501,10 @@ pub fn decode(data: &[u8], limits: &Limits) -> Result<DecodedImage> {
             let trivial = regular_frames == 1 && is_identity_blend(&header, &headers.metadata);
             if trivial {
                 // The canvas copy is only needed if a later frame reads this
-                // one back.
-                canvas = if header.can_reference() {
+                // one back — either through its own `source`, or as the
+                // running image a cropped frame leaves showing outside its
+                // rectangle (see `CROP_LEAVES_RUNNING_IMAGE_OUTSIDE`).
+                canvas = if header.can_reference() || !header.is_last {
                     Some(canvas_from_image(&image, &headers.metadata))
                 } else {
                     None
@@ -516,6 +518,9 @@ pub fn decode(data: &[u8], limits: &Limits) -> Result<DecodedImage> {
                     &header,
                     &headers.metadata,
                     &canvases,
+                    canvas.as_ref(),
+                    headers.width(),
+                    headers.height(),
                     &mut guard,
                 )?;
                 decoded = None;
@@ -611,8 +616,92 @@ pub fn decode(data: &[u8], limits: &Limits) -> Result<DecodedImage> {
             image_from_canvas(canvas, &headers.metadata)
         }
     };
+    // D.3.2: the orientation transform is applied after decoding, to the
+    // whole image — colour and extra channels alike.
+    image = apply_orientation(image, headers.metadata.orientation, &mut guard)?;
     image.icc_profile = icc_profile;
     Ok(image)
+}
+
+/// Applies Table D.4's orientation transform to a decoded image.
+///
+/// Everything upstream of here works on the stored sample grid: `SizeHeader`,
+/// every frame rectangle and every group coordinate are pre-orientation (F.2
+/// says so in as many words), and D.3.2 puts the turn at the very end. So this
+/// is a pure permutation of samples, applied identically to the integer planes
+/// and to the float planes where they exist, and it swaps the reported
+/// dimensions for the four transposing rows of Table D.4.
+///
+/// # Errors
+///
+/// Allocation rejection for the transformed copy.
+fn apply_orientation(
+    image: DecodedImage,
+    orientation: Orientation,
+    guard: &mut AllocGuard,
+) -> Result<DecodedImage> {
+    if orientation == Orientation::Identity {
+        return Ok(image);
+    }
+    let (src_width, src_height) = (image.width, image.height);
+    let (width, height) = orientation.displayed_size(src_width, src_height);
+    let cells = u64::from(width)
+        .checked_mul(u64::from(height))
+        .ok_or_else(|| DecodeError::out_of_range("image area", "D.3.2", u64::from(width)))?;
+    let float_count = image.float_planes.as_ref().map_or(0, Vec::len);
+    guard.charge(cells * 4 * (image.planes.len() + float_count) as u64)?;
+
+    let planes = image
+        .planes
+        .iter()
+        .map(|plane| Plane {
+            width,
+            height,
+            bits_per_sample: plane.bits_per_sample,
+            samples: turn(width, height, src_width, src_height, orientation, |x, y| {
+                plane.get(x, y)
+            }),
+        })
+        .collect();
+    let float_planes = image.float_planes.as_ref().map(|planes| {
+        planes
+            .iter()
+            .map(|plane| FloatPlane {
+                width,
+                height,
+                samples: turn(width, height, src_width, src_height, orientation, |x, y| {
+                    plane.get(x, y)
+                }),
+            })
+            .collect()
+    });
+    Ok(DecodedImage {
+        width,
+        height,
+        planes,
+        num_colour_channels: image.num_colour_channels,
+        icc_profile: image.icc_profile,
+        float_planes,
+    })
+}
+
+/// Rasterises one plane through [`Orientation::source_of`].
+fn turn<T>(
+    width: u32,
+    height: u32,
+    src_width: u32,
+    src_height: u32,
+    orientation: Orientation,
+    sample: impl Fn(u32, u32) -> T,
+) -> Vec<T> {
+    let mut out = Vec::with_capacity(width as usize * height as usize);
+    for y in 0..height {
+        for x in 0..width {
+            let (sx, sy) = orientation.source_of(x, y, src_width, src_height);
+            out.push(sample(sx, sy));
+        }
+    }
+    out
 }
 
 /// The four `Reference[]` slots as F.2's blending reads them.
@@ -745,6 +834,32 @@ fn image_from_canvas(canvas: Canvas, metadata: &ImageMetadata) -> DecodedImage {
     }
 }
 
+/// **Flip point — what a cropped frame leaves outside its rectangle (F.2).**
+///
+/// F.2 says a cropped frame "updates the rectangle of the image" bounded by
+/// `(x0, y0)` and `width x height`, and that a blend's "previous sample" is
+/// the sample "in the source frame, which is the frame that was previously
+/// stored in `Reference[source]`". Those are two different buffers, and the
+/// clause never says what the *image* holds outside the updated rectangle.
+///
+/// * `true` (shipped): the running composite — the image so far — is left
+///   untouched outside the rectangle. This is the reading that makes "updates
+///   the rectangle of the image" mean what it says: a crop is a partial
+///   update, not a full-canvas operation whose source happens to be a
+///   reference slot.
+/// * `false`: `Reference[source]` shows through outside the rectangle, i.e.
+///   the frame is composited over the whole canvas with the crop only masking
+///   which samples the *new* frame contributes.
+///
+/// **Unexercised by the corpus.** The two readings coincide whenever the
+/// running composite equals `Reference[source]`, and every cropped case
+/// available arranges exactly that: `spot`, `cmyk_layers` and `sunset_logo`
+/// each store every frame's blended result into slot 1 and give the next
+/// frame `source == 1`. Discriminating would need a stream whose cropped
+/// frame blends against a slot other than the one holding the running image,
+/// which `cjxl` does not emit.
+pub const CROP_LEAVES_RUNNING_IMAGE_OUTSIDE: bool = true;
+
 /// F.2's compositing of one frame onto the canvas (Tables F.7 and F.8).
 ///
 /// Every channel group has its own rule, and — because `source` is part of
@@ -753,18 +868,40 @@ fn image_from_canvas(canvas: Canvas, metadata: &ImageMetadata) -> DecodedImage {
 /// `Reference[ec_blending_info[i].source]`. A slot no frame has written is
 /// "assumed to have all sample values set to zeroes".
 ///
+/// # Cropped frames
+///
+/// The canvas is always `image_width x image_height`; `frame` is the frame's
+/// own rectangle, which for `have_crop` sits at `(header.x0, header.y0)` and
+/// may be any size, including one that hangs off any edge. F.2: "if `x0` or
+/// `y0` is negative, or the frame extends beyond the right or bottom edge of
+/// the image, only the intersection of the frame with the image is updated
+/// and contributes to the decoded image." So the loops below run over that
+/// intersection, and everything outside it comes from `running` — see
+/// [`CROP_LEAVES_RUNNING_IMAGE_OUTSIDE`].
+///
+/// A frame without a crop covers the canvas exactly, the intersection is the
+/// whole canvas, and `running` never shows through.
+///
 /// # Errors
 ///
 /// [`DecodeError::Unsupported`] if a rule names an alpha channel the image
 /// does not have, and any allocation rejection.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the crop rectangle, the canvas size, the four reference slots \
+              and the running image are all genuinely independent inputs"
+)]
 fn composite_frame(
     frame: &Canvas,
     header: &FrameHeader,
     metadata: &ImageMetadata,
     canvases: &CanvasSlots,
+    running: Option<&Canvas>,
+    image_width: u32,
+    image_height: u32,
     guard: &mut AllocGuard,
 ) -> Result<Canvas> {
-    let (width, height) = (frame.width, frame.height);
+    let (width, height) = (image_width, image_height);
     let num_colour = frame.colour.len();
     let num_extra = frame.extra.len();
     let cells = u64::from(width)
@@ -801,22 +938,65 @@ fn composite_frame(
         })
     };
 
-    let mut out = Canvas::zeros(width, height, num_colour, num_extra);
+    // F.2's intersection of the frame rectangle with the image, in canvas
+    // coordinates. `x0`/`y0` are `UnpackSigned` values and legitimately
+    // negative, so the arithmetic is done in `i64` and only the clamped
+    // result is narrowed.
+    let (x0, y0) = if header.have_crop {
+        (i64::from(header.x0), i64::from(header.y0))
+    } else {
+        (0, 0)
+    };
+    let rect = CropRect::intersect(x0, y0, frame.width, frame.height, width, height);
+
+    // The frame covering the canvas is the common case; nothing of `running`
+    // can survive it, so do not pay for the copy.
+    let mut out = if !CROP_LEAVES_RUNNING_IMAGE_OUTSIDE || rect.covers(width, height) {
+        Canvas::zeros(width, height, num_colour, num_extra)
+    } else {
+        running.map_or_else(
+            || Canvas::zeros(width, height, num_colour, num_extra),
+            Canvas::clone,
+        )
+    };
+    // A running image from an earlier frame must have the canvas shape; a
+    // mismatch would silently misindex, so fall back to zeroes instead.
+    if out.width != width
+        || out.height != height
+        || out.colour.len() != num_colour
+        || out.extra.len() != num_extra
+    {
+        out = Canvas::zeros(width, height, num_colour, num_extra);
+    }
+    if !CROP_LEAVES_RUNNING_IMAGE_OUTSIDE {
+        // The alternative reading: `Reference[source]` shows through outside
+        // the rectangle, per channel group.
+        for c in 0..num_colour {
+            let old = source_of(header.blending_info.source);
+            copy_outside(&mut out.colour, c, old.colour.get(c), &rect, width, height);
+        }
+        for c in 0..num_extra {
+            let info = header.ec_blending_info.get(c).copied().unwrap_or_default();
+            let old = source_of(info.source);
+            copy_outside(&mut out.extra, c, old.extra.get(c), &rect, width, height);
+        }
+    }
 
     for c in 0..num_colour {
         let ctx = alpha_context(&header.blending_info, false)?;
         let old = source_of(header.blending_info.source);
         let alpha = usize::try_from(ctx.info.alpha_channel).unwrap_or(usize::MAX);
-        for y in 0..height {
-            for x in 0..width {
-                let new_sample = frame.colour_at(c, x, y);
+        for y in rect.y_range() {
+            for x in rect.x_range() {
+                let (fx, fy) = rect.frame_coord(x, y);
+                let new_sample = frame.colour_at(c, fx, fy);
                 let old_sample = old.colour_at(c, x, y);
                 let value = crate::frame::blend_sample(
                     &ctx,
                     old_sample,
                     new_sample,
                     old.extra_at(alpha, x, y),
-                    frame.extra_at(alpha, x, y),
+                    frame.extra_at(alpha, fx, fy),
                 );
                 if let Some(slot) = out
                     .colour
@@ -841,16 +1021,17 @@ fn composite_frame(
         let ctx = alpha_context(&info, is_alpha_itself)?;
         let old = source_of(info.source);
         let alpha = usize::try_from(info.alpha_channel).unwrap_or(usize::MAX);
-        for y in 0..height {
-            for x in 0..width {
-                let new_sample = frame.extra_at(c, x, y);
+        for y in rect.y_range() {
+            for x in rect.x_range() {
+                let (fx, fy) = rect.frame_coord(x, y);
+                let new_sample = frame.extra_at(c, fx, fy);
                 let old_sample = old.extra_at(c, x, y);
                 let value = crate::frame::blend_sample(
                     &ctx,
                     old_sample,
                     new_sample,
                     old.extra_at(alpha, x, y),
-                    frame.extra_at(alpha, x, y),
+                    frame.extra_at(alpha, fx, fy),
                 );
                 if let Some(slot) = out
                     .extra
@@ -863,6 +1044,109 @@ fn composite_frame(
         }
     }
     Ok(out)
+}
+
+/// The intersection of a frame rectangle with the canvas, in canvas
+/// coordinates, plus the offset back to frame coordinates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CropRect {
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+    /// Canvas x of the frame's own column 0, possibly negative.
+    origin_x: i64,
+    /// Canvas y of the frame's own row 0, possibly negative.
+    origin_y: i64,
+}
+
+impl CropRect {
+    /// F.2's "only the intersection of the frame with the image".
+    fn intersect(
+        x0: i64,
+        y0: i64,
+        frame_width: u32,
+        frame_height: u32,
+        canvas_width: u32,
+        canvas_height: u32,
+    ) -> Self {
+        let clamp = |start: i64, extent: u32, bound: u32| -> (u32, u32) {
+            let lo = start.max(0).min(i64::from(bound));
+            let hi = start
+                .saturating_add(i64::from(extent))
+                .max(0)
+                .min(i64::from(bound));
+            // Both are in `0..=bound`, so the narrowing cannot fail.
+            let lo = u32::try_from(lo).unwrap_or(0);
+            let hi = u32::try_from(hi).unwrap_or(0);
+            (lo, hi.saturating_sub(lo))
+        };
+        let (x, width) = clamp(x0, frame_width, canvas_width);
+        let (y, height) = clamp(y0, frame_height, canvas_height);
+        Self {
+            x,
+            y,
+            width,
+            height,
+            origin_x: x0,
+            origin_y: y0,
+        }
+    }
+
+    /// Whether the rectangle is the whole canvas.
+    const fn covers(&self, canvas_width: u32, canvas_height: u32) -> bool {
+        self.x == 0 && self.y == 0 && self.width == canvas_width && self.height == canvas_height
+    }
+
+    fn x_range(&self) -> std::ops::Range<u32> {
+        self.x..self.x.saturating_add(self.width)
+    }
+
+    fn y_range(&self) -> std::ops::Range<u32> {
+        self.y..self.y.saturating_add(self.height)
+    }
+
+    /// Canvas coordinate to the frame's own coordinate.
+    ///
+    /// Only called for coordinates inside the intersection, where the result
+    /// is non-negative and inside the frame by construction.
+    fn frame_coord(&self, x: u32, y: u32) -> (u32, u32) {
+        let fx = i64::from(x) - self.origin_x;
+        let fy = i64::from(y) - self.origin_y;
+        (
+            u32::try_from(fx).unwrap_or(u32::MAX),
+            u32::try_from(fy).unwrap_or(u32::MAX),
+        )
+    }
+}
+
+/// Copies `src` into `dst[index]` everywhere outside `rect`.
+///
+/// Only reachable under the `false` arm of
+/// [`CROP_LEAVES_RUNNING_IMAGE_OUTSIDE`].
+fn copy_outside(
+    dst: &mut [Vec<f32>],
+    index: usize,
+    src: Option<&Vec<f32>>,
+    rect: &CropRect,
+    width: u32,
+    height: u32,
+) {
+    let Some(plane) = dst.get_mut(index) else {
+        return;
+    };
+    for y in 0..height {
+        for x in 0..width {
+            if rect.x_range().contains(&x) && rect.y_range().contains(&y) {
+                continue;
+            }
+            let offset = y as usize * width as usize + x as usize;
+            let value = src.and_then(|p| p.get(offset)).copied().unwrap_or(0.0);
+            if let Some(slot) = plane.get_mut(offset) {
+                *slot = value;
+            }
+        }
+    }
 }
 
 /// The byte range of TOC section `index`.
@@ -1055,12 +1339,7 @@ const fn shifted_ceil(value: u32, shift: u32) -> u32 {
 ///
 /// Split from the per-encoding checks so that a construct is rejected in
 /// exactly one place: everything here is orthogonal to `encoding`.
-fn check_supported_common(header: &FrameHeader, purpose: FramePurpose) -> Result<()> {
-    if header.have_crop && purpose == FramePurpose::Displayed {
-        // A cropped *displayed* frame has to be blended onto the canvas
-        // (F.2); a cropped reference frame just occupies its rectangle.
-        return Err(unsupported("cropped frames", "18181-1 F.2"));
-    }
+fn check_supported_common(header: &FrameHeader) -> Result<()> {
     if header.do_ycbcr {
         return Err(unsupported("do_YCbCr colour reconstruction", "18181-1 L.3"));
     }
@@ -1079,7 +1358,7 @@ fn check_supported_modular(
     metadata: &ImageMetadata,
     purpose: FramePurpose,
 ) -> Result<()> {
-    check_supported_common(header, purpose)?;
+    check_supported_common(header)?;
     // K.2 produces fractional samples, and a kModular frame's output is its
     // integers — there is no float stage to put them in. Upsampling one would
     // mean building the whole float pipeline the kVarDCT path already has.
@@ -1125,7 +1404,7 @@ fn check_supported_modular(
 
 /// Rejects every frame construct outside the `kVarDCT` scope of slice 8.
 fn check_supported_vardct(header: &FrameHeader, metadata: &ImageMetadata) -> Result<()> {
-    check_supported_common(header, FramePurpose::Displayed)?;
+    check_supported_common(header)?;
     if !metadata.xyb_encoded {
         // A kVarDCT frame that is not XYB-encoded would need L.2 skipped and
         // the samples interpreted directly in the signalled colour encoding.
@@ -3046,6 +3325,250 @@ mod tests {
             float_planes: None,
         };
         assert_eq!(image.interleaved_colour(), vec![0u16, 255]);
+    }
+
+    // -----------------------------------------------------------------
+    // F.2's crop rectangle
+    // -----------------------------------------------------------------
+
+    /// A frame that starts at the origin and matches the canvas is the whole
+    /// canvas, and reports itself as such so the copy of the running image is
+    /// skipped.
+    #[test]
+    fn an_uncropped_frame_is_the_whole_canvas() {
+        let rect = CropRect::intersect(0, 0, 64, 48, 64, 48);
+        assert_eq!((rect.x, rect.y, rect.width, rect.height), (0, 0, 64, 48));
+        assert!(rect.covers(64, 48));
+        assert_eq!(rect.frame_coord(63, 47), (63, 47));
+    }
+
+    /// A rectangle strictly inside the canvas: the offset is what turns a
+    /// canvas coordinate back into a frame one.
+    #[test]
+    fn an_inner_rectangle_offsets_both_axes() {
+        // `spot`'s layer: 381x145 at (89, 114) on a 600x400 canvas.
+        let rect = CropRect::intersect(89, 114, 381, 145, 600, 400);
+        assert_eq!(
+            (rect.x, rect.y, rect.width, rect.height),
+            (89, 114, 381, 145)
+        );
+        assert!(!rect.covers(600, 400));
+        assert_eq!(rect.frame_coord(89, 114), (0, 0));
+        assert_eq!(rect.frame_coord(469, 258), (380, 144));
+    }
+
+    /// Negative origins clip at the near edges, and — the part a sign error
+    /// gets wrong — the frame coordinate at the clipped edge is the *inset*
+    /// one, not zero.
+    #[test]
+    fn negative_origins_clip_and_still_offset() {
+        // `sunset_logo`: 2048x1024 at (-662, -100) on a 1386x924 canvas.
+        let rect = CropRect::intersect(-662, -100, 2048, 1024, 1386, 924);
+        assert_eq!(
+            (rect.x, rect.y, rect.width, rect.height),
+            (0, 0, 1386, 924),
+            "the visible part starts at the canvas origin"
+        );
+        assert!(
+            rect.covers(1386, 924),
+            "the far edges land exactly on the canvas's, so it is a full frame"
+        );
+        assert_eq!(
+            rect.frame_coord(0, 0),
+            (662, 100),
+            "canvas (0,0) is frame (662,100) — reading frame (0,0) here is \
+             the classic clamp-the-rectangle-but-not-the-source bug"
+        );
+        assert_eq!(rect.frame_coord(1385, 923), (2047, 1023));
+    }
+
+    /// Overhang past the far edges is dropped, per F.2's "only the
+    /// intersection ... is updated".
+    #[test]
+    fn overhang_past_the_far_edges_is_dropped() {
+        let rect = CropRect::intersect(30, 40, 100, 100, 64, 64);
+        assert_eq!((rect.x, rect.y, rect.width, rect.height), (30, 40, 34, 24));
+        assert!(!rect.covers(64, 64));
+        assert_eq!(rect.frame_coord(63, 63), (33, 23));
+    }
+
+    /// A rectangle entirely off the canvas contributes nothing, and the empty
+    /// ranges make the compositing loops run zero times.
+    #[test]
+    fn a_rectangle_entirely_off_the_canvas_is_empty() {
+        for (x0, y0) in [(-200i64, 0i64), (0, -200), (200, 0), (0, 200)] {
+            let rect = CropRect::intersect(x0, y0, 100, 100, 64, 64);
+            assert_eq!(rect.width * rect.height, 0, "at ({x0}, {y0})");
+            assert_eq!(rect.x_range().count() * rect.y_range().count(), 0);
+        }
+    }
+
+    /// The extreme `UnpackSigned` values do not overflow the intersection.
+    #[test]
+    fn extreme_offsets_do_not_overflow() {
+        for x0 in [i64::from(i32::MIN), i64::from(i32::MAX)] {
+            let rect = CropRect::intersect(x0, 0, u32::MAX, 8, 64, 64);
+            assert!(rect.x <= 64 && rect.width <= 64);
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // D.3.2's orientation
+    // -----------------------------------------------------------------
+
+    /// Turning a plane twice by a row and its inverse is the identity.
+    ///
+    /// The eight rows of Table D.4 form a group; four are involutions and the
+    /// two rotations are each other's inverse. Composing every row with its
+    /// inverse and requiring the identity catches an axis swapped in one
+    /// direction only, which is the shape of error a hand-written table makes.
+    #[test]
+    fn every_orientation_composed_with_its_inverse_is_the_identity() {
+        const PAIRS: [(Orientation, Orientation); 8] = [
+            (Orientation::Identity, Orientation::Identity),
+            (Orientation::FlipHorizontal, Orientation::FlipHorizontal),
+            (Orientation::Rotate180, Orientation::Rotate180),
+            (Orientation::FlipVertical, Orientation::FlipVertical),
+            (Orientation::Transpose, Orientation::Transpose),
+            (Orientation::Rotate90Cw, Orientation::Rotate90Ccw),
+            (Orientation::AntiTranspose, Orientation::AntiTranspose),
+            (Orientation::Rotate90Ccw, Orientation::Rotate90Cw),
+        ];
+        let (w, h) = (7u32, 5u32);
+        for (forward, back) in PAIRS {
+            let (mw, mh) = forward.displayed_size(w, h);
+            for y in 0..h {
+                for x in 0..w {
+                    // Where (x, y) lands under `forward`, found by inverting.
+                    let mut landed = None;
+                    for my in 0..mh {
+                        for mx in 0..mw {
+                            if forward.source_of(mx, my, w, h) == (x, y) {
+                                landed = Some((mx, my));
+                            }
+                        }
+                    }
+                    let (mx, my) = landed.expect("every sample has a home");
+                    assert_eq!(
+                        back.source_of(x, y, mw, mh),
+                        (mx, my),
+                        "{forward:?} then {back:?} moved ({x}, {y})"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Each row moves the stored top-left corner to the corner Table D.4's
+    /// "first row"/"first column" pair names.
+    ///
+    /// Read the other way round: `source_of(0, 0, ..)` is the stored sample
+    /// that ends up at the displayed origin. For a stored grid whose corners
+    /// are (0,0), (W-1,0), (0,H-1) and (W-1,H-1), this is the whole table.
+    #[test]
+    fn the_displayed_origin_comes_from_the_corner_table_d4_names() {
+        let (w, h) = (7u32, 5u32);
+        let cases = [
+            (Orientation::Identity, (0, 0)),
+            (Orientation::FlipHorizontal, (w - 1, 0)),
+            (Orientation::Rotate180, (w - 1, h - 1)),
+            (Orientation::FlipVertical, (0, h - 1)),
+            (Orientation::Transpose, (0, 0)),
+            (Orientation::Rotate90Cw, (0, h - 1)),
+            (Orientation::AntiTranspose, (w - 1, h - 1)),
+            (Orientation::Rotate90Ccw, (w - 1, 0)),
+        ];
+        for (orientation, want) in cases {
+            assert_eq!(
+                orientation.source_of(0, 0, w, h),
+                want,
+                "{orientation:?}'s displayed origin"
+            );
+        }
+    }
+
+    /// Only the four transposing rows swap the reported dimensions.
+    #[test]
+    fn only_the_transposing_rows_swap_the_dimensions() {
+        for value in 1..=8u32 {
+            let orientation = Orientation::from_value(value).expect("Table D.4");
+            let (w, h) = orientation.displayed_size(7, 5);
+            if orientation.swaps_axes() {
+                assert_eq!((w, h), (5, 7), "orientation {value}");
+            } else {
+                assert_eq!((w, h), (7, 5), "orientation {value}");
+            }
+        }
+    }
+
+    /// `apply_orientation` turns every plane, integer and float alike, and is
+    /// a permutation: no sample is invented and none is lost.
+    #[test]
+    fn apply_orientation_turns_integer_and_float_planes_together() {
+        let (w, h) = (4u32, 3u32);
+        let ints: Vec<i32> = (0..(w * h) as i32).collect();
+        let floats: Vec<f32> = ints.iter().map(|&v| v as f32).collect();
+        let image = DecodedImage {
+            width: w,
+            height: h,
+            num_colour_channels: 1,
+            planes: vec![Plane {
+                width: w,
+                height: h,
+                bits_per_sample: 8,
+                samples: ints.clone(),
+            }],
+            icc_profile: None,
+            float_planes: Some(vec![FloatPlane {
+                width: w,
+                height: h,
+                samples: floats,
+            }]),
+        };
+        let limits = Limits::default();
+        let mut guard = AllocGuard::new(&limits);
+        let turned = apply_orientation(image, Orientation::Rotate90Cw, &mut guard).expect("turn");
+
+        assert_eq!((turned.width, turned.height), (3, 4));
+        let plane = turned.planes.first().expect("one plane");
+        assert_eq!((plane.width, plane.height), (3, 4));
+        let mut sorted = plane.samples.clone();
+        sorted.sort_unstable();
+        assert_eq!(sorted, ints, "a turn is a permutation, not a resample");
+        // Rotating clockwise puts the stored bottom-left sample at the
+        // displayed origin: row h-1, column 0, which is sample (h-1)*w = 8.
+        assert_eq!(plane.samples.first().copied(), Some(8));
+
+        let floats = turned
+            .float_planes
+            .as_ref()
+            .and_then(|planes| planes.first())
+            .expect("one float plane");
+        assert_eq!((floats.width, floats.height), (3, 4));
+        assert_eq!(floats.samples.first().copied(), Some(8.0));
+    }
+
+    /// The identity row is a no-op that does not even reallocate the planes.
+    #[test]
+    fn the_identity_orientation_returns_the_image_unchanged() {
+        let image = DecodedImage {
+            width: 2,
+            height: 1,
+            num_colour_channels: 1,
+            planes: vec![Plane {
+                width: 2,
+                height: 1,
+                bits_per_sample: 8,
+                samples: vec![3, 7],
+            }],
+            icc_profile: None,
+            float_planes: None,
+        };
+        let limits = Limits::default();
+        let mut guard = AllocGuard::new(&limits);
+        let same =
+            apply_orientation(image.clone(), Orientation::Identity, &mut guard).expect("no-op");
+        assert_eq!(same, image);
     }
 
     #[test]

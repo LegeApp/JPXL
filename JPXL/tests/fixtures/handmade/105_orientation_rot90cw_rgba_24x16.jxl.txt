@@ -1,0 +1,83 @@
+Fixture: 105_orientation_rot90cw_rgba_24x16.jxl
+24x16 RGBA, lossless modular, metadata.orientation = 6 (rotate 90 clockwise)
+
+Purpose
+-------
+Rung 6 of the Table D.4 ladder (18181-1 D.3.2): transpose composed with a horizontal flip.
+
+The stored sample grid is 24x16; the DISPLAYED image is 16x24. D.3.2 puts the
+transform after decoding, and F.2 says a frame's width and height "are
+interpreted according to the sample grid before taking metadata.orientation
+into account" -- so every dimension inside the codestream is pre-orientation
+and only the finished image is turned. Getting that backwards is the classic
+trap this rung exists to catch.
+
+The eight fixtures 100-107 share one pixel payload and differ only in the
+orientation field, so any two of their reference decodes differ exactly by the
+transform between them. That is what makes the ladder a test rather than eight
+assertions that a decode is self-consistent: a decoder that dropped the field
+would agree with rung 1 and disagree with the other seven.
+
+Content, chosen so no two rows of Table D.4 can be confused:
+  R  horizontal ramp        separates left from right
+  G  vertical ramp          separates top from bottom
+  B  (7x + 13y) mod 256     a diagonal texture with no symmetry, so a
+                            transpose is not a flip in disguise
+  A  transparent corner     fully transparent in the top-left 6x4 block only,
+                            which pins the origin
+
+Frame structure, as parsed by JPXL itself: one kRegularFrame, kModular,
+lossless, 24x16, one group, no crop, one extra channel (kAlpha, 8-bit).
+
+Grading (18181-3 4.2)
+---------------------
+Grading is against a reference DECODE of this stream (the committed .npy, or a
+fresh djxl decode), never against the original source PNG -- Part 3 bounds
+decoder-vs-reference error, not encoder loss against the pre-encode image.
+djxl applies the orientation itself, so the reference .npy is already in
+DISPLAYED orientation and its shape is the swapped one for Table D.4's four
+transposing rows. That shape agreement is the first thing the test asserts:
+18181-3 4.2 condition 1 fails outright for a decoder that ignored the field.
+
+cjxl/djxl are used strictly as BLACK BOXES: they emit/consume conformant
+streams for JPXL to parse. libjxl's source is never read. If a rebuild at a
+different libjxl revision changes these digests, that is the point of recording
+them -- do not silently update them; note the revision change.
+
+Provenance
+----------
+  Encoder:      cjxl v0.13.0 196a43d9 [_AVX2_,SSE4,SSE2] {GNU 15.2.0}
+  libjxl rev:   196a43d996aa6ed33ebf98812a7c6d43b2b6d01b (v0.12-snapshot-2-g196a43d9)
+  cjxl flags:   -d 0 -e 7
+  Built by:     tools/setup-oracles.sh (flags recorded in
+                tools/oracle-bin/PINNED_REVISIONS.txt)
+  Regenerate:   tools/make-orientation-fixtures.sh
+                That script IS the recipe; it rewrites the source and re-encodes.
+
+  Source image: tests/fixtures/generated/src_orient_rgba_24x16_o6.png  (1309 bytes)
+                sha256 7e340820f19d4be09ae47e65c2ae124e855e8e497082e10fc88cff81a495aff1
+                Synthetic PNG, written by the Python snippet inside
+                tools/make-orientation-fixtures.sh with nothing but the standard
+                library -- no third-party image was used, converted or
+                consulted, and no image library is involved. PNG rather than PNM
+                because PNM carries neither an alpha channel nor a metadata
+                chunk, and this recipe needs both.
+                The PNG carries an `eXIf` chunk holding a minimal
+                little-endian TIFF header with one IFD entry, tag 0x0112
+                (Orientation). cjxl has no orientation flag; this chunk is how
+                the value reaches the image header, and the generating script
+                verifies with jxlinfo that it arrived.
+
+  Fixture:      246 bytes
+                sha256 314992af53b16cff36f6fb7678fc1a5aeb6ed3f150f8a86c63e9ec7c6c8aff58
+
+  Reference decode (djxl --output_format npy):
+    105_orientation_rot90cw_rgba_24x16.npy  (6222 bytes)
+    sha256 8fc5c8062c449ce610956bbc82bc4b12341da4c1c97e5a79a37c050cd69a5381
+    Committed alongside the fixture (< 100 KB).
+    Shape (1, 24, 16, 4) little-endian f32, per 18181-3 4.1.2. The channel count
+    includes the alpha channel: djxl interleaves the extra channels after the
+    colour ones, which is the same order G.1.3 gives the modular channel list
+    and the order jpxl-decode returns its planes in. Readable with
+    jpxl_conformance::FloatImage::from_npy.
+    Regenerable at any time from the fixture with the pinned djxl build.

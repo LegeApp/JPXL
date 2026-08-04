@@ -1,0 +1,73 @@
+Fixture: 109_orientation_transpose_vardct_rgba_64x64.jxl
+64x64 RGBA, VarDCT lossy d=1.0, metadata.orientation = 5 (transpose)
+
+Purpose
+-------
+The FLOAT-PLANE rung. A kVarDCT decode carries `float_planes` alongside the
+integer planes, and those floats are the authoritative result 18181-3 4.2
+grades -- the integers are only their quantization. The orientation transform
+has to be applied to both. A decoder that turned only the integer planes passes
+rungs 100-108, whose lossless modular decodes have no float planes at all, and
+fails here.
+
+The image is square, so the swapped dimensions cannot themselves reveal the
+bug: only the sample positions can. That is deliberate -- a square fixture
+makes the shape check useless and forces the pixel comparison to do the work.
+
+Filters are left at cjxl's own choice, so this stream is in 18181-3 Annex A's
+ordinary error class (peak <= 0.02, RMSE <= 1e-3) rather than the tighter
+no-filter one. The test grades far inside that and asserts a tighter bound of
+its own; see e2e_layers.rs.
+
+Grading (18181-3 4.2)
+---------------------
+Grading is against a reference DECODE of this stream (the committed .npy, or a
+fresh djxl decode), never against the original source PNG -- Part 3 bounds
+decoder-vs-reference error, not encoder loss against the pre-encode image.
+djxl applies the orientation itself, so the reference .npy is already in
+DISPLAYED orientation and its shape is the swapped one for Table D.4's four
+transposing rows. That shape agreement is the first thing the test asserts:
+18181-3 4.2 condition 1 fails outright for a decoder that ignored the field.
+
+cjxl/djxl are used strictly as BLACK BOXES: they emit/consume conformant
+streams for JPXL to parse. libjxl's source is never read. If a rebuild at a
+different libjxl revision changes these digests, that is the point of recording
+them -- do not silently update them; note the revision change.
+
+Provenance
+----------
+  Encoder:      cjxl v0.13.0 196a43d9 [_AVX2_,SSE4,SSE2] {GNU 15.2.0}
+  libjxl rev:   196a43d996aa6ed33ebf98812a7c6d43b2b6d01b (v0.12-snapshot-2-g196a43d9)
+  cjxl flags:   -d 1.0 -e 7
+  Built by:     tools/setup-oracles.sh (flags recorded in
+                tools/oracle-bin/PINNED_REVISIONS.txt)
+  Regenerate:   tools/make-orientation-fixtures.sh
+                That script IS the recipe; it rewrites the source and re-encodes.
+
+  Source image: tests/fixtures/generated/src_orient_rgba_64x64_o5.png  (13062 bytes)
+                sha256 c8e521f170d2e7d11f7dd45a8d064bd3250b5da25b58d9f4464170ded2a982b2
+                Synthetic PNG, written by the Python snippet inside
+                tools/make-orientation-fixtures.sh with nothing but the standard
+                library -- no third-party image was used, converted or
+                consulted, and no image library is involved. PNG rather than PNM
+                because PNM carries neither an alpha channel nor a metadata
+                chunk, and this recipe needs both.
+                The PNG carries an `eXIf` chunk holding a minimal
+                little-endian TIFF header with one IFD entry, tag 0x0112
+                (Orientation). cjxl has no orientation flag; this chunk is how
+                the value reaches the image header, and the generating script
+                verifies with jxlinfo that it arrived.
+
+  Fixture:      2014 bytes
+                sha256 0f103ed15ea68485e872f06db6d9ccfe8acb96ff073a19ea26e388316486ff9b
+
+  Reference decode (djxl --output_format npy):
+    109_orientation_transpose_vardct_rgba_64x64.npy  (65614 bytes)
+    sha256 6f6b797ffdcaafbf49670002ea82483ed6456e30009653a3019c6f994e0f2722
+    Committed alongside the fixture (< 100 KB).
+    Shape (1, 64, 64, 4) little-endian f32, per 18181-3 4.1.2. The channel count
+    includes the alpha channel: djxl interleaves the extra channels after the
+    colour ones, which is the same order G.1.3 gives the modular channel list
+    and the order jpxl-decode returns its planes in. Readable with
+    jpxl_conformance::FloatImage::from_npy.
+    Regenerable at any time from the fixture with the pinned djxl build.
