@@ -27,6 +27,9 @@ Last reviewed: 2026-08-04.
 | G.2.2, F.2 | kLFFrame + `kUseLfFrame`, multi-pass accumulation | Part 3 class | `e2e_progressive` ladder 70–74 + corpus | Supported |
 | Annex J | Gaborish + EPF | Part 3 with-filters class | filters-on fixtures 52/53/56 | Supported (J.2 chroma upsampling refused) |
 | K.2, L.4 | Frame + extra-channel upsampling (2/4/8, default and custom weights) | Part 3 class | `e2e_upsampling` ladder 90–95 + corpus `upsampling`/`upsampling_5` | Supported in kVarDCT frames (kModular + upsampling refused) |
+| F.2 | Cropped displayed frames (negative origins, any-edge overhang) | Part 3 class | corpus `spot`/`cmyk_layers`/`sunset_logo`, `CropRect` unit tests | Supported |
+| D.3.2, Table D.4 | Orientation (all 8), integer + float planes | Bit-exact rearrangement | `e2e_layers` ladder 100–109, all 8 vs djxl | Supported (previews still refused) |
+| D.3.6 | kBlack / kSpotColour extra channels | Graded as stored (18181-3 §4.1.2) | corpus `spot` (6ch) / `cmyk_layers` (5ch) | Supported; spot-colour rendering not performed (references don't) |
 | K.3 | Patches incl. per-channel-group alpha blending, kReferenceOnly reference frames | Part 3 class | corpus `bike`/`bike_5`/`progressive`/`patches`/`patches_5` | Supported |
 | L.2 | XYB inverse, transfer functions incl. negative-branch behaviour | Tolerance | color.rs tests, fixture 63, corpus | Supported |
 | Part 2 §8–9 | Box parser, `jxlc`/`jxlp`, box validation | Bit-exact framing | `container` suite, jxlinfo cross-check | Supported (`brob` decompression, `jxli`/`jbrd` parsing deferred) |
@@ -34,8 +37,8 @@ Last reviewed: 2026-08-04.
 
 Refused (typed `Unsupported`, never guessed): YCbCr, J.2 chroma
 upsampling, upsampling in kModular frames, animation (presented frames
-with a duration), cropped/oriented displayed frames, splines, noise,
-`lf_level > 1`, kVarDCT LF frames, patches in kModular frames,
+with a duration), previews, splines, noise, `lf_level > 1`, kVarDCT LF
+frames, patches in kModular frames, xyb modular displayed frames,
 `brob` decompression.
 
 ## Official conformance corpus
@@ -54,7 +57,7 @@ test case's files in from there.
 
 | Stream set | Revision | Result |
 | --- | --- | --- |
-| `tests/fixtures/conformance/` | pinned commit at clone time (see the submodule/checkout's own git log) | References downloaded via `download_and_symlink_using_curl.sh` (85 objects, ~1.2 GB, all 39 test cases linked). `bike_5`'s `reference_image.npy` (shape `(1, 2560, 2048, 3)`, sha256-verified) and `test.json` (`peak_error: 0.06`, `rms_error: 0.02`) are readable end to end by `jpxl_conformance::FloatImage::from_npy` — see `crates/jpxl-conformance/tests/corpus.rs`. **Fifteen test cases pass their own `test.json` thresholds against JPXL's decoder**: `grayscale` / `grayscale_5` (peak 2.3e-4), `bike` / `bike_5` (2.5e-4), `progressive` / `progressive_5` (2.0e-5), `alpha_nonpremultiplied` / `alpha_triangles` (1.2e-7), `alpha_premultiplied` (2.6e-6), `patches` / `patches_5` (7.8e-6 / 2.4e-2), `blendmodes` / `blendmodes_5` (1.9e-6), `upsampling` / `upsampling_5` (4.3e-5 / 1.6e-2) — tests in `crates/jpxl-decode/tests/{e2e_vardct.rs,e2e_progressive.rs,e2e_alpha.rs,e2e_upsampling.rs}`, zero ignores. Remaining cases need cropped/oriented displayed frames, animation, YCbCr, splines, noise, or `jbrd`. |
+| `tests/fixtures/conformance/` | pinned commit at clone time (see the submodule/checkout's own git log) | References downloaded via `download_and_symlink_using_curl.sh` (85 objects, ~1.2 GB, all 39 test cases linked). `bike_5`'s `reference_image.npy` (shape `(1, 2560, 2048, 3)`, sha256-verified) and `test.json` (`peak_error: 0.06`, `rms_error: 0.02`) are readable end to end by `jpxl_conformance::FloatImage::from_npy` — see `crates/jpxl-conformance/tests/corpus.rs`. **Eighteen test cases pass their own `test.json` thresholds against JPXL's decoder**: `grayscale` / `grayscale_5` (peak 2.3e-4), `bike` / `bike_5` (2.5e-4), `progressive` / `progressive_5` (2.0e-5), `alpha_nonpremultiplied` / `alpha_triangles` (1.2e-7), `alpha_premultiplied` (2.6e-6), `patches` / `patches_5` (7.8e-6 / 2.4e-2), `blendmodes` / `blendmodes_5` (1.9e-6), `upsampling` / `upsampling_5` (4.3e-5 / 1.6e-2), `spot` (6.0e-8), `cmyk_layers` (1.2e-7), `sunset_logo` (4.8e-7) — tests in `crates/jpxl-decode/tests/{e2e_vardct.rs,e2e_progressive.rs,e2e_alpha.rs,e2e_upsampling.rs,e2e_layers.rs}`, zero ignores. Remaining 21 need: animation ×5, YCbCr/jbrd ×6, noise ×2, xyb-modular displayed frame (`bicycles`), kModular patches (`patches_lossless`), and combinations thereof. |
 
 ### Part 3 §4.2 grading (18181-3 §4.1.2 / §4.2 / §4.3)
 

@@ -13,6 +13,55 @@ Keep this file small. Entries whose content has landed in `PLAN.md`,
 
 ---
 
+## 2026-08-04 (wave 8) — cropped frames + orientation + kBlack; corpus 18/39; encoder phase planned
+
+**`spot`/`cmyk_layers`/`sunset_logo` pass** (peaks 6e-8/1.2e-7/4.8e-7,
+orders inside thresholds). All three were gated on ONE refusal: F.2
+cropped frames. Built: `composite_frame` placing frames at (x0,y0) with
+i64 `CropRect::intersect` (negative UnpackSigned origins, any-edge
+overhang), lifted for ALL encodings (compositing is display-space,
+encoding-agnostic); Table D.4 orientation — all 8 rows, derived by
+inverting the first-row/first-column pair, cross-checked against the
+prose, applied to integer AND float planes at the very end (D.3.2;
+every in-codestream dimension is pre-orientation). **kBlack needed NO
+code**: 18181-3 §4.1.2 grades every extra channel as itself in ec_info
+order — CMYK conversion would FAIL shape condition 1. `bench_oriented_brg`
+is NOT unlocked by orientation despite the name: its gate is do_YCbCr.
+Orientation was previously silently IGNORED (not refused) — sunset_logo's
+shape assertion is what caught it. Fixtures 100–109 (hand-built eXIf
+orientation tags, jxlinfo-verified by the script; cjxl cannot emit
+cropped non-animation frames, so crop evidence is the corpus streams +
+unit tests). Mutation-tested: anti-transpose↔transpose killed by the
+corner test (both are involutions — the inverse-composition test alone
+cannot kill it).
+
+**Flip point, recorded unexercised:** `CROP_LEAVES_RUNNING_IMAGE_OUTSIDE
+= true` — what "the image" holds outside a cropped frame's rectangle
+(F.2 names two buffers and never says). Proven undiscriminated: all
+three corpus cases store to slot 1 and read source==1; both arms
+implemented.
+
+**Corpus 18/39.** Remaining gates, enumerated across all 39: animation
+×5, do_YCbCr ×6 (incl. bench_oriented_brg ×2), noise ×2, `bicycles`
+(xyb modular displayed frame), `patches_lossless` (patches in kModular
++ stored frame in non-XYB). Gate: 1002 tests, 0 failed, zero ignores.
+
+**Encoder phase adopted into PLAN.md (slices 11–20)** from external
+advisor doc `docs/Encoder-plan1.md`, with recorded adjustments: ANS
+encoder is its own slice 11.5; lossless density (MA trees/LZ77)
+interleaves as slice 19; the inverse-primitives-into-core refactor is a
+gated mechanical slice; SIMD/threading stay out until a scalar R-D
+baseline. DO NOT START until the user triggers it (their session-limit
+budgeting).
+
+**Next candidates (decoder):** noise (Annex K.4 — synthesis, likely
+self-contained); `bicycles`/`patches_lossless` (kModular displayed-frame
+gaps); YCbCr + jbrd (big, unlocks 6+); animation (scope decision);
+rare-transform coverage (Hornuss/DCT4x4/≥DCT128 still no pixel proof);
+the grey-Y 2.3e-4 residual family.
+
+---
+
 ## 2026-08-04 (wave 7) — K.2 upsampling; THIRD scan-verified Part 1 defect (I.2.4 AFV transpose); corpus 15/39
 
 **`upsampling`/`upsampling_5` pass** (peak 4.3e-5 / 1.6e-2 vs 0.004 /
