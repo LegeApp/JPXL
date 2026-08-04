@@ -220,6 +220,46 @@ fn a_bits_per_pixel_target_lands_the_byte_budget_it_implies() {
     assert!(outcome.undershoot_fraction() <= MAX_UNDERSHOOT);
 }
 
+/// Slice 17's exit condition on the rate side: the target contract survives
+/// an adaptive-quantization field. The loop prices with the writer, so the
+/// field's per-varblock muls and the §7.2 factorization are inside every
+/// exact price it takes. Never-over is unconditional; the undershoot bound
+/// is 2% here rather than the fixed-quantizer 1%, because the field makes
+/// the size ladder lumpier and the tighter bound is genuinely unreachable at
+/// some targets: at `Uniform`/4000 the loop lands on 3955 (1.125%), and a
+/// development-time brute force over every integer `global_scale` in the
+/// bracketing range found no rung in `(3955, 4000]` — the loop had found the
+/// reachable optimum.
+#[test]
+fn the_byte_target_contract_holds_with_adaptive_quantization_on() {
+    let (width, height) = (300u32, 260u32);
+    let source = test_image(width, height);
+    for mode in [
+        jpxl_encode_policy::AqMode::Masking,
+        jpxl_encode_policy::AqMode::Uniform,
+    ] {
+        let mut request = EncodeRequest::defaults();
+        request.budget.aq_mode = mode;
+        for target in [4_000u64, 9_000] {
+            let outcome =
+                encode_srgb8_to_target(width, height, &source, &request, RateTarget::Bytes(target))
+                    .expect("reachable");
+            assert!(
+                outcome.achieved() <= target,
+                "{mode:?} at {target}: over budget ({})",
+                outcome.achieved()
+            );
+            assert!(
+                outcome.undershoot_fraction() <= 0.02,
+                "{mode:?} at {target}: undershoot {} of {target}",
+                outcome.achieved()
+            );
+            let image = decode(&outcome.codestream, &Limits::default()).expect("decodes");
+            assert_eq!((image.width, image.height), (width, height));
+        }
+    }
+}
+
 /// The target on the request is the same thing as the target in the call.
 #[test]
 fn a_request_carrying_a_target_routes_through_the_loop() {

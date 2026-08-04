@@ -611,6 +611,103 @@ fn both_oracles_decode_a_hierarchical_stream() {
     }
 }
 
+/// Slice 17's new wire content: a `BlockInfo` `mul` row that *varies* per
+/// varblock (adaptive quantization), under the §7.2 factorization's halved
+/// `global_scale` and doubled `quant_lf`. Constant `HfMul > 1` was proven in
+/// slice 14; a varying row exercises the per-varblock dequantization path in
+/// external decoders for the first time.
+#[test]
+fn both_oracles_decode_an_adaptive_quantization_stream() {
+    let case = Case {
+        name: "aq-300x260",
+        width: 300,
+        height: 260,
+        grey: false,
+    };
+    // Left half gradient, right half hash noise: a field with both signs.
+    let mut source = Vec::new();
+    for y in 0..case.height {
+        for x in 0..case.width {
+            let luma = if x < case.width / 2 {
+                u8::try_from(100 + (x + y) / 16).unwrap_or(128)
+            } else {
+                let hash = (x.wrapping_mul(0x9E37).wrapping_add(y.wrapping_mul(0x79B9)))
+                    .wrapping_mul(0x85EB_CA6B);
+                u8::try_from(96 + ((hash >> 24) & 0x3F)).unwrap_or(128)
+            };
+            source.extend_from_slice(&[
+                luma,
+                u8::try_from(u16::from(luma) * 4 / 5).unwrap_or(255),
+                u8::try_from(u16::from(luma) * 3 / 5).unwrap_or(255),
+            ]);
+        }
+    }
+
+    let mut request = EncodeRequest::defaults();
+    request.budget.aq_mode = jpxl_encode_policy::AqMode::Masking;
+    let frame = PreparedFrame::from_srgb8(case.width, case.height, &source).expect("frame");
+    let plan = plan_frame(&frame, &request).expect("a legal plan");
+    let muls: std::collections::BTreeSet<u32> = plan
+        .plan()
+        .spatial
+        .lf_groups
+        .iter()
+        .flat_map(|g| g.blocks.iter())
+        .map(|b| b.hf_mul.get())
+        .collect();
+    assert!(
+        muls.len() >= 2,
+        "the oracle fixture must put a varying mul row on the wire, got {muls:?}"
+    );
+    let codestream = jpxl_encode::vardct::write_codestream(&plan).expect("encodes");
+
+    let dir = scratch("aq");
+    let jxl = dir.join(format!("{}.jxl", case.name));
+    std::fs::write(&jxl, &codestream).expect("write");
+    let ours = ours(&codestream);
+
+    for kind in [OracleKind::Djxl, OracleKind::JxlOxide] {
+        let Some(oracle) = oracle::find(kind) else {
+            println!("skipping {kind:?}: not installed");
+            continue;
+        };
+        let (out, format) = match kind {
+            OracleKind::Djxl => (dir.join(format!("{}.ppm", case.name)), OutputFormat::Ppm),
+            _ => (dir.join(format!("{}.npy", case.name)), OutputFormat::Npy),
+        };
+        match oracle.decode(&jxl, &out, format) {
+            Ok(()) => {}
+            Err(err) if err.is_unavailable() => {
+                println!("skipping {kind:?}: {err}");
+                continue;
+            }
+            Err(err) => panic!(
+                "{kind:?} refused an adaptive-quantization stream ({} bytes, muls {muls:?}): {err}",
+                codestream.len()
+            ),
+        }
+        let bytes = std::fs::read(&out).expect("read oracle output");
+        let samples: Vec<u8> = match kind {
+            OracleKind::Djxl => PnmImage::from_ppm(&bytes)
+                .expect("ppm")
+                .samples
+                .iter()
+                .map(|&v| u8::try_from(v.min(255)).unwrap_or(0))
+                .collect(),
+            _ => read_npy_f32(&bytes)
+                .expect("npy")
+                .iter()
+                .map(|&v| u8::try_from((v.clamp(0.0, 1.0) * 255.0).round() as i32).unwrap_or(255))
+                .collect(),
+        };
+        let (peak, rmse) = error(&samples, &ours);
+        assert!(
+            peak <= MAX_PEAK_BETWEEN_DECODERS,
+            "{kind:?} and jpxl-decode disagree by {peak} on a varying mul row (RMSE {rmse:.3})"
+        );
+    }
+}
+
 /// A corrupted stream must be refused, never silently mis-decoded.
 ///
 /// The ANS terminal state of C.3.2 is the check that makes this cheap: a

@@ -62,6 +62,7 @@
 pub mod analysis;
 pub mod block;
 pub mod error;
+pub mod field;
 pub mod quantize;
 pub mod rate;
 pub mod request;
@@ -74,7 +75,9 @@ use jpxl_core::forward::{
 use jpxl_core::geometry::LfBlockPos;
 use jpxl_core::varblock::TransformType;
 use jpxl_encode::vardct::headers::{NEUTRAL_QM_SCALE, VARDCT_GROUP_SIZE_SHIFT};
-use jpxl_encode::vardct::ids::{CflFactor, ClusterId, HfMul, LfGroupId, PreContextId, PresetId};
+use jpxl_encode::vardct::ids::{
+    CflFactor, ClusterId, GlobalScale, HfMul, LfGroupId, PreContextId, PresetId, QuantLf,
+};
 use jpxl_encode::vardct::plan::{
     CflGrid, EmissionPlan, EntropyModelPlan, EntropyPlan, FrameDecision, HfBlockContextPlan,
     HfPassEntropyPlan, HistogramPlan, HybridUintPlan, LfCorrelationDecision, LfDecision,
@@ -91,6 +94,9 @@ use quantize::{
 
 pub use analysis::{AnalysisAtlas, AtomGrid};
 pub use error::{PolicyError, Result};
+pub use field::AqMode;
+
+use field::{DesiredQuantField, mul_lattice};
 pub use rate::{
     LadderSearch, QuantizerChoice, RateOutcome, RatePhase, RateStep, Rung, search_frame,
 };
@@ -210,12 +216,16 @@ fn plan_at_with_cfl(
         "the atom grid and the block grid are the same grid"
     );
 
+    // §7.2's factorization first: with an AQ field the wire quantizer scalars
+    // differ from the request's (exactly compensated), and everything below
+    // quantizes against the wire values.
+    let aq = AqSetup::build(atlas, request, quantizer);
     let lf_quant = LfQuantizer::new(
-        quantizer.global_scale.get(),
-        quantizer.quant_lf.get(),
+        aq.global_scale.get(),
+        aq.quant_lf.get(),
         LfDecision::vardct_neutral().extra_precision,
     );
-    let hf_quants = HfQuantizers::new(quantizer.global_scale.get(), quantizer.hf_mul.get())?;
+    let hf_quants = HfQuantizers::new(aq.global_scale.get(), aq.baseline, &aq.muls())?;
 
     // The cover is selected before chroma-from-luma is estimated: the estimate
     // regresses over the coefficients of the *selected* transforms, so the
@@ -234,14 +244,21 @@ fn plan_at_with_cfl(
             what: "an LF group outside the frame's grid",
         })?;
         let varblocks = match request.budget.cover_mode {
-            CoverMode::FixedDct8x8 => block::fixed_dct8x8(blocks, quantizer.hf_mul)?,
-            CoverMode::Hierarchical => select_blocks(
-                frame,
-                &hf_quants,
-                blocks,
-                (rect.x0, rect.y0),
-                quantizer.hf_mul,
-            )?,
+            CoverMode::FixedDct8x8 => {
+                let mut varblocks = block::fixed_dct8x8(blocks, aq.baseline)?;
+                for vb in &mut varblocks {
+                    vb.hf_mul = aq.mul_for_footprint(
+                        rect.x0 / 8 + vb.origin.bx(),
+                        rect.y0 / 8 + vb.origin.by(),
+                        1,
+                        1,
+                    );
+                }
+                varblocks
+            }
+            CoverMode::Hierarchical => {
+                select_blocks(frame, &hf_quants, blocks, (rect.x0, rect.y0), &aq)?
+            }
         };
         group_shapes.push((id, blocks, rect));
         maps.push(varblocks);
@@ -284,8 +301,8 @@ fn plan_at_with_cfl(
     let spatial = SpatialPlan {
         frame: decision,
         quantizer: QuantizerDecision {
-            global_scale: quantizer.global_scale,
-            quant_lf: quantizer.quant_lf,
+            global_scale: aq.global_scale,
+            quant_lf: aq.quant_lf,
         },
         lf,
         restoration: RestorationDecision::default(),
@@ -410,13 +427,104 @@ const fn square_transform(n: u32) -> Option<TransformType> {
     }
 }
 
+/// §7.2's factorization of the request's quantizer into what the wire
+/// carries once an adaptive-quantization field is in play.
+///
+/// The wire's per-varblock knob, `HfMul >= 1`, divides the step just like
+/// `global_scale` does (I.2.1: `Mul = (1 << 16) / (global_scale * HfMul)`),
+/// so from a baseline of 1 a varblock can only be *refined*, never coarsened.
+/// Bidirectional adjustment is representable exactly anyway: **halve**
+/// `global_scale`, **double** `quant_lf` — the LF step divides by
+/// `global_scale * quant_lf`, so the product and every LF integer are
+/// unchanged — and **double** the baseline `HfMul`, so the baseline HF
+/// denominator `global_scale * HfMul` is unchanged too (both are exact
+/// integer products in f64). A mul one below the doubled baseline is now an
+/// octave coarser, one above an octave finer. When `global_scale` is odd or
+/// the doubled `quant_lf`/baseline is not representable, the field falls
+/// back to refine-only: adjustments capped at the baseline. A field that
+/// turns out neutral (a flat frame) collapses to the plain wire — the
+/// factorization's non-zero `mul` row costs real bytes under the gradient
+/// predictor (the DctSelect row above it is zeros), and a neutral field
+/// would buy nothing for them.
+struct AqSetup {
+    field: Option<DesiredQuantField>,
+    refine_only: bool,
+    /// What I.2.1 signals.
+    global_scale: GlobalScale,
+    /// What I.2.1 signals.
+    quant_lf: QuantLf,
+    /// The wire `HfMul` of a varblock the field leaves alone.
+    baseline: HfMul,
+}
+
+impl AqSetup {
+    fn build(atlas: &AnalysisAtlas, request: &EncodeRequest, quantizer: QuantizerChoice) -> Self {
+        let off = Self {
+            field: None,
+            refine_only: false,
+            global_scale: quantizer.global_scale,
+            quant_lf: quantizer.quant_lf,
+            baseline: quantizer.hf_mul,
+        };
+        let field = match DesiredQuantField::from_atlas(atlas, request.budget.aq_mode) {
+            Some(field) if !field.is_neutral() => field,
+            _ => return off,
+        };
+
+        // An odd `global_scale` is snapped down to the even family (an
+        // off-by-one the rate loop prices exactly) instead of falling back to
+        // refine-only: a fallback keyed on parity would make adjacent rate
+        // rungs alternate between two differently-sized encoders and put a
+        // systematic sawtooth in the ladder.
+        let even = quantizer.global_scale.get() & !1;
+        let doubled = (
+            even >= 2,
+            GlobalScale::new((even / 2).max(1)),
+            QuantLf::new(quantizer.quant_lf.get().saturating_mul(2)),
+            HfMul::new(quantizer.hf_mul.get().saturating_mul(2)),
+        );
+        if let (true, Ok(global_scale), Ok(quant_lf), Ok(baseline)) = doubled {
+            Self {
+                field: Some(field),
+                refine_only: false,
+                global_scale,
+                quant_lf,
+                baseline,
+            }
+        } else {
+            Self {
+                field: Some(field),
+                refine_only: true,
+                ..off
+            }
+        }
+    }
+
+    /// The `HfMul` of a varblock footprint (frame-global atom coordinates).
+    fn mul_for_footprint(&self, bx: u32, by: u32, rows: u32, cols: u32) -> HfMul {
+        self.field.as_ref().map_or(self.baseline, |field| {
+            field.mul_for_footprint(bx, by, rows, cols, self.baseline, self.refine_only)
+        })
+    }
+
+    /// Every `HfMul` this setup can assign.
+    fn muls(&self) -> Vec<HfMul> {
+        if self.field.is_some() {
+            mul_lattice(self.baseline, self.refine_only)
+        } else {
+            vec![self.baseline]
+        }
+    }
+}
+
 /// The per-transform HF quantizers a frame needs, built once.
 ///
 /// I.5.3's `Mul` and the dequantization matrices depend only on the transform,
 /// `global_scale` and `HfMul`; with a constant `HfMul` (adaptive quant is
 /// milestone 7) there is one quantizer per transform for the whole frame.
 struct HfQuantizers {
-    by_transform: Vec<(TransformType, HfQuantizer)>,
+    by_key: Vec<((TransformType, u32), HfQuantizer)>,
+    baseline: HfMul,
     /// §4.3's Lagrange multiplier per channel, in bits per unit of squared
     /// **sample-domain** error, from the DCT8x8 operating point: a uniform
     /// quantizer at step `s` trades one bit for `s^2/16` of squared error
@@ -434,24 +542,30 @@ struct HfQuantizers {
 }
 
 impl HfQuantizers {
-    fn new(global_scale: u32, hf_mul: u32) -> Result<Self> {
-        let mut by_transform = Vec::with_capacity(SQUARE_TRANSFORMS.len());
+    /// Builds every `(transform, HfMul)` quantizer a frame can ask for: the
+    /// square vocabulary crossed with `muls` (the adaptive-quantization
+    /// lattice around `baseline`, or just `[baseline]` with the field off).
+    fn new(global_scale: u32, baseline: HfMul, muls: &[HfMul]) -> Result<Self> {
+        let mut by_key = Vec::with_capacity(SQUARE_TRANSFORMS.len() * muls.len());
         for transform in SQUARE_TRANSFORMS {
-            by_transform.push((
-                transform,
-                HfQuantizer::new(
-                    transform,
-                    global_scale,
-                    hf_mul,
-                    NEUTRAL_QM_SCALE,
-                    NEUTRAL_QM_SCALE,
-                )?,
-            ));
+            for &mul in muls {
+                by_key.push((
+                    (transform, mul.get()),
+                    HfQuantizer::new(
+                        transform,
+                        global_scale,
+                        mul.get(),
+                        NEUTRAL_QM_SCALE,
+                        NEUTRAL_QM_SCALE,
+                    )?,
+                ));
+            }
         }
-        let dct8 = &by_transform
-            .first()
+        let dct8 = &by_key
+            .iter()
+            .find(|((t, m), _)| *t == TransformType::Dct8x8 && *m == baseline.get())
             .ok_or(PolicyError::Unsupported {
-                what: "an empty transform vocabulary",
+                what: "a baseline DCT8x8 quantizer",
             })?
             .1;
         let mut lambda = [0.0f64; NUM_CHANNELS];
@@ -470,19 +584,26 @@ impl HfQuantizers {
             *slot = if mean > 0.0 { 16.0 / mean } else { 0.0 };
         }
         Ok(Self {
-            by_transform,
+            by_key,
+            baseline,
             lambda,
         })
     }
 
-    fn get(&self, transform: TransformType) -> Result<&HfQuantizer> {
-        self.by_transform
+    fn get(&self, transform: TransformType, mul: HfMul) -> Result<&HfQuantizer> {
+        self.by_key
             .iter()
-            .find(|(t, _)| *t == transform)
+            .find(|((t, m), _)| *t == transform && *m == mul.get())
             .map(|(_, q)| q)
             .ok_or(PolicyError::Unsupported {
-                what: "an HF quantizer for a transform outside milestone 6",
+                what: "an HF quantizer outside the built (transform, HfMul) set",
             })
+    }
+
+    /// The baseline-`HfMul` quantizer for a transform: the frame's nominal
+    /// operating point.
+    fn baseline(&self, transform: TransformType) -> Result<&HfQuantizer> {
+        self.get(transform, self.baseline)
     }
 }
 
@@ -838,7 +959,7 @@ fn estimate_cfl(
                 &mut scratch,
             )?;
             let cells = side * side;
-            let hf_quant = hf_quants.get(transform)?;
+            let hf_quant = hf_quants.get(transform, vb.hf_mul)?;
             let tile = usize::try_from(
                 u64::from(vb.origin.by() / 8) * u64::from(tiles.width)
                     + u64::from(vb.origin.bx() / 8),
@@ -940,7 +1061,7 @@ fn estimate_cfl(
                 tile,
                 0.0,
                 0,
-                hf_quants.get(TransformType::Dct8x8)?,
+                hf_quants.baseline(TransformType::Dct8x8)?,
             )?));
         }
         for tile in &group.b {
@@ -948,7 +1069,7 @@ fn estimate_cfl(
                 tile,
                 1.0,
                 2,
-                hf_quants.get(TransformType::Dct8x8)?,
+                hf_quants.baseline(TransformType::Dct8x8)?,
             )?));
         }
         groups.push(CflGrid::new(group.tiles, x, b)?);
@@ -1160,7 +1281,7 @@ fn quantize_group(
             coeffs,
             transform,
             lf_quant,
-            hf_quants.get(transform)?,
+            hf_quants.get(transform, vb.hf_mul)?,
             factors,
             tscratch,
             bx,
@@ -1191,6 +1312,14 @@ const PER_VARBLOCK_BITS: f64 = 2.0;
 /// slice 18 trains the entropy model.
 const NON_DCT8X8_SIGNAL_BITS: f64 = 32.0;
 
+/// The `metadata_bits` a non-baseline `HfMul` pays: like DctSelect, its `mul`
+/// sample breaks a constant run in `BlockInfo`'s second row. Charged at the
+/// same order as a DctSelect transition but lower — the lattice keeps the
+/// values small and repetitive.
+fn mul_signal_bits(hf_mul: HfMul, baseline: HfMul) -> f64 {
+    if hf_mul == baseline { 0.0 } else { 8.0 }
+}
+
 /// §4.3's objective `J = R + lambda * D + metadata_bits` for one square
 /// transform candidate, in bits: the residual bit proxy, plus each channel's
 /// squared reconstruction error at that channel's operating-point exchange
@@ -1206,6 +1335,7 @@ fn block_cost(
     frame: &PreparedFrame,
     hf_quants: &HfQuantizers,
     transform: TransformType,
+    hf_mul: HfMul,
     px: u32,
     py: u32,
     scratch: &mut ForwardScratch,
@@ -1214,7 +1344,7 @@ fn block_cost(
     let side = forward_square(frame, transform, px, py, scratch)?;
     let n = transform.block_dims().0;
     let cells = side * side;
-    let hf_quant = hf_quants.get(transform)?;
+    let hf_quant = hf_quants.get(transform, hf_mul)?;
     // One squared coefficient unit is `side^2` squared sample units (the
     // forward transforms are not Parseval; see [`HfQuantizers::lambda`]).
     #[allow(
@@ -1277,7 +1407,7 @@ fn tile_region(
     bx: u32,
     by: u32,
     size: u32,
-    hf_mul: HfMul,
+    aq: &AqSetup,
     x0: u32,
     y0: u32,
     scratch: &mut ForwardScratch,
@@ -1286,16 +1416,24 @@ fn tile_region(
     if bx >= grid.width || by >= grid.height {
         return Ok((0.0, Vec::new()));
     }
+    // A candidate's `HfMul` comes from the adaptive-quantization field over
+    // its own footprint (the baseline with the field off): the solver chooses
+    // the *transform* at the field's quantizer, it does not second-guess the
+    // field. Atom coordinates are frame-global: the group origin is a pixel
+    // rect, so `x0 / 8` is the group's first atom column.
     if size == 1 {
+        let hf_mul = aq.mul_for_footprint(x0 / 8 + bx, y0 / 8 + by, 1, 1);
         let cost = block_cost(
             frame,
             hf_quants,
             TransformType::Dct8x8,
+            hf_mul,
             x0 + bx * 8,
             y0 + by * 8,
             scratch,
             d_y_hf,
-        )? + PER_VARBLOCK_BITS;
+        )? + PER_VARBLOCK_BITS
+            + mul_signal_bits(hf_mul, aq.baseline);
         return Ok((
             cost,
             vec![VarblockDecision {
@@ -1316,7 +1454,7 @@ fn tile_region(
         (bx + half, by + half),
     ] {
         let (c, mut b) = tile_region(
-            frame, hf_quants, grid, qx, qy, half, hf_mul, x0, y0, scratch, d_y_hf,
+            frame, hf_quants, grid, qx, qy, half, aq, x0, y0, scratch, d_y_hf,
         )?;
         split_cost += c;
         split_blocks.append(&mut b);
@@ -1325,16 +1463,19 @@ fn tile_region(
     let fits = bx + size <= grid.width && by + size <= grid.height;
     let single = match square_transform(size) {
         Some(transform) if fits => {
+            let hf_mul = aq.mul_for_footprint(x0 / 8 + bx, y0 / 8 + by, size, size);
             let cost = block_cost(
                 frame,
                 hf_quants,
                 transform,
+                hf_mul,
                 x0 + bx * 8,
                 y0 + by * 8,
                 scratch,
                 d_y_hf,
             )? + PER_VARBLOCK_BITS
-                + NON_DCT8X8_SIGNAL_BITS;
+                + NON_DCT8X8_SIGNAL_BITS
+                + mul_signal_bits(hf_mul, aq.baseline);
             Some((
                 cost,
                 vec![VarblockDecision {
@@ -1362,7 +1503,7 @@ fn select_blocks(
     hf_quants: &HfQuantizers,
     grid: jpxl_encode::vardct::BlockGrid,
     origin: (u32, u32),
-    hf_mul: HfMul,
+    aq: &AqSetup,
 ) -> Result<Vec<VarblockDecision>> {
     let (x0, y0) = origin;
     let mut scratch = ForwardScratch::new();
@@ -1379,7 +1520,7 @@ fn select_blocks(
                 sbx,
                 sby,
                 4,
-                hf_mul,
+                aq,
                 x0,
                 y0,
                 &mut scratch,
@@ -1904,6 +2045,201 @@ mod tests {
                 .iter()
                 .any(|b| b.transform == TransformType::Dct32x32),
             "the smooth region must merge to DCT32x32"
+        );
+    }
+
+    fn aq_request(mode: AqMode) -> EncodeRequest {
+        let mut request = EncodeRequest::defaults();
+        request.budget.aq_mode = mode;
+        request
+    }
+
+    /// Left half a gentle gradient, right half hash noise: the two-population
+    /// fixture every slice-17 claim is measured on.
+    fn half_flat_half_noise(width: u32, height: u32) -> Vec<u8> {
+        let mut out = Vec::new();
+        for y in 0..height {
+            for x in 0..width {
+                let luma = if x < width / 2 {
+                    u8::try_from(100 + (x + y) / 16).unwrap_or(128)
+                } else {
+                    let hash = (x.wrapping_mul(0x9E37).wrapping_add(y.wrapping_mul(0x79B9)))
+                        .wrapping_mul(0x85EB_CA6B);
+                    u8::try_from(96 + ((hash >> 24) & 0x3F)).unwrap_or(128)
+                };
+                out.extend_from_slice(&[
+                    luma,
+                    u8::try_from(u16::from(luma) * 4 / 5).unwrap_or(255),
+                    u8::try_from(u16::from(luma) * 3 / 5).unwrap_or(255),
+                ]);
+            }
+        }
+        out
+    }
+
+    /// RMSE over one half of the frame, all three channels.
+    fn half_rmse(decoded: &[u8], source: &[u8], width: u32, height: u32, left: bool) -> f64 {
+        let mut sum = 0.0f64;
+        let mut count = 0u64;
+        for y in 0..height {
+            for x in 0..width {
+                if (x < width / 2) != left {
+                    continue;
+                }
+                for channel in 0..3u32 {
+                    let i = usize::try_from((y * width + x) * 3 + channel).unwrap_or(usize::MAX);
+                    let error = f64::from(decoded.get(i).copied().unwrap_or(0))
+                        - f64::from(source.get(i).copied().unwrap_or(0));
+                    sum += error * error;
+                    count += 1;
+                }
+            }
+        }
+        (sum / count.max(1) as f64).sqrt()
+    }
+
+    #[test]
+    fn a_neutral_aq_field_collapses_to_the_plain_wire() {
+        // A flat frame has no activity deviation, so the field is neutral and
+        // the §7.2 factorization (which costs a non-zero `mul` row) must not
+        // be paid for. Byte identity, not just size parity.
+        let rgb = vec![128u8; 128 * 128 * 3];
+        let off = encode_srgb8_vardct(128, 128, &rgb, &aq_request(AqMode::Off)).expect("encodes");
+        let aq =
+            encode_srgb8_vardct(128, 128, &rgb, &aq_request(AqMode::Masking)).expect("encodes");
+        assert_eq!(off, aq, "a neutral field must cost nothing");
+    }
+
+    #[test]
+    fn the_aq_factorization_leaves_every_lf_integer_unchanged() {
+        // Halving global_scale and doubling quant_lf preserves their product
+        // exactly, so the LF planes — quantized against that product — must
+        // be identical integers, not merely close.
+        let rgb = half_flat_half_noise(256, 256);
+        let frame = PreparedFrame::from_srgb8(256, 256, &rgb).expect("frame");
+        let off = plan_frame(&frame, &aq_request(AqMode::Off)).expect("plan");
+        let aq = plan_frame(&frame, &aq_request(AqMode::Masking)).expect("plan");
+        // The factorization must actually be in play for this to prove
+        // anything.
+        assert_ne!(
+            off.plan().spatial.quantizer.global_scale,
+            aq.plan().spatial.quantizer.global_scale,
+            "the fixture must trigger the factorization"
+        );
+        for (a, b) in off
+            .plan()
+            .quantized
+            .lf_groups
+            .iter()
+            .zip(aq.plan().quantized.lf_groups.iter())
+        {
+            for channel in 0..3 {
+                assert_eq!(
+                    a.lf.plane(channel),
+                    b.lf.plane(channel),
+                    "LF integers must be untouched by the HF factorization"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn uniform_aq_improves_spatial_quality_uniformity() {
+        // The slice-17 exit criterion, measured directly: the error gap
+        // between the flat and the busy half shrinks when the field points
+        // at equalization. Measured: gap 4.36 -> 2.97 at 12408 -> 17141 B
+        // (the busy half is refined; the flat half's HF is already zero, so
+        // coarsening it saves nothing on this fixture).
+        let rgb = half_flat_half_noise(256, 256);
+        let off = encode_srgb8_vardct(256, 256, &rgb, &aq_request(AqMode::Off)).expect("encodes");
+        let uniform =
+            encode_srgb8_vardct(256, 256, &rgb, &aq_request(AqMode::Uniform)).expect("encodes");
+
+        let off_out = decoded_rgb(&off);
+        let uniform_out = decoded_rgb(&uniform);
+        let off_gap = (half_rmse(&off_out, &rgb, 256, 256, false)
+            - half_rmse(&off_out, &rgb, 256, 256, true))
+        .abs();
+        let uniform_gap = (half_rmse(&uniform_out, &rgb, 256, 256, false)
+            - half_rmse(&uniform_out, &rgb, 256, 256, true))
+        .abs();
+        eprintln!(
+            "uniformity: off gap {off_gap:.3} ({} B), uniform gap {uniform_gap:.3} ({} B)",
+            off.len(),
+            uniform.len()
+        );
+        assert!(
+            uniform_gap < off_gap * 0.8,
+            "the uniform field must shrink the flat/busy error gap \
+             ({off_gap:.3} -> {uniform_gap:.3})"
+        );
+    }
+
+    #[test]
+    fn masking_aq_saves_bytes_and_refines_the_flat_half() {
+        // The perceptual direction: texture masks coarser quantization, flat
+        // regions band and get refined. Both claims measured against Off on
+        // the same stream: smaller output AND a better flat half. Measured:
+        // 12408 -> 9799 B, flat RMSE 0.426 -> 0.333.
+        let rgb = half_flat_half_noise(256, 256);
+        let frame = PreparedFrame::from_srgb8(256, 256, &rgb).expect("frame");
+        let plan = plan_frame(&frame, &aq_request(AqMode::Masking)).expect("plan");
+        let muls: std::collections::BTreeSet<u32> = plan
+            .plan()
+            .spatial
+            .lf_groups
+            .iter()
+            .flat_map(|g| g.blocks.iter())
+            .map(|b| b.hf_mul.get())
+            .collect();
+        assert!(
+            muls.len() >= 2,
+            "the fixture must put a varying mul row on the wire, got {muls:?}"
+        );
+
+        let off = encode_srgb8_vardct(256, 256, &rgb, &aq_request(AqMode::Off)).expect("encodes");
+        let masking = jpxl_encode::vardct::write_codestream(&plan).expect("encodes");
+        let off_flat = half_rmse(&decoded_rgb(&off), &rgb, 256, 256, true);
+        let masking_flat = half_rmse(&decoded_rgb(&masking), &rgb, 256, 256, true);
+        eprintln!(
+            "masking: {} B flat {masking_flat:.3} vs off {} B flat {off_flat:.3}",
+            masking.len(),
+            off.len()
+        );
+        assert!(
+            masking.len() < off.len(),
+            "masking must save bytes ({} vs {})",
+            masking.len(),
+            off.len()
+        );
+        assert!(
+            masking_flat < off_flat,
+            "masking must refine the flat half ({off_flat:.3} -> {masking_flat:.3})"
+        );
+    }
+
+    #[test]
+    fn aq_composes_with_the_hierarchical_cover() {
+        let rgb = half_flat_half_noise(300, 260);
+        let frame = PreparedFrame::from_srgb8(300, 260, &rgb).expect("frame");
+        let mut request = aq_request(AqMode::Masking);
+        request.budget.cover_mode = CoverMode::Hierarchical;
+        let plan = plan_frame(&frame, &request).expect("a legal plan");
+        let blocks: Vec<_> = plan
+            .plan()
+            .spatial
+            .lf_groups
+            .iter()
+            .flat_map(|g| g.blocks.iter())
+            .collect();
+        assert!(
+            blocks.iter().any(|b| b.transform != TransformType::Dct8x8),
+            "the flat half must still merge"
+        );
+        let muls: std::collections::BTreeSet<u32> = blocks.iter().map(|b| b.hf_mul.get()).collect();
+        assert!(
+            muls.len() >= 2,
+            "the field must still vary the mul row, got {muls:?}"
         );
     }
 }

@@ -150,6 +150,8 @@ impl Default for RateSearchBudget {
 pub struct SearchBudget {
     /// How the cover search explores.
     pub cover_mode: CoverMode,
+    /// How adaptive quantization points its field (milestone 7).
+    pub aq_mode: crate::field::AqMode,
     /// What the rate loop may spend (milestone 4).
     pub rate: RateSearchBudget,
 }
