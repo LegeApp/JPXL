@@ -13,6 +13,36 @@ Keep this file small. Entries whose content has landed in `PLAN.md`,
 
 ---
 
+## 2026-08-04 (wave 12) — encoder slice 17: adaptive quantization
+
+**Slice 17 (5f2c8be): perceptual field + `HfMul` factorization.**
+x265-family variance AQ (broad strokes from the bpg-rs/still265 AQ
+research digest, reimplemented for this wire): per-atom octave
+adjustments from log2-variance deviation, half-octave lattice,
+`Masking` (perceptual) and `Uniform` (error-equalizing) directions.
+**Trap-grade wire fact: `HfMul` divides the step like `global_scale`
+does (I.2.1), so larger `HfMul` = finer.** The first implementation
+assumed the opposite and doubled gs+mul together (denominator ×4 =
+two octaves finer everywhere); the correct exact factorization is
+halve `global_scale` / double `quant_lf` / double baseline `HfMul` —
+both products preserved, LF integers proven unchanged. Odd gs snaps
+to the even family (no parity sawtooth in the rate ladder). Neutral
+fields collapse to the plain wire (flat content byte-identical);
+a non-zero constant mul row costs ~3 bits/block because the gradient
+predictor sees the zero DctSelect row above it — slice 18's trained
+tree should fix that pricing. Uniformity exit: flat/busy RMSE gap
+4.36 → 2.97 (`Uniform`); `Masking` saves 21–32% while refining flat
+regions. Rate contract with AQ: never-over unchanged; undershoot
+stated at 2% — at Uniform/4000 the loop's 3955 IS the brute-force
+optimum over every integer gs in the bracket. Varying mul row
+decoded by both external oracles within 1 code point (new wire
+content). **Open decision for slice 18:** defaults are still
+`FixedDct8x8` + `AqMode::Off`; flip production to Hierarchical +
+Masking after the entropy model prices DctSelect/mul rows properly
+and a corpus-level sweep exists.
+
+---
+
 ## 2026-08-04 (wave 11) — encoder slices 15–16: CfL and the block selector
 
 **Slice 15 (d7b9b59): CfL estimation.** Real I.6 factors: frame-wide
