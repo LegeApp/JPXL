@@ -13,6 +13,34 @@ Keep this file small. Entries whose content has landed in `PLAN.md`,
 
 ---
 
+## 2026-08-04 (wave 14) — encoder slice 18b: custom orders, Hierarchical default
+
+**Slice 18b (d0b6581): F.3.2 writer + §9.4 optimizer + the real
+refinement pass.** `write_hf_coeff_orders` mirrors the decoder's
+shared-stream structure exactly (one C.1 stream, eight distributions,
+`end` + Lehmer per `(Order ID, channel)`, LLF prefix never permuted —
+refused, not repaired). Policy proposes orders from per-position
+nonzero frequencies in the quantized IR, re-censuses under them
+(contexts depend on order position), retrains clusters, and adopts
+only on a strict exact-price win. Density: −1.8% to −9.1% on top of
+wave 13. The permutation composition direction — the documented
+two-readings trap in `jpxl-decode/vardct/order.rs` — now has
+external-decoder parity evidence, not just internal consistency.
+
+**`CoverMode::Hierarchical` is the production default.** Consequence
+worth knowing: the 2100×24 roundtrip rung's peak error moved 42→89
+(bound restated 70→96, RMSE unchanged inside bound) because a merge
+straddles that fixture's hard vertical edge and rings — §4.3's J has
+no edge term. Slice 20's perceptual work owns edge-aware splitting;
+do not "fix" this by hand-tuning NON_DCT8X8_SIGNAL_BITS.
+
+**Still queued from M8:** trained block context (needs its writer),
+HF presets, census-type unification, `AqMode` default (still Off —
+perceptual direction is an opinionated choice), `quant_lf` fill knob
+for LF-dominated rate targets.
+
+---
+
 ## 2026-08-04 (wave 13) — encoder slice 18: trained entropy model
 
 **Slice 18 (0b493cd): §9.3 clustering + per-cluster hybrid-uint.**
