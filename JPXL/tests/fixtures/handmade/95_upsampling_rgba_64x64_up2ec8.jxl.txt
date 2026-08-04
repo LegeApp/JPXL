@@ -1,0 +1,107 @@
+Fixture: 95_upsampling_rgba_64x64_up2ec8.jxl
+64x64 RGBA, VarDCT lossy d=1.0, upsampling 2, ec_upsampling 8
+
+Purpose
+-------
+Rung 6: the two factors composed and UNEQUAL, which is the only configuration
+where the double shift can go wrong in either direction.
+
+The frame grid is 32x32 (64 / upsampling). The alpha channel's factor relative
+to the IMAGE is 8, so it is stored at 8x8 -- a shift of 2 relative to the frame
+grid, which is what the modular layer must use for the channel's dimensions and
+for G.4.2's group offsets. Then L.4 upsamples it by 8 (not by 2, and not by 4)
+to reach the 64x64 output, while the colour channels take 2. Getting the
+composition backwards, or applying the frame factor to the extra channel,
+produces an alpha plane of the wrong size or the wrong content; both are caught
+here and by nothing else in the tree.
+
+F.2 constrains this pair: `ec_upsampling[i] << dim_shift >= upsampling`
+whenever upsampling > 1, so the frame-relative shift is never negative.
+
+Frame structure, as parsed by JPXL itself (jpxl-decode's own frame-header
+reader and FrameGeometry, not by any oracle):
+
+  frame 0  kRegularFrame  kVarDCT  frame 32x32 -> output 64x64
+           group_dim 256, 1 group, 1 LF group, 1 TOC section
+           upsampling 2; 1 extra channel (kAlpha), ec_upsampling 8, dim_shift 0
+
+Note the two sizes. F.1 divides the frame dimensions by `upsampling`, so the
+frame -- and with it every group, LF group, varblock and modular channel -- is
+the SMALLER of the two. The larger is what K.1/K.2 produce, after the Annex J
+restoration filters have run at the smaller size and before Annex K's features
+are drawn and Annex L's colour transforms are applied.
+
+The colour content is the shape the VarDCT, progressive and alpha recipes use:
+a smooth left half and a 1-pixel checkerboard right half. The checkerboard
+earns its place here specifically -- cjxl downsamples the source before
+encoding, so the highest representable spatial frequency is exactly the content
+whose upsampled reconstruction differs between K.2 and any other interpolator.
+This sidecar does not claim particular varblock transforms were chosen.
+
+The alpha content is deliberately NOT the same shape as the colour: a radial
+ramp with a hard-edged fully transparent notch in the top-left quadrant. A
+decode that upsampled the alpha channel by the colour channels' factor,
+transposed it, shifted it, or dropped it and left zeros therefore cannot
+produce a plausible image, and the test asserts the alpha plane is
+non-constant before it grades anything.
+
+Grading (18181-3 4.2)
+---------------------
+Filters are left at cjxl's own choice, so this stream is in 18181-3 Annex A's
+ordinary error class rather than the tighter no-filter one:
+
+    Part 3 error class:  peak <= 0.02,  RMSE <= 1e-3   (filters enabled)
+
+That is deliberate. K.1 places upsampling AFTER Annex J -- the gaborish
+convolution and the edge-preserving filter run at the frame's stored size and
+K.2 runs on their output. A fixture encoded with --gaborish=0 --epf=0 cannot
+distinguish that order from the opposite one, so these fixtures keep the
+filters on and accept the looser budget.
+
+The test grades far inside that budget (peak below 1e-4 on every rung), and
+asserts a tighter bound of its own; see e2e_upsampling.rs.
+
+Grading is against a reference DECODE of this stream (the committed .npy, or a
+fresh djxl decode), never against the original source PNG -- Part 3 conformance
+bounds decoder-vs-reference error, not encoder loss against the pre-encode
+image. That distinction matters more than usual here: cjxl DOWNSAMPLED the
+source before encoding, so the stream cannot reconstruct the source even in
+principle.
+
+Provenance
+----------
+  Encoder:      cjxl v0.13.0 196a43d9 [_AVX2_,SSE4,SSE2] {GNU 15.2.0}
+  libjxl rev:   196a43d996aa6ed33ebf98812a7c6d43b2b6d01b (v0.12-snapshot-2-g196a43d9)
+  cjxl flags:   -d 1.0 -e 7 --resampling=2 --ec_resampling=8
+  Built by:     tools/setup-oracles.sh (flags recorded in
+                tools/oracle-bin/PINNED_REVISIONS.txt)
+  Regenerate:   tools/make-upsampling-fixtures.sh
+                That script IS the recipe; it rewrites the source and re-encodes.
+
+  Source image: tests/fixtures/generated/src_up_rgba_64x64.png  (10866 bytes)
+                sha256 a4165fbd73c4dd454e1d3fbd9866d61dc10d8b253fca56a426a056cad85998d7
+                Synthetic PNG, written by the Python snippet inside
+                tools/make-upsampling-fixtures.sh with nothing but the standard
+                library -- no third-party image was used, converted or
+                consulted, and no image library is involved. PNG rather than
+                PNM because PNM has no alpha channel.
+
+  Fixture:      333 bytes
+                sha256 caa3c142924b6ed2e2a656fb31db29e45fc81f37c03b42f569ccab7069d5fb1d
+
+  Reference decode (djxl --output_format npy):
+    95_upsampling_rgba_64x64_up2ec8.npy  (65614 bytes)
+    sha256 1cb3571da0cd0ea44b8468a916e9f52153a278efbd7858bacbcafdc28d3b11f3
+    Committed alongside the fixture (< 100 KB).
+    Shape (1, 64, 64, 4) little-endian f32, per 18181-3 4.1.2. The channel count
+    includes the alpha channel: djxl interleaves the extra channels after the
+    colour ones, which is the same order G.1.3 gives the modular channel list
+    and the order jpxl-decode returns its planes in. Readable with
+    jpxl_conformance::FloatImage::from_npy.
+    Regenerable at any time from the fixture with the pinned djxl build
+    (decode is deterministic per libjxl revision, see PINNED_REVISIONS.txt).
+
+cjxl/djxl are used strictly as BLACK BOXES: they emit/consume conformant
+streams for JPXL to parse. libjxl's source is never read. If a rebuild at a
+different libjxl revision changes these digests, that is the point of
+recording them -- do not silently update them; note the revision change.

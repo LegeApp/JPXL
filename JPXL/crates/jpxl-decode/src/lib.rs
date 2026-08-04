@@ -25,9 +25,14 @@
 //!   bytes ([`extract_icc_profile`]).
 //! * Annex C entropy coding, via [`jpxl_entropy`].
 //!
-//! Not implemented: VarDCT (Annex I), XYB and YCbCr reconstruction, upsampling,
-//! patches, splines, noise, and multi-frame blending. Each is a typed
-//! [`DecodeError::Unsupported`] naming its clause — never wrong pixels.
+//! * Annex J restoration filters, K.2 non-separable upsampling (for both
+//!   `upsampling` and `ec_upsampling`), K.3 patches, and Annex L colour
+//!   transforms.
+//!
+//! Not implemented: J.2 simple upsampling (`do_YCbCr` chroma subsampling),
+//! YCbCr reconstruction, splines, noise, animation, and upsampling in a
+//! `kModular` frame. Each is a typed [`DecodeError::Unsupported`] naming its
+//! clause — never wrong pixels.
 //!
 //! ```
 //! use jpxl_bitstream::BitReader;

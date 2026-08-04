@@ -509,6 +509,51 @@ const AFV_FREQS: [f64; 16] = [
     12.971_662_025_702_35,
 ];
 
+/// **Standard defect (scan-verified) — I.2.4's AFV frequency placement.**
+///
+/// I.2.4's AFV loop reads `freqs[y * 4 + x]` and writes the interpolated
+/// weight to `weights(2 * y, 2 * x)`. Every other position in that same block
+/// of pseudocode indexes `weights` as `(column, row)`:
+/// `weights(x, 2 * y + 1) = weights4x8(x, y)` fills the odd rows across all
+/// eight columns, and `weights(2 * x + 1, 2 * y) = weights4x4(x, y)` the odd
+/// columns. Under that convention `weights(2 * y, 2 * x)` places the
+/// frequency of AFV basis function `y * 4 + x` at column `2y`, row `2x` — the
+/// transpose of the coefficient it belongs to.
+///
+/// Which coefficient that is, is not in doubt. I.9.8 builds the AFV quadrant
+/// as `coeff_afv[iy * 4 + ix] = coefficients(ix * 2, iy * 2)`, so basis index
+/// `j = iy * 4 + ix` is the coefficient at column `2 * ix`, row `2 * iy`; the
+/// frequency table is indexed by the same `j`. `freqs` corroborates it from
+/// its own side: its four zero entries are exactly indices 0, 1, 4 and 5,
+/// which are exactly the four positions the loop skips.
+///
+/// **This is not an OCR artifact.** The printed page (Part 1, printed p. 59)
+/// reads `weights(2 * y, 2 * x) = val;` — checked against the image scan,
+/// because the transcriptions agreeing proves nothing when they descend from
+/// one scan (see the H.5.2 `^`/`*` case). The defect is in the published text.
+///
+/// `true` (shipped): place at `(2 * x, 2 * y)`, the position the coefficient
+/// actually occupies. `false`: the literal text.
+///
+/// **Measured, not argued.** `freqs` is strongly asymmetric (`freqs[3]` is
+/// 5.378 against `freqs[12]`'s 2.663), so the two readings give different
+/// matrices for every AFV varblock. Against the pinned oracle, on two
+/// independent 800x600 streams — the `upsampling` conformance case and a
+/// synthetic re-encode of its reference at `-d 1` with no resampling — the
+/// literal reading puts the entire remaining error on the AFV varblocks and
+/// nothing else:
+///
+/// | stream | literal | shipped |
+/// | --- | --- | --- |
+/// | `upsampling` corpus | peak 7.8e-2, B RMSE 5.3e-4 | peak 4.3e-5, B RMSE 9.1e-7 |
+/// | synthetic, no resampling | peak 8.7e-3, B RMSE 3.1e-5 | peak 3.8e-5, B RMSE 5.9e-7 |
+///
+/// The localisation is what identifies it: with the literal reading the top
+/// twenty 8x8 tiles hold 100 % of the squared error and the four worst are
+/// AFV0/AFV1/AFV2/AFV3 varblocks, while the 94 DCT4x8/DCT8x4 varblocks
+/// sharing the same 4x8 IDCT are clean.
+pub const AFV_FREQ_POSITION_IS_TRANSPOSED: bool = true;
+
 /// The AFV interpolation range, `[lo, hi]` from the clause. `lo` is
 /// `AFV_FREQS[2]` and `hi` is `AFV_FREQS[15]`.
 const AFV_LO: f64 = 0.851_777_889_032_429_6;
@@ -1563,7 +1608,11 @@ fn build_weights(
                     }
                     let freq = AFV_FREQS[y * 4 + x];
                     let val = interpolate(freq - AFV_LO, range, &bands)?;
-                    w.set(2 * y, 2 * x, val);
+                    if AFV_FREQ_POSITION_IS_TRANSPOSED {
+                        w.set(2 * x, 2 * y, val);
+                    } else {
+                        w.set(2 * y, 2 * x, val);
+                    }
                 }
             }
             for y in 0..4 {
@@ -1951,6 +2000,51 @@ mod tests {
         assert_eq!(w.at(1, 0), 384.0);
         assert_eq!(w.at(0, 1), AFV_PARAMS[2][0]);
         assert_eq!(w.at(1, 0), AFV_PARAMS[2][1]);
+    }
+
+    /// Pins [`AFV_FREQ_POSITION_IS_TRANSPOSED`] to a matrix cell that the two
+    /// readings disagree about.
+    ///
+    /// Channel B (`c == 2`) is the only one whose AFV multipliers are nonzero,
+    /// so it is the only one whose four bands differ and therefore the only
+    /// one where the frequency table's placement is observable at all — see
+    /// `afv_bands_are_constant_when_the_multipliers_are_zero`. Positions
+    /// `(0, 6)` and `(6, 0)` carry `freqs[3] = 5.378` and `freqs[12] = 2.663`,
+    /// the most widely separated pair in the table; under the literal reading
+    /// the two values are exchanged.
+    ///
+    /// This test is what makes the constant mutation-testable: flipping it to
+    /// `false` fails here, not only three orders of magnitude downstream in a
+    /// corpus decode.
+    #[test]
+    fn afv_frequency_weights_sit_at_their_own_coefficient() {
+        let matrices = DequantMatrices::all_default().expect("defaults build");
+        let w = matrices.weights(10, 2).expect("weights");
+
+        let lo = AFV_LO;
+        let range = AFV_HI - AFV_LO + 1e-6;
+        let mut bands = [0.0f64; 4];
+        bands[0] = AFV_PARAMS[2][5];
+        for i in 1..4 {
+            bands[i] = bands[i - 1] * mult(AFV_PARAMS[2][i + 5]);
+        }
+        // Basis index 3 is (ix, iy) = (3, 0): coefficient column 6, row 0.
+        let at_index_3 = interpolate(AFV_FREQS[3] - lo, range, &bands).expect("interpolates");
+        // Basis index 12 is (ix, iy) = (0, 3): coefficient column 0, row 6.
+        let at_index_12 = interpolate(AFV_FREQS[12] - lo, range, &bands).expect("interpolates");
+        assert_ne!(
+            at_index_3, at_index_12,
+            "the two readings only differ if these do"
+        );
+
+        let (a, b) = (at_index_3, at_index_12);
+        if AFV_FREQ_POSITION_IS_TRANSPOSED {
+            assert_eq!(w.at(6, 0), a);
+            assert_eq!(w.at(0, 6), b);
+        } else {
+            assert_eq!(w.at(0, 6), a);
+            assert_eq!(w.at(6, 0), b);
+        }
     }
 
     #[test]

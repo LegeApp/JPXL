@@ -16,8 +16,8 @@
 //!
 //! Modular mode only. A `kVarDCT` frame returns
 //! [`DecodeError::Unsupported`] naming Annex I, as do the frame features that
-//! belong to later slices (patches, splines, noise, XYB, YCbCr, upsampling,
-//! multi-frame blending). Nothing here guesses: an unimplemented construct is
+//! belong to later slices (splines, noise, YCbCr, chroma subsampling,
+//! animation). Nothing here guesses: an unimplemented construct is
 //! always a typed error, never wrong pixels.
 //!
 //! # The modular group pipeline (Annex G)
@@ -51,7 +51,8 @@ use crate::error::{DecodeError, Result};
 use crate::frame::blending::ALPHA_SELF_RULE_IS_THE_NAMED_CHANNEL;
 use crate::frame::{
     BlendContext, BlendMode, BlendingInfo, Canvas, Encoding, FrameGeometry, FrameHeader, FrameType,
-    Rect, Toc, read_frame_header, read_toc, stream_index as stream_index_of,
+    PlaneDims, Rect, Toc, UpsamplingWeightSet, read_frame_header, read_toc,
+    stream_index as stream_index_of,
 };
 use crate::headers::{ImageHeaders, ImageMetadata, decode_image_headers_metered};
 use crate::modular::{
@@ -920,16 +921,9 @@ fn initial_channels(
     }
 
     // "Then the extra channels (if any) ... in ascending order of index",
-    // with dim_shift applied to both dimensions (D.3.6).
-    for info in &metadata.ec_info {
-        let shift = info.dim_shift;
-        if shift > 30 {
-            return Err(DecodeError::out_of_range(
-                "dim_shift",
-                "D.3.6",
-                u64::from(shift),
-            ));
-        }
+    // each at its own subsampling of the frame grid (see `ec_frame_shift`).
+    for index in 0..metadata.ec_info.len() {
+        let shift = ec_frame_shift(header, metadata, index)?;
         specs.push(ChannelSpec::with_shifts(
             shifted_ceil(width, shift),
             shifted_ceil(height, shift),
@@ -939,6 +933,113 @@ fn initial_channels(
         ));
     }
     Ok((specs, num_colour))
+}
+
+/// **Flip point — whether `ec_upsampling` shrinks the modular channel (F.2).**
+///
+/// G.1.3 sizes extra channels as `ceil(width / (1 << dim_shift))` and never
+/// mentions `ec_upsampling`. F.2 says the opposite in two places: the
+/// subsampling of an extra channel "is cumulative with the subsampling implied
+/// by `dim_shift`", and its worked example spells the consequence out — with
+/// 256x256 groups and an alpha channel at `ec_upsampling == 4`, "the groups
+/// consist of 256x256 Y samples, 128x128 Cb and Cr samples, and 64x64 alpha
+/// samples, which all correspond to the same image region".
+///
+/// L.4 settles it: it upsamples extra channel `n` by
+/// `ec_upsampling[n] << dim_shift[n]` to reach the *image* size, which only
+/// lands on the image size if the stored channel is `ceil(image / that)`.
+/// G.1.3's sentence is the incomplete one.
+///
+/// `true` (shipped): cumulative — the channel's shift relative to the frame
+/// grid is `log2(ec_upsampling[n]) + dim_shift[n] - log2(upsampling)`.
+/// `false`: G.1.3 literally — the shift is `dim_shift[n]` alone.
+///
+/// **Settled by fixture, not by argument.** The two readings coincide exactly
+/// whenever `ec_upsampling[n] == upsampling`, which is every conformance case
+/// available — `upsampling`/`upsampling_5` has `upsampling == 4` with
+/// `ec_upsampling == [4]`, and every other case has both equal to 1. So the
+/// discriminating streams were made: handmade fixture 94 (`upsampling == 1`,
+/// `ec_upsampling == [4]`) and fixture 95 (`2` and `[8]`), both from
+/// `cjxl --resampling=… --ec_resampling=…`. Under `false`, fixture 94 reads
+/// its 16x16 alpha channel as 64x64 and the modular sub-bitstream runs off its
+/// end — `OutOfBounds { bit_pos: 13579, requested_bits: 16 }`. Under `true`
+/// both grade at peak 5.4e-5 against `djxl`. This is not a size-only
+/// disagreement: the wrong reading desynchronises the entropy stream.
+///
+/// F.2 additionally *requires* equality whenever a patch blends with alpha
+/// (K.1, Table K.1's closing paragraph), which is why the patch corpus cases
+/// cannot discriminate it either.
+pub const EC_DIMS_INCLUDE_EC_UPSAMPLING: bool = true;
+
+/// Extra channel `index`'s subsampling shift relative to the **frame** grid.
+///
+/// The frame grid is already `ceil(image / upsampling)` (F.1), and the extra
+/// channel is stored at `ceil(image / (ec_upsampling[i] << dim_shift))`
+/// (F.2, L.4) — so the shift the modular layer sees is the difference. F.2
+/// guarantees it is non-negative: "if `upsampling > 1`, then for all extra
+/// channels, `(ec_upsampling[i] << ec_info[i].dim_shift) >= upsampling`".
+fn ec_frame_shift(header: &FrameHeader, metadata: &ImageMetadata, index: usize) -> Result<u32> {
+    let info = metadata
+        .ec_info
+        .get(index)
+        .ok_or_else(|| DecodeError::out_of_range("extra channel index", "D.3.6", index as u64))?;
+    if info.dim_shift > 30 {
+        return Err(DecodeError::out_of_range(
+            "dim_shift",
+            "D.3.6",
+            u64::from(info.dim_shift),
+        ));
+    }
+    if !EC_DIMS_INCLUDE_EC_UPSAMPLING {
+        return Ok(info.dim_shift);
+    }
+    let total = ec_total_upsampling(header, metadata, index)?;
+    let frame_shift = header.upsampling.trailing_zeros();
+    total
+        .trailing_zeros()
+        .checked_sub(frame_shift)
+        .ok_or_else(|| {
+            // F.2's `>= upsampling` constraint, violated.
+            DecodeError::out_of_range(
+                "ec_upsampling << dim_shift against upsampling",
+                "F.2",
+                u64::from(total),
+            )
+        })
+}
+
+/// `ec_upsampling[index] << ec_info[index].dim_shift` — L.4's factor `f`.
+///
+/// This is the factor relative to the **image**, not to the frame: it is what
+/// L.4 upsamples the decoded channel by, and F.2 caps it at 64.
+fn ec_total_upsampling(
+    header: &FrameHeader,
+    metadata: &ImageMetadata,
+    index: usize,
+) -> Result<u32> {
+    let info = metadata
+        .ec_info
+        .get(index)
+        .ok_or_else(|| DecodeError::out_of_range("extra channel index", "D.3.6", index as u64))?;
+    let ec_upsampling = header.ec_upsampling.get(index).copied().unwrap_or(1);
+    if !matches!(ec_upsampling, 1 | 2 | 4 | 8) {
+        return Err(DecodeError::out_of_range(
+            "ec_upsampling",
+            "F.2",
+            u64::from(ec_upsampling),
+        ));
+    }
+    let total = ec_upsampling
+        .checked_shl(info.dim_shift)
+        .filter(|t| *t <= crate::frame::upsampling::MAX_TOTAL)
+        .ok_or_else(|| {
+            DecodeError::out_of_range(
+                "ec_upsampling << dim_shift",
+                "F.2",
+                u64::from(info.dim_shift),
+            )
+        })?;
+    Ok(total)
 }
 
 /// `ceil(value / (1 << shift))`.
@@ -963,9 +1064,6 @@ fn check_supported_common(header: &FrameHeader, purpose: FramePurpose) -> Result
     if header.do_ycbcr {
         return Err(unsupported("do_YCbCr colour reconstruction", "18181-1 L.3"));
     }
-    if header.upsampling != 1 {
-        return Err(unsupported("frame upsampling", "18181-1 J.2"));
-    }
     if header.flags.splines() {
         return Err(unsupported("splines", "18181-1 K.4"));
     }
@@ -982,6 +1080,20 @@ fn check_supported_modular(
     purpose: FramePurpose,
 ) -> Result<()> {
     check_supported_common(header, purpose)?;
+    // K.2 produces fractional samples, and a kModular frame's output is its
+    // integers — there is no float stage to put them in. Upsampling one would
+    // mean building the whole float pipeline the kVarDCT path already has.
+    if header.upsampling != 1 {
+        return Err(unsupported("upsampling in a kModular frame", "18181-1 K.2"));
+    }
+    if header.ec_upsampling.iter().any(|&f| f != 1)
+        || metadata.ec_info.iter().any(|info| info.dim_shift != 0)
+    {
+        return Err(unsupported(
+            "a subsampled extra channel in a kModular frame",
+            "18181-1 K.2",
+        ));
+    }
     if header.flags.use_lf_frame() {
         // G.2.2's substitution is defined against the `LF coefficients` row of
         // Table G.3, which only exists for `encoding == kVarDCT`. A kModular
@@ -1035,26 +1147,15 @@ fn check_supported_vardct(header: &FrameHeader, metadata: &ImageMetadata) -> Res
 
 /// Rejects the extra-channel shapes no encoding renders yet.
 ///
-/// Decoding an extra channel is the same modular machinery for every
-/// encoding; what is not implemented is *resampling* one. D.3.6's `dim_shift`
-/// and F.2's `ec_upsampling` both make a channel smaller than the frame, and
-/// L.4 (and K.1 before it) restores it with K.2's non-separable upsampling —
-/// a filter this decoder does not have. A channel that arrives at a different
-/// size than the frame is therefore refused rather than stretched.
+/// D.3.6's `dim_shift` and F.2's `ec_upsampling` make a channel smaller than
+/// the frame; K.1 and L.4 restore it with K.2's non-separable upsampling,
+/// which [`crate::frame::upsampling`] implements. What is validated here is
+/// only that the cumulative factor is one K.2 can express.
 fn check_supported_extra_channels(header: &FrameHeader, metadata: &ImageMetadata) -> Result<()> {
     for (index, info) in metadata.ec_info.iter().enumerate() {
-        if info.dim_shift != 0 {
-            return Err(unsupported(
-                "an extra channel with dim_shift > 0 (K.2 upsampling)",
-                "18181-1 L.4",
-            ));
-        }
-        if header.ec_upsampling.get(index).copied().unwrap_or(1) != 1 {
-            return Err(unsupported(
-                "an extra channel with ec_upsampling > 1 (K.2 upsampling)",
-                "18181-1 K.2",
-            ));
-        }
+        // Rejects a factor outside {1, 2, ..., 64} and F.2's
+        // `>= upsampling` constraint.
+        ec_frame_shift(header, metadata, index)?;
         if info.bit_depth.is_float() {
             // G.4.2's last paragraph interprets the integers "according to
             // metadata.ec_info[i].bit_depth"; the float reading of that is
@@ -1865,9 +1966,15 @@ fn decode_vardct_frame(
             crate::frame::patches::read_patches(
                 reader,
                 metadata.num_extra(),
-                geometry.width(),
-                geometry.height(),
-                crate::frame::patches::max_num_patches(geometry.width(), geometry.height()),
+                // K.3.1's containment check ("the width x height rectangle
+                // ... is fully contained within the frame") is against the
+                // frame K.3.2 draws on, which K.1 has already upsampled.
+                geometry.upsampled_width(),
+                geometry.upsampled_height(),
+                crate::frame::patches::max_num_patches(
+                    geometry.upsampled_width(),
+                    geometry.upsampled_height(),
+                ),
                 guard,
             )?
         } else {
@@ -2216,7 +2323,16 @@ fn decode_vardct_frame(
     // H.6's inverse transforms over the now-complete extra-channel image, and
     // G.4.2's last paragraph: the integers are interpreted according to
     // `ec_info[i].bit_depth`.
-    let extra = extra_channel_planes(ec_partial, &modular_options, metadata, geometry, guard)?;
+    let weights = upsampling_weights(metadata);
+    let extra = extra_channel_planes(
+        ec_partial,
+        &modular_options,
+        header,
+        metadata,
+        geometry,
+        &weights,
+        guard,
+    )?;
 
     // ---- I.5.3, I.6, I.8, I.9 -------------------------------------------
     let dequant = render::HfDequantParams {
@@ -2315,8 +2431,16 @@ fn decode_vardct_frame(
     // Clause 4 fixes this order: frame data (G), restoration filters (J),
     // image features (K), and "finally ... colour transforms as specified in
     // Annex L". K.3.2 repeats it from its own side.
+    //
+    // K.1 puts upsampling at the head of Annex K — the colour channels are
+    // "first upsampled as specified in K.2", before the features are drawn on
+    // top. So the J filters see the frame at its stored size and K.2 runs
+    // between them and the patches. (The extra channels were upsampled when
+    // their planes were built, for the same reason: K.3.2 blends against
+    // them.)
     let mut extra = extra;
     render::apply_restoration(&mut planes, filter, &sigma)?;
+    upsample_colour(&mut planes, geometry, &weights, guard)?;
     render::apply_patches(&mut planes, &mut extra, &patches, references)?;
     render::to_linear_srgb(&mut planes, &opsin_inverse(metadata));
     apply_transfer_function(&mut planes, metadata)?;
@@ -2332,17 +2456,30 @@ fn decode_vardct_frame(
 /// Annex L and the scale 18181-3 §4.2 grades. The values are **not** clipped —
 /// a lossy alpha channel legitimately overshoots, and clipping here would hide
 /// it from the conformance metric.
+///
+/// # K.2 upsampling
+///
+/// A channel is stored at `ceil(image / (ec_upsampling[i] << dim_shift))`
+/// (F.2) and rendered at the frame's upsampled size; L.4 names the factor `f`
+/// that closes the gap and K.2 is the filter. It is applied here, on the
+/// channel's own `[0, 1]` scale, before anything else sees the plane —
+/// K.3.2's patch blending needs the alpha channel at the colour channels'
+/// resolution, and Table K.1 requires exactly that when a patch blends.
 fn extra_channel_planes(
     partial: crate::modular::PartialModular,
     options: &ModularOptions,
+    header: &FrameHeader,
     metadata: &ImageMetadata,
     geometry: &FrameGeometry,
+    weights: &UpsamplingWeightSet,
     guard: &mut AllocGuard,
 ) -> Result<crate::vardct::render::ExtraPlanes> {
-    let (width, height) = (geometry.width(), geometry.height());
+    let (out_width, out_height) = (geometry.upsampled_width(), geometry.upsampled_height());
     let num_extra = metadata.num_extra();
     if num_extra == 0 {
-        return Ok(crate::vardct::render::ExtraPlanes::empty(width, height));
+        return Ok(crate::vardct::render::ExtraPlanes::empty(
+            out_width, out_height,
+        ));
     }
     let channels = partial.into_image(options, guard)?.into_channels();
     if channels.len() != num_extra {
@@ -2352,7 +2489,9 @@ fn extra_channel_planes(
             channels.len() as u64,
         ));
     }
-    let mut planes = crate::vardct::render::ExtraPlanes::zeros(width, height, num_extra, guard)?;
+    let mut planes =
+        crate::vardct::render::ExtraPlanes::zeros(out_width, out_height, num_extra, guard)?;
+    let target = PlaneDims::new(out_width as usize, out_height as usize);
     for (index, channel) in channels.iter().enumerate() {
         let bits = metadata
             .ec_info
@@ -2363,13 +2502,68 @@ fn extra_channel_planes(
         } else {
             ((1u32 << bits) - 1) as f32
         };
-        for y in 0..height {
-            for x in 0..width {
-                planes.set(index, x, y, channel.get(x, y) as f32 / max);
+        // The stored size: the frame grid shifted by this channel's own
+        // subsampling.
+        let shift = ec_frame_shift(header, metadata, index)?;
+        let src_width = shifted_ceil(geometry.width(), shift);
+        let src_height = shifted_ceil(geometry.height(), shift);
+        let src_dims = PlaneDims::new(src_width as usize, src_height as usize);
+        let mut samples = Vec::with_capacity(src_dims.width.saturating_mul(src_dims.height));
+        for y in 0..src_height {
+            for x in 0..src_width {
+                samples.push(channel.get(x, y) as f32 / max);
             }
+        }
+        // L.4's factor `f`, relative to the image rather than to the frame.
+        let factor = ec_total_upsampling(header, metadata, index)?;
+        let upsampled =
+            crate::frame::upsample_plane(&samples, src_dims, factor, target, weights, guard)?;
+        for (offset, value) in upsampled.iter().enumerate() {
+            let (x, y) = (offset % target.width, offset / target.width);
+            planes.set(
+                index,
+                u32::try_from(x).unwrap_or(u32::MAX),
+                u32::try_from(y).unwrap_or(u32::MAX),
+                *value,
+            );
         }
     }
     Ok(planes)
+}
+
+/// The frame's `up{k}_weight` tables: D.3's custom ones when `cw_mask`
+/// signalled them, K.2's defaults otherwise.
+fn upsampling_weights(metadata: &ImageMetadata) -> UpsamplingWeightSet {
+    let w = &metadata.upsampling;
+    UpsamplingWeightSet::new(w.up2.clone(), w.up4.clone(), w.up8.clone())
+}
+
+/// K.1: upsamples the frame's colour planes by `frame_header.upsampling`.
+///
+/// Runs after Annex J and before Annex K's features, which is the order clause
+/// 4 and K.1 fix between them. A no-op at `upsampling == 1`, which keeps every
+/// existing path bit-identical.
+fn upsample_colour(
+    planes: &mut crate::vardct::render::ColourPlanes,
+    geometry: &FrameGeometry,
+    weights: &UpsamplingWeightSet,
+    guard: &mut AllocGuard,
+) -> Result<()> {
+    let factor = geometry.upsampling();
+    if factor == 1 {
+        return Ok(());
+    }
+    let src = planes.dims();
+    let target = PlaneDims::new(
+        geometry.upsampled_width() as usize,
+        geometry.upsampled_height() as usize,
+    );
+    for plane in &mut planes.planes {
+        *plane = crate::frame::upsample_plane(plane, src, factor, target, weights, guard)?;
+    }
+    planes.width = geometry.upsampled_width();
+    planes.height = geometry.upsampled_height();
+    Ok(())
 }
 
 /// The `LFFrame[frame_header.lf_level]` slot G.2.2 names, checked against the
@@ -2717,6 +2911,22 @@ fn assemble_float(
     let max = full_scale(bits);
 
     let (width, height) = (planes.width, planes.height);
+    // Colour and extra planes reach this point at the frame's *upsampled*
+    // size, by two different routes: the colour planes through `upsample_colour`
+    // after Annex J, the extra channels inside `extra_channel_planes` at their
+    // own L.4 factor. The two factors differ (F.2 only requires
+    // `ec_upsampling << dim_shift >= upsampling`), so agreeing here is a
+    // conclusion, not an invariant of the types — and every plane below is
+    // sized from `width`/`height` alone. Check it rather than truncate an
+    // extra channel silently.
+    let expected = (geometry.upsampled_width(), geometry.upsampled_height());
+    if (width, height) != expected || (extra.width, extra.height) != expected {
+        return Err(DecodeError::out_of_range(
+            "plane size against the frame's upsampled size",
+            "K.2",
+            u64::from(extra.width),
+        ));
+    }
     let total = num_colour + extra.len();
     let mut float_planes = Vec::with_capacity(total);
     let mut integer_planes = Vec::with_capacity(total);
@@ -2774,8 +2984,11 @@ fn assemble_float(
     }
 
     Ok(DecodedImage {
-        width: geometry.width(),
-        height: geometry.height(),
+        // The frame's *output* size: K.2 has already run on both the colour
+        // and the extra planes, so this is `geometry.width()` only when
+        // `upsampling == 1`.
+        width: geometry.upsampled_width(),
+        height: geometry.upsampled_height(),
         planes: integer_planes,
         num_colour_channels: num_colour,
         icc_profile: None,

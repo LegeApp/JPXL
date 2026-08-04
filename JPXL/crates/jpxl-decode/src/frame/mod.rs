@@ -43,6 +43,7 @@ pub mod patches;
 pub mod restoration;
 pub mod stream_index;
 pub mod toc;
+pub mod upsampling;
 
 use jpxl_core::limits::{AllocGuard, Limits};
 
@@ -65,6 +66,9 @@ pub use patches::{
 };
 pub use restoration::{EpfParams, GaborWeights, RestorationFilter, read_restoration_filter};
 pub use toc::{Toc, get_context, lehmer_to_permutation, read_permutation, read_toc};
+pub use upsampling::{
+    UpsamplingKernel, UpsamplingWeightSet, upsample_plane, upsample_step, weight_index,
+};
 
 impl FrameGeometry {
     /// Derives a frame's geometry directly from its header (18181-1 F.1).

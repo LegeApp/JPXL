@@ -111,6 +111,9 @@ pub struct GroupLayout {
 pub struct FrameGeometry {
     width: u32,
     height: u32,
+    upsampling: u32,
+    upsampled_width: u32,
+    upsampled_height: u32,
     group_dim: u32,
     groups_x: u32,
     groups_y: u32,
@@ -149,6 +152,14 @@ impl FrameGeometry {
             ));
         }
 
+        // The size K.2 has to reach: the frame dimensions with only the
+        // `lf_level` division applied. F.1 divides by `upsampling` first and
+        // by `1 << (3 * lf_level)` second, so undoing just the first step
+        // means applying only the second — which is also why this is not
+        // `width * upsampling`: that would overshoot whenever the `ceil`
+        // rounded up.
+        let (upsampled_width, upsampled_height) =
+            scale_frame_dimensions(width, height, 1, lf_level)?;
         let (width, height) = scale_frame_dimensions(width, height, upsampling, lf_level)?;
 
         // The crop fields are independent of the image size, so a frame can
@@ -177,6 +188,9 @@ impl FrameGeometry {
         let geometry = Self {
             width,
             height,
+            upsampling,
+            upsampled_width,
+            upsampled_height,
             group_dim: dim,
             groups_x,
             groups_y,
@@ -206,6 +220,30 @@ impl FrameGeometry {
     #[must_use]
     pub const fn height(&self) -> u32 {
         self.height
+    }
+
+    /// `frame_header.upsampling`: the K.2 factor the colour channels take.
+    #[must_use]
+    pub const fn upsampling(&self) -> u32 {
+        self.upsampling
+    }
+
+    /// Frame width after K.2 upsampling — the width of the frame's output.
+    ///
+    /// Equal to [`width`](Self::width) when `upsampling == 1`. Groups, LF
+    /// groups and every modular channel live on the *un*-upsampled grid
+    /// ([`width`](Self::width)); only the post-Annex-J pixel stages see this
+    /// one.
+    #[must_use]
+    pub const fn upsampled_width(&self) -> u32 {
+        self.upsampled_width
+    }
+
+    /// Frame height after K.2 upsampling. See
+    /// [`upsampled_width`](Self::upsampled_width).
+    #[must_use]
+    pub const fn upsampled_height(&self) -> u32 {
+        self.upsampled_height
     }
 
     /// Side length of a full group in samples (`128 << group_size_shift`).
