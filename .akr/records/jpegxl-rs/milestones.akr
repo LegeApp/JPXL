@@ -1,0 +1,117 @@
+akr 0.1
+project jpegxl-rs
+
+record jpegxl-rs.milestone.durable-rulings/1 : milestone {
+    title "Phase B - durable rulings imported"
+    state proposed
+    intent """
+        HANDOFF "Already fixed" becomes decisions; HANDOFF "Traps" becomes policies;
+        LESSONS and resource limits become decisions and constraints; the ISO-18181
+        crosswalk becomes terms and constraints.
+        """
+    acceptance {
+        check rulings-captured {
+            statement """
+                Every HANDOFF do-not-redo and trap line exists as a decision or policy
+                record, and DECISION-HISTORY.md reads as the authority.
+                """
+            method manual
+        }
+    }
+    after [ @jpegxl-rs.milestone.spine-bootstrap ]
+    part_of [ @jpegxl-rs.track.akr-adoption ]
+    author "GitHub Uploader"
+}
+
+record jpegxl-rs.milestone.experiments-as-observations/1 : milestone {
+    title "Phase D - experiments become observations"
+    state proposed
+    intent """
+        Each docs/experiments note becomes an observation or evidence record with
+        observed_at and watches on the source files it concerns, so it goes stale
+        automatically and surfaces in REVIEW-REQUIRED.md.
+        """
+    acceptance {
+        check queue-reflects-reality {
+            statement """
+                akr review-queue reflects the current stale and at-risk set, and the dated
+                experiment notes are captured as records.
+                """
+            method manual
+        }
+    }
+    after [ @jpegxl-rs.milestone.history-backfilled ]
+    part_of [ @jpegxl-rs.track.akr-adoption ]
+    author "GitHub Uploader"
+}
+
+record jpegxl-rs.milestone.history-backfilled/1 : milestone {
+    title "Phase C - history M1-M8 backfilled as legacy"
+    state proposed
+    intent """
+        Import M1-M8 milestones and their slices as completed records carrying
+        source { kind legacy }; D-028 exempts their old evidence commits from the
+        descendant-commit gate.
+        """
+    acceptance {
+        check history-green {
+            statement """
+                M1-M8 render as completed in ROADMAP.md and akr check is clean with zero
+                AKR-R022.
+                """
+            method command
+            command "akr check"
+        }
+    }
+    after [ @jpegxl-rs.milestone.durable-rulings ]
+    part_of [ @jpegxl-rs.track.akr-adoption ]
+    author "GitHub Uploader"
+}
+
+record jpegxl-rs.milestone.markdown-retired/1 : milestone {
+    title "Phase E - markdown planning retired"
+    state proposed
+    intent """
+        CI runs akr check, akr check --views-current, and cargo fmt --check. HANDOFF,
+        PLAN and CONFORMANCE are replaced by a pointer to docs/generated; the roadmap and
+        lessons survive only as legacy citations; AGENTS.md workflow is cut over.
+        """
+    acceptance {
+        check no-hand-plans {
+            statement """
+                No hand-edited planning markdown remains; the generated views are the
+                reading surface and CI enforces akr check and views-current.
+                """
+            method manual
+        }
+    }
+    after [ @jpegxl-rs.milestone.experiments-as-observations ]
+    part_of [ @jpegxl-rs.track.akr-adoption ]
+    author "GitHub Uploader"
+}
+
+record jpegxl-rs.milestone.spine-bootstrap/1 : milestone {
+    title "Phase A - AKR ledger spine live"
+    state proposed
+    intent """
+        Conventions decided; the adoption ledger exists; akr build emits the seven
+        generated views; AGENTS.md already carries the AKR protocol.
+        """
+    acceptance {
+        check builds {
+            statement """
+                akr build emits docs/generated and akr check reports no diagnostics.
+                """
+            method command
+            command "akr build"
+        }
+        check conventions {
+            statement """
+                A decision record fixes the namespace, scope convention, and kind crosswalk.
+                """
+            method manual
+        }
+    }
+    part_of [ @jpegxl-rs.track.akr-adoption ]
+    author "GitHub Uploader"
+}

@@ -1,0 +1,121 @@
+akr 0.1
+project jpegxl-rs
+
+record jpegxl-rs.decision.annex-h-corrected-constants/1 : decision {
+    title "Annex H OCR corruptions: the verified constants"
+    state proposed
+    scope [ path "JPXL/crates/jpxl-decode/**", path "JPXL/crates/jpxl-entropy/**" ]
+    topic annex-h-constants
+    decision """
+        Verified Annex H values after OCR corruption (2026-08-02): Table H.4 rows 4/5 are
+        abs(N)/abs(W); kDeltaPalette[4] is {0,-12,0} (not {0,-12,9}); Table H.3 row 13 is
+        WW not WH (pinned by the coefficients-sum-to-16 test); H.5.2 weight normalisation
+        and error2weight exist only in the LaTeX; in H.6.3 "B = B + A&A" means B = B + A.
+        Do not re-transcribe these from the corrupted source.
+        """
+    context """
+        Recovered from HANDOFF "Already fixed" (2026-08-02). See the prefer-latex-over-ocr
+        policy for the general rule.
+        """
+    author "GitHub Uploader"
+}
+
+record jpegxl-rs.decision.c26-alias-mapping/1 : decision {
+    title "C.2.6 alias mapping is symbols[u] = o, not 0"
+    state proposed
+    scope [ path "JPXL/crates/jpxl-entropy/**" ]
+    topic c26-alias-mapping
+    decision """
+        In the C.2.6 alias-table build, symbols[u] = o (the overfull index), not 0. The
+        LaTeX renders it as 0, an OCR corruption; only o is consistent with the algorithm.
+        The invariant test (each symbol s appears exactly D[s] times across slots, offsets
+        a permutation of 0..D[s]) fails under = 0. If that test fires, the bug is in new
+        code, not the test.
+        """
+    context """
+        Recovered from HANDOFF "Already fixed" (2026-08-02).
+        """
+    author "GitHub Uploader"
+}
+
+record jpegxl-rs.decision.ledger-conventions/1 : decision {
+    title "AKR ledger conventions for jpegxl-rs"
+    state proposed
+    scope [ all ]
+    topic ledger-conventions
+    decision """
+        The AKR ledger at the repository root is the plan-of-record. One namespace,
+        jpegxl-rs; structure comes from scope path globs over JPXL/crates/**, not from
+        extra namespaces. Kind crosswalk from the retired markdown: roadmap phases and
+        milestones become milestone and track; waves and slices become work; HANDOFF
+        "Already fixed" becomes decision; HANDOFF "Traps" becomes policy; LESSONS and
+        resource limits become decision and constraint; docs/experiments notes become
+        observation and evidence with watches; CONFORMANCE becomes milestone acceptance
+        plus observation. Generated views under docs/generated are the single reading
+        surface; the source markdown is retired to legacy citations. Historical
+        milestones are imported with source { kind legacy } so D-028 exempts their old
+        evidence commits from the descendant-commit gate.
+        """
+    context """
+        Planning lived in RUST_JXL_ENCODER_ROADMAP.md, JPXL/docs HANDOFF, PLAN and
+        CONFORMANCE, and about twenty-five dated docs/experiments notes, all hand
+        maintained and drifting. AKR makes the plan typed, checkable and generated.
+        """
+    consequences """
+        Agents propose and revise records and log papercuts instead of editing
+        HANDOFF.md; wave commits become ledger writes. Renaming the namespace later
+        rewrites every key, so it is fixed here.
+        """
+    author "GitHub Uploader"
+}
+
+record jpegxl-rs.decision.quant-bias-defaults/1 : decision {
+    title "quant_bias defaults are 1 minus x"
+    state proposed
+    scope [ path "JPXL/crates/jpxl-core/**" ]
+    topic quant-bias-defaults
+    decision """
+        Table L.1 prints the quant_bias defaults as literal expressions (1 - 0.05465 and
+        so on), verified against a clean scan after both OCRs collapsed the "1 -" prefix.
+        DEFAULT_QUANT_BIAS is approximately [0.9453, 0.9299, 0.9501] in headers/opsin.rs.
+        Do not simplify these back to the small constants.
+        """
+    context """
+        Recovered from HANDOFF "Already fixed" (2026-08-02).
+        """
+    author "GitHub Uploader"
+}
+
+record jpegxl-rs.decision.read-u32-wraps/1 : decision {
+    title "read_u32 wraps mod 2^32, it does not error"
+    state proposed
+    scope [ path "JPXL/crates/jpxl-bitstream/**" ]
+    topic read-u32-overflow
+    decision """
+        Per 18181-1 B.2.2, read_u32 computes (offset + v) Umod (1 << 32): it wraps with
+        wrapping_add and never returns Overflow on offset + payload. Regression test
+        u32_offset_plus_payload_wraps_mod_2_pow_32. Do not harden this back into an error.
+        """
+    context """
+        Recovered from HANDOFF "Already fixed" (2026-08-02). The original scaffold
+        returned Overflow; the fix carries a clause citation.
+        """
+    author "GitHub Uploader"
+}
+
+record jpegxl-rs.decision.xyb-inverse-matrix-normative/1 : decision {
+    title "XYB inverse matrix is verified normative"
+    state proposed
+    scope [ path "JPXL/crates/jpxl-core/**" ]
+    topic xyb-inverse-matrix
+    decision """
+        OPSIN_ABSORBANCE_INVERSE_MATRIX matches 18181-1 L.2.1 Table L.1 defaults
+        digit-for-digit at f32; it is normative, not provisional. The spec signals
+        opsin_bias0..2 as negative (decoder side); the forward-side positive bias is the
+        same convention mirrored, documented in jpxl-core/src/color.rs.
+        """
+    context """
+        Recovered from HANDOFF "Already fixed" (2026-08-02).
+        """
+    author "GitHub Uploader"
+}

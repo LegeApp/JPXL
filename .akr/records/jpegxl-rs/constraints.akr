@@ -1,0 +1,103 @@
+akr 0.1
+project jpegxl-rs
+
+record jpegxl-rs.constraint.correctness-before-speed/1 : constraint {
+    title "Correctness order: conformance before performance"
+    state proposed
+    scope [ all ]
+    topic correctness-order
+    statement """
+        Work proceeds in this order of priority: conformance, resource safety, memory
+        ownership, scalar performance, parallelism, SIMD, then encoder quality search.
+        """
+    rationale """
+        Roadmap Phase 10.
+        """
+    author "GitHub Uploader"
+}
+
+record jpegxl-rs.constraint.correctness-metrics/1 : constraint {
+    title "Correctness is measured by pixels, not byte-parity with libjxl"
+    state proposed
+    scope [ path "JPXL/crates/jpxl-conformance/**" ]
+    topic correctness-metrics
+    statement """
+        Decoder success is not lossless correctness. Conformance compares parse success,
+        dimensions, bit depth, color interpretation, frame count, an exact pixel hash for
+        lossless paths, and peak error plus RMSE for conforming lossy paths. Byte-for-byte
+        parity with libjxl is not a general target.
+        """
+    rationale """
+        From LESSONS "Decoder success is not lossless correctness" and roadmap Phase 1.
+        """
+    author "GitHub Uploader"
+}
+
+record jpegxl-rs.constraint.decoder-resource-limits/1 : constraint {
+    title "The decoder enforces explicit resource limits"
+    state proposed
+    scope [ path "JPXL/crates/jpxl-core/**", path "JPXL/crates/jpxl-decode/**" ]
+    topic resource-limits
+    statement """
+        The decoder enforces explicit, configurable upper bounds and validates all TOC
+        ranges before allocating or launching workers.
+        """
+    measure """
+        Explicit limits exist for: pixels, frames, channels, extra channels, section count,
+        section bytes, ICC bytes, MA-tree nodes, histograms, LZ77 window, temporary memory,
+        and worker count.
+        """
+    rationale """
+        Roadmap Phase 10: memory and thread limits are correctness, not optional tuning.
+        """
+    author "GitHub Uploader"
+}
+
+record jpegxl-rs.constraint.forbid-unsafe-by-default/1 : constraint {
+    title "Start forbidding unsafe; add SIMD unsafe only with a local contract"
+    state proposed
+    scope [ all ]
+    topic unsafe-policy
+    statement """
+        Crates start with forbid(unsafe_code). Unsafe SIMD is added only after profiles show
+        a concrete bottleneck and only where the safety contract is local and documented.
+        """
+    rationale """
+        Roadmap Phase 10 hardening order.
+        """
+    author "GitHub Uploader"
+}
+
+record jpegxl-rs.constraint.no-libjxl-runtime-dep/1 : constraint {
+    title "No runtime dependency on libjxl"
+    state proposed
+    scope [ all ]
+    topic no-libjxl-dep
+    statement """
+        The shipped library has no runtime dependency on libjxl or any C JPEG XL codec.
+        External decoders are invoked only as separate processes by the conformance harness.
+        """
+    rationale """
+        Part of the standard-first, clean-room constitution (roadmap Phase 0).
+        """
+    author "GitHub Uploader"
+}
+
+record jpegxl-rs.constraint.no-panic-checked-arith/1 : constraint {
+    title "Parsers use checked arithmetic and never panic on bad input"
+    state proposed
+    scope [ all ]
+    topic no-panic
+    statement """
+        Every parser operation uses checked arithmetic and enforces resource limits.
+        Invalid or unsupported syntax returns a typed error; it never panics and never
+        silently substitutes defaults.
+        """
+    measure """
+        Corruption fixtures produce Result errors, not panics, across the decode paths.
+        """
+    rationale """
+        Roadmap Phase 2 requirement.
+        """
+    author "GitHub Uploader"
+}

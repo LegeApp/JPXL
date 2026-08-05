@@ -1,0 +1,9 @@
+akr 0.1
+project jpegxl-rs
+
+namespace jpegxl-rs "Project-wide knowledge."
+
+defaults {
+    review_after_days 90
+    view_output "docs/generated"
+}

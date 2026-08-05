@@ -1,0 +1,13 @@
+akr 0.1
+project jpegxl-rs
+
+record jpegxl-rs.track.akr-adoption/1 : track {
+    title "Adopt AKR as the plan-of-record"
+    state proposed
+    intent """
+        Retire hand-maintained markdown planning (roadmap, HANDOFF, PLAN, CONFORMANCE,
+        docs/experiments) and make the AKR generated views the single reading surface.
+        """
+    cadence "one migration phase per session"
+    author "GitHub Uploader"
+}
