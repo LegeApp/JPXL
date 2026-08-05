@@ -48,7 +48,7 @@ record jpegxl-rs.milestone.experiments-as-observations/1 : milestone {
 
 record jpegxl-rs.milestone.history-backfilled/1 : milestone {
     title "Phase C - history M1-M8 backfilled as legacy"
-    state proposed
+    state completed
     intent """
         Import M1-M8 milestones and their slices as completed records carrying
         source { kind legacy }; D-028 exempts their old evidence commits from the
@@ -62,11 +62,227 @@ record jpegxl-rs.milestone.history-backfilled/1 : milestone {
                 """
             method command
             command "akr check"
+            verified_by [ @jpegxl-rs.evidence.history-backfilled ]
         }
     }
     after [ @jpegxl-rs.milestone.durable-rulings ]
     part_of [ @jpegxl-rs.track.akr-adoption ]
     author "GitHub Uploader"
+}
+
+record jpegxl-rs.milestone.m1-plan-ir/1 : milestone {
+    title "M1 - VarDCT plan IR and structural split"
+    state completed
+    intent """
+        Create jpxl-encode-policy and define exact VarDCT plan types with validate() in jpxl-encode, so malformed plans cannot reach the writer.
+        """
+    acceptance {
+        check typed-rejection {
+            statement """
+                A hand-built legal plan validates and dumps; malformed plans are rejected with typed errors, tested per invariant.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.m1-plan-ir ]
+        }
+    }
+    part_of [ @jpegxl-rs.track.vardct-encoder ]
+    author "GitHub Uploader"
+    source {
+        kind legacy
+        path "JPXL/docs/PLAN.md"
+        excerpt """
+            Structural split + plan IR (M1)
+            """
+    }
+}
+
+record jpegxl-rs.milestone.m2-fixed-dct8/1 : milestone {
+    title "M2 - Fixed-DCT8x8 VarDCT vertical slice"
+    state completed
+    intent """
+        RGB8 to XYB, one frame, DCT8x8 only, default matrices, constant HfMul, natural order, one pass and preset, filters off, ANS.
+        """
+    acceptance {
+        check three-decoders-accept {
+            statement """
+                JPXL, djxl and jxl-oxide all decode the stream; pixels are within the stated lossy tolerance; the section trace and ANS terminal state are valid.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.m2-fixed-dct8 ]
+        }
+    }
+    after [ @jpegxl-rs.milestone.m1-plan-ir ]
+    part_of [ @jpegxl-rs.track.vardct-encoder ]
+    author "GitHub Uploader"
+    source {
+        kind legacy
+        path "JPXL/docs/PLAN.md"
+        excerpt """
+            Fixed-DCT8x8 VarDCT vertical slice (M2)
+            """
+    }
+}
+
+record jpegxl-rs.milestone.m3-forward-transforms/1 : milestone {
+    title "M3 - Forward transform algebra"
+    state completed
+    intent """
+        Allocation-free forward forms for every supported transform, plus lf_from_llf.
+        """
+    acceptance {
+        check forward-inverse-pairs {
+            statement """
+                Forward and inverse pair tests pass per transform, and a forced-transform-map encode decodes correctly end to end.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.m3-forward-transforms ]
+        }
+    }
+    after [ @jpegxl-rs.milestone.m2-fixed-dct8 ]
+    part_of [ @jpegxl-rs.track.vardct-encoder ]
+    author "GitHub Uploader"
+    source {
+        kind legacy
+        path "JPXL/docs/PLAN.md"
+        excerpt """
+            Forward transform algebra (M3)
+            """
+    }
+}
+
+record jpegxl-rs.milestone.m4-rate-loop/1 : milestone {
+    title "M4 - Exact rate loop with fixed blocks"
+    state completed
+    intent """
+        global_scale, HfMul, LF quant, target bpp, exact section accounting, and discrete budget fill.
+        """
+    acceptance {
+        check byte-target-hit {
+            statement """
+                The encoder hits a byte target within the stated tolerance with fixed blocks; monotonicity checks are bracketed, not assumed.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.m4-rate-loop ]
+        }
+    }
+    after [ @jpegxl-rs.milestone.m3-forward-transforms ]
+    part_of [ @jpegxl-rs.track.vardct-encoder ]
+    author "GitHub Uploader"
+    source {
+        kind legacy
+        path "JPXL/docs/PLAN.md"
+        excerpt """
+            Exact rate loop, fixed blocks (M4)
+            """
+    }
+}
+
+record jpegxl-rs.milestone.m5-cfl/1 : milestone {
+    title "M5 - Chroma-from-luma estimation"
+    state completed
+    intent """
+        LF correlation plus per-64x64 HF factors: regression then integer refinement.
+        """
+    acceptance {
+        check size-improves-no-regression {
+            statement """
+                Size improves at equal quality on a correlated-colour corpus with zero regression on grayscale.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.m5-cfl ]
+        }
+    }
+    after [ @jpegxl-rs.milestone.m4-rate-loop ]
+    part_of [ @jpegxl-rs.track.vardct-encoder ]
+    author "GitHub Uploader"
+    source {
+        kind legacy
+        path "JPXL/docs/PLAN.md"
+        excerpt """
+            CfL estimation (M5)
+            """
+    }
+}
+
+record jpegxl-rs.milestone.m6-block-selector/1 : milestone {
+    title "M6 - Hierarchical block selector"
+    state completed
+    intent """
+        DCT8/16/32 plus common rectangles, with exact DP within the hierarchy.
+        """
+    acceptance {
+        check beats-fixed-8x8 {
+            statement """
+                Selected maps are legal (decoder placement invariant as the gate) and matched-quality size beats the fixed-8x8 baseline on a mixed corpus.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.m6-block-selector ]
+        }
+    }
+    after [ @jpegxl-rs.milestone.m5-cfl ]
+    part_of [ @jpegxl-rs.track.vardct-encoder ]
+    author "GitHub Uploader"
+    source {
+        kind legacy
+        path "JPXL/docs/PLAN.md"
+        excerpt """
+            Hierarchical block selector (M6)
+            """
+    }
+}
+
+record jpegxl-rs.milestone.m7-adaptive-quant/1 : milestone {
+    title "M7 - Adaptive quant and R-D curves"
+    state completed
+    intent """
+        Perceptual field, global_scale times HfMul factorization, and joint transform and quant selection.
+        """
+    acceptance {
+        check quality-uniformity {
+            statement """
+                Spatial quality uniformity improves and target size stays stable.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.m7-adaptive-quant ]
+        }
+    }
+    after [ @jpegxl-rs.milestone.m6-block-selector ]
+    part_of [ @jpegxl-rs.track.vardct-encoder ]
+    author "GitHub Uploader"
+    source {
+        kind legacy
+        path "JPXL/docs/PLAN.md"
+        excerpt """
+            Adaptive quant + R-D curves (M7)
+            """
+    }
+}
+
+record jpegxl-rs.milestone.m8-entropy-opt/1 : milestone {
+    title "M8 - Entropy optimization"
+    state completed
+    intent """
+        Trained block context, clustering, custom orders, optional presets, and one bounded refinement pass.
+        """
+    acceptance {
+        check density-bounded {
+            statement """
+                Density improves with decode-verified streams and the refinement loop is provably bounded.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.m8-entropy-opt ]
+        }
+    }
+    after [ @jpegxl-rs.milestone.m7-adaptive-quant ]
+    part_of [ @jpegxl-rs.track.vardct-encoder ]
+    author "GitHub Uploader"
+    source {
+        kind legacy
+        path "JPXL/docs/PLAN.md"
+        excerpt """
+            Entropy optimization (M8)
+            """
+    }
 }
 
 record jpegxl-rs.milestone.markdown-retired/1 : milestone {

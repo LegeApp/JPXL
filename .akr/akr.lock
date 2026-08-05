@@ -5,8 +5,8 @@ build {
     tool "akr 0.1.0"
     grammar "0.1"
     vocabulary "0.1"
-    commit git:3aad4265c335bc54e889ffccf5e29c3f3c8380ff
-    source_graph "sha256:e0c3830d1f9d754ddb02858602df840d20994bd173f6aaba693e3a7d26e4ba59"
+    commit git:65341abc2ad425ef0e193a6012e26a01ca4275b0
+    source_graph "sha256:9915bfc8fb1484be12913b414c39dd546f8f8f2cc161a625f74418350daab2ad"
 }
 
 source ".akr/project.akr" {
@@ -25,13 +25,13 @@ source ".akr/records/jpegxl-rs/decisions.akr" {
 }
 
 source ".akr/records/jpegxl-rs/evidence.akr" {
-    hash "sha256:5fb160ef51fb2b2e2110a8da0cf1be8df2e562560ecf1cdccf400b4738d5d961"
-    records 3
+    hash "sha256:0821c737d343eb0d950db6e204de71060c21ed1f1356f2676c3b7a9b55d86cc2"
+    records 12
 }
 
 source ".akr/records/jpegxl-rs/milestones.akr" {
-    hash "sha256:5cc30b3eda93696e607c08c8533362acecf2b2ec692c763252183381ae640fbf"
-    records 5
+    hash "sha256:735bd3e1d37d9c7f95cdeb63a463c0443267c5c14097ab10db9cb28890fa0044"
+    records 13
 }
 
 source ".akr/records/jpegxl-rs/policies.akr" {
@@ -40,8 +40,8 @@ source ".akr/records/jpegxl-rs/policies.akr" {
 }
 
 source ".akr/records/jpegxl-rs/tracks.akr" {
-    hash "sha256:76f73b6b82da06aed2de74d6e5a5d4abee2a746aac8611e4ffb2a3cd87aa0542"
-    records 1
+    hash "sha256:3fc3dcee012c86072b785f57e9fdb77849b8401e91834df45c46bbeecdc82fa1"
+    records 2
 }
 
 resolution @jpegxl-rs.milestone.durable-rulings/1 {
@@ -65,7 +65,7 @@ resolution @jpegxl-rs.milestone.durable-rulings/1 {
 resolution @jpegxl-rs.milestone.experiments-as-observations/1 {
     slot after
     to @jpegxl-rs.milestone.history-backfilled/1
-    hash "sha256:a7e442bdb5a3b01f54006d3385f8cb9a27ecf616bb46a41642bc29a7e7d7ad87"
+    hash "sha256:9e2bc9820ec3386ef9ce74c7659e0e95bd3bef8f9d21ebc1d855ecebdda88edc"
 }
 
 resolution @jpegxl-rs.milestone.experiments-as-observations/1 {
@@ -84,6 +84,150 @@ resolution @jpegxl-rs.milestone.history-backfilled/1 {
     slot part_of
     to @jpegxl-rs.track.akr-adoption/1
     hash "sha256:186b1a437dc661df26b9d379196e4ffd31c3b2de8527fd445895565c7f680e7c"
+}
+
+resolution @jpegxl-rs.milestone.history-backfilled/1 {
+    slot verified_by
+    to @jpegxl-rs.evidence.history-backfilled/1
+    hash "sha256:4aa4bba4295cce3e93c48dff164c981a82ecf1ad1206355da100dfc2d81ed0f1"
+}
+
+resolution @jpegxl-rs.milestone.m1-plan-ir/1 {
+    slot part_of
+    to @jpegxl-rs.track.vardct-encoder/1
+    hash "sha256:da3fcf5896fcd17d7293a0104df9796343bd386ea1dffd96b18cbdd2ccf6e124"
+}
+
+resolution @jpegxl-rs.milestone.m1-plan-ir/1 {
+    slot verified_by
+    to @jpegxl-rs.evidence.m1-plan-ir/1
+    hash "sha256:c89bc7184d9b204761769600cac70406bef53a0cd84e263ba7e450e393ed222c"
+}
+
+resolution @jpegxl-rs.milestone.m2-fixed-dct8/1 {
+    slot after
+    to @jpegxl-rs.milestone.m1-plan-ir/1
+    hash "sha256:d9b4a60184f5a02e40fdca3c59cc3a19824dfa4053a2e2b4ee37b8f0868a6f9d"
+}
+
+resolution @jpegxl-rs.milestone.m2-fixed-dct8/1 {
+    slot part_of
+    to @jpegxl-rs.track.vardct-encoder/1
+    hash "sha256:da3fcf5896fcd17d7293a0104df9796343bd386ea1dffd96b18cbdd2ccf6e124"
+}
+
+resolution @jpegxl-rs.milestone.m2-fixed-dct8/1 {
+    slot verified_by
+    to @jpegxl-rs.evidence.m2-fixed-dct8/1
+    hash "sha256:5eed141475d3034ac44fbddccee4b532cfa637248ba2e230807bc5d0cec35453"
+}
+
+resolution @jpegxl-rs.milestone.m3-forward-transforms/1 {
+    slot after
+    to @jpegxl-rs.milestone.m2-fixed-dct8/1
+    hash "sha256:a91ec0f6672041bacc71a617abfbde6b88a2603f7e4fddf6eaf818412caf1671"
+}
+
+resolution @jpegxl-rs.milestone.m3-forward-transforms/1 {
+    slot part_of
+    to @jpegxl-rs.track.vardct-encoder/1
+    hash "sha256:da3fcf5896fcd17d7293a0104df9796343bd386ea1dffd96b18cbdd2ccf6e124"
+}
+
+resolution @jpegxl-rs.milestone.m3-forward-transforms/1 {
+    slot verified_by
+    to @jpegxl-rs.evidence.m3-forward-transforms/1
+    hash "sha256:a95f96ea53b45df4dc656e22f5dc0bd89b6dca5508434733b5a5e2001e680051"
+}
+
+resolution @jpegxl-rs.milestone.m4-rate-loop/1 {
+    slot after
+    to @jpegxl-rs.milestone.m3-forward-transforms/1
+    hash "sha256:5ece0338f197c06721b62e3ea088b2d010dd57109a90a7ff084a577b2cf2c8db"
+}
+
+resolution @jpegxl-rs.milestone.m4-rate-loop/1 {
+    slot part_of
+    to @jpegxl-rs.track.vardct-encoder/1
+    hash "sha256:da3fcf5896fcd17d7293a0104df9796343bd386ea1dffd96b18cbdd2ccf6e124"
+}
+
+resolution @jpegxl-rs.milestone.m4-rate-loop/1 {
+    slot verified_by
+    to @jpegxl-rs.evidence.m4-rate-loop/1
+    hash "sha256:27a3236ebe7dbb08e50a231d6911f6c18ec65eb187cc06b7cb741d7957389729"
+}
+
+resolution @jpegxl-rs.milestone.m5-cfl/1 {
+    slot after
+    to @jpegxl-rs.milestone.m4-rate-loop/1
+    hash "sha256:15d99948af9fdbef396adc4c695857a153a3563eeaff00fad9548741190e53be"
+}
+
+resolution @jpegxl-rs.milestone.m5-cfl/1 {
+    slot part_of
+    to @jpegxl-rs.track.vardct-encoder/1
+    hash "sha256:da3fcf5896fcd17d7293a0104df9796343bd386ea1dffd96b18cbdd2ccf6e124"
+}
+
+resolution @jpegxl-rs.milestone.m5-cfl/1 {
+    slot verified_by
+    to @jpegxl-rs.evidence.m5-cfl/1
+    hash "sha256:58b96d259efa62784225d8d09af84d0e6a2b0f97449160f0bd75cfc07ddc26d2"
+}
+
+resolution @jpegxl-rs.milestone.m6-block-selector/1 {
+    slot after
+    to @jpegxl-rs.milestone.m5-cfl/1
+    hash "sha256:2e3d89d2f4d966f5593f923cd95ae5ddc6d6d5421cec9636a286e6805a819bf6"
+}
+
+resolution @jpegxl-rs.milestone.m6-block-selector/1 {
+    slot part_of
+    to @jpegxl-rs.track.vardct-encoder/1
+    hash "sha256:da3fcf5896fcd17d7293a0104df9796343bd386ea1dffd96b18cbdd2ccf6e124"
+}
+
+resolution @jpegxl-rs.milestone.m6-block-selector/1 {
+    slot verified_by
+    to @jpegxl-rs.evidence.m6-block-selector/1
+    hash "sha256:e84d14a8b7f28792a6fc8687ad55ff0b8d73c72769c50a18b6a0c7c1e402da6b"
+}
+
+resolution @jpegxl-rs.milestone.m7-adaptive-quant/1 {
+    slot after
+    to @jpegxl-rs.milestone.m6-block-selector/1
+    hash "sha256:d042800967b43dcd049d8c13cf4ae2b3163625e2f941b1064ea89d5d284162ec"
+}
+
+resolution @jpegxl-rs.milestone.m7-adaptive-quant/1 {
+    slot part_of
+    to @jpegxl-rs.track.vardct-encoder/1
+    hash "sha256:da3fcf5896fcd17d7293a0104df9796343bd386ea1dffd96b18cbdd2ccf6e124"
+}
+
+resolution @jpegxl-rs.milestone.m7-adaptive-quant/1 {
+    slot verified_by
+    to @jpegxl-rs.evidence.m7-adaptive-quant/1
+    hash "sha256:5f346839bef48a29cdbb833a89eb3e8c5200772f443cd9737b387dcb0939ce4c"
+}
+
+resolution @jpegxl-rs.milestone.m8-entropy-opt/1 {
+    slot after
+    to @jpegxl-rs.milestone.m7-adaptive-quant/1
+    hash "sha256:c263b7b724ed6aba75a8fdc87e0b3adf729e712a919caddbf29af56dc1eb9fac"
+}
+
+resolution @jpegxl-rs.milestone.m8-entropy-opt/1 {
+    slot part_of
+    to @jpegxl-rs.track.vardct-encoder/1
+    hash "sha256:da3fcf5896fcd17d7293a0104df9796343bd386ea1dffd96b18cbdd2ccf6e124"
+}
+
+resolution @jpegxl-rs.milestone.m8-entropy-opt/1 {
+    slot verified_by
+    to @jpegxl-rs.evidence.m8-entropy-opt/1
+    hash "sha256:e811528b71a6eea45f0f0280e8afdc580e70d54cdda5f2576f33bc40f03142d2"
 }
 
 resolution @jpegxl-rs.milestone.markdown-retired/1 {
@@ -116,6 +260,51 @@ resolution @jpegxl-rs.milestone.spine-bootstrap/1 {
     hash "sha256:5793d09f02a73315418bdbcd130b2116fba1c79ae1b09148cc2deb782032c0d3"
 }
 
+seal @jpegxl-rs.evidence.history-backfilled/1 {
+    state verified
+    hash "sha256:4aa4bba4295cce3e93c48dff164c981a82ecf1ad1206355da100dfc2d81ed0f1"
+}
+
+seal @jpegxl-rs.evidence.m1-plan-ir/1 {
+    state verified
+    hash "sha256:c89bc7184d9b204761769600cac70406bef53a0cd84e263ba7e450e393ed222c"
+}
+
+seal @jpegxl-rs.evidence.m2-fixed-dct8/1 {
+    state verified
+    hash "sha256:5eed141475d3034ac44fbddccee4b532cfa637248ba2e230807bc5d0cec35453"
+}
+
+seal @jpegxl-rs.evidence.m3-forward-transforms/1 {
+    state verified
+    hash "sha256:a95f96ea53b45df4dc656e22f5dc0bd89b6dca5508434733b5a5e2001e680051"
+}
+
+seal @jpegxl-rs.evidence.m4-rate-loop/1 {
+    state verified
+    hash "sha256:27a3236ebe7dbb08e50a231d6911f6c18ec65eb187cc06b7cb741d7957389729"
+}
+
+seal @jpegxl-rs.evidence.m5-cfl/1 {
+    state verified
+    hash "sha256:58b96d259efa62784225d8d09af84d0e6a2b0f97449160f0bd75cfc07ddc26d2"
+}
+
+seal @jpegxl-rs.evidence.m6-block-selector/1 {
+    state verified
+    hash "sha256:e84d14a8b7f28792a6fc8687ad55ff0b8d73c72769c50a18b6a0c7c1e402da6b"
+}
+
+seal @jpegxl-rs.evidence.m7-adaptive-quant/1 {
+    state verified
+    hash "sha256:5f346839bef48a29cdbb833a89eb3e8c5200772f443cd9737b387dcb0939ce4c"
+}
+
+seal @jpegxl-rs.evidence.m8-entropy-opt/1 {
+    state verified
+    hash "sha256:e811528b71a6eea45f0f0280e8afdc580e70d54cdda5f2576f33bc40f03142d2"
+}
+
 seal @jpegxl-rs.evidence.rulings-captured/1 {
     state verified
     hash "sha256:6fa0b4ff5fc5ab2005d848d8cd8d938b136f6299bc9c158bf7488c5353bf3d48"
@@ -134,6 +323,51 @@ seal @jpegxl-rs.evidence.spine-conventions/1 {
 seal @jpegxl-rs.milestone.durable-rulings/1 {
     state completed
     hash "sha256:5b51c57197a52f692c0735aabb0dec45b946cf834767e8ffa53bb1bb22d98d35"
+}
+
+seal @jpegxl-rs.milestone.history-backfilled/1 {
+    state completed
+    hash "sha256:9e2bc9820ec3386ef9ce74c7659e0e95bd3bef8f9d21ebc1d855ecebdda88edc"
+}
+
+seal @jpegxl-rs.milestone.m1-plan-ir/1 {
+    state completed
+    hash "sha256:d9b4a60184f5a02e40fdca3c59cc3a19824dfa4053a2e2b4ee37b8f0868a6f9d"
+}
+
+seal @jpegxl-rs.milestone.m2-fixed-dct8/1 {
+    state completed
+    hash "sha256:a91ec0f6672041bacc71a617abfbde6b88a2603f7e4fddf6eaf818412caf1671"
+}
+
+seal @jpegxl-rs.milestone.m3-forward-transforms/1 {
+    state completed
+    hash "sha256:5ece0338f197c06721b62e3ea088b2d010dd57109a90a7ff084a577b2cf2c8db"
+}
+
+seal @jpegxl-rs.milestone.m4-rate-loop/1 {
+    state completed
+    hash "sha256:15d99948af9fdbef396adc4c695857a153a3563eeaff00fad9548741190e53be"
+}
+
+seal @jpegxl-rs.milestone.m5-cfl/1 {
+    state completed
+    hash "sha256:2e3d89d2f4d966f5593f923cd95ae5ddc6d6d5421cec9636a286e6805a819bf6"
+}
+
+seal @jpegxl-rs.milestone.m6-block-selector/1 {
+    state completed
+    hash "sha256:d042800967b43dcd049d8c13cf4ae2b3163625e2f941b1064ea89d5d284162ec"
+}
+
+seal @jpegxl-rs.milestone.m7-adaptive-quant/1 {
+    state completed
+    hash "sha256:c263b7b724ed6aba75a8fdc87e0b3adf729e712a919caddbf29af56dc1eb9fac"
+}
+
+seal @jpegxl-rs.milestone.m8-entropy-opt/1 {
+    state completed
+    hash "sha256:0a2c5016f4a3be90fb412ad42f2cc5eba6cfb394c6b950c44df6be4f76787b95"
 }
 
 seal @jpegxl-rs.milestone.spine-bootstrap/1 {

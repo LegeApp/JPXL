@@ -11,3 +11,14 @@ record jpegxl-rs.track.akr-adoption/1 : track {
     cadence "one migration phase per session"
     author "GitHub Uploader"
 }
+
+record jpegxl-rs.track.vardct-encoder/1 : track {
+    title "VarDCT encoder (M1-M8)"
+    state proposed
+    intent """
+        The VarDCT encoder, built as milestones M1-M8 (PLAN.md slices 11-18) and
+        backfilled from git history as legacy-sourced completed records (D-028).
+        """
+    cadence "one milestone per encoder slice"
+    author "GitHub Uploader"
+}
