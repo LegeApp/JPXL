@@ -1,0 +1,39 @@
+akr 0.1
+project jpegxl-rs
+
+record jpegxl-rs.evidence.rulings-captured/1 : evidence {
+    title "HANDOFF Already-fixed and Traps plus LESSONS captured as 5 decisions, 12 policies, 6 constraints"
+    state verified
+    result pass
+    method manual
+    observed_at git:3aad4265c335bc54e889ffccf5e29c3f3c8380ff
+    summary """
+        HANDOFF Already-fixed and Traps plus LESSONS captured as 5 decisions, 12 policies, 6 constraints
+        """
+    author "GitHub Uploader"
+}
+
+record jpegxl-rs.evidence.spine-builds/1 : evidence {
+    title "akr build emits docs/generated (7 views) and akr check reports no diagnostics"
+    state verified
+    result pass
+    method command
+    observed_at git:3aad4265c335bc54e889ffccf5e29c3f3c8380ff
+    command "akr build"
+    summary """
+        akr build emits docs/generated (7 views) and akr check reports no diagnostics
+        """
+    author "GitHub Uploader"
+}
+
+record jpegxl-rs.evidence.spine-conventions/1 : evidence {
+    title "jpegxl-rs.decision.ledger-conventions fixes namespace, scope convention, and the kind crosswalk"
+    state verified
+    result pass
+    method manual
+    observed_at git:3aad4265c335bc54e889ffccf5e29c3f3c8380ff
+    summary """
+        jpegxl-rs.decision.ledger-conventions fixes namespace, scope convention, and the kind crosswalk
+        """
+    author "GitHub Uploader"
+}

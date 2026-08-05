@@ -3,7 +3,7 @@ project jpegxl-rs
 
 record jpegxl-rs.milestone.durable-rulings/1 : milestone {
     title "Phase B - durable rulings imported"
-    state proposed
+    state completed
     intent """
         HANDOFF "Already fixed" becomes decisions; HANDOFF "Traps" becomes policies;
         LESSONS and resource limits become decisions and constraints; the ISO-18181
@@ -16,6 +16,7 @@ record jpegxl-rs.milestone.durable-rulings/1 : milestone {
                 record, and DECISION-HISTORY.md reads as the authority.
                 """
             method manual
+            verified_by [ @jpegxl-rs.evidence.rulings-captured ]
         }
     }
     after [ @jpegxl-rs.milestone.spine-bootstrap ]
@@ -92,7 +93,7 @@ record jpegxl-rs.milestone.markdown-retired/1 : milestone {
 
 record jpegxl-rs.milestone.spine-bootstrap/1 : milestone {
     title "Phase A - AKR ledger spine live"
-    state proposed
+    state completed
     intent """
         Conventions decided; the adoption ledger exists; akr build emits the seven
         generated views; AGENTS.md already carries the AKR protocol.
@@ -104,12 +105,14 @@ record jpegxl-rs.milestone.spine-bootstrap/1 : milestone {
                 """
             method command
             command "akr build"
+            verified_by [ @jpegxl-rs.evidence.spine-builds ]
         }
         check conventions {
             statement """
                 A decision record fixes the namespace, scope convention, and kind crosswalk.
                 """
             method manual
+            verified_by [ @jpegxl-rs.evidence.spine-conventions ]
         }
     }
     part_of [ @jpegxl-rs.track.akr-adoption ]
