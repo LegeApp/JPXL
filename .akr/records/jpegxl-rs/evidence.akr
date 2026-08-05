@@ -180,13 +180,29 @@ record jpegxl-rs.evidence.m8-entropy-opt/1 : evidence {
 
 record jpegxl-rs.evidence.markdown-cutover/1 : evidence {
     title "CI gates added (scripts/ci-akr.ps1, .sh, .github/workflows/akr.yml) running akr check, --views-current, cargo fmt --check; AGENTS.md routes planning through the ledger; HANDOFF/PLAN/CONFORMANCE carry a legacy banner pointing at docs/generated"
-    state verified
+    state superseded
     result pass
     method manual
     observed_at git:a92064f93d63b81b9b42c94ad97e7661cec8afba
     summary """
         CI gates added (scripts/ci-akr.ps1, .sh, .github/workflows/akr.yml) running akr check, --views-current, cargo fmt --check; AGENTS.md routes planning through the ledger; HANDOFF/PLAN/CONFORMANCE carry a legacy banner pointing at docs/generated
         """
+    author "GitHub Uploader"
+}
+
+record jpegxl-rs.evidence.markdown-cutover/2 : evidence {
+    title "Phase E cutover wired: CI gates, AGENTS.md routing, legacy banners"
+    state verified
+    result pass
+    method manual
+    observed_at git:2a5e8eb9be07de65bc639cb547dc05679954ebb1
+    summary """
+        CI gates (scripts/ci-akr.ps1 and .sh and the akr.yml workflow) run akr check, akr
+        check --views-current, and cargo fmt --check; AGENTS.md routes planning through
+        the ledger; HANDOFF, PLAN and CONFORMANCE carry a legacy banner pointing at
+        docs/generated.
+        """
+    supersedes [ @jpegxl-rs.evidence.markdown-cutover/1 ]
     author "GitHub Uploader"
 }
 

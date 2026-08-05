@@ -5,8 +5,8 @@ build {
     tool "akr 0.1.0"
     grammar "0.1"
     vocabulary "0.1"
-    commit git:a92064f93d63b81b9b42c94ad97e7661cec8afba
-    source_graph "sha256:2b2f9502f75a3ac3fdba2ca79704a31f4e19a2724154e444c464099d12c9b03e"
+    commit git:2a5e8eb9be07de65bc639cb547dc05679954ebb1
+    source_graph "sha256:0b80772c6121a85b13bc03f28eabe9a472d0c3d6448b505a61f78ed8ce16e79f"
 }
 
 source ".akr/project.akr" {
@@ -25,8 +25,8 @@ source ".akr/records/jpegxl-rs/decisions.akr" {
 }
 
 source ".akr/records/jpegxl-rs/evidence.akr" {
-    hash "sha256:f7da2d052e3085710579a3608dfed70eb59ddc802ea6305f8dd9527fa39b7891"
-    records 14
+    hash "sha256:2bb68ef7e74fc5b0751a473ecbc9e45f29ee3c6848537d89fc1b83d866ad4d12"
+    records 15
 }
 
 source ".akr/records/jpegxl-rs/milestones.akr" {
@@ -255,8 +255,8 @@ resolution @jpegxl-rs.milestone.markdown-retired/1 {
 
 resolution @jpegxl-rs.milestone.markdown-retired/1 {
     slot verified_by
-    to @jpegxl-rs.evidence.markdown-cutover/1
-    hash "sha256:41b1ca8dd880ad3d07cceb2596efbfb66e6777200f71e90bc7eee66a14b9222d"
+    to @jpegxl-rs.evidence.markdown-cutover/2
+    hash "sha256:f6d62a57f797272bde901c7362291f30e581372263914c099cbbea2ce3648610"
 }
 
 resolution @jpegxl-rs.milestone.spine-bootstrap/1 {
@@ -328,8 +328,13 @@ seal @jpegxl-rs.evidence.m8-entropy-opt/1 {
 }
 
 seal @jpegxl-rs.evidence.markdown-cutover/1 {
+    state superseded
+    hash "sha256:4d74ca3e20e6c4b440f1f64be7cf2abb6e61ff97f49fa91055534d33d4b97f11"
+}
+
+seal @jpegxl-rs.evidence.markdown-cutover/2 {
     state verified
-    hash "sha256:41b1ca8dd880ad3d07cceb2596efbfb66e6777200f71e90bc7eee66a14b9222d"
+    hash "sha256:f6d62a57f797272bde901c7362291f30e581372263914c099cbbea2ce3648610"
 }
 
 seal @jpegxl-rs.evidence.rulings-captured/1 {
