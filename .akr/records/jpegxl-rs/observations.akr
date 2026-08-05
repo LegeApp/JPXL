@@ -1,0 +1,326 @@
+akr 0.1
+project jpegxl-rs
+
+record jpegxl-rs.observation.cropped-frames-orientation-kblack/1 : observation {
+    title "Cropped frames, orientation, kBlack channels"
+    state verified
+    statement """
+        Behaviour of cropped displayed frames, image orientation, and kBlack extra channels was established.
+        """
+    observed_at git:f35cabcf45c130c513d3f1498de2017facb9551f
+    watches [ "JPXL/crates/jpxl-decode/**" ]
+    author "GitHub Uploader"
+    source {
+        kind legacy
+        path "JPXL/docs/experiments/2026-08-04-cropped-frames-orientation-kblack.md"
+        excerpt """
+            Cropped displayed frames, image orientation, and kBlack extra channels
+            """
+    }
+}
+
+record jpegxl-rs.observation.epf-flip-points/1 : observation {
+    title "J.4 EPF has four flip points"
+    state verified
+    statement """
+        The J.4 edge-preserving filter has four flip points, and the J.3/J.4 OCR discrepancies reconcile against them.
+        """
+    observed_at git:f35cabcf45c130c513d3f1498de2017facb9551f
+    watches [ "JPXL/crates/jpxl-decode/**" ]
+    author "GitHub Uploader"
+    source {
+        kind legacy
+        path "JPXL/docs/experiments/2026-08-03-epf-flip-points.md"
+        excerpt """
+            J.4 edge-preserving filter: four flip points and the J.3/J.4 OCR reconciliation
+            """
+    }
+}
+
+record jpegxl-rs.observation.flip-point-fixtures/1 : observation {
+    title "Flip-point fixtures and a dead-code bug"
+    state verified
+    statement """
+        Targeted fixtures pin the four flip points; the work also exposed one dead-code bug.
+        """
+    observed_at git:f35cabcf45c130c513d3f1498de2017facb9551f
+    watches [ "JPXL/crates/jpxl-decode/**" ]
+    author "GitHub Uploader"
+    source {
+        kind legacy
+        path "JPXL/docs/experiments/2026-08-03-flip-point-fixtures.md"
+        excerpt """
+            Four flip points, targeted fixtures, and one dead-code bug
+            """
+    }
+}
+
+record jpegxl-rs.observation.h52-clamp/1 : observation {
+    title "H.5.2 clamp guard is XOR; defect was in the sub-predictors"
+    state verified
+    statement """
+        H.5.2's clamp is asymmetric, not one symmetric clamp behind one guard; the guard is XOR (a single scan read resolved three sessions of chasing), and the residual defect localised to the sub-predictors, not the weights, clamp, or max_error.
+        """
+    observed_at git:f35cabcf45c130c513d3f1498de2017facb9551f
+    watches [ "JPXL/crates/jpxl-decode/**" ]
+    author "GitHub Uploader"
+    source {
+        kind legacy
+        path "JPXL/docs/experiments/2026-08-03-h52-clamp-xor-scan-resolution.md"
+        excerpt """
+            H.5.2's clamp guard is XOR: one scan read closes three sessions of chasing
+            """
+    }
+}
+
+record jpegxl-rs.observation.i25-dequant-constants/1 : observation {
+    title "I.2.5 default dequantization constants verified"
+    state verified
+    statement """
+        The I.2.5 default dequantization constants were checked digit by digit against a clean scan to determine which printed digits are real.
+        """
+    observed_at git:f35cabcf45c130c513d3f1498de2017facb9551f
+    watches [ "JPXL/crates/jpxl-core/**" ]
+    author "GitHub Uploader"
+    source {
+        kind legacy
+        path "JPXL/docs/experiments/2026-08-03-i25-default-dequant-constants.md"
+        excerpt """
+            I.2.5 default dequantization constants: which printed digits are real?
+            """
+    }
+}
+
+record jpegxl-rs.observation.i4-context-model/1 : observation {
+    title "I.4 context model proved by ANS exhaustion"
+    state verified
+    statement """
+        I.4's context model was proved by ANS exhaustion, with the limits of that proof documented.
+        """
+    observed_at git:f35cabcf45c130c513d3f1498de2017facb9551f
+    watches [ "JPXL/crates/jpxl-entropy/**" ]
+    author "GitHub Uploader"
+    source {
+        kind legacy
+        path "JPXL/docs/experiments/2026-08-03-i4-context-model-ans-gate.md"
+        excerpt """
+            I.4's context model, proved by ANS exhaustion, and what that proof misses
+            """
+    }
+}
+
+record jpegxl-rs.observation.i6-cfl-sign-wire-range/1 : observation {
+    title "I.6 CfL sign convention and HF factor wire range"
+    state verified
+    statement """
+        The I.6 chroma-from-luma sign convention and the HF factor wire range were established.
+        """
+    observed_at git:f35cabcf45c130c513d3f1498de2017facb9551f
+    watches [ "JPXL/crates/jpxl-decode/**" ]
+    author "GitHub Uploader"
+    source {
+        kind legacy
+        path "JPXL/docs/experiments/2026-08-04-i6-cfl-sign-and-wire-range.md"
+        excerpt """
+            I.6 chroma-from-luma: sign convention and the HF factor wire range
+            """
+    }
+}
+
+record jpegxl-rs.observation.i8-scalef/1 : observation {
+    title "I.8 ScaleF printed formula divides by zero"
+    state verified
+    statement """
+        The I.8 ScaleF formula as printed divides by zero; the correct argument was recovered.
+        """
+    observed_at git:f35cabcf45c130c513d3f1498de2017facb9551f
+    watches [ "JPXL/crates/jpxl-decode/**" ]
+    author "GitHub Uploader"
+    source {
+        kind legacy
+        path "JPXL/docs/experiments/2026-08-03-i8-scalef-argument.md"
+        excerpt """
+            I.8 ScaleF: the printed formula divides by zero
+            """
+    }
+}
+
+record jpegxl-rs.observation.i9-dct8x4-half-placement/1 : observation {
+    title "I.9.6/I.9.7 DCT8x4 half-block placement"
+    state verified
+    statement """
+        Where the two DCT8x4 half-blocks land under I.9.6 and I.9.7 was determined from fixtures.
+        """
+    observed_at git:f35cabcf45c130c513d3f1498de2017facb9551f
+    watches [ "JPXL/crates/jpxl-decode/**" ]
+    author "GitHub Uploader"
+    source {
+        kind legacy
+        path "JPXL/docs/experiments/2026-08-03-i9-dct8x4-half-placement.md"
+        excerpt """
+            I.9.6 / I.9.7: where the two half-blocks land
+            """
+    }
+}
+
+record jpegxl-rs.observation.icc-stream-placement/1 : observation {
+    title "ICC payload placement and E.4.4 tags"
+    state verified
+    statement """
+        ICC payload placement and the E.4.4 tag dictionary were pinned down against byte-exact fixtures.
+        """
+    observed_at git:f35cabcf45c130c513d3f1498de2017facb9551f
+    watches [ "JPXL/crates/jpxl-core/**" ]
+    author "GitHub Uploader"
+    source {
+        kind legacy
+        path "JPXL/docs/experiments/2026-08-03-icc-stream-placement.md"
+        excerpt """
+            ICC payload placement and the E.4.4 tag dictionary
+            """
+    }
+}
+
+record jpegxl-rs.observation.k2-upsampling-afv-transpose/1 : observation {
+    title "K.2 upsampling exposes AFV dequant-weight transpose"
+    state verified
+    statement """
+        K.2 upsampling work exposed an AFV dequant-weight transpose that had to be corrected.
+        """
+    observed_at git:f35cabcf45c130c513d3f1498de2017facb9551f
+    watches [ "JPXL/crates/jpxl-decode/**" ]
+    author "GitHub Uploader"
+    source {
+        kind legacy
+        path "JPXL/docs/experiments/2026-08-04-k2-upsampling-and-afv-weight-transpose.md"
+        excerpt """
+            K.2 upsampling, and the AFV dequant-weight transpose it exposed
+            """
+    }
+}
+
+record jpegxl-rs.observation.lf-frame-multipass/1 : observation {
+    title "Progressive: kLFFrame, kUseLfFrame, multi-pass HF"
+    state verified
+    statement """
+        Progressive decoding behaviour for kLFFrame, kUseLfFrame and multi-pass HF was established.
+        """
+    observed_at git:f35cabcf45c130c513d3f1498de2017facb9551f
+    watches [ "JPXL/crates/jpxl-decode/**" ]
+    author "GitHub Uploader"
+    source {
+        kind legacy
+        path "JPXL/docs/experiments/2026-08-04-lf-frame-and-multipass.md"
+        excerpt """
+            Progressive decoding: kLFFrame, kUseLfFrame and multi-pass HF
+            """
+    }
+}
+
+record jpegxl-rs.observation.lf-quant-channel-order/1 : observation {
+    title "G.2.2 LfQuant channel order (fixture-proven)"
+    state verified
+    statement """
+        The order of LfQuant's three channels (G.2.2) was settled by fixture evidence, which superseded the earlier reading.
+        """
+    observed_at git:f35cabcf45c130c513d3f1498de2017facb9551f
+    watches [ "JPXL/crates/jpxl-decode/**" ]
+    author "GitHub Uploader"
+    source {
+        kind legacy
+        path "JPXL/docs/experiments/2026-08-03-lf-quant-channel-order-fixture-evidence.md"
+        excerpt """
+            G.2.2 LfQuant channel order: fixture evidence supersedes the earlier reading
+            """
+    }
+}
+
+record jpegxl-rs.observation.negative-transfer-function/1 : observation {
+    title "E.6 transfer functions below zero: sRGB odd, BT.709 not"
+    state verified
+    statement """
+        For Table E.6 transfer functions below zero, sRGB is odd while BT.709 is not; the below-zero branch was handled accordingly.
+        """
+    observed_at git:f35cabcf45c130c513d3f1498de2017facb9551f
+    watches [ "JPXL/crates/jpxl-core/**" ]
+    author "GitHub Uploader"
+    source {
+        kind legacy
+        path "JPXL/docs/experiments/2026-08-04-negative-transfer-function-branch.md"
+        excerpt """
+            Table E.6 transfer functions below zero: sRGB is odd, BT.709 is not
+            """
+    }
+}
+
+record jpegxl-rs.observation.noise-xorshift/1 : observation {
+    title "K.5.2 XorShift128Plus update uses XOR not multiply"
+    state verified
+    statement """
+        In K.5.2's XorShift128Plus state update, the * in the transcription is actually ^ (XOR), read from the scan.
+        """
+    observed_at git:f35cabcf45c130c513d3f1498de2017facb9551f
+    watches [ "JPXL/crates/jpxl-decode/**" ]
+    author "GitHub Uploader"
+    source {
+        kind legacy
+        path "JPXL/docs/experiments/2026-08-04-noise-xorshift-ocr-reading.md"
+        excerpt """
+            K.5.2's XorShift128Plus state update: the transcription's asterisk is XOR
+            """
+    }
+}
+
+record jpegxl-rs.observation.patches-k3/1 : observation {
+    title "Patches (K.3) corpus content and proof path"
+    state verified
+    statement """
+        What the corpus patch (K.3) streams contain, and how the patches path was proved.
+        """
+    observed_at git:f35cabcf45c130c513d3f1498de2017facb9551f
+    watches [ "JPXL/crates/jpxl-decode/**" ]
+    author "GitHub Uploader"
+    source {
+        kind legacy
+        path "JPXL/docs/experiments/2026-08-03-patches-k3.md"
+        excerpt """
+            Patches (K.3): what the corpus streams contain, and how the path was proved
+            """
+    }
+}
+
+record jpegxl-rs.observation.vardct-extra-channels-blending/1 : observation {
+    title "Extra channels in VarDCT frames and F.8 blending"
+    state verified
+    statement """
+        Extra channels in kVarDCT frames, Table F.8 frame blending, and K.3.2 with alpha were established.
+        """
+    observed_at git:f35cabcf45c130c513d3f1498de2017facb9551f
+    watches [ "JPXL/crates/jpxl-decode/**" ]
+    author "GitHub Uploader"
+    source {
+        kind legacy
+        path "JPXL/docs/experiments/2026-08-04-vardct-extra-channels-and-frame-blending.md"
+        excerpt """
+            Extra channels in kVarDCT frames, Table F.8 frame blending, and K.3.2 with alpha
+            """
+    }
+}
+
+record jpegxl-rs.observation.vardct-flip-point-probe/1 : observation {
+    title "VarDCT flip-point probe (slice 8F)"
+    state verified
+    statement """
+        The VarDCT flip-point probe pass (slice 8F) recorded which flip points the VarDCT path exercises.
+        """
+    observed_at git:f35cabcf45c130c513d3f1498de2017facb9551f
+    watches [ "JPXL/crates/jpxl-decode/**" ]
+    author "GitHub Uploader"
+    source {
+        kind legacy
+        path "JPXL/docs/experiments/2026-08-03-vardct-flip-point-probe.md"
+        excerpt """
+            VarDCT flip-point probe pass (slice 8F)
+            """
+    }
+}

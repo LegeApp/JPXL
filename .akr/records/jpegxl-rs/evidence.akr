@@ -1,6 +1,18 @@
 akr 0.1
 project jpegxl-rs
 
+record jpegxl-rs.evidence.experiments-captured/1 : evidence {
+    title "The dated docs/experiments notes are captured as 18 observations that watch the relevant crates; akr review-queue reflects the resulting stale/at-risk set"
+    state verified
+    result pass
+    method manual
+    observed_at git:f35cabcf45c130c513d3f1498de2017facb9551f
+    summary """
+        The dated docs/experiments notes are captured as 18 observations that watch the relevant crates; akr review-queue reflects the resulting stale/at-risk set
+        """
+    author "GitHub Uploader"
+}
+
 record jpegxl-rs.evidence.history-backfilled/1 : evidence {
     title "M1-M8 render as completed in ROADMAP.md and akr check reports no diagnostics and zero AKR-R022"
     state verified

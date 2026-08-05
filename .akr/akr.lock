@@ -5,8 +5,8 @@ build {
     tool "akr 0.1.0"
     grammar "0.1"
     vocabulary "0.1"
-    commit git:65341abc2ad425ef0e193a6012e26a01ca4275b0
-    source_graph "sha256:9915bfc8fb1484be12913b414c39dd546f8f8f2cc161a625f74418350daab2ad"
+    commit git:f35cabcf45c130c513d3f1498de2017facb9551f
+    source_graph "sha256:1b956c4ebdfe946d962c4e0bf1f4d85e3e9d2f30fd43e2973a2a0f94c5f1cbd3"
 }
 
 source ".akr/project.akr" {
@@ -25,13 +25,18 @@ source ".akr/records/jpegxl-rs/decisions.akr" {
 }
 
 source ".akr/records/jpegxl-rs/evidence.akr" {
-    hash "sha256:0821c737d343eb0d950db6e204de71060c21ed1f1356f2676c3b7a9b55d86cc2"
-    records 12
+    hash "sha256:f503d51280525614ec726f5f34ef9861b12b7a8a44f6dbb8e909caae78060856"
+    records 13
 }
 
 source ".akr/records/jpegxl-rs/milestones.akr" {
-    hash "sha256:735bd3e1d37d9c7f95cdeb63a463c0443267c5c14097ab10db9cb28890fa0044"
+    hash "sha256:3dd19effd12f3786a56461ebe3962e0d7556d75ae27f02e5a65c732c818e63ca"
     records 13
+}
+
+source ".akr/records/jpegxl-rs/observations.akr" {
+    hash "sha256:64015b754c5aae570f30be8a08808554002c9da145242446806220d6ac2bad8b"
+    records 18
 }
 
 source ".akr/records/jpegxl-rs/policies.akr" {
@@ -72,6 +77,12 @@ resolution @jpegxl-rs.milestone.experiments-as-observations/1 {
     slot part_of
     to @jpegxl-rs.track.akr-adoption/1
     hash "sha256:186b1a437dc661df26b9d379196e4ffd31c3b2de8527fd445895565c7f680e7c"
+}
+
+resolution @jpegxl-rs.milestone.experiments-as-observations/1 {
+    slot verified_by
+    to @jpegxl-rs.evidence.experiments-captured/1
+    hash "sha256:e8cd8642db7bbf317ba082be89b3fb53243094c29dc225a530527a0000425c97"
 }
 
 resolution @jpegxl-rs.milestone.history-backfilled/1 {
@@ -233,7 +244,7 @@ resolution @jpegxl-rs.milestone.m8-entropy-opt/1 {
 resolution @jpegxl-rs.milestone.markdown-retired/1 {
     slot after
     to @jpegxl-rs.milestone.experiments-as-observations/1
-    hash "sha256:9d37621bee5adb7ece4e9b5751a3ed5e360dafe502ef2afddb1b6a36cdc1da83"
+    hash "sha256:746e8eead0bd4662d565fdd526da45b5d9e0552817592cb40d9d94a1940be7a3"
 }
 
 resolution @jpegxl-rs.milestone.markdown-retired/1 {
@@ -258,6 +269,11 @@ resolution @jpegxl-rs.milestone.spine-bootstrap/1 {
     slot verified_by
     to @jpegxl-rs.evidence.spine-conventions/1
     hash "sha256:5793d09f02a73315418bdbcd130b2116fba1c79ae1b09148cc2deb782032c0d3"
+}
+
+seal @jpegxl-rs.evidence.experiments-captured/1 {
+    state verified
+    hash "sha256:e8cd8642db7bbf317ba082be89b3fb53243094c29dc225a530527a0000425c97"
 }
 
 seal @jpegxl-rs.evidence.history-backfilled/1 {
@@ -325,6 +341,11 @@ seal @jpegxl-rs.milestone.durable-rulings/1 {
     hash "sha256:5b51c57197a52f692c0735aabb0dec45b946cf834767e8ffa53bb1bb22d98d35"
 }
 
+seal @jpegxl-rs.milestone.experiments-as-observations/1 {
+    state completed
+    hash "sha256:746e8eead0bd4662d565fdd526da45b5d9e0552817592cb40d9d94a1940be7a3"
+}
+
 seal @jpegxl-rs.milestone.history-backfilled/1 {
     state completed
     hash "sha256:9e2bc9820ec3386ef9ce74c7659e0e95bd3bef8f9d21ebc1d855ecebdda88edc"
@@ -373,4 +394,94 @@ seal @jpegxl-rs.milestone.m8-entropy-opt/1 {
 seal @jpegxl-rs.milestone.spine-bootstrap/1 {
     state completed
     hash "sha256:df7662c178a233de8a7b385c1f35a7e92556b887da5866b12f936deb4af8c16d"
+}
+
+seal @jpegxl-rs.observation.cropped-frames-orientation-kblack/1 {
+    state verified
+    hash "sha256:a0bad99c9992e720d1bf528c16ce6b1ac0f29e7efb975e896a088c353b3a3a47"
+}
+
+seal @jpegxl-rs.observation.epf-flip-points/1 {
+    state verified
+    hash "sha256:414c0379d2cbb3b0add33d7daf7ec3079840b898a542297caa419114378483c5"
+}
+
+seal @jpegxl-rs.observation.flip-point-fixtures/1 {
+    state verified
+    hash "sha256:b2164f137e5559f0d4567943068da091543a7fcb0265e824130cb7d413f76c49"
+}
+
+seal @jpegxl-rs.observation.h52-clamp/1 {
+    state verified
+    hash "sha256:19695e04f861e0680ee62016f53195477db4a960d9f3b9d4d9ac77ce480f09e9"
+}
+
+seal @jpegxl-rs.observation.i25-dequant-constants/1 {
+    state verified
+    hash "sha256:6bc3a2384b4def5962c3cb6557cb2891e7c1cca0caa9f6c5ce71bfa97c768a3a"
+}
+
+seal @jpegxl-rs.observation.i4-context-model/1 {
+    state verified
+    hash "sha256:940fb6358e6cd479b4a2a54187f3730baaf3323bbabab7db545129c0c93ee667"
+}
+
+seal @jpegxl-rs.observation.i6-cfl-sign-wire-range/1 {
+    state verified
+    hash "sha256:cf866d013a8933a1b2000f799ceb8d30c27e89100c578611ee8210a70df091f4"
+}
+
+seal @jpegxl-rs.observation.i8-scalef/1 {
+    state verified
+    hash "sha256:7ee9a45dd15b188498987c919a5a81ab20c8cada64360f00565bc5a1b5ce2145"
+}
+
+seal @jpegxl-rs.observation.i9-dct8x4-half-placement/1 {
+    state verified
+    hash "sha256:c64318be89049f37ff8eb7b4da2678bbcc7ef173a396758d33adeb184760d449"
+}
+
+seal @jpegxl-rs.observation.icc-stream-placement/1 {
+    state verified
+    hash "sha256:8d794dddb7366f16cdaca16e7abaf6782b6e55857878bfcfed8e668946407c3f"
+}
+
+seal @jpegxl-rs.observation.k2-upsampling-afv-transpose/1 {
+    state verified
+    hash "sha256:547248aaaf60e6539f010ba7e3915698436a9a91886db8887a10d587b00a223f"
+}
+
+seal @jpegxl-rs.observation.lf-frame-multipass/1 {
+    state verified
+    hash "sha256:c250381e775d27a45f1ac4f99cf5e9c423dc6437e239af7ab5a69b1feb4454ec"
+}
+
+seal @jpegxl-rs.observation.lf-quant-channel-order/1 {
+    state verified
+    hash "sha256:35ae8d247b0f95478a482ff19cedfb7bda0537aac68fed27490a5f4abfe5ffc1"
+}
+
+seal @jpegxl-rs.observation.negative-transfer-function/1 {
+    state verified
+    hash "sha256:05d606a3194a0bcf4d17c6e735c32017dbc9aaa2897d39e05f9089eb3ec91e9f"
+}
+
+seal @jpegxl-rs.observation.noise-xorshift/1 {
+    state verified
+    hash "sha256:d8c0bbf3c294a2da6eb5c824f06a504714404ca2a6d46b4e19366a31033ba0b9"
+}
+
+seal @jpegxl-rs.observation.patches-k3/1 {
+    state verified
+    hash "sha256:bca247170ce59df488ca3e70fa061470da5f680454af775bd9bdbb99364ff5f7"
+}
+
+seal @jpegxl-rs.observation.vardct-extra-channels-blending/1 {
+    state verified
+    hash "sha256:50a2b43ee403dc44b594973e5c79b8f8c9a79793e8c1cd245c4745e8f5ecc918"
+}
+
+seal @jpegxl-rs.observation.vardct-flip-point-probe/1 {
+    state verified
+    hash "sha256:9dfad6eeeb694ae4f08fff33573cf559f103e29c37bb793244ad152cd199c24c"
 }

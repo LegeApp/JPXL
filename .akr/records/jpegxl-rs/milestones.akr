@@ -26,7 +26,7 @@ record jpegxl-rs.milestone.durable-rulings/1 : milestone {
 
 record jpegxl-rs.milestone.experiments-as-observations/1 : milestone {
     title "Phase D - experiments become observations"
-    state proposed
+    state completed
     intent """
         Each docs/experiments note becomes an observation or evidence record with
         observed_at and watches on the source files it concerns, so it goes stale
@@ -39,6 +39,7 @@ record jpegxl-rs.milestone.experiments-as-observations/1 : milestone {
                 experiment notes are captured as records.
                 """
             method manual
+            verified_by [ @jpegxl-rs.evidence.experiments-captured ]
         }
     }
     after [ @jpegxl-rs.milestone.history-backfilled ]
