@@ -178,6 +178,18 @@ record jpegxl-rs.evidence.m8-entropy-opt/1 : evidence {
     }
 }
 
+record jpegxl-rs.evidence.markdown-cutover/1 : evidence {
+    title "CI gates added (scripts/ci-akr.ps1, .sh, .github/workflows/akr.yml) running akr check, --views-current, cargo fmt --check; AGENTS.md routes planning through the ledger; HANDOFF/PLAN/CONFORMANCE carry a legacy banner pointing at docs/generated"
+    state verified
+    result pass
+    method manual
+    observed_at git:a92064f93d63b81b9b42c94ad97e7661cec8afba
+    summary """
+        CI gates added (scripts/ci-akr.ps1, .sh, .github/workflows/akr.yml) running akr check, --views-current, cargo fmt --check; AGENTS.md routes planning through the ledger; HANDOFF/PLAN/CONFORMANCE carry a legacy banner pointing at docs/generated
+        """
+    author "GitHub Uploader"
+}
+
 record jpegxl-rs.evidence.rulings-captured/1 : evidence {
     title "HANDOFF Already-fixed and Traps plus LESSONS captured as 5 decisions, 12 policies, 6 constraints"
     state verified

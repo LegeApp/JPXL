@@ -1,3 +1,7 @@
+> **Plan of record: AKR.** Milestones, decisions, policies, constraints and the experiment
+> findings now live in the AKR ledger (`.akr/`) and its generated views under
+> `docs/generated/`. This file is retained as a working log / legacy reference — not the
+> authoritative plan. See `AGENTS.md` and `docs/generated/ROADMAP.md`.
 # CONFORMANCE
 
 What JPXL supports and the tests that prove it. One row per feature or clause
@@ -37,8 +41,9 @@ Last reviewed: 2026-08-04.
 | L.2 | XYB inverse, transfer functions incl. negative-branch behaviour | Tolerance | color.rs tests, fixture 63, corpus | Supported |
 | L.3 | `do_YCbCr` colour reconstruction | Tolerance | corpus `bench_oriented_brg`/`_5` (peak 1.9e-6), `grayscale_jpeg`/`_5` (peak 1.9e-6), `e2e_ycbcr.rs` | Supported in kVarDCT frames with `jpeg_upsampling == [0, 0, 0]`; J.2 chroma upsampling (nonzero `jpeg_upsampling`, e.g. `cafe`) and do_YCbCr in kModular frames still refused |
 | Part 2 §8–9 | Box parser, `jxlc`/`jxlp`, box validation | Bit-exact framing | `container` suite, jxlinfo cross-check | Supported (`brob` decompression, `jxli`/`jbrd` parsing deferred) |
-| — | Encoder, lossless (gray/RGB, 8/16-bit, RCT, multi-group, `jxlc`/`jxlp`) | Decoders must agree | self + `djxl` + `jxl-oxide` sample-exact | Supported |
-| — | Encoder, lossy VarDCT (square transforms DCT8×8/16×16/32×32, CfL, per-varblock adaptive quantization, default matrices, 1 pass, filters off; exact byte-target rate loop, never-over + ≤1% undershoot fixed / ≤2% with AQ) | Decoders must agree (within output quantization) | `vardct_oracle.rs`/`vardct_roundtrip.rs`/`rate_loop.rs`: self + `djxl` + `jxl-oxide` within 1 8-bit code point on every ladder rung incl. multi-section, non-multiple-of-8, two-LF-group, HfMul>1, rate-targeted, CfL, merged-transform and varying-mul-row streams | Supported (hierarchical cover is the default; AQ opt-in via `AqMode`; entropy census-trained — clustering, per-cluster hybrid-uint, frequency-trained coefficient orders with the F.3.2 permutation stream; rectangles, trained block context, HF presets queued; no CLI wiring yet) |
+| — | Encoder, lossless (gray/RGB; RCT / exact palette / default squeeze; multi-section G.1.3 partition; ANS + LZ77 + MA trees) | Decoders must agree | self + `djxl` + `jxl-oxide` sample-exact | Supported (19a–e + 20a/b); cjxl density pin queued |
+| — | Encoder VarDCT restoration filters (gab signal + inverse-Gaborish precondition in policy) | Headers + policy e2e | unit + `vardct_roundtrip` / `vardct_oracle` gaborish cases | Supported (off by default via `EncodeRequest::restoration`); EPF iters may be signalled but have no encoder inverse yet |
+| — | Encoder, lossy VarDCT (square transforms DCT8×8/16×16/32×32, CfL, per-varblock adaptive quantization, default matrices, 1 pass, filters off; exact byte-target rate loop, never-over + ≤1% undershoot fixed / ≤2% with AQ) | Decoders must agree (within output quantization) | `vardct_oracle.rs`/`vardct_roundtrip.rs`/`rate_loop.rs`: self + `djxl` + `jxl-oxide` within 1 8-bit code point on every ladder rung incl. multi-section, non-multiple-of-8, two-LF-group, HfMul>1, rate-targeted, CfL, merged-transform, varying-mul-row, and multi-HF-preset streams | Supported (hierarchical cover + `AqMode::Masking` are production defaults; entropy census-trained — clustering, per-cluster hybrid-uint, F.3.2 orders, I.2.2 block-context trim, multi HF presets; rate loop with secondary `quant_lf` fill; rectangles queued; no CLI wiring yet) |
 
 Refused (typed `Unsupported`, never guessed): J.2 chroma upsampling
 (`jpeg_upsampling != [0, 0, 0]`), do_YCbCr in kModular frames, upsampling

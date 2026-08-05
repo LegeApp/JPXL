@@ -1,0 +1,24 @@
+name: akr
+
+# The AKR ledger lives at the repo root; the codec is under JPXL/.
+on: [push, pull_request]
+
+jobs:
+  ledger:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0            # freshness / last_change need full history
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Install akr
+        run: cargo install --git https://github.com/LegeApp/AKR.git akr-cli
+      - name: akr check (ledger coherence)
+        run: akr check
+      - name: akr check --views-current (D-025)
+        run: akr check --views-current
+      - name: cargo fmt --check
+        working-directory: JPXL
+        run: cargo fmt --all --check

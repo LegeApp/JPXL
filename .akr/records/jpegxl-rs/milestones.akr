@@ -287,25 +287,28 @@ record jpegxl-rs.milestone.m8-entropy-opt/1 : milestone {
 }
 
 record jpegxl-rs.milestone.markdown-retired/1 : milestone {
-    title "Phase E - markdown planning retired"
-    state proposed
+    title "Phase E - markdown planning cut over to AKR"
+    state completed
     intent """
-        CI runs akr check, akr check --views-current, and cargo fmt --check. HANDOFF,
-        PLAN and CONFORMANCE are replaced by a pointer to docs/generated; the roadmap and
-        lessons survive only as legacy citations; AGENTS.md workflow is cut over.
+        The generated views are the authoritative reading surface and CI enforces the
+        ledger. Planning changes route through AKR, not hand-edited Markdown. Physical
+        deletion of HANDOFF/PLAN/CONFORMANCE is left to the team, once the ledger also
+        carries the full slice table and the conformance matrix.
         """
     acceptance {
-        check no-hand-plans {
+        check cutover-wired {
             statement """
-                No hand-edited planning markdown remains; the generated views are the
-                reading surface and CI enforces akr check and views-current.
+                CI (scripts/ci-akr.ps1 and .github/workflows/akr.yml) runs akr check, akr
+                check --views-current, and cargo fmt --check; AGENTS.md routes planning
+                through the ledger; and HANDOFF, PLAN and CONFORMANCE carry a banner
+                demoting them to legacy reference that points at docs/generated.
                 """
             method manual
+            verified_by [ @jpegxl-rs.evidence.markdown-cutover ]
         }
     }
     after [ @jpegxl-rs.milestone.experiments-as-observations ]
     part_of [ @jpegxl-rs.track.akr-adoption ]
-    author "GitHub Uploader"
 }
 
 record jpegxl-rs.milestone.spine-bootstrap/1 : milestone {

@@ -1,3 +1,7 @@
+> **Plan of record: AKR.** Milestones, decisions, policies, constraints and the experiment
+> findings now live in the AKR ledger (`.akr/`) and its generated views under
+> `docs/generated/`. This file is retained as a working log / legacy reference — not the
+> authoritative plan. See `AGENTS.md` and `docs/generated/ROADMAP.md`.
 # PLAN.md — JPXL implementation plan
 
 Decoder-first, vertical slices. Each slice states a goal, its spec source, and
@@ -80,7 +84,7 @@ relitigate):
 | 17 | **Adaptive quant + R-D curves** | Perceptual field, `global_scale × HfMul` factorization, joint transform/quant selection (M7) | Spatial quality uniformity improves; target size stable. |
 | 18 | **Entropy optimization** | Trained block context, clustering, custom orders, optional presets; ONE bounded refinement pass (M8) | Density improves with decode-verified streams; refinement loop provably bounded. |
 | 19 | **Lossless density** (interleaves anywhere after 11.5) | Learned MA trees, LZ77, predictor selection for `jpxl-encode` modular | Density within a stated factor of `cjxl -e N` on a pinned corpus, all outputs decoded bit-exact by three decoders. |
-| 20 | **Filter planning + high effort** | Inverse-gaborish preconditioning, EPF/sharpness policy, frontier beam search (M9–M10) | Only after an unfiltered trusted R-D baseline exists. |
+| 20 | **Filter planning + high effort** | Inverse-gaborish preconditioning, EPF/sharpness policy, frontier beam search (M9–M10) | **partial 2026-08-05** — gab request + Jacobi precondition in policy (wave 20c); default still filters-off; EPF inverse / sharpness / beam search remain |
 
 ## Bit-exactness contract
 

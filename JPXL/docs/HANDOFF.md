@@ -1,3 +1,7 @@
+> **Plan of record: AKR.** Milestones, decisions, policies, constraints and the experiment
+> findings now live in the AKR ledger (`.akr/`) and its generated views under
+> `docs/generated/`. This file is retained as a working log / legacy reference — not the
+> authoritative plan. See `AGENTS.md` and `docs/generated/ROADMAP.md`.
 # HANDOFF
 
 Dated working ledger. **Prepend** new entries — newest first. Each entry: what
@@ -10,6 +14,238 @@ mark it corrected; do not leave a wrong explanation standing.
 
 Keep this file small. Entries whose content has landed in `PLAN.md`,
 `CONFORMANCE.md`, or `docs/experiments/` get deleted from here.
+
+---
+
+## 2026-08-05 (wave 20c) — VarDCT policy wires inverse Gaborish
+
+**Request knob.** `EncodeRequest::restoration` (`RestorationDecision`,
+default all off). `epf_iters > 3` refused at plan time.
+
+**Precondition in `plan_at`.** When `restoration.gaborish`,
+`prepare_gaborish_frame` runs Jacobi inverse-Gaborish on XYB and all
+DCT / cover / CfL / quantize paths use that frame. AQ analysis stays on
+the source planes (intended post-J.3 appearance). Plan header carries the
+request's restoration bits.
+
+**Proved:** policy unit + roundtrip + oracle (`djxl` / `jxl-oxide`) agree
+on a 64×64 gaborish stream within 1 code point; source RMSE stays in the
+unfiltered 64×64 class. Filters still default off.
+
+**Next:** cjxl density pin (optimization session first item); optional
+deeper EPF inverse / sharpness / filter search; multi-section polish.
+
+---
+
+## 2026-08-05 (wave 20b) — multi-section modular + filter precondition API
+
+**G.1.3 partition.** `ModularSource.nb_meta_channels` + `partition_channels`
+(meta always; then channels ≤ `group_dim`; remainder → LF group if
+`hshift≥3 && vshift≥3`, else pass group). Tracks shifts on squeeze.
+
+**P2b palette multi-section.** LfGlobal residual-codes meta; pass groups
+code index rects. 200×200 / `group_size_shift=0` sample-exact via
+jpxl-decode.
+
+**S3 squeeze multi-section.** Same partition; LF-group sections emit
+(empty stream when no LF-shifted channels). 300×200 multi-group squeeze
+sample-exact.
+
+**F2 precondition API.** `gaborish::precondition_xyb_planes` for planners
+before DCT when gab on. Header/write already signal filters; default off.
+
+**Proved:** multi-section palette + squeeze unit/e2e; lib suite. Policy
+wiring landed as wave 20c.
+
+---
+
+## 2026-08-05 (wave 20a) — palette, squeeze (single-section), filter write
+
+See git history for 20a detail (palette/squeeze single-section + filter
+header).
+
+---
+
+## 2026-08-05 (wave 19e) — deeper MA learning (slice 19 large, workstream B)
+
+**General tree IR.** `MaTree` is now an owned full binary tree (`MaNode::{Decision, Leaf}`) with per-leaf Table H.3 predictors and BFS `ctx_id` assignment (H.4.2 leaf encounter order). Writers emit breadth-first; residual collection uses each leaf’s own predictor.
+
+**Policy.** `plan_for`: (1) best single-leaf predictor by residual+tree bit cost; (2) greedy splits (property×threshold, parent predictor on both children) until no win; (3) per-leaf predictor refinement. Tree bits measured via `ma_tree_bit_cost` (no 64-bit fudge). Depth ≤ 4 / leaves ≤ 8 on frames ≤ 64×64; larger frames cap at one binary split so multi-group planning stays usable. Policy scoring sets `allow_lz77 = false`; final emission still adopts residual LZ77 when cheaper (nested compose).
+
+**Proved:** full `jpxl-encode` suite green (roundtrip, oracle djxl/jxl-oxide, containers); unit tests for BFS ctx order, per-leaf predictors, `plan_for` bounds.
+
+**Next:** palette / Squeeze; density pin vs `cjxl` (optimization session first item); slice 20 filters.
+
+---
+
+## 2026-08-05 (wave 19d) — encoder LZ77 emission (slice 19 large, workstream A)
+
+**Phase 1 — `jpxl-entropy` LZ77 encode.** `Lz77EncodeParams` on
+`EncoderPlan`; `write_bundle` emits Table C.1 + `lz_len_conf` (log alphabet
+8); context map must already include the trailing distance context
+(`identity_with_lz77`). `TokenCensus::record_token` / `record_copy` for
+length triggers (bypass value hybrid-uint). `SymbolEncoder::push_copy`
+emits length token + distance. Encode↔decode suite in
+`tests/encode_lz77.rs`. Default remains LZ77 off.
+
+**Phase 2 — modular residual LZ77.** Greedy match finder (lookback 256,
+adaptive `min_symbol` just above max literal token so ANS alphabets stay
+small). Exact-price adopt-if-cheaper vs plain ANS. **Trap:** H.3 sets
+`dist_multiplier` to channel width — wire distances must use C.3.3
+(`raw = distance + 119` when M > 0), not `distance - 1`. Verified with
+`resolve_distance` invert test + three-decoder gates.
+
+**Proved:** `cargo test -p jpxl-entropy -p jpxl-encode` green including
+oracle `djxl` / `jxl-oxide`; repeating multi-value residual patterns
+strictly smaller with LZ77; constant single-symbol residuals keep plain
+ANS (adopt-if-cheaper).
+
+**Next:** landed as wave 19e (deeper MA). Density pin vs `cjxl` stays first
+item of optimization session.
+
+---
+
+## 2026-08-05 (wave 19) — encoder slice 19c: multi-leaf MA tree (small)
+
+**Binary property split.** `MaTree::{SingleLeaf, BinarySplit}`: one
+decision `property[k] > value` then two leaves (same Table H.3 predictor,
+contexts 0/1). Residual ANS uses identity map over `num_contexts` leaves.
+Tree emission follows H.4.2 breadth-first (decision, left leaf, right leaf)
+with the existing six-context flat tree code.
+
+**Policy.** After choosing the best single-leaf predictor, try a small grid
+of splits (properties 4/5/6/7/9/10/11 × thresholds 0…64). Adopt only if
+residual cost improves by ≥64 bits (covers unmeasured tree overhead).
+
+**Proved:** full `jpxl-encode` suite green (roundtrip, oracle, containers);
+unit test for left/right context assignment.
+
+**Still large:** deeper / learned MA trees (wave 19d landed LZ77); palette /
+Squeeze; density pin vs `cjxl -e N`. Slice 20 filters after unfiltered
+baseline.
+
+---
+
+## 2026-08-05 (wave 18) — encoder slice 19a/b: lossless density (ANS + predictors)
+
+**Decoder status (for orientation):** largely complete for the planned
+reference path — corpus **30/39** green; remaining 9 are animation ×5
+(deferred forever), J.2 chroma-subsampled `cafe`/`_5`, and two probed
+failing cases (`lossless_pfm`, `grayscale_public_university`). Rare
+VarDCT transforms lack pixel-comparison coverage but parse. Encoder
+slices 11–18 + M8 leftovers done; this wave starts **slice 19**.
+
+**Slice 19a — ANS residual coding.** Modular sample streams no longer use
+flat prefix codes. Each residual section: census → best hybrid-uint among
+a fixed candidate set → `EncoderPlan::identity` ANS → bundle + payload.
+Tree stream stays the tiny flat `TREE_CODE` (one leaf). Multi-section
+`LfGlobal` still header-only (empty residual ANS stream).
+
+**Slice 19b — predictor selection.** `LosslessPlan` carries a Table H.3
+predictor. `plan_for` scores Zero / West / North / Avg(W,N) / Select /
+Gradient by exact residual-section bit cost and adopts the cheapest
+(Gradient on ties). Select formula fixed to match decoder Table H.3
+(`abs(N−NW) < abs(W−NW) ? W : N`). Weighted (6) deferred (H.5 state).
+
+**Proved:** full `jpxl-encode` roundtrip + djxl + jxl-oxide sample-exact
+on oracle ladder; constant 64×64 grey ≪ 256 B; smooth 128×128 ramp
+≪ 800 B; noise 64×64 stays under 1 bpp (table overhead dominates).
+
+**Still in slice 19:** multi-leaf MA trees, LZ77 emission (entropy encode
+still writes `lz77.enabled = false`), optional global tree, palette /
+Squeeze transforms, density-vs-`cjxl -e N` corpus pin. **Slice 20**
+filters only after unfiltered R-D baseline is trusted.
+
+---
+
+## 2026-08-05 (wave 17) — M8 leftovers: census, AqMode default, quant_lf fill
+
+**Census “unification” (settled, not merged).** `CensusSink` (raw
+PackSigned per pre-context in `jpxl-encode`) and `TokenCensus`
+(tokenized, in `jpxl-entropy`) are **two stages on purpose**: policy
+trains before hybrid-uint configs exist; ANS tables need tokens after
+configs exist. Documented in `vardct/sink.rs`. Deleted the unused
+placeholder `SymbolSink` trait (emission uses `SymbolEncoder` via an
+`HfEventSink` adapter).
+
+**`AqMode::Masking` is the production default.** Flat frames still
+collapse to a neutral field (byte-identical to Off). Explicit `Off`
+remains for baselines. Hierarchical cover was already the default
+cover.
+
+**`quant_lf` secondary fill.** After the global_scale/HfMul ladder
+settles, if undershoot exceeds tolerance and budget remains, a discrete
+probe over legal `quant_lf` values at the winning rung spends LF-dominated
+slack without reopening R-D (wave 13 LF cliffs). Controlled by
+`RateSearchBudget::lf_fill_probes` (default 8; set 0 to hold the
+request's ratio fixed). `RatePhase::LfFill` appears in the trace.
+Rate-loop iteration tripwire raised 20→32 to cover fill probes
+(measured ≤27).
+
+**M8 complete** for the encoder entropy/R-D track except rectangles
+(separate evidence track). Next: slice 19 lossless density, or slice 20
+filters only after an unfiltered R-D baseline is trusted.
+
+---
+
+## 2026-08-05 (wave 16) — Windows oracles + encoder slice 18d: HF presets
+
+**Oracle rebuild (Windows).** The vendored `tools/oracle-bin/{djxl,cjxl,jxlinfo}`
+were Linux ELFs (os error 193 on spawn). Rebuilt libjxl with MinGW
+(`libjxl/build-win`, Ninja, static libjxl) and installed PE
+`djxl.exe`/`cjxl.exe`/`jxlinfo.exe` plus MinGW runtime DLLs beside them.
+`jxl-oxide-cli 0.12.6` installed to `~/.cargo/bin`. Discovery now prefers
+`.exe`, rejects ELF magic on Windows, and resolves `USERPROFILE/.cargo/bin`.
+`tools/setup-oracles.ps1` is the Windows counterpart of `setup-oracles.sh`.
+Provenance: `PINNED_REVISIONS.txt` (libjxl `196a43d9`, GNU 16.1.0).
+Full `vardct_oracle` suite: **9/9 green** including both external oracles.
+
+**Slice 18d: multi HF preset.** Writer: removed `num_hf_presets != 1`
+refusal; `write_pass_group` emits I.4 `hfp`; walk offset =
+`495 · nb_block_ctx · hfp`. Policy: per-group absolute HF mass fingerprint,
+median split into two presets when mass differs and `num_groups ≥ 2`;
+re-census + retrain + exact-price adopt. Measured on 512×512 half-flat /
+half-noise: **`num_hf_presets=2`, assignment `[0,1,0,1]`** (checkerboard
+of groups), self-decode + both oracles accept.
+
+**Still queued from M8:** census-type unification, `AqMode` default,
+`quant_lf` fill. Next: those polish items or slice 19 lossless density.
+
+---
+
+## 2026-08-05 (wave 15) — encoder slice 18c: I.2.2 custom block context
+
+**Slice 18c: trained HF block context.** Writer emits the full I.2.2
+non-default path (LF/QF thresholds + C.2.2 `block_ctx_map` via the
+existing `ContextMap` encoder); `check_supported` no longer refuses
+`HfBlockContextPlan::Custom`. Policy proposes a candidate and adopts
+only on a strict exact `price_codestream` win (one re-census + retrain,
+same discipline as 18b orders).
+
+**Winning lever today: shape-class trim (no thresholds).** A frame that
+only uses a few Order IDs (FixedDct8x8 = shape 0) collapses unused
+default-map rows onto context 0 and densifies; `nb_block_ctx` drops
+(measured 15 → 2) and I.4's pre-context count shrinks with it. Density
+on half-noise 256×256 FixedDct8x8: **10038 → 9995 B (−0.4%)**, pixels
+unchanged, our decoder accepts the custom map. QF-threshold candidates
+are still proposed under varying `HfMul` but currently lose the price
+gate on the pinned fixtures (map cost > HF savings) — kept as a
+candidate path, not deleted.
+
+**Proved:** hand-built custom I.2.2 fragment round-trips through
+`jpxl-decode::read_hf_block_context` (thresholds + map bit-exact);
+full-frame custom map decodes under jpxl-decode; adopt-if-cheaper never
+regresses size.
+
+**Still queued from M8:** HF presets, census-type unification
+(`CensusSink` vs `TokenCensus`), `AqMode` default (still Off),
+`quant_lf` fill knob for LF-dominated rate targets. LF-threshold
+proposals deferred (did not amortise). Next encoder: 18d presets or
+slice 19 lossless density.
+
+**Env note:** `djxl` oracle on this host is a non-Win32 binary (os error
+193); external-oracle parity for the new map was not re-run here —
+self-decoder + prior ladder remain the gate.
 
 ---
 
@@ -34,10 +270,8 @@ straddles that fixture's hard vertical edge and rings — §4.3's J has
 no edge term. Slice 20's perceptual work owns edge-aware splitting;
 do not "fix" this by hand-tuning NON_DCT8X8_SIGNAL_BITS.
 
-**Still queued from M8:** trained block context (needs its writer),
-HF presets, census-type unification, `AqMode` default (still Off —
-perceptual direction is an opinionated choice), `quant_lf` fill knob
-for LF-dominated rate targets.
+**Still queued from M8 (updated wave 15):** HF presets, census-type
+unification, `AqMode` default, `quant_lf` fill. Block context: done.
 
 ---
 
@@ -1096,6 +1330,12 @@ codes, rANS, hybrid-uint, LZ77, clustering). Slice 3 unblocks slices 4, 5, and
 
 ## Traps — do not fix these by loosening a check
 
+- **Modular residual LZ77 must use H.3 `dist_multiplier`** (2026-08-05).
+  The residual `SymbolDecoder` gets `set_dist_multiplier(max_channel_width)`.
+  Encoding distances as `raw = distance - 1` (as if M=0) produces streams that
+  round-trip in isolation but fail under full modular decode. Use
+  `raw = distance + 119` when M > 0 (C.3.3 past the special table). Do not
+  "fix" by forcing M=0 on the decoder.
 - **`EXPERIMENT_CLAMP_SYMMETRIC = false` is not a loosened check**
   (2026-08-03). Restoring the printed symmetric H.5.2 clamp "to match the
   spec" re-breaks fixtures 05/09/10/20; the contradicting oracle samples are

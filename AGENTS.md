@@ -225,3 +225,52 @@ Work is dispatched as briefs that list whole files. Rules:
   hash, and how to regenerate it. Fixtures without provenance do not merge.
 - The software license and the patent position are separate questions. Nothing
   here is legal advice.
+
+## Project knowledge (AKR)
+
+Durable project knowledge lives in `.akr/` as typed records, not in Markdown.
+`docs/generated/` is build output. Follow this protocol.
+
+**Before starting any task**
+1. `knowledge.context --goal <milestone|work|track>` for the thing you are working on.
+   Add `--paths` for the files you expect to touch.
+2. Read the bundle in full. Contradictions and staleness warnings are always included
+   and are never noise.
+
+**While working**
+- Look things up with `knowledge.get`; find them with `knowledge.search`.
+  Search ranks results; it never grants authority. A record's standing comes from its
+  state, its scope, and its relations.
+- Scratch notes go in `.agent/scratch/`. Nobody reviews them and nothing depends on them.
+
+**When something becomes durable**
+- New knowledge: `knowledge.propose`. Observations need `observed_at` and, if they can
+  go out of date, `watches`.
+- Changed knowledge: `knowledge.revise`. Never edit a `.akr` file directly, and never
+  edit a record that is not `proposed`.
+- Replacing a plan: `knowledge.supersede`, with a disposition for every unfinished
+  child. The tool will list them; answer each one.
+- Finishing work: `knowledge.complete`, with evidence for every acceptance check.
+  Evidence records state what was observed; they never state what they verify.
+
+**Never**
+- Never edit `docs/generated/` — it is regenerated and CI checks it.
+- Never read `.akr/cache/` — it is a private cache.
+- Never delete a record. Move it to a terminal state instead.
+
+**Before handing back**
+- `knowledge.validate`. If it reports diagnostics, fix them or say so explicitly.
+
+## Planning is in AKR (cutover)
+
+The authoritative plan and durable knowledge live in the AKR ledger (`.akr/`) and its
+generated views under `docs/generated/` (ROADMAP, CURRENT-STATE, DECISION-HISTORY,
+OPEN-QUESTIONS, REVIEW-REQUIRED, PAPERCUTS), not in Markdown. Record milestones,
+decisions, policies, constraints and findings with the `knowledge.*` tools / `akr`
+(`propose` / `revise` / `complete` / `evidence add` / `papercut`) — never by hand-editing
+`docs/generated/`. `JPXL/docs/HANDOFF.md`, `PLAN.md` and `CONFORMANCE.md` are retained as
+working logs / legacy reference pending full migration; prefer the views.
+
+Gate before finalizing (run on a clean tree): `scripts/ci-akr.ps1` (or `scripts/ci-akr.sh`)
+runs `akr check`, `akr check --views-current`, and `cargo fmt --check`. Install the tool
+with `cargo install --git https://github.com/LegeApp/AKR.git akr-cli`.

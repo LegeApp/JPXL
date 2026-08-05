@@ -5,8 +5,8 @@ build {
     tool "akr 0.1.0"
     grammar "0.1"
     vocabulary "0.1"
-    commit git:f35cabcf45c130c513d3f1498de2017facb9551f
-    source_graph "sha256:1b956c4ebdfe946d962c4e0bf1f4d85e3e9d2f30fd43e2973a2a0f94c5f1cbd3"
+    commit git:a92064f93d63b81b9b42c94ad97e7661cec8afba
+    source_graph "sha256:2b2f9502f75a3ac3fdba2ca79704a31f4e19a2724154e444c464099d12c9b03e"
 }
 
 source ".akr/project.akr" {
@@ -25,12 +25,12 @@ source ".akr/records/jpegxl-rs/decisions.akr" {
 }
 
 source ".akr/records/jpegxl-rs/evidence.akr" {
-    hash "sha256:f503d51280525614ec726f5f34ef9861b12b7a8a44f6dbb8e909caae78060856"
-    records 13
+    hash "sha256:f7da2d052e3085710579a3608dfed70eb59ddc802ea6305f8dd9527fa39b7891"
+    records 14
 }
 
 source ".akr/records/jpegxl-rs/milestones.akr" {
-    hash "sha256:3dd19effd12f3786a56461ebe3962e0d7556d75ae27f02e5a65c732c818e63ca"
+    hash "sha256:e325536b9ac9e23dc86d24a43c44672ddce819004db882d44604978ba3322a9d"
     records 13
 }
 
@@ -253,6 +253,12 @@ resolution @jpegxl-rs.milestone.markdown-retired/1 {
     hash "sha256:186b1a437dc661df26b9d379196e4ffd31c3b2de8527fd445895565c7f680e7c"
 }
 
+resolution @jpegxl-rs.milestone.markdown-retired/1 {
+    slot verified_by
+    to @jpegxl-rs.evidence.markdown-cutover/1
+    hash "sha256:41b1ca8dd880ad3d07cceb2596efbfb66e6777200f71e90bc7eee66a14b9222d"
+}
+
 resolution @jpegxl-rs.milestone.spine-bootstrap/1 {
     slot part_of
     to @jpegxl-rs.track.akr-adoption/1
@@ -319,6 +325,11 @@ seal @jpegxl-rs.evidence.m7-adaptive-quant/1 {
 seal @jpegxl-rs.evidence.m8-entropy-opt/1 {
     state verified
     hash "sha256:e811528b71a6eea45f0f0280e8afdc580e70d54cdda5f2576f33bc40f03142d2"
+}
+
+seal @jpegxl-rs.evidence.markdown-cutover/1 {
+    state verified
+    hash "sha256:41b1ca8dd880ad3d07cceb2596efbfb66e6777200f71e90bc7eee66a14b9222d"
 }
 
 seal @jpegxl-rs.evidence.rulings-captured/1 {
@@ -389,6 +400,11 @@ seal @jpegxl-rs.milestone.m7-adaptive-quant/1 {
 seal @jpegxl-rs.milestone.m8-entropy-opt/1 {
     state completed
     hash "sha256:0a2c5016f4a3be90fb412ad42f2cc5eba6cfb394c6b950c44df6be4f76787b95"
+}
+
+seal @jpegxl-rs.milestone.markdown-retired/1 {
+    state completed
+    hash "sha256:dd0ec1d47d5ebdc23bd013172b01e9eecca5f173f362bd05f58d24fd4af27335"
 }
 
 seal @jpegxl-rs.milestone.spine-bootstrap/1 {
