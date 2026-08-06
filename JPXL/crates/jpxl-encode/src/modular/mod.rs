@@ -1107,9 +1107,59 @@ pub fn write_ma_tree(w: &mut BitWriter, tree: &MaTree) -> Result<()> {
 ///
 /// As [`write_ma_tree`].
 pub fn ma_tree_bit_cost(tree: &MaTree) -> Result<u64> {
-    let mut w = BitWriter::new();
+    let mut w = BitWriter::counting();
     write_ma_tree(&mut w, tree)?;
     Ok(w.bit_len())
+}
+
+/// Shannon-style residual bit estimate (no ANS table emission).
+///
+/// Collects residuals once, picks a hybrid-uint config by the same census cost
+/// as the real encoder, and returns data bits plus a fixed table overhead.
+/// Used by the Opt-M tiered planner for intermediate candidate ranking; exact
+/// [`write_residual_payload_indices`] remains the finalist gate.
+///
+/// # Errors
+///
+/// Residual out of range or census/hybrid-config rejection.
+pub fn estimate_residual_bits_indices(
+    source: &ModularSource,
+    indices: &[usize],
+    rect: Option<Rect>,
+) -> Result<u64> {
+    let events = collect_residuals_indices(source, indices, rect)?;
+    let num_contexts = source.tree.num_contexts().max(1);
+    let mut census = TokenCensus::new(num_contexts)?;
+    for &(ctx, value) in &events {
+        census.record(ctx, value)?;
+    }
+    seed_empty_contexts(&mut census, num_contexts, events.is_empty());
+    let config = best_hybrid_config(&census, num_contexts, None)?;
+    let data = hybrid_data_cost(&census, num_contexts, &config);
+    // Clustered ANS tables are usually hundreds of bits; a fixed pad keeps the
+    // estimate from systematically undercutting exact prices.
+    const TABLE_OVERHEAD_BITS: f64 = 256.0;
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "bit estimate for ranking only; floored to non-negative u64"
+    )]
+    let bits = if data.is_finite() {
+        (data + TABLE_OVERHEAD_BITS).max(0.0).ceil() as u64
+    } else {
+        u64::MAX / 4
+    };
+    Ok(bits)
+}
+
+/// Full-frame residual bit estimate (see [`estimate_residual_bits_indices`]).
+///
+/// # Errors
+///
+/// As [`estimate_residual_bits_indices`].
+pub fn estimate_residual_bits_full(source: &ModularSource) -> Result<u64> {
+    let indices: Vec<usize> = (0..source.channels.len()).collect();
+    estimate_residual_bits_indices(source, &indices, None)
 }
 
 fn write_leaf_node(w: &mut BitWriter, predictor: Predictor) -> Result<()> {

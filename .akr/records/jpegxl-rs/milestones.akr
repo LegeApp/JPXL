@@ -73,7 +73,7 @@ record jpegxl-rs.milestone.history-backfilled/1 : milestone {
 
 record jpegxl-rs.milestone.m-opt-bitwriter/1 : milestone {
     title "Opt-B - Bulk BitWriter"
-    state proposed
+    state completed
     intent """
         BitWriter::write_bits packs LSB-first words without a per-bit loop; bitspan and
         writer append avoid clone-and-replay; zero_pad_to_byte is O(1) when high bits are
@@ -87,6 +87,7 @@ record jpegxl-rs.milestone.m-opt-bitwriter/1 : milestone {
                 """
             method command
             command "cargo test --workspace"
+            verified_by [ @jpegxl-rs.evidence.opt-b-bulk-bitwriter/1 ]
         }
     }
     after [ @jpegxl-rs.milestone.m-opt-foundation ]
@@ -104,7 +105,7 @@ record jpegxl-rs.milestone.m-opt-bitwriter/1 : milestone {
 
 record jpegxl-rs.milestone.m-opt-dct32-scalar/1 : milestone {
     title "Opt-D - Factored scalar DCT32"
-    state proposed
+    state completed
     intent """
         A factored scalar 32-point DCT-II (and DCT-III if the shared core needs it)
         replaces the dense matrix path for production encode; the dense matrix remains
@@ -119,6 +120,7 @@ record jpegxl-rs.milestone.m-opt-dct32-scalar/1 : milestone {
                 project decoder and libjxl.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.opt-d-factored-dct32/1 ]
         }
     }
     after [ @jpegxl-rs.milestone.m-opt-vardct-structure ]
@@ -136,7 +138,7 @@ record jpegxl-rs.milestone.m-opt-dct32-scalar/1 : milestone {
 
 record jpegxl-rs.milestone.m-opt-foundation/1 : milestone {
     title "Opt-F - Measurement foundation"
-    state proposed
+    state completed
     intent """
         Separate Modular lossless, VarDCT fixed-quantizer, and VarDCT target-rate
         encode benchmarks exist; multiplicity counters distinguish repeated work from
@@ -156,6 +158,7 @@ record jpegxl-rs.milestone.m-opt-foundation/1 : milestone {
                 reference until promotion criteria are met.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.opt-f-bench-modes/1 ]
         }
         check three-bench-entry-points {
             statement """
@@ -164,6 +167,7 @@ record jpegxl-rs.milestone.m-opt-foundation/1 : milestone {
                 VarDCT measurement (@jpegxl-rs.policy.jpxl-bench-entry-points).
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.opt-f-bench-modes/1 ]
         }
     }
     after [ @jpegxl-rs.milestone.m8-entropy-opt ]
@@ -181,7 +185,7 @@ record jpegxl-rs.milestone.m-opt-foundation/1 : milestone {
 
 record jpegxl-rs.milestone.m-opt-modular-planner/1 : milestone {
     title "Opt-M - Modular planner and residual path"
-    state proposed
+    state completed
     intent """
         Modular MA/residual planning uses tiered scoring: one raster analysis, cheap
         candidate ranking, exact pricing only for finalists. Residual collection uses
@@ -196,6 +200,7 @@ record jpegxl-rs.milestone.m-opt-modular-planner/1 : milestone {
                 three-decoder bit-exact Modular roundtrip still holds.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.opt-m-tiered-planner/1 ]
         }
     }
     after [ @jpegxl-rs.milestone.m-opt-bitwriter ]

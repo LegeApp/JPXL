@@ -94,11 +94,13 @@ const DEEP_SEARCH_SAMPLE_CAP: u64 = 64 * 64;
 
 /// Chooses a plan for already-transformed `planes`.
 ///
-/// Policy (slice 19d):
-/// 1. Score each predictor as a single-leaf tree (residual + tree bits).
-/// 2. Greedy recursive splitting: at each leaf, try property×threshold with
-///    the parent predictor on both children; adopt strict total-cost wins.
-/// 3. Per-leaf predictor refinement over the settled topology.
+/// Policy (slice 19d + Opt-M tiered scoring):
+/// 1. Score each predictor as a single-leaf tree with a **cheap** residual
+///    estimate (collect + Shannon hybrid cost, no ANS emit).
+/// 2. Greedy recursive splitting with the same cheap ranker.
+/// 3. Per-leaf predictor refinement (cheap).
+/// 4. **Exact** residual ANS price of the MA winner, then exact palette and
+///    squeeze trials against that baseline.
 ///
 /// Frames larger than [`DEEP_SEARCH_SAMPLE_CAP`] samples use at most one
 /// binary split (depth 1, two leaves) so multi-group planning stays usable.
@@ -113,6 +115,7 @@ pub fn plan_for(
     rct: bool,
     options: &EncodeOptions,
 ) -> Result<ValidatedLosslessPlan> {
+    reset_multiplicity();
     let group_size_shift = options.group_size_shift.unwrap_or(DEFAULT_GROUP_SIZE_SHIFT);
     let samples = u64::from(width).saturating_mul(u64::from(height));
     let max_leaves = if samples > DEEP_SEARCH_SAMPLE_CAP {
@@ -140,7 +143,14 @@ pub fn plan_for(
 
     for &predictor in PREDICTOR_CANDIDATES {
         let tree = MaTree::single_leaf(predictor);
-        let cost = total_cost(width, height, score_planes, &tree, group_size_shift)?;
+        let cost = total_cost(
+            width,
+            height,
+            score_planes,
+            &tree,
+            group_size_shift,
+            PriceTier::Cheap,
+        )?;
         if best.as_ref().is_none_or(|(c, _)| cost < *c) {
             best = Some((cost, tree));
         }
@@ -149,7 +159,7 @@ pub fn plan_for(
     let (mut best_cost, mut best_tree) =
         best.unwrap_or_else(|| (u64::MAX, MaTree::single_leaf(Predictor::Gradient)));
 
-    // Greedy splits: repeatedly try to split every current leaf.
+    // Greedy splits: repeatedly try to split every current leaf (cheap rank).
     loop {
         if best_tree.num_contexts() >= max_leaves || best_tree.depth() >= max_depth {
             break;
@@ -172,8 +182,14 @@ pub fn plan_for(
                     if candidate.depth() > max_depth || candidate.num_contexts() > max_leaves {
                         continue;
                     }
-                    let cost =
-                        total_cost(width, height, score_planes, &candidate, group_size_shift)?;
+                    let cost = total_cost(
+                        width,
+                        height,
+                        score_planes,
+                        &candidate,
+                        group_size_shift,
+                        PriceTier::Cheap,
+                    )?;
                     if cost < best_cost && round_best.as_ref().is_none_or(|(c, _)| cost < *c) {
                         round_best = Some((cost, candidate));
                     }
@@ -191,7 +207,7 @@ pub fn plan_for(
         }
     }
 
-    // Per-leaf predictor refinement on the settled topology.
+    // Per-leaf predictor refinement on the settled topology (cheap).
     let leaf_count = best_tree.num_contexts();
     for ctx in 0..leaf_count {
         let current = best_tree
@@ -206,7 +222,14 @@ pub fn plan_for(
             let Ok(candidate) = best_tree.with_leaf_predictor(ctx, predictor) else {
                 continue;
             };
-            let cost = total_cost(width, height, score_planes, &candidate, group_size_shift)?;
+            let cost = total_cost(
+                width,
+                height,
+                score_planes,
+                &candidate,
+                group_size_shift,
+                PriceTier::Cheap,
+            )?;
             if cost < best_cost {
                 best_cost = cost;
                 best_tree = candidate;
@@ -214,12 +237,15 @@ pub fn plan_for(
         }
     }
 
-    // Nested palette trial on *source* samples (not RCT). Single-section only
-    // in wave 1; gray or RGB exact-colour. Adopts if strictly cheaper.
+    // Stage C: exact residual price of the MA finalist (baseline for transforms).
+    let ma_source =
+        modular::ModularSource::direct(width, height, score_planes, false, best_tree.clone(), false);
+    best_cost = total_cost_source(&ma_source, group_size_shift, PriceTier::Exact)?;
+
+    // Nested palette trial on *source* samples (not RCT). Exact-price gate.
     let mut palette: Option<PaletteForward> = None;
     let mut use_rct = rct;
     let mut use_squeeze = false;
-    // Palette / squeeze trials (single- and multi-section). Exact-price.
     let num_c = planes.len();
     if (num_c == 1 || num_c == 3)
         && let Some(fwd) = try_exact_palette(width, height, planes, 0, num_c)?
@@ -228,6 +254,7 @@ pub fn plan_for(
         let cost = total_cost_source(
             &modular::ModularSource::from_palette(fwd.clone(), tree.clone(), false),
             group_size_shift,
+            PriceTier::Exact,
         )?;
         if cost < best_cost {
             best_cost = cost;
@@ -237,7 +264,7 @@ pub fn plan_for(
         }
     }
 
-    // Default squeeze on MA-scored planes. Skip when palette won.
+    // Default squeeze on MA-scored planes. Skip when palette won. Exact gate.
     if palette.is_none() && squeeze::default_would_run(width, height, score_planes.len()) {
         let tree = MaTree::single_leaf(Predictor::Gradient);
         let source = modular::ModularSource::with_default_squeeze(
@@ -260,7 +287,7 @@ pub fn plan_for(
         } else {
             source
         };
-        let cost = total_cost_source(&source, group_size_shift)?;
+        let cost = total_cost_source(&source, group_size_shift, PriceTier::Exact)?;
         if cost < best_cost {
             best_cost = cost;
             best_tree = tree;
@@ -279,6 +306,60 @@ pub fn plan_for(
     })
 }
 
+/// How residual candidates are priced (Opt-M tiered planner).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PriceTier {
+    /// Collect residuals + Shannon hybrid estimate (no ANS emit).
+    Cheap,
+    /// Full residual ANS write path (count-only BitWriter).
+    Exact,
+}
+
+/// Multiplicity counters for one [`plan_for`] call (Opt-M acceptance).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct PlanMultiplicity {
+    /// Exact residual stream prices (finalists + palette/squeeze trials).
+    pub exact_residual_prices: u32,
+    /// Cheap ranking scores during tree search.
+    pub cheap_scores: u32,
+}
+
+std::thread_local! {
+    static LAST_PLAN_MULTIPLICITY: std::cell::Cell<PlanMultiplicity> =
+        const { std::cell::Cell::new(PlanMultiplicity {
+            exact_residual_prices: 0,
+            cheap_scores: 0,
+        }) };
+}
+
+/// Multiplicity counters from the most recent [`plan_for`] on this thread.
+#[must_use]
+pub fn last_plan_multiplicity() -> PlanMultiplicity {
+    LAST_PLAN_MULTIPLICITY.with(std::cell::Cell::get)
+}
+
+fn reset_multiplicity() {
+    LAST_PLAN_MULTIPLICITY.with(|c| {
+        c.set(PlanMultiplicity::default());
+    });
+}
+
+fn bump_exact() {
+    LAST_PLAN_MULTIPLICITY.with(|c| {
+        let mut m = c.get();
+        m.exact_residual_prices = m.exact_residual_prices.saturating_add(1);
+        c.set(m);
+    });
+}
+
+fn bump_cheap() {
+    LAST_PLAN_MULTIPLICITY.with(|c| {
+        let mut m = c.get();
+        m.cheap_scores = m.cheap_scores.saturating_add(1);
+        c.set(m);
+    });
+}
+
 /// Residual-section bits plus measured MA tree bits for direct planes.
 fn total_cost(
     width: u32,
@@ -286,13 +367,18 @@ fn total_cost(
     planes: &[Plane],
     tree: &MaTree,
     group_size_shift: u32,
+    tier: PriceTier,
 ) -> Result<u64> {
     let source = modular::ModularSource::direct(width, height, planes, false, tree.clone(), false);
-    total_cost_source(&source, group_size_shift)
+    total_cost_source(&source, group_size_shift, tier)
 }
 
-fn total_cost_source(source: &modular::ModularSource, group_size_shift: u32) -> Result<u64> {
-    let residual = residual_stream_cost_source(source, group_size_shift)?;
+fn total_cost_source(
+    source: &modular::ModularSource,
+    group_size_shift: u32,
+    tier: PriceTier,
+) -> Result<u64> {
+    let residual = residual_stream_cost_source(source, group_size_shift, tier)?;
     let tree_bits = modular::ma_tree_bit_cost(&source.tree)?;
     let geometry = crate::frame::Geometry::new(source.width, source.height, group_size_shift)?;
     let sections = if geometry.is_single_section() {
@@ -303,25 +389,49 @@ fn total_cost_source(source: &modular::ModularSource, group_size_shift: u32) -> 
     Ok(residual.saturating_add(tree_bits.saturating_mul(sections)))
 }
 
-/// Exact residual-section bit cost under ANS for a prepared source.
+/// Residual-section bit cost under the chosen tier.
 fn residual_stream_cost_source(
     source: &modular::ModularSource,
     group_size_shift: u32,
+    tier: PriceTier,
 ) -> Result<u64> {
+    match tier {
+        PriceTier::Cheap => {
+            bump_cheap();
+            cheap_residual_bits(source, group_size_shift)
+        }
+        PriceTier::Exact => {
+            bump_exact();
+            exact_residual_bits(source, group_size_shift)
+        }
+    }
+}
+
+/// Stage-B estimate: one residual collect + hybrid Shannon cost (no ANS emit).
+fn cheap_residual_bits(source: &modular::ModularSource, group_size_shift: u32) -> Result<u64> {
+    let geometry = crate::frame::Geometry::new(source.width, source.height, group_size_shift)?;
+    if geometry.is_single_section() {
+        return modular::estimate_residual_bits_full(source);
+    }
+    // Multi-section: estimate full-frame residuals once (ranking quality), not
+    // per-group exact streams. Finalist Exact re-prices with the real layout.
+    modular::estimate_residual_bits_full(source)
+}
+
+/// Stage-C exact residual ANS cost (count-only writer; no payload retain).
+fn exact_residual_bits(source: &modular::ModularSource, group_size_shift: u32) -> Result<u64> {
     use jpxl_bitstream::BitWriter;
 
     let geometry = crate::frame::Geometry::new(source.width, source.height, group_size_shift)?;
     let mut bits = 0u64;
     if geometry.is_single_section() {
-        let mut w = BitWriter::new();
+        let mut w = BitWriter::counting();
         modular::write_residual_payload_full(&mut w, source)?;
         bits = bits.saturating_add(w.bit_len());
     } else {
         let part = modular::partition_channels(source, geometry.group_dim());
-        // Approximate multi-section residual cost: LfGlobal bands + one full
-        // pass over all pass-group tiles (same as emission).
         if !part.lf_global.is_empty() {
-            let mut w = BitWriter::new();
+            let mut w = BitWriter::counting();
             modular::write_residual_payload_indices(&mut w, source, &part.lf_global, None)?;
             bits = bits.saturating_add(w.bit_len());
         }
@@ -332,7 +442,7 @@ fn residual_stream_cost_source(
             if part.lf_group.is_empty() {
                 continue;
             }
-            let mut w = BitWriter::new();
+            let mut w = BitWriter::counting();
             modular::write_residual_payload_indices(
                 &mut w,
                 source,
@@ -353,7 +463,7 @@ fn residual_stream_cost_source(
             if part.pass_group.is_empty() {
                 continue;
             }
-            let mut w = BitWriter::new();
+            let mut w = BitWriter::counting();
             modular::write_residual_payload_indices(
                 &mut w,
                 source,
@@ -390,6 +500,36 @@ mod tests {
         assert!(plan.plan().tree.num_contexts() >= 1);
         assert!(plan.plan().tree.num_contexts() <= MAX_TREE_LEAVES);
         assert!(plan.plan().tree.depth() <= MAX_TREE_DEPTH);
+    }
+
+    /// Opt-M: exact residual prices only for finalists (MA winner + optional
+    /// palette/squeeze), not for every property×threshold trial.
+    #[test]
+    fn plan_for_prices_exact_only_on_finalists() {
+        let width = 48u32;
+        let height = 48u32;
+        let plane: Plane = (0..height)
+            .flat_map(|y| (0..width).map(move |x| ((x * 3 + y * 5) % 200) as i32))
+            .collect();
+        let _ = plan_for(width, height, &[plane], false, &EncodeOptions::default()).expect("plan");
+        let m = last_plan_multiplicity();
+        assert!(
+            m.cheap_scores >= 6,
+            "predictor search alone should cheap-score every candidate: {m:?}"
+        );
+        // At most: 1 MA exact + 1 palette + 1 squeeze.
+        assert!(
+            m.exact_residual_prices <= 3,
+            "exact residual prices must stay on finalists only: {m:?}"
+        );
+        assert!(
+            m.exact_residual_prices >= 1,
+            "the MA winner must be exact-priced: {m:?}"
+        );
+        assert!(
+            m.cheap_scores > m.exact_residual_prices * 5,
+            "cheap ranking should dominate exact finalist prices: {m:?}"
+        );
     }
 
     #[test]

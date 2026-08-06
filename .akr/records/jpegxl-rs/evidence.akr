@@ -206,6 +206,30 @@ record jpegxl-rs.evidence.markdown-cutover/2 : evidence {
     author "GitHub Uploader"
 }
 
+record jpegxl-rs.evidence.opt-b-bulk-bitwriter/1 : evidence {
+    title "Bulk write_bits, append_writer, counting writer; modular append_bits uses append_writer; bitstream unit tests green including bulk_write_bits_matches_legacy_bit_loop."
+    state verified
+    result pass
+    method command
+    observed_at git:14bf96c6bdabd560d61217f4ba1146a8a0125ed1
+    command "cd JPXL && cargo test -p jpxl-bitstream --lib"
+    summary """
+        Bulk write_bits, append_writer, counting writer; modular append_bits uses append_writer; bitstream unit tests green including bulk_write_bits_matches_legacy_bit_loop.
+        """
+}
+
+record jpegxl-rs.evidence.opt-d-factored-dct32/1 : evidence {
+    title "Factored dct_ii_32/dct_iii_32 production path; dense matrix retained as oracle; dct_ii_32_matches_naive and roundtrip through iii pass."
+    state verified
+    result pass
+    method command
+    observed_at git:14bf96c6bdabd560d61217f4ba1146a8a0125ed1
+    command "cd JPXL && cargo test -p jpxl-core dct_ii_32 --lib"
+    summary """
+        Factored dct_ii_32/dct_iii_32 production path; dense matrix retained as oracle; dct_ii_32_matches_naive and roundtrip through iii pass.
+        """
+}
+
 record jpegxl-rs.evidence.opt-f-bench-entry-points/1 : evidence {
     title "Four jpxl bench modes ran successfully on the pre-opt ladder; raw numbers in scratch artifact."
     state verified
@@ -219,6 +243,30 @@ record jpegxl-rs.evidence.opt-f-bench-entry-points/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.opt-f-bench-modes/1 : evidence {
+    title "jpxl bench exposes modular, vardct-fixed, vardct-rate, vardct-probe. Preopt ladder and RateProbeStats live under .agent/scratch and AKR observations. Contract A fixed fingerprints held after Opt-V."
+    state verified
+    result pass
+    method observation
+    observed_at git:14bf96c6bdabd560d61217f4ba1146a8a0125ed1
+    artifact ".agent/scratch/preopt-baseline-2026-08-06.md"
+    summary """
+        jpxl bench exposes modular, vardct-fixed, vardct-rate, vardct-probe. Preopt ladder and RateProbeStats live under .agent/scratch and AKR observations. Contract A fixed fingerprints held after Opt-V.
+        """
+}
+
+record jpegxl-rs.evidence.opt-m-tiered-planner/1 : evidence {
+    title "Opt-M tiered Modular planner: cheap Shannon residual ranking for tree search; exact residual ANS only for MA finalist + palette/squeeze. plan_for_prices_exact_only_on_finalists and palette/squeeze roundtrips green."
+    state verified
+    result pass
+    method command
+    observed_at git:14bf96c6bdabd560d61217f4ba1146a8a0125ed1
+    command "cd JPXL && cargo test -p jpxl-encode --lib lossless::"
+    summary """
+        Opt-M tiered Modular planner: cheap Shannon residual ranking for tree search; exact residual ANS only for MA finalist + palette/squeeze. plan_for_prices_exact_only_on_finalists and palette/squeeze roundtrips green.
+        """
+}
+
 record jpegxl-rs.evidence.opt-v1-count-only-arenas/1 : evidence {
     title "Count-only BitWriter price_codestream matches emit sizing; group HF coeff arenas; rate_loop 11/11; vardct-fixed 256 fingerprint 37145644e7e1857f (Contract A). Scratch: .agent/scratch/preopt-baseline-2026-08-06.md"
     state verified
@@ -229,6 +277,30 @@ record jpegxl-rs.evidence.opt-v1-count-only-arenas/1 : evidence {
     artifact ".agent/scratch/preopt-baseline-2026-08-06.md"
     summary """
         Count-only BitWriter price_codestream matches emit sizing; group HF coeff arenas; rate_loop 11/11; vardct-fixed 256 fingerprint 37145644e7e1857f (Contract A). Scratch: .agent/scratch/preopt-baseline-2026-08-06.md
+        """
+}
+
+record jpegxl-rs.evidence.opt-v1-count-only-arenas-at-head/1 : evidence {
+    title "Re-check after Opt-M: count-only price matches emit; Contract A fingerprint 37145644e7e1857f held at commit with Opt-V1 code."
+    state verified
+    result pass
+    method command
+    observed_at git:14bf96c6bdabd560d61217f4ba1146a8a0125ed1
+    command "cd JPXL && cargo test -p jpxl-encode a_priced_size_is_the_emitted_size"
+    summary """
+        Re-check after Opt-M: count-only price matches emit; Contract A fingerprint 37145644e7e1857f held at commit with Opt-V1 code.
+        """
+}
+
+record jpegxl-rs.evidence.opt-v2-rate-multiplicity-at-head/1 : evidence {
+    title "Re-check after Opt-M: rate_probe_multiplicity_is_down still holds with Fast/Full + PreparedSearch stats."
+    state verified
+    result pass
+    method command
+    observed_at git:14bf96c6bdabd560d61217f4ba1146a8a0125ed1
+    command "cd JPXL && cargo test -p jpxl-encode-policy --test rate_loop rate_probe_multiplicity"
+    summary """
+        Re-check after Opt-M: rate_probe_multiplicity_is_down still holds with Fast/Full + PreparedSearch stats.
         """
 }
 
@@ -273,6 +345,18 @@ record jpegxl-rs.evidence.performance-md-akr-check/2 : evidence {
     supersedes [ @jpegxl-rs.evidence.performance-md-akr-check/1 ]
 }
 
+record jpegxl-rs.evidence.performance-md-akr-check-at-head/1 : evidence {
+    title "akr check clean for PERFORMANCE.md disposition after Opt-M ledger closeout."
+    state verified
+    result pass
+    method command
+    observed_at git:14bf96c6bdabd560d61217f4ba1146a8a0125ed1
+    command "akr check"
+    summary """
+        akr check clean for PERFORMANCE.md disposition after Opt-M ledger closeout.
+        """
+}
+
 record jpegxl-rs.evidence.performance-md-stub/1 : evidence {
     title "PERFORMANCE.md replaced with short stub pointing at AKR policies/observations and .agent/scratch paths; tables and full rules removed."
     state verified
@@ -282,6 +366,17 @@ record jpegxl-rs.evidence.performance-md-stub/1 : evidence {
     artifact "JPXL/docs/PERFORMANCE.md"
     summary """
         PERFORMANCE.md replaced with short stub pointing at AKR policies/observations and .agent/scratch paths; tables and full rules removed.
+        """
+}
+
+record jpegxl-rs.evidence.performance-md-stub-at-head/1 : evidence {
+    title "JPXL/docs/PERFORMANCE.md remains a short stub pointing at AKR and .agent/scratch."
+    state verified
+    result pass
+    method observation
+    observed_at git:14bf96c6bdabd560d61217f4ba1146a8a0125ed1
+    summary """
+        JPXL/docs/PERFORMANCE.md remains a short stub pointing at AKR and .agent/scratch.
         """
 }
 
