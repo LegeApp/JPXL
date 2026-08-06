@@ -121,6 +121,10 @@ pub fn xyb_to_linear_srgb(xyb: [f32; 3]) -> [f32; 3] {
 
 /// Converts three planar linear-sRGB channels to XYB in place.
 ///
+/// With `simd`, processes four pixels at a time: the opsin matrix is applied
+/// with `wide::f32x4`, then per-lane scalar `cbrt` matches the single-pixel
+/// path (Contract B vs a pure-`powf` SIMD cube root).
+///
 /// # Panics
 ///
 /// Panics if the three planes do not have equal length.
@@ -129,11 +133,109 @@ pub fn linear_srgb_to_xyb_planes(r: &mut [f32], g: &mut [f32], b: &mut [f32]) {
         r.len() == g.len() && g.len() == b.len(),
         "planar XYB conversion needs three equally sized planes"
     );
-    for ((rp, gp), bp) in r.iter_mut().zip(g.iter_mut()).zip(b.iter_mut()) {
-        let [x, y, bb] = linear_srgb_to_xyb([*rp, *gp, *bp]);
-        *rp = x;
-        *gp = y;
-        *bp = bb;
+    #[cfg(feature = "simd")]
+    {
+        linear_srgb_to_xyb_planes_simd(r, g, b);
+    }
+    #[cfg(not(feature = "simd"))]
+    {
+        for ((rp, gp), bp) in r.iter_mut().zip(g.iter_mut()).zip(b.iter_mut()) {
+            let [x, y, bb] = linear_srgb_to_xyb([*rp, *gp, *bp]);
+            *rp = x;
+            *gp = y;
+            *bp = bb;
+        }
+    }
+}
+
+#[cfg(feature = "simd")]
+fn linear_srgb_to_xyb_planes_simd(r: &mut [f32], g: &mut [f32], b: &mut [f32]) {
+    use wide::f32x4;
+    let n = r.len();
+    let [ml, mm, ms] = OPSIN_ABSORBANCE_MATRIX;
+    let bias = f32x4::splat(OPSIN_BIAS);
+    let bias_c = f32x4::splat(OPSIN_BIAS_CBRT);
+    let half = f32x4::splat(0.5);
+    let mut i = 0usize;
+    while i + 4 <= n {
+        let rv = f32x4::new([
+            r.get(i).copied().unwrap_or(0.0),
+            r.get(i + 1).copied().unwrap_or(0.0),
+            r.get(i + 2).copied().unwrap_or(0.0),
+            r.get(i + 3).copied().unwrap_or(0.0),
+        ]);
+        let gv = f32x4::new([
+            g.get(i).copied().unwrap_or(0.0),
+            g.get(i + 1).copied().unwrap_or(0.0),
+            g.get(i + 2).copied().unwrap_or(0.0),
+            g.get(i + 3).copied().unwrap_or(0.0),
+        ]);
+        let bv = f32x4::new([
+            b.get(i).copied().unwrap_or(0.0),
+            b.get(i + 1).copied().unwrap_or(0.0),
+            b.get(i + 2).copied().unwrap_or(0.0),
+            b.get(i + 3).copied().unwrap_or(0.0),
+        ]);
+        let lm = f32x4::splat(ml[0]) * rv + f32x4::splat(ml[1]) * gv + f32x4::splat(ml[2]) * bv + bias;
+        let mm_ =
+            f32x4::splat(mm[0]) * rv + f32x4::splat(mm[1]) * gv + f32x4::splat(mm[2]) * bv + bias;
+        let sm = f32x4::splat(ms[0]) * rv + f32x4::splat(ms[1]) * gv + f32x4::splat(ms[2]) * bv + bias;
+        // Scalar cbrt per lane so nonlinearities match linear_srgb_to_xyb.
+        let lma = lm.to_array();
+        let mma = mm_.to_array();
+        let sma = sm.to_array();
+        let lg = f32x4::new([
+            lma[0].cbrt(),
+            lma[1].cbrt(),
+            lma[2].cbrt(),
+            lma[3].cbrt(),
+        ]) - bias_c;
+        let mg = f32x4::new([
+            mma[0].cbrt(),
+            mma[1].cbrt(),
+            mma[2].cbrt(),
+            mma[3].cbrt(),
+        ]) - bias_c;
+        let sg = f32x4::new([
+            sma[0].cbrt(),
+            sma[1].cbrt(),
+            sma[2].cbrt(),
+            sma[3].cbrt(),
+        ]) - bias_c;
+        let x = half * (lg - mg);
+        let y = half * (lg + mg);
+        let xa = x.to_array();
+        let ya = y.to_array();
+        let sa = sg.to_array();
+        for j in 0..4 {
+            if let Some(slot) = r.get_mut(i + j) {
+                *slot = xa[j];
+            }
+            if let Some(slot) = g.get_mut(i + j) {
+                *slot = ya[j];
+            }
+            if let Some(slot) = b.get_mut(i + j) {
+                *slot = sa[j];
+            }
+        }
+        i += 4;
+    }
+    while i < n {
+        let [x, y, bb] = linear_srgb_to_xyb([
+            r.get(i).copied().unwrap_or(0.0),
+            g.get(i).copied().unwrap_or(0.0),
+            b.get(i).copied().unwrap_or(0.0),
+        ]);
+        if let Some(slot) = r.get_mut(i) {
+            *slot = x;
+        }
+        if let Some(slot) = g.get_mut(i) {
+            *slot = y;
+        }
+        if let Some(slot) = b.get_mut(i) {
+            *slot = bb;
+        }
+        i += 1;
     }
 }
 
@@ -147,11 +249,94 @@ pub fn xyb_to_linear_srgb_planes(x: &mut [f32], y: &mut [f32], b: &mut [f32]) {
         x.len() == y.len() && y.len() == b.len(),
         "planar XYB conversion needs three equally sized planes"
     );
-    for ((xp, yp), bp) in x.iter_mut().zip(y.iter_mut()).zip(b.iter_mut()) {
-        let [r, g, bb] = xyb_to_linear_srgb([*xp, *yp, *bp]);
-        *xp = r;
-        *yp = g;
-        *bp = bb;
+    #[cfg(feature = "simd")]
+    {
+        xyb_to_linear_srgb_planes_simd(x, y, b);
+    }
+    #[cfg(not(feature = "simd"))]
+    {
+        for ((xp, yp), bp) in x.iter_mut().zip(y.iter_mut()).zip(b.iter_mut()) {
+            let [r, g, bb] = xyb_to_linear_srgb([*xp, *yp, *bp]);
+            *xp = r;
+            *yp = g;
+            *bp = bb;
+        }
+    }
+}
+
+#[cfg(feature = "simd")]
+fn xyb_to_linear_srgb_planes_simd(x: &mut [f32], y: &mut [f32], b: &mut [f32]) {
+    use wide::f32x4;
+    let n = x.len();
+    let [ir, ig, ib] = OPSIN_ABSORBANCE_INVERSE_MATRIX;
+    let bias = f32x4::splat(OPSIN_BIAS);
+    let bias_c = f32x4::splat(OPSIN_BIAS_CBRT);
+    let mut i = 0usize;
+    while i + 4 <= n {
+        let xv = f32x4::new([
+            x.get(i).copied().unwrap_or(0.0),
+            x.get(i + 1).copied().unwrap_or(0.0),
+            x.get(i + 2).copied().unwrap_or(0.0),
+            x.get(i + 3).copied().unwrap_or(0.0),
+        ]);
+        let yv = f32x4::new([
+            y.get(i).copied().unwrap_or(0.0),
+            y.get(i + 1).copied().unwrap_or(0.0),
+            y.get(i + 2).copied().unwrap_or(0.0),
+            y.get(i + 3).copied().unwrap_or(0.0),
+        ]);
+        let bv = f32x4::new([
+            b.get(i).copied().unwrap_or(0.0),
+            b.get(i + 1).copied().unwrap_or(0.0),
+            b.get(i + 2).copied().unwrap_or(0.0),
+            b.get(i + 3).copied().unwrap_or(0.0),
+        ]);
+        let lg = yv + xv;
+        let mg = yv - xv;
+        let sg = bv;
+        // cube(v + bias_cbrt) - bias  (scalar cube per lane for exactness)
+        let cube_lane = |t: f32x4| -> f32x4 {
+            let a = (t + bias_c).to_array();
+            f32x4::new([cube(a[0]), cube(a[1]), cube(a[2]), cube(a[3])]) - bias
+        };
+        let lm = cube_lane(lg);
+        let mm = cube_lane(mg);
+        let sm = cube_lane(sg);
+        let r = f32x4::splat(ir[0]) * lm + f32x4::splat(ir[1]) * mm + f32x4::splat(ir[2]) * sm;
+        let g = f32x4::splat(ig[0]) * lm + f32x4::splat(ig[1]) * mm + f32x4::splat(ig[2]) * sm;
+        let bb = f32x4::splat(ib[0]) * lm + f32x4::splat(ib[1]) * mm + f32x4::splat(ib[2]) * sm;
+        let ra = r.to_array();
+        let ga = g.to_array();
+        let ba = bb.to_array();
+        for j in 0..4 {
+            if let Some(slot) = x.get_mut(i + j) {
+                *slot = ra[j];
+            }
+            if let Some(slot) = y.get_mut(i + j) {
+                *slot = ga[j];
+            }
+            if let Some(slot) = b.get_mut(i + j) {
+                *slot = ba[j];
+            }
+        }
+        i += 4;
+    }
+    while i < n {
+        let [r, g, bb] = xyb_to_linear_srgb([
+            x.get(i).copied().unwrap_or(0.0),
+            y.get(i).copied().unwrap_or(0.0),
+            b.get(i).copied().unwrap_or(0.0),
+        ]);
+        if let Some(slot) = x.get_mut(i) {
+            *slot = r;
+        }
+        if let Some(slot) = y.get_mut(i) {
+            *slot = g;
+        }
+        if let Some(slot) = b.get_mut(i) {
+            *slot = bb;
+        }
+        i += 1;
     }
 }
 
