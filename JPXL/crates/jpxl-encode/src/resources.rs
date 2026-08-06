@@ -5,6 +5,13 @@
 //! units and **reduces in fixed TOC / raster order** so Contract A holds
 //! across thread counts.
 //!
+//! # Defaults
+//!
+//! With the default **`parallel`** feature, [`EncodeResources::default`] is
+//! [`EncodeResources::auto`]: group/section axis with
+//! [`std::thread::available_parallelism`] workers (clamped per work item).
+//! Without `parallel`, the default is fully serial.
+//!
 //! With the default **`parallel`** feature, workers use a capped **rayon**
 //! pool. Without it, [`std::thread::scope`] is used.
 
@@ -13,10 +20,13 @@ use core::num::NonZeroUsize;
 /// Which coarse axis may use more than one worker.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ParallelAxis {
-    /// Everything serial (default).
-    #[default]
+    /// Everything serial.
     Serial,
     /// Independent LF / pass-group section bodies after globals are ready.
+    ///
+    /// This is the default axis when [`EncodeResources::auto`] is used under
+    /// the `parallel` feature.
+    #[default]
     Groups,
 }
 
@@ -31,13 +41,15 @@ pub struct EncodeResources {
 }
 
 impl Default for EncodeResources {
+    /// [`auto`](Self::auto) when the `parallel` feature is on, otherwise
+    /// [`serial`](Self::serial).
     fn default() -> Self {
-        Self::serial()
+        Self::auto()
     }
 }
 
 impl EncodeResources {
-    /// Fully serial encode (Contract A baseline).
+    /// Fully serial encode (Contract A baseline / single-thread checks).
     #[must_use]
     pub const fn serial() -> Self {
         Self {
@@ -46,7 +58,9 @@ impl EncodeResources {
         }
     }
 
-    /// Up to `threads` workers on the groups/sections axis.
+    /// Group/section axis with up to `threads` workers.
+    ///
+    /// `threads <= 1` collapses to serial axis.
     #[must_use]
     pub fn groups(threads: usize) -> Self {
         let threads = threads.max(1);
@@ -60,7 +74,27 @@ impl EncodeResources {
         }
     }
 
+    /// Host-aware default: group axis with [`available_parallelism`](std::thread::available_parallelism)
+    /// workers when the `parallel` feature is enabled; otherwise serial.
+    #[must_use]
+    pub fn auto() -> Self {
+        #[cfg(feature = "parallel")]
+        {
+            let n = std::thread::available_parallelism()
+                .map(NonZeroUsize::get)
+                .unwrap_or(1);
+            Self::groups(n.max(1))
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            Self::serial()
+        }
+    }
+
     /// Effective worker count for `ready` independent items.
+    ///
+    /// Never exceeds `threads` or `ready`; returns 1 when the axis is serial
+    /// or there is only one work item.
     #[must_use]
     pub fn workers_for(self, ready: usize) -> usize {
         if matches!(self.axis, ParallelAxis::Serial) || self.threads <= 1 || ready <= 1 {
@@ -121,12 +155,18 @@ where
 {
     use rayon::prelude::*;
 
-    // Build a local pool capped at `workers` so we do not oversubscribe the
-    // global pool when the caller requested a small budget.
+    // Local pool capped at `workers` so one encode does not oversubscribe the
+    // process when the caller asked for a small budget.
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(workers)
         .build()
-        .unwrap_or_else(|_| rayon::ThreadPoolBuilder::new().build().expect("rayon pool"));
+        .unwrap_or_else(|_| {
+            // Fall back to a one-thread pool rather than panicking on exotic hosts.
+            rayon::ThreadPoolBuilder::new()
+                .num_threads(1)
+                .build()
+                .expect("single-thread rayon pool")
+        });
 
     let mut slots: Vec<Option<Result<T, E>>> = (0..n).map(|_| None).collect();
     pool.install(|| {
@@ -218,5 +258,21 @@ mod tests {
         assert_eq!(r.workers_for(3), 3);
         assert_eq!(r.workers_for(100), 8);
         assert_eq!(EncodeResources::serial().workers_for(100), 1);
+    }
+
+    #[test]
+    fn auto_is_groups_when_parallel_feature() {
+        let a = EncodeResources::auto();
+        #[cfg(feature = "parallel")]
+        {
+            assert!(a.threads >= 1);
+            if a.threads > 1 {
+                assert!(a.parallel_groups());
+            }
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            assert_eq!(a, EncodeResources::serial());
+        }
     }
 }

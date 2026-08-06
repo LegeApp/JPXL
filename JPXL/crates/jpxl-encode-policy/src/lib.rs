@@ -2137,13 +2137,13 @@ pub fn encode_srgb8_vardct(
     }
     let frame = PreparedFrame::from_srgb8(width, height, rgb)?;
     let plan = plan_frame(&frame, request)?;
-    Ok(jpxl_encode::vardct::write_codestream(&plan)?)
+    Ok(jpxl_encode::vardct::write_codestream_with(
+        &plan,
+        request.resources,
+    )?)
 }
 
-/// As [`encode_srgb8_vardct`], with an explicit section-parallel resource policy.
-///
-/// Rate-targeted encodes still plan serially; only emission fans out under
-/// Contract A (fixed TOC reduction order).
+/// As [`encode_srgb8_vardct`], overriding [`EncodeRequest::resources`].
 ///
 /// # Errors
 ///
@@ -2155,13 +2155,9 @@ pub fn encode_srgb8_vardct_with_resources(
     request: &EncodeRequest,
     resources: jpxl_encode::EncodeResources,
 ) -> Result<Vec<u8>> {
-    if request.target.is_some() {
-        // Rate loop already multiplies encodes; keep emission serial for now.
-        return encode_srgb8_vardct(width, height, rgb, request);
-    }
-    let frame = PreparedFrame::from_srgb8(width, height, rgb)?;
-    let plan = plan_frame(&frame, request)?;
-    Ok(jpxl_encode::vardct::write_codestream_with(&plan, resources)?)
+    let mut req = *request;
+    req.resources = resources;
+    encode_srgb8_vardct(width, height, rgb, &req)
 }
 
 /// Encodes an 8-bit sRGB image to a byte or bits-per-pixel target.
@@ -2199,7 +2195,7 @@ mod tests {
     }
 
     /// Opt-P Contract A: multi-group VarDCT emission is byte-identical at
-    /// 1 and N section workers.
+    /// serial, fixed-N, and host-auto worker budgets.
     #[test]
     fn multi_group_vardct_is_byte_identical_across_thread_counts() {
         let (width, height) = (300u32, 260u32); // >256 → multi pass-group
@@ -2221,9 +2217,15 @@ mod tests {
             jpxl_encode::EncodeResources::groups(4),
         )
         .expect("parallel");
+        // Default request uses EncodeResources::auto() — must match serial.
+        let auto = encode_srgb8_vardct(width, height, &rgb, &request).expect("auto");
         assert_eq!(
             serial, parallel,
             "Contract A: 1-thread and 4-thread VarDCT multi-group must match"
+        );
+        assert_eq!(
+            serial, auto,
+            "Contract A: EncodeResources::auto must match serial emission"
         );
         let image = decode(&serial, &Limits::default()).expect("decodes");
         assert_eq!((image.width, image.height), (width, height));

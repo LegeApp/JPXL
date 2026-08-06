@@ -42,6 +42,8 @@ Encode options:
     --group-size-shift <0..3>     Force group_dim = 128 << shift (default 2)
     --jxlp <bytes>                Split the codestream across jxlp boxes
                                   (18181-2 9.10); implies --container
+    --threads <n>                 Section-parallel workers (default: host
+                                  available_parallelism; 1 = serial)
 
 Exit codes:
     0  success (info: recognised as JPEG XL)
@@ -74,6 +76,7 @@ Options:
     --height <n>          Synthetic frame height (default 256)
     --iters <n>           Timed iterations after one warm-up (default 3)
     --bpp <f>             Target bits/pixel for vardct-rate (default 1.0)
+    --threads <n>         Section-parallel workers (default: auto; 1 = serial)
     --input <path.ppm>    Use a real P6 image instead of the synthetic RGB
 
 Prints one line per run: mode, size, iters, wall_ms_total, wall_ms_median,
@@ -267,6 +270,17 @@ fn cmd_encode(args: &[String]) -> u8 {
                 };
                 options.jxlp_fragment_size = Some(value);
             }
+            "--threads" => {
+                let Some(value) = rest.next().and_then(|v| v.parse::<usize>().ok()) else {
+                    fail("`--threads` needs a positive integer (1 = serial)");
+                    return EXIT_ERROR;
+                };
+                options.resources = if value <= 1 {
+                    jpxl_encode::EncodeResources::serial()
+                } else {
+                    jpxl_encode::EncodeResources::groups(value)
+                };
+            }
             other if other.starts_with("--") => {
                 fail(&format!("unknown `encode` option `{other}`"));
                 return EXIT_ERROR;
@@ -339,6 +353,7 @@ fn cmd_bench(args: &[String]) -> u8 {
     let mut iters = 3usize;
     let mut bpp = 1.0f64;
     let mut input: Option<&str> = None;
+    let mut resources = jpxl_encode::EncodeResources::auto();
 
     let mut rest = args.get(1..).unwrap_or(&[]).iter();
     while let Some(arg) = rest.next() {
@@ -370,6 +385,17 @@ fn cmd_bench(args: &[String]) -> u8 {
                     return EXIT_ERROR;
                 };
                 bpp = v;
+            }
+            "--threads" => {
+                let Some(v) = rest.next().and_then(|s| s.parse::<usize>().ok()) else {
+                    fail("`--threads` needs a positive integer (1 = serial)");
+                    return EXIT_ERROR;
+                };
+                resources = if v <= 1 {
+                    jpxl_encode::EncodeResources::serial()
+                } else {
+                    jpxl_encode::EncodeResources::groups(v)
+                };
             }
             "--input" => {
                 let Some(path) = rest.next() else {
@@ -406,10 +432,10 @@ fn cmd_bench(args: &[String]) -> u8 {
     };
 
     let timed = match mode {
-        "modular" => bench_modular(&rgb, width, height, iters),
-        "vardct-fixed" => bench_vardct_fixed(&rgb, width, height, iters),
-        "vardct-rate" => bench_vardct_rate(&rgb, width, height, bpp, iters),
-        "vardct-probe" => bench_vardct_probe(&rgb, width, height, iters),
+        "modular" => bench_modular(&rgb, width, height, iters, resources),
+        "vardct-fixed" => bench_vardct_fixed(&rgb, width, height, iters, resources),
+        "vardct-rate" => bench_vardct_rate(&rgb, width, height, bpp, iters, resources),
+        "vardct-probe" => bench_vardct_probe(&rgb, width, height, iters, resources),
         other => {
             fail(&format!(
                 "unknown bench mode `{other}` (modular|vardct-fixed|vardct-rate|vardct-probe)"
@@ -445,11 +471,18 @@ struct BenchReport {
     fingerprint: u64,
 }
 
-fn bench_modular(rgb: &[u8], width: u32, height: u32, iters: usize) -> Result<BenchReport, String> {
+fn bench_modular(
+    rgb: &[u8],
+    width: u32,
+    height: u32,
+    iters: usize,
+    resources: jpxl_encode::EncodeResources,
+) -> Result<BenchReport, String> {
     let samples: Vec<u16> = rgb.iter().map(|&b| u16::from(b)).collect();
     let image = jpxl_encode::Image::from_interleaved(width, height, 3, 8, &samples)
         .map_err(|e| e.to_string())?;
-    let options = jpxl_encode::EncodeOptions::default();
+    let mut options = jpxl_encode::EncodeOptions::default();
+    options.resources = resources;
     // Warm-up (not timed).
     let warm = jpxl_encode::encode(&image, &options).map_err(|e| e.to_string())?;
     time_iters(iters, warm.len(), fnv1a64(&warm), || {
@@ -462,8 +495,10 @@ fn bench_vardct_fixed(
     width: u32,
     height: u32,
     iters: usize,
+    resources: jpxl_encode::EncodeResources,
 ) -> Result<BenchReport, String> {
-    let request = jpxl_encode_policy::EncodeRequest::defaults();
+    let mut request = jpxl_encode_policy::EncodeRequest::defaults();
+    request.resources = resources;
     let warm = jpxl_encode_policy::encode_srgb8_vardct(width, height, rgb, &request)
         .map_err(|e| e.to_string())?;
     time_iters(iters, warm.len(), fnv1a64(&warm), || {
@@ -478,8 +513,10 @@ fn bench_vardct_rate(
     height: u32,
     bpp: f64,
     iters: usize,
+    resources: jpxl_encode::EncodeResources,
 ) -> Result<BenchReport, String> {
     let mut request = jpxl_encode_policy::EncodeRequest::defaults();
+    request.resources = resources;
     let target = jpxl_encode_policy::RateTarget::BitsPerPixel(bpp);
     request.target = Some(target);
     let warm = jpxl_encode_policy::encode_srgb8_to_target(width, height, rgb, &request, target)
@@ -498,17 +535,20 @@ fn bench_vardct_probe(
     width: u32,
     height: u32,
     iters: usize,
+    resources: jpxl_encode::EncodeResources,
 ) -> Result<BenchReport, String> {
     // One predetermined quantizer: plan_frame without a rate target is a single
     // plan_at + emit — the fourth measurement the advisor asked for.
-    let request = jpxl_encode_policy::EncodeRequest::defaults();
+    let mut request = jpxl_encode_policy::EncodeRequest::defaults();
+    request.resources = resources;
     let frame = jpxl_encode_policy::PreparedFrame::from_srgb8(width, height, rgb)
         .map_err(|e| e.to_string())?;
     let warm_plan = jpxl_encode_policy::plan_frame(&frame, &request).map_err(|e| e.to_string())?;
-    let warm = jpxl_encode::vardct::write_codestream(&warm_plan).map_err(|e| e.to_string())?;
+    let warm = jpxl_encode::vardct::write_codestream_with(&warm_plan, resources)
+        .map_err(|e| e.to_string())?;
     time_iters(iters, warm.len(), fnv1a64(&warm), || {
         let plan = jpxl_encode_policy::plan_frame(&frame, &request).map_err(|e| e.to_string())?;
-        jpxl_encode::vardct::write_codestream(&plan).map_err(|e| e.to_string())
+        jpxl_encode::vardct::write_codestream_with(&plan, resources).map_err(|e| e.to_string())
     })
 }
 

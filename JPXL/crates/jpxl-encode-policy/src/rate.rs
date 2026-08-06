@@ -60,7 +60,9 @@
 
 use jpxl_encode::vardct::ids::{GlobalScale, HfMul, MAX_GLOBAL_SCALE, QuantLf};
 use jpxl_encode::vardct::size::CodestreamSizing;
-use jpxl_encode::vardct::{Emission, ValidatedEmissionPlan, emit_codestream, price_codestream};
+use jpxl_encode::vardct::{
+    Emission, ValidatedEmissionPlan, emit_codestream_with, price_codestream,
+};
 
 use crate::error::{PolicyError, Result};
 use crate::request::{EncodeRequest, RateSearchBudget, RateTarget, RateTolerance};
@@ -769,7 +771,8 @@ pub fn search_frame(
         |quantizer| {
             let plan = prepared.plan(quantizer, EntropySearch::Full)?;
             // Keep the emission of the incumbent so the winner is not re-encoded.
-            let emission = emit_codestream(&plan)?;
+            // Finalist Full emits use the request's EncodeResources (parallel groups).
+            let emission = emit_codestream_with(&plan, prepared.request.resources)?;
             prepared.stats.full_prices = prepared.stats.full_prices.saturating_add(1);
             let bytes = emission.sizing.total;
             let better = full_best.as_ref().is_none_or(|(prev_q, _, prev)| {

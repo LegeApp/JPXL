@@ -208,6 +208,11 @@ pub struct EncodeRequest {
     /// intended samples. `epf_iters > 0` is signalled on the wire but has no
     /// encoder-side inverse yet (deeper EPF is a later filter-planning item).
     pub restoration: RestorationDecision,
+    /// Coarse section-parallelism policy for emission (Opt-P).
+    ///
+    /// Default is [`jpxl_encode::EncodeResources::auto`]. Rate-loop intermediate
+    /// prices stay serial for predictability; Final Full emits use this budget.
+    pub resources: jpxl_encode::EncodeResources,
 }
 
 impl EncodeRequest {
@@ -242,6 +247,7 @@ impl EncodeRequest {
             target: None,
             tolerance: RateTolerance::default(),
             restoration: RestorationDecision::default(),
+            resources: jpxl_encode::EncodeResources::auto(),
         }
     }
 

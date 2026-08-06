@@ -235,9 +235,11 @@ pub struct EncodeOptions {
     /// Implies [`EncodeOptions::container`]: a fragmented codestream has
     /// nowhere to live outside a container.
     pub jxlp_fragment_size: Option<usize>,
-    /// Resource policy for coarse section parallelism (Opt-P). Default is
-    /// serial. Under Contract A the codestream must not depend on
-    /// [`EncodeResources::threads`].
+    /// Resource policy for coarse section parallelism (Opt-P).
+    ///
+    /// Default is [`EncodeResources::auto`] (group axis + host parallelism)
+    /// when the `parallel` feature is on. Under Contract A the codestream must
+    /// not depend on [`EncodeResources::threads`].
     pub resources: EncodeResources,
 }
 
@@ -482,7 +484,7 @@ mod tests {
     use modular::{MaTree, Predictor};
 
     /// Opt-P Contract A: multi-section modular encode is byte-identical at
-    /// 1 worker and N workers (fixed reduction order).
+    /// serial, fixed-N, and host-auto worker budgets.
     #[test]
     fn multi_section_modular_is_byte_identical_across_thread_counts() {
         let width = 300u32;
@@ -491,19 +493,26 @@ mod tests {
             .flat_map(|y| (0..width).map(move |x| ((x + 3 * y) % 200) as i32))
             .collect();
         let image = Image::new(width, height, 8, vec![plane]).expect("image");
-        let mut serial = EncodeOptions {
+        let base = EncodeOptions {
             group_size_shift: Some(0), // group_dim 128 → multi-section
             ..EncodeOptions::default()
         };
+        let mut serial = base;
         serial.resources = EncodeResources::serial();
-        let mut parallel = serial;
+        let mut parallel = base;
         parallel.resources = EncodeResources::groups(4);
+        let auto = base; // default resources = auto
 
         let a = encode(&image, &serial).expect("serial");
         let b = encode(&image, &parallel).expect("parallel");
+        let c = encode(&image, &auto).expect("auto");
         assert_eq!(
             a, b,
             "Contract A: 1-thread and 4-thread modular multi-section must match"
+        );
+        assert_eq!(
+            a, c,
+            "Contract A: EncodeResources::auto must match serial emission"
         );
     }
 
