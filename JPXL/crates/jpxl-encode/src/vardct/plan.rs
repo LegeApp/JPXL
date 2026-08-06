@@ -24,6 +24,13 @@
 //! bitstream will contain; deciding *which* plan is `jpxl-encode-policy`'s
 //! entire job.
 //!
+//! # Sharing (Opt-V1)
+//!
+//! [`EmissionPlan`]'s spatial and quantized stages are held behind
+//! [`std::sync::Arc`]. Entropy-order / block-context / preset alternatives
+//! clone the plan for free with respect to coefficient payload; only
+//! [`EntropyPlan`] is expected to diverge.
+//!
 //! # Milestone-1 scope
 //!
 //! [`SpatialPlan`], [`QuantizedFrameIr`], [`EntropyPlan`] and [`EmissionPlan`]
@@ -461,11 +468,42 @@ impl LfQuantPlanes {
     }
 }
 
+/// Storage for one channel of a varblock's coefficients.
+///
+/// Opt-V arenas: many varblocks share one [`Arc`] group buffer via
+/// [`Shared`](ChannelStorage::Shared); simple constructors still own a box.
+#[derive(Debug, Clone)]
+enum ChannelStorage {
+    Owned(Box<[i32]>),
+    Shared {
+        arena: std::sync::Arc<[i32]>,
+        start: usize,
+        len: usize,
+    },
+}
+
+impl ChannelStorage {
+    fn as_slice(&self) -> &[i32] {
+        match self {
+            Self::Owned(b) => b,
+            Self::Shared { arena, start, len } => arena.get(*start..*start + *len).unwrap_or(&[]),
+        }
+    }
+}
+
+impl PartialEq for ChannelStorage {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_slice() == other.as_slice()
+    }
+}
+
+impl Eq for ChannelStorage {}
+
 /// One varblock's quantized HF coefficients, per channel, in the coefficient
 /// array's own raster order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VarblockCoefficients {
-    channels: [Box<[i32]>; NUM_CHANNELS],
+    channels: [ChannelStorage; NUM_CHANNELS],
 }
 
 impl VarblockCoefficients {
@@ -474,7 +512,9 @@ impl VarblockCoefficients {
     pub fn zeros(transform: TransformType) -> Self {
         let n = transform.num_blocks() * 64;
         Self {
-            channels: core::array::from_fn(|_| vec![0i32; n].into_boxed_slice()),
+            channels: core::array::from_fn(|_| {
+                ChannelStorage::Owned(vec![0i32; n].into_boxed_slice())
+            }),
         }
     }
 
@@ -497,14 +537,61 @@ impl VarblockCoefficients {
             }
         }
         Ok(Self {
-            channels: channels.map(Vec::into_boxed_slice),
+            channels: channels.map(|c| ChannelStorage::Owned(c.into_boxed_slice())),
         })
+    }
+
+    /// Three channels sliced from a group-scoped coefficient arena.
+    ///
+    /// Channel order is X, Y, B. Each range is `start..start+len` into `arena`.
+    ///
+    /// # Errors
+    ///
+    /// [`PlanError::ShapeMismatch`] if a range is out of bounds or the wrong
+    /// length for `transform`.
+    pub fn from_arena(
+        transform: TransformType,
+        arena: std::sync::Arc<[i32]>,
+        starts: [usize; NUM_CHANNELS],
+    ) -> PlanResult<Self> {
+        let expected = (transform.num_blocks() * 64) as usize;
+        let mut channels = [
+            ChannelStorage::Owned(Box::new([])),
+            ChannelStorage::Owned(Box::new([])),
+            ChannelStorage::Owned(Box::new([])),
+        ];
+        for (i, start) in starts.into_iter().enumerate() {
+            let end = start.checked_add(expected).ok_or_else(|| {
+                PlanError::shape(
+                    "varblock coefficient arena range",
+                    "I.3.2",
+                    expected as u64,
+                    0,
+                )
+            })?;
+            if end > arena.len() {
+                return Err(PlanError::shape(
+                    "varblock coefficient arena range",
+                    "I.3.2",
+                    expected as u64,
+                    arena.len() as u64,
+                ));
+            }
+            if let Some(slot) = channels.get_mut(i) {
+                *slot = ChannelStorage::Shared {
+                    arena: std::sync::Arc::clone(&arena),
+                    start,
+                    len: expected,
+                };
+            }
+        }
+        Ok(Self { channels })
     }
 
     /// One channel's coefficients, `c` in `0..3`.
     #[must_use]
     pub fn channel(&self, c: usize) -> Option<&[i32]> {
-        self.channels.get(c).map(|p| &**p)
+        self.channels.get(c).map(ChannelStorage::as_slice)
     }
 }
 
@@ -585,8 +672,7 @@ pub struct HybridUintPlan {
 /// One entropy distribution, as symbol counts over its alphabet.
 ///
 /// Milestone 1 stores the census result; turning counts into a normalized ANS
-/// table and serializing it is slice 11.5's job, behind
-/// [`crate::vardct::sink::SymbolSink`].
+/// table and serializing it is the writer's job via `jpxl_entropy::EntropyTables`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HistogramPlan {
     counts: Box<[u32]>,
@@ -796,16 +882,49 @@ impl SectionLayout {
 /// against nothing. What it carries instead is the lowered plan itself — the
 /// three stages the writer reads — plus the section layout, and the header
 /// fields it needs are already in [`FrameDecision`]/[`SpatialPlan`].
+///
+/// `spatial` and `quantized` are shared via [`Arc`] so entropy alternatives
+/// (natural vs custom order, default vs custom block context, multi-preset)
+/// do not deep-clone coefficient arrays.
 #[derive(Debug, Clone, PartialEq)]
 pub struct EmissionPlan {
-    /// The spatial decisions.
-    pub spatial: SpatialPlan,
-    /// The exact integers.
-    pub quantized: QuantizedFrameIr,
+    /// The spatial decisions (shared across entropy overlays).
+    pub spatial: std::sync::Arc<SpatialPlan>,
+    /// The exact integers (shared across entropy overlays).
+    pub quantized: std::sync::Arc<QuantizedFrameIr>,
     /// The entropy models.
     pub entropy: EntropyPlan,
     /// The TOC layout.
     pub sections: SectionLayout,
+}
+
+impl EmissionPlan {
+    /// Builds a plan that owns a new shared payload for `spatial` and
+    /// `quantized`.
+    #[must_use]
+    pub fn new(
+        spatial: SpatialPlan,
+        quantized: QuantizedFrameIr,
+        entropy: EntropyPlan,
+        sections: SectionLayout,
+    ) -> Self {
+        Self {
+            spatial: std::sync::Arc::new(spatial),
+            quantized: std::sync::Arc::new(quantized),
+            entropy,
+            sections,
+        }
+    }
+
+    /// Exclusive access to the spatial stage (COW via [`Arc::make_mut`]).
+    pub fn spatial_mut(&mut self) -> &mut SpatialPlan {
+        std::sync::Arc::make_mut(&mut self.spatial)
+    }
+
+    /// Exclusive access to the quantized stage (COW via [`Arc::make_mut`]).
+    pub fn quantized_mut(&mut self) -> &mut QuantizedFrameIr {
+        std::sync::Arc::make_mut(&mut self.quantized)
+    }
 }
 
 #[cfg(test)]

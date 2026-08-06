@@ -172,6 +172,44 @@ const DCT4_8: [[f32; 8]; 8] = [
      0.386_505_22, -0.440_960_65, 0.478_470_18, -0.497_592_36],
 ];
 
+/// Orthonormal 16-point DCT-IV matrix entries
+/// `sqrt(2/16) * cos(pi * (2n+1) * (2u+1) / 64)`.
+#[rustfmt::skip]
+const DCT4_16: [[f32; 16]; 16] = [
+    [0.353_127_52, 0.349_726_71, 0.342_957_84, 0.332_886_10, 0.319_608_48, 0.303_252_86, 0.283_976_75, 0.261_965_78,
+     0.237_431_95, 0.210_611_51, 0.181_762_77, 0.151_163_55, 0.119_108_55, 0.085_906_47, 0.051_877_06, 0.017_348_04],
+    [0.349_726_71, 0.319_608_48, 0.261_965_78, 0.181_762_77, 0.085_906_47, -0.017_348_04, -0.119_108_55, -0.210_611_51,
+     -0.283_976_75, -0.332_886_10, -0.353_127_52, -0.342_957_84, -0.303_252_86, -0.237_431_95, -0.151_163_55, -0.051_877_06],
+    [0.342_957_84, 0.261_965_78, 0.119_108_55, -0.051_877_06, -0.210_611_51, -0.319_608_48, -0.353_127_52, -0.303_252_86,
+     -0.181_762_77, -0.017_348_04, 0.151_163_55, 0.283_976_75, 0.349_726_71, 0.332_886_10, 0.237_431_95, 0.085_906_47],
+    [0.332_886_10, 0.181_762_77, -0.051_877_06, -0.261_965_78, -0.353_127_52, -0.283_976_75, -0.085_906_47, 0.151_163_55,
+     0.319_608_48, 0.342_957_84, 0.210_611_51, -0.017_348_04, -0.237_431_95, -0.349_726_71, -0.303_252_86, -0.119_108_55],
+    [0.319_608_48, 0.085_906_47, -0.210_611_51, -0.353_127_52, -0.237_431_95, 0.051_877_06, 0.303_252_86, 0.332_886_10,
+     0.119_108_55, -0.181_762_77, -0.349_726_71, -0.261_965_78, 0.017_348_04, 0.283_976_75, 0.342_957_84, 0.151_163_55],
+    [0.303_252_86, -0.017_348_04, -0.319_608_48, -0.283_976_75, 0.051_877_06, 0.332_886_10, 0.261_965_78, -0.085_906_47,
+     -0.342_957_84, -0.237_431_95, 0.119_108_55, 0.349_726_71, 0.210_611_51, -0.151_163_55, -0.353_127_52, -0.181_762_77],
+    [0.283_976_75, -0.119_108_55, -0.353_127_52, -0.085_906_47, 0.303_252_86, 0.261_965_78, -0.151_163_55, -0.349_726_71,
+     -0.051_877_06, 0.319_608_48, 0.237_431_95, -0.181_762_77, -0.342_957_84, -0.017_348_04, 0.332_886_10, 0.210_611_51],
+    [0.261_965_78, -0.210_611_51, -0.303_252_86, 0.151_163_55, 0.332_886_10, -0.085_906_47, -0.349_726_71, 0.017_348_04,
+     0.353_127_52, 0.051_877_06, -0.342_957_84, -0.119_108_55, 0.319_608_48, 0.181_762_77, -0.283_976_75, -0.237_431_95],
+    [0.237_431_95, -0.283_976_75, -0.181_762_77, 0.319_608_48, 0.119_108_55, -0.342_957_84, -0.051_877_06, 0.353_127_52,
+     -0.017_348_04, -0.349_726_71, 0.085_906_47, 0.332_886_10, -0.151_163_55, -0.303_252_86, 0.210_611_51, 0.261_965_78],
+    [0.210_611_51, -0.332_886_10, -0.017_348_04, 0.342_957_84, -0.181_762_77, -0.237_431_95, 0.319_608_48, 0.051_877_06,
+     -0.349_726_71, 0.151_163_55, 0.261_965_78, -0.303_252_86, -0.085_906_47, 0.353_127_52, -0.119_108_55, -0.283_976_75],
+    [0.181_762_77, -0.353_127_52, 0.151_163_55, 0.210_611_51, -0.349_726_71, 0.119_108_55, 0.237_431_95, -0.342_957_84,
+     0.085_906_47, 0.261_965_78, -0.332_886_10, 0.051_877_06, 0.283_976_75, -0.319_608_48, 0.017_348_04, 0.303_252_86],
+    [0.151_163_55, -0.342_957_84, 0.283_976_75, -0.017_348_04, -0.261_965_78, 0.349_726_71, -0.181_762_77, -0.119_108_55,
+     0.332_886_10, -0.303_252_86, 0.051_877_06, 0.237_431_95, -0.353_127_52, 0.210_611_51, 0.085_906_47, -0.319_608_48],
+    [0.119_108_55, -0.303_252_86, 0.349_726_71, -0.237_431_95, 0.017_348_04, 0.210_611_51, -0.342_957_84, 0.319_608_48,
+     -0.151_163_55, -0.085_906_47, 0.283_976_75, -0.353_127_52, 0.261_965_78, -0.051_877_06, -0.181_762_77, 0.332_886_10],
+    [0.085_906_47, -0.237_431_95, 0.332_886_10, -0.349_726_71, 0.283_976_75, -0.151_163_55, -0.017_348_04, 0.181_762_77,
+     -0.303_252_86, 0.353_127_52, -0.319_608_48, 0.210_611_51, -0.051_877_06, -0.119_108_55, 0.261_965_78, -0.342_957_84],
+    [0.051_877_06, -0.151_163_55, 0.237_431_95, -0.303_252_86, 0.342_957_84, -0.353_127_52, 0.332_886_10, -0.283_976_75,
+     0.210_611_51, -0.119_108_55, 0.017_348_04, 0.085_906_47, -0.181_762_77, 0.261_965_78, -0.319_608_48, 0.349_726_71],
+    [0.017_348_04, -0.051_877_06, 0.085_906_47, -0.119_108_55, 0.151_163_55, -0.181_762_77, 0.210_611_51, -0.237_431_95,
+     0.261_965_78, -0.283_976_75, 0.303_252_86, -0.319_608_48, 0.332_886_10, -0.342_957_84, 0.349_726_71, -0.353_127_52],
+];
+
 /// Orthonormal 2-point DCT-IV, in place. A single Givens rotation.
 fn dct_iv_2(v: &mut [f32; 2]) {
     let (x0, x1) = (v[0], v[1]);
@@ -195,6 +233,18 @@ fn dct_iv_4(v: &mut [f32; 4]) {
 fn dct_iv_8(v: &mut [f32; 8]) {
     let x = *v;
     for (out, row) in v.iter_mut().zip(DCT4_8.iter()) {
+        let mut acc = 0.0;
+        for (c, xn) in row.iter().zip(x.iter()) {
+            acc += c * xn;
+        }
+        *out = acc;
+    }
+}
+
+/// Orthonormal 16-point DCT-IV, in place.
+fn dct_iv_16(v: &mut [f32; 16]) {
+    let x = *v;
+    for (out, row) in v.iter_mut().zip(DCT4_16.iter()) {
         let mut acc = 0.0;
         for (c, xn) in row.iter().zip(x.iter()) {
             acc += c * xn;
@@ -305,6 +355,43 @@ pub fn dct_iii_16(v: &mut [f32; 16]) {
     }
 }
 
+/// Orthonormal 32-point DCT-II (forward transform), in place.
+///
+/// Factored even/odd split over [`dct_ii_16`] and [`dct_iv_16`]. Replaces the
+/// dense matrix path for length 32 (Opt-D / flamegraph `matrix_pass` hotspot).
+pub fn dct_ii_32(v: &mut [f32; 32]) {
+    let mut even = [0.0f32; 16];
+    let mut odd = [0.0f32; 16];
+    for k in 0..16 {
+        even[k] = v[k] + v[31 - k];
+        odd[k] = v[k] - v[31 - k];
+    }
+    dct_ii_16(&mut even);
+    dct_iv_16(&mut odd);
+    for k in 0..16 {
+        v[2 * k] = even[k] * FRAC_1_SQRT_2;
+        v[2 * k + 1] = odd[k] * FRAC_1_SQRT_2;
+    }
+}
+
+/// Orthonormal 32-point DCT-III (inverse transform), in place.
+///
+/// Exact inverse of [`dct_ii_32`].
+pub fn dct_iii_32(v: &mut [f32; 32]) {
+    let mut even = [0.0f32; 16];
+    let mut odd = [0.0f32; 16];
+    for k in 0..16 {
+        even[k] = v[2 * k] * FRAC_1_SQRT_2;
+        odd[k] = v[2 * k + 1] * FRAC_1_SQRT_2;
+    }
+    dct_iii_16(&mut even);
+    dct_iv_16(&mut odd);
+    for k in 0..16 {
+        v[k] = even[k] + odd[k];
+        v[31 - k] = even[k] - odd[k];
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Separable 2-D transforms
 // ---------------------------------------------------------------------------
@@ -402,11 +489,11 @@ pub fn idct2d_8x16(block: &mut [f32; 128]) {
 // reachable: I.8 runs `DCT_2D` over the `bwidth/8 x bheight/8` LF rectangle,
 // which is 1 x 1 for DCT8x8 and 1 x N for the flat rectangular transforms.
 //
-// The hand-factored butterflies above cover 2, 4, 8 and 16 and are kept as the
-// production path at those sizes. 32 and up use a cached orthonormal DCT-II
-// matrix and an f64 accumulator: a reference decoder wants "obviously correct"
-// far more than it wants a radix-2 recursion at DCT256x256, and every size is
-// cross-checked against `dct2_naive` in the tests.
+// The hand-factored butterflies cover 2, 4, 8, 16 and 32 and are the production
+// path at those sizes. 64 and up use a cached orthonormal DCT-II matrix and an
+// f64 accumulator: a reference decoder wants "obviously correct" far more than
+// a radix-2 recursion at DCT256x256, and every size is cross-checked against
+// `dct2_naive` in the tests.
 
 /// Largest 1-D transform length VarDCT can ask for (DCT256x256, 18181-1 I.1).
 pub const MAX_TRANSFORM_SIZE: usize = 256;
@@ -482,6 +569,7 @@ fn dct_ii_any(v: &mut [f32]) {
         4 => apply_fixed::<4>(v, dct_ii_4),
         8 => apply_fixed::<8>(v, dct_ii_8),
         16 => apply_fixed::<16>(v, dct_ii_16),
+        32 => apply_fixed::<32>(v, dct_ii_32),
         n => {
             if let Some(m) = dct_matrix(n) {
                 matrix_pass(v, m, n, true);
@@ -502,6 +590,7 @@ fn dct_iii_any(v: &mut [f32]) {
         4 => apply_fixed::<4>(v, dct_iii_4),
         8 => apply_fixed::<8>(v, dct_iii_8),
         16 => apply_fixed::<16>(v, dct_iii_16),
+        32 => apply_fixed::<32>(v, dct_iii_32),
         n => {
             if let Some(m) = dct_matrix(n) {
                 matrix_pass(v, m, n, false);
@@ -945,6 +1034,53 @@ mod tests {
             dct3_naive(&input, &mut reference, 16);
             dct_iii_16(&mut fast);
             assert_slice_close(&fast, &reference, 1e-5, "dct_iii_16");
+        }
+    }
+
+    #[test]
+    fn dct_ii_32_matches_naive() {
+        let mut rng = Lcg::new(0x32dc_f000);
+        for _ in 0..64 {
+            let mut fast = [0.0f32; 32];
+            for slot in &mut fast {
+                *slot = rng.next(1.0);
+            }
+            let input = fast;
+            let mut reference = [0.0f32; 32];
+            dct2_naive(&input, &mut reference, 32);
+            dct_ii_32(&mut fast);
+            assert_slice_close(&fast, &reference, 1e-4, "dct_ii_32");
+        }
+    }
+
+    #[test]
+    fn dct_iii_32_matches_naive() {
+        let mut rng = Lcg::new(0x33dc_f001);
+        for _ in 0..64 {
+            let mut fast = [0.0f32; 32];
+            for slot in &mut fast {
+                *slot = rng.next(1.0);
+            }
+            let input = fast;
+            let mut reference = [0.0f32; 32];
+            dct3_naive(&input, &mut reference, 32);
+            dct_iii_32(&mut fast);
+            assert_slice_close(&fast, &reference, 1e-4, "dct_iii_32");
+        }
+    }
+
+    #[test]
+    fn dct_ii_32_round_trips_through_dct_iii_32() {
+        let mut rng = Lcg::new(0x32f0_0001);
+        for _ in 0..32 {
+            let mut v = [0.0f32; 32];
+            for slot in &mut v {
+                *slot = rng.next(1.0);
+            }
+            let original = v;
+            dct_ii_32(&mut v);
+            dct_iii_32(&mut v);
+            assert_slice_close(&v, &original, 1e-4, "ii/iii_32 round trip");
         }
     }
 

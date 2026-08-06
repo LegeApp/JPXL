@@ -51,10 +51,15 @@ use crate::analysis::AnalysisAtlas;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AqMode {
     /// No field: every varblock at the request's `HfMul`, byte-identical to
-    /// the pre-slice-17 encoder.
-    #[default]
+    /// a constant-mul encode. Opt out when measuring an un-AQ baseline.
     Off,
     /// Perceptual masking: busy coarser, flat finer.
+    ///
+    /// Production default since the M8 leftover wave: the entropy model now
+    /// prices DctSelect/mul rows, Hierarchical cover is already the default
+    /// cover, and flat content still collapses to a neutral field (byte-
+    /// identical to [`AqMode::Off`]) so the switch costs nothing on flat.
+    #[default]
     Masking,
     /// Error equalization: busy finer, flat coarser.
     Uniform,

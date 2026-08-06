@@ -7,20 +7,22 @@
 //! hybrid-uint configuration per cluster, and one distribution per cluster.
 //! The writer rebuilds the ANS tables from its own exact token census, so the
 //! *levers* are the map and the configurations — this module chooses both
-//! from the raw value census and nothing else.
+//! from the raw value census and nothing else. Slice 18c also proposes an
+//! I.2.2 HF block-context model (thresholds + clustering map); that choice
+//! *does* change the event stream, so the caller re-censuses under it and
+//! adopts only on an exact `price_codestream` win — the same discipline as
+//! §9.4's coefficient-order pass.
 //!
-//! # Why one pass is exact
+//! # Why the refinement bound is one re-census
 //!
-//! The event stream — which contexts fire, with which raw values — depends on
-//! the block context model and the coefficient orders, and on nothing this
-//! module chooses. With the default block context and natural orders (both
-//! fixed until their writers exist), the census taken before training is
-//! byte-for-byte the census the writer will take after it. §9's "bounded
-//! refinement pass" therefore has its bound at **zero iterations** at this
-//! scope: re-running the census after training would count the same events.
-//! The clusterer's own termination is separately bounded: every merge reduces
-//! the cluster count by one, so at most `n - 1` merges happen, and the
-//! stale-edge recomputations are bounded by the candidate edge count.
+//! The event stream depends on the block context model and the coefficient
+//! orders. Clustering and hybrid-uint alone leave it unchanged, so training
+//! them needs no second walk. A proposed custom block context (or custom
+//! orders) changes which pre-context each symbol lands in, so the caller
+//! walks once under the candidate and trains a fresh model. The loop is
+//! closed: one proposal, one re-census, exact-price adopt. The clusterer's
+//! own termination is separately bounded: every merge reduces the cluster
+//! count by one, so at most `n - 1` merges happen.
 //!
 //! # Cost model
 //!
@@ -35,12 +37,17 @@
 //! streams the trained model produces.
 
 use jpxl_core::varblock::{NUM_ORDER_IDS, natural_coeff_order, order_id_dims};
-use jpxl_encode::vardct::ids::{ClusterId, OrderId};
+use jpxl_encode::vardct::ids::{ClusterId, OrderId, PresetId};
 use jpxl_encode::vardct::plan::{
-    HistogramPlan, HybridUintPlan, OrderSet, QuantizedFrameIr, SpatialPlan,
+    DEFAULT_BLOCK_CTX_MAP, HfBlockContextPlan, HistogramPlan, HybridUintPlan, OrderSet,
+    QuantizedFrameIr, SpatialPlan,
 };
-use jpxl_encode::vardct::{CensusSink, PlanResult};
+use jpxl_encode::vardct::{CensusSink, PlanResult, VardctGeometry};
 use jpxl_entropy::HybridUintConfig;
+
+/// At most this many QF thresholds in a proposal — each doubles (roughly)
+/// `bsize`, and I.2.2 caps `bsize` at `39 * 64`.
+const MAX_QF_THRESHOLDS: usize = 3;
 
 /// The candidate hybrid-uint configurations a cluster may use, as
 /// `(split_exponent, msb_in_token, lsb_in_token)`. All satisfy C.2.3's
@@ -234,6 +241,257 @@ fn fingerprint(values: &[(u32, u64)]) -> (u64, u64) {
         reason = "both terms are small non-negative fractions scaled to integers"
     )]
     ((zeros * 1000 / total), (mean_class * 100.0).max(0.0) as u64)
+}
+
+/// Proposes an I.2.2 HF block-context model from the quantized IR.
+///
+/// Returns [`HfBlockContextPlan::Default`] when no candidate is expected to
+/// beat the default map — the caller then keeps the existing path and stays
+/// byte-identical to pre-18c. A non-default proposal is always a *candidate*:
+/// the caller re-censuses, retrains, and keeps it only on a strict exact-price
+/// win.
+///
+/// # What is being searched
+///
+/// Two levers, tried in order:
+///
+/// 1. **Shape-class trim (no thresholds).** The default map has 15 contexts
+///    covering every Order ID; a frame that only uses a few transform shapes
+///    never fires the rest. Collapsing unused shape classes shrinks
+///    `nb_block_ctx`, which shrinks I.4's pre-context count (`495 × nb`) and
+///    the HF context map the entropy trainer has to signal. This is the
+///    cheapest density win and needs no QF/LF thresholds.
+/// 2. **QF split.** When `HfMul` varies, one QF threshold expands `bsize` and
+///    the Y row of the finer band gets its own half of a 16-way map.
+///
+/// LF thresholds are deferred: alone they rarely amortise the map, and with
+/// QF they multiply `bsize` past the break-even point of a single-pass encoder.
+pub(crate) fn propose_block_context(
+    spatial: &SpatialPlan,
+    _quantized: &QuantizedFrameIr,
+) -> HfBlockContextPlan {
+    let used_shapes = used_shape_classes(spatial);
+    let qf_thresholds = propose_qf_thresholds(spatial);
+
+    if qf_thresholds.is_empty() {
+        return propose_trimmed_map(&used_shapes);
+    }
+
+    // QF path: one threshold, Y fine-band split under the 16-context ceiling.
+    // Unused shape classes alias to 0 so density holds after densify.
+    let n_qf = qf_thresholds.len() + 1;
+    let bsize = 39 * n_qf;
+    if bsize > 39 * 64 {
+        return HfBlockContextPlan::Default;
+    }
+    let mut map: Vec<u8> = Vec::with_capacity(bsize);
+    for base in 0..39usize {
+        let shape = base % 13;
+        let base_label = DEFAULT_BLOCK_CTX_MAP.get(base).copied().unwrap_or(0);
+        let coarse = base_label / 2; // 0..14 → 0..7
+        for qf_band in 0..n_qf {
+            let label = if !used_shapes.contains(&shape) {
+                0
+            } else if base < 13 && qf_band > 0 {
+                // Y on the fine QF band.
+                8 + coarse
+            } else {
+                coarse
+            };
+            map.push(label);
+        }
+    }
+    densify_inplace(&mut map);
+    HfBlockContextPlan::Custom {
+        lf_thresholds: [Vec::new(), Vec::new(), Vec::new()],
+        qf_thresholds,
+        map,
+    }
+}
+
+/// Shape classes (`order_id` in `0..13`) the frame's varblocks actually use.
+fn used_shape_classes(spatial: &SpatialPlan) -> std::collections::BTreeSet<usize> {
+    spatial
+        .lf_groups
+        .iter()
+        .flat_map(|g| g.blocks.iter().map(|b| b.transform.order_id()))
+        .collect()
+}
+
+/// Custom map with empty thresholds: keep the default labels of every used
+/// shape class and collapse the rest onto context 0, then densify. When the
+/// frame only exercises a few Order IDs this drops `nb_block_ctx` well below
+/// 15; when every class is used the densified map matches the default and we
+/// return [`HfBlockContextPlan::Default`] so the wire stays one bit.
+fn propose_trimmed_map(used_shapes: &std::collections::BTreeSet<usize>) -> HfBlockContextPlan {
+    if used_shapes.is_empty() || used_shapes.len() >= 13 {
+        return HfBlockContextPlan::Default;
+    }
+    let mut map = DEFAULT_BLOCK_CTX_MAP.to_vec();
+    for (base, slot) in map.iter_mut().enumerate() {
+        let shape = base % 13;
+        if !used_shapes.contains(&shape) {
+            *slot = 0;
+        }
+    }
+    densify_inplace(&mut map);
+    let nb = map.iter().copied().max().map_or(0, |m| u64::from(m) + 1);
+    // No win if we did not actually shrink the context count.
+    if nb >= 15 || map.as_slice() == DEFAULT_BLOCK_CTX_MAP.as_slice() {
+        return HfBlockContextPlan::Default;
+    }
+    HfBlockContextPlan::Custom {
+        lf_thresholds: [Vec::new(), Vec::new(), Vec::new()],
+        qf_thresholds: Vec::new(),
+        map,
+    }
+}
+
+/// Remap labels onto a dense `0..k` in place.
+fn densify_inplace(map: &mut [u8]) {
+    let mut used: Vec<u8> = map.to_vec();
+    used.sort_unstable();
+    used.dedup();
+    for slot in map.iter_mut() {
+        let dense = used
+            .iter()
+            .position(|&x| x == *slot)
+            .and_then(|i| u8::try_from(i).ok())
+            .unwrap_or(0);
+        *slot = dense;
+    }
+}
+
+/// Caps multi-preset proposals: each preset multiplies the pre-context
+/// count and the HF histogram bundle. Two is enough to prove the wire
+/// path; more is a later density search.
+const MAX_HF_PRESETS: u32 = 2;
+
+/// Proposes an I.2.6 multi-preset assignment from per-group coefficient
+/// mass fingerprints.
+///
+/// Returns `None` when a split cannot help (single group, uniform mass).
+/// Otherwise `(num_hf_presets, group_presets)` with every group assigned
+/// a dense preset id in `0..num_hf_presets`. The caller re-censuses under
+/// the assignment (I.4's `offset = 495·nb·hfp` depends on it) and adopts
+/// only on an exact price win.
+pub(crate) fn propose_presets(
+    geometry: &VardctGeometry,
+    spatial: &SpatialPlan,
+    quantized: &QuantizedFrameIr,
+) -> Option<(u32, Vec<PresetId>)> {
+    let num_groups = usize::try_from(geometry.num_groups()).unwrap_or(0);
+    if num_groups < 2 {
+        return None;
+    }
+    let scores: Vec<u64> = (0..num_groups)
+        .map(|g| group_mass_score(geometry, spatial, quantized, g as u64))
+        .collect();
+    let min = scores.iter().copied().min().unwrap_or(0);
+    let max = scores.iter().copied().max().unwrap_or(0);
+    // A flat score field means every group looks the same to the fingerprint;
+    // splitting only pays the second histogram bank.
+    if max == min {
+        return None;
+    }
+    let mid = min.saturating_add(max.saturating_sub(min) / 2);
+    let mut assignment = Vec::with_capacity(num_groups);
+    let mut saw_lo = false;
+    let mut saw_hi = false;
+    for &score in &scores {
+        if score <= mid {
+            assignment.push(PresetId::new(0));
+            saw_lo = true;
+        } else {
+            assignment.push(PresetId::new(1));
+            saw_hi = true;
+        }
+    }
+    if !(saw_lo && saw_hi) {
+        return None;
+    }
+    // I.2.6: num_hf_presets ≤ num_groups (field width is ceil(log2(num_groups))).
+    let num = MAX_HF_PRESETS.min(u32::try_from(num_groups).unwrap_or(1));
+    if num < 2 {
+        return None;
+    }
+    Some((num, assignment))
+}
+
+/// A cheap per-group fingerprint: total absolute HF coefficient mass.
+///
+/// Groups with heavy residual structure want a different histogram bank from
+/// near-flat groups; the absolute mass is enough to seed a two-way split
+/// without a second full entropy census.
+fn group_mass_score(
+    geometry: &VardctGeometry,
+    spatial: &SpatialPlan,
+    quantized: &QuantizedFrameIr,
+    group: u64,
+) -> u64 {
+    let Some(rect) = geometry.group_rect(group) else {
+        return 0;
+    };
+    let Some(lf_id) = geometry.lf_group_of(group) else {
+        return 0;
+    };
+    let Some(lf_rect) = geometry.lf_group_rect(lf_id) else {
+        return 0;
+    };
+    let index = usize::try_from(lf_id.index()).unwrap_or(usize::MAX);
+    let Some(spatial_g) = spatial.lf_groups.get(index) else {
+        return 0;
+    };
+    let Some(quant_g) = quantized.lf_groups.get(index) else {
+        return 0;
+    };
+    let origin_bx = (rect.x0 - lf_rect.x0) / 8;
+    let origin_by = (rect.y0 - lf_rect.y0) / 8;
+    let blocks_w = rect.width.div_ceil(8);
+    let blocks_h = rect.height.div_ceil(8);
+    let mut mass = 0u64;
+    for (i, block) in spatial_g.blocks.iter().enumerate() {
+        let (bx, by) = (block.origin.bx(), block.origin.by());
+        if bx < origin_bx || by < origin_by {
+            continue;
+        }
+        let (lx, ly) = (bx - origin_bx, by - origin_by);
+        if lx >= blocks_w || ly >= blocks_h {
+            continue;
+        }
+        let Some(coeff) = quant_g.coefficients.get(i) else {
+            continue;
+        };
+        for channel in 0..3usize {
+            if let Some(values) = coeff.channel(channel) {
+                for &v in values {
+                    mass = mass.saturating_add(u64::from(v.unsigned_abs()));
+                }
+            }
+        }
+    }
+    mass
+}
+
+/// QF thresholds from the distinct `HfMul` values on the plan. I.4 compares
+/// `qf > threshold`, so placing a threshold at each mul (except the largest)
+/// puts every distinct mul into its own band.
+fn propose_qf_thresholds(spatial: &SpatialPlan) -> Vec<u32> {
+    let mut muls: Vec<u32> = spatial
+        .lf_groups
+        .iter()
+        .flat_map(|g| g.blocks.iter().map(|b| b.hf_mul.get()))
+        .collect();
+    muls.sort_unstable();
+    muls.dedup();
+    if muls.len() < 2 {
+        return Vec::new();
+    }
+    // Drop the largest: a threshold equal to the max mul leaves an empty top
+    // band because nothing is strictly greater.
+    muls.pop();
+    muls.truncate(MAX_QF_THRESHOLDS);
+    muls
 }
 
 /// Trains the model from a raw census (§9.2 steps 2–5).
@@ -671,6 +929,15 @@ mod tests {
         for id in &model.context_map {
             assert!(usize::from(id.get()) < model.histograms.len());
         }
+    }
+
+    #[test]
+    fn densify_inplace_is_dense() {
+        let mut map = vec![4u8, 0, 4, 9, 0, 9];
+        densify_inplace(&mut map);
+        assert_eq!(map, vec![1, 0, 1, 2, 0, 2]);
+        let max = map.iter().copied().max().unwrap_or(0);
+        assert!(max < 16, "densified labels must stay under I.2.2's ceiling");
     }
 
     #[test]

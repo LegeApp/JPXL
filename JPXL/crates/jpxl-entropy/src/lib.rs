@@ -107,8 +107,8 @@ pub use ans::{AnsDistribution, AnsState};
 pub use decoder::SymbolDecoder;
 pub use dist::{ClusterMap, inverse_move_to_front, read_cluster_map};
 pub use encode::{
-    CodingMode, ContextMap, ContextMapForm, EncoderPlan, EntropyTables, Histogram, PrefixEncoder,
-    SymbolEncoder, TokenCensus,
+    CodingMode, ContextMap, ContextMapForm, EncoderPlan, EntropyTables, Histogram,
+    Lz77EncodeParams, PrefixEncoder, SymbolEncoder, TokenCensus,
 };
 pub use error::{EntropyError, Result};
 pub use hybrid::HybridUintConfig;

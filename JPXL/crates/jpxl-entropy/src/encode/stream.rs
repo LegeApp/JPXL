@@ -35,10 +35,14 @@
 //!
 //! # LZ77
 //!
-//! Back-reference emission is **not implemented** (slice 19). The `lz77.enabled`
-//! flag is written as false, which is a complete and legal framing: no distance
-//! context is appended and no `lz_len_conf` is written, exactly as C.2.1
-//! requires when the flag is clear.
+//! When [`EncoderPlan::lz77`] is [`None`], the `lz77.enabled` flag is written
+//! as false — complete and legal framing with no distance context and no
+//! `lz_len_conf`. When `Some`, Table C.1 fields and the length configuration
+//! are written, the context map must already include the distance context as
+//! its **last** entry (C.2.1 appends it on the read side from the caller's
+//! value-context count), and [`SymbolEncoder::push_copy`] emits back-references.
+//! Length trigger tokens are counted with [`TokenCensus::record_token`] because
+//! they bypass the value-cluster hybrid-uint configuration.
 //!
 //! Every path here is **bit-exact** (see `docs/PLAN.md`).
 
@@ -50,6 +54,7 @@ use crate::hybrid::{HybridUintConfig, bit_width};
 use super::ans::{AnsEncodeTable, AnsSymbol, encode_symbols};
 use super::cluster::{ContextMap, ContextMapForm};
 use super::histogram::Histogram;
+use super::lz77::Lz77EncodeParams;
 use super::prefix::{MAX_PREFIX_ALPHABET, PrefixEncoder};
 
 /// `log_alphabet_size` for prefix-coded streams (18181-1 C.2.1).
@@ -148,14 +153,24 @@ impl RawHistogram {
     }
 }
 
-/// The census pass: raw value counts for every pre-clustered context.
+/// The census pass: raw value counts (and optional direct tokens) per context.
+///
+/// Ordinary integers go through [`record`](Self::record) and are later
+/// hybrid-uint tokenized under the cluster configuration. LZ77 length-trigger
+/// tokens go through [`record_token`](Self::record_token): they are already
+/// alphabet symbols and must not be re-tokenized.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TokenCensus {
     contexts: Vec<RawHistogram>,
+    /// Pre-tokenized symbols (LZ77 length triggers), same indexing as `contexts`.
+    tokens: Vec<RawHistogram>,
 }
 
 impl TokenCensus {
     /// A census over `num_contexts` pre-clustered contexts.
+    ///
+    /// When LZ77 is enabled this must equal the context map's `num_dist`
+    /// (value contexts **plus** the distance context).
     ///
     /// # Errors
     ///
@@ -167,10 +182,11 @@ impl TokenCensus {
         }
         Ok(Self {
             contexts: vec![RawHistogram::new(); num_contexts],
+            tokens: vec![RawHistogram::new(); num_contexts],
         })
     }
 
-    /// Records one value in `ctx`.
+    /// Records one hybrid-uint *value* in `ctx` (literals and distance values).
     ///
     /// # Errors
     ///
@@ -184,7 +200,43 @@ impl TokenCensus {
         Ok(())
     }
 
-    /// The raw histogram of one context.
+    /// Records one already-tokenized alphabet symbol in `ctx`.
+    ///
+    /// Used for LZ77 length-trigger tokens (`>= min_symbol`), which the decoder
+    /// does not pass through the value-cluster hybrid-uint configuration.
+    ///
+    /// # Errors
+    ///
+    /// [`EntropyError::Encode`](crate::EntropyError::Encode) if `ctx` is outside
+    /// this census.
+    pub fn record_token(&mut self, ctx: usize, token: u32) -> Result<()> {
+        self.tokens
+            .get_mut(ctx)
+            .ok_or_else(|| encode_error!("C.2.1: context {ctx} is outside this census"))?
+            .record(token);
+        Ok(())
+    }
+
+    /// Records a back-reference for census: length token on `ctx`, distance on
+    /// the stream's distance context.
+    ///
+    /// # Errors
+    ///
+    /// If tokenization fails or either context is out of range.
+    pub fn record_copy(
+        &mut self,
+        ctx: usize,
+        length: u32,
+        raw_distance: u32,
+        dist_ctx: usize,
+        lz77: &Lz77EncodeParams,
+    ) -> Result<()> {
+        let length_tok = lz77.tokenize_length(length)?;
+        self.record_token(ctx, length_tok.token)?;
+        self.record(dist_ctx, raw_distance)
+    }
+
+    /// The raw-value histogram of one context.
     #[must_use]
     pub fn context(&self, ctx: usize) -> Option<&RawHistogram> {
         self.contexts.get(ctx)
@@ -208,6 +260,10 @@ pub struct EncoderPlan {
     /// Prefix codes or ANS.
     pub mode: CodingMode,
     /// Context-to-cluster mapping.
+    ///
+    /// When [`lz77`](Self::lz77) is `Some`, this map must include the distance
+    /// context as its **last** entry (one more than the caller's value-context
+    /// count). [`identity_with_lz77`](Self::identity_with_lz77) builds that shape.
     pub context_map: ContextMap,
     /// Which C.2.2 encoding to use for it.
     pub context_map_form: ContextMapForm,
@@ -216,11 +272,13 @@ pub struct EncoderPlan {
     /// ANS `log_alphabet_size`; `None` derives the narrowest legal value.
     /// Ignored for prefix codes, which C.2.1 fixes at 15.
     pub log_alphabet_size: Option<u32>,
+    /// LZ77 back-references; `None` writes `lz77.enabled = false`.
+    pub lz77: Option<Lz77EncodeParams>,
 }
 
 impl EncoderPlan {
     /// A plan with one cluster per context and the same configuration for all
-    /// of them.
+    /// of them. LZ77 is disabled.
     ///
     /// # Errors
     ///
@@ -240,11 +298,55 @@ impl EncoderPlan {
             context_map_form: ContextMapForm::Auto,
             configs,
             log_alphabet_size: None,
+            lz77: None,
+        })
+    }
+
+    /// Identity value contexts plus a distance context sharing cluster 0.
+    ///
+    /// The map has `num_value_contexts + 1` entries: contexts `0..n` are the
+    /// identity clustering, and the final entry (the distance context) maps to
+    /// cluster `0`. That matches the handmade LZ77 fixture layout and is a
+    /// good default when a single cluster codes both values and distances.
+    ///
+    /// # Errors
+    ///
+    /// As [`identity`](Self::identity), or if the LZ77 parameters are illegal.
+    pub fn identity_with_lz77(
+        num_value_contexts: usize,
+        mode: CodingMode,
+        config: HybridUintConfig,
+        lz77: Lz77EncodeParams,
+    ) -> Result<Self> {
+        config.validate()?;
+        lz77.validate()?;
+        if num_value_contexts == 0 {
+            return Err(encode_error!("C.2.1: num_dist must be at least 1"));
+        }
+        let mut clusters = Vec::with_capacity(num_value_contexts + 1);
+        for i in 0..num_value_contexts {
+            let cluster = u8::try_from(i).map_err(|_| {
+                encode_error!("C.2.2: {num_value_contexts} contexts exceed the cluster range")
+            })?;
+            clusters.push(cluster);
+        }
+        // Distance context shares cluster 0 (C.2.1 appends it after value contexts).
+        clusters.push(0);
+        let context_map = ContextMap::new(clusters)?;
+        let configs = vec![config; context_map.num_clusters()];
+        Ok(Self {
+            mode,
+            context_map,
+            context_map_form: ContextMapForm::Auto,
+            configs,
+            log_alphabet_size: None,
+            lz77: Some(lz77),
         })
     }
 
     /// A plan with a caller-supplied clustering and one configuration per
-    /// cluster.
+    /// cluster. LZ77 is disabled; set [`lz77`](Self::lz77) afterwards if needed
+    /// (and size the map with a trailing distance context).
     ///
     /// # Errors
     ///
@@ -271,7 +373,27 @@ impl EncoderPlan {
             context_map_form: ContextMapForm::Auto,
             configs,
             log_alphabet_size: None,
+            lz77: None,
         })
+    }
+
+    /// Pre-clustered context index reserved for LZ77 distances, if enabled.
+    ///
+    /// Always the last entry of the context map when LZ77 is on.
+    #[must_use]
+    pub fn lz_dist_ctx(&self) -> Option<usize> {
+        self.lz77
+            .as_ref()
+            .map(|_| self.context_map.num_dist().saturating_sub(1))
+    }
+
+    /// Number of *value* contexts (excludes the distance context when LZ77 is on).
+    #[must_use]
+    pub fn num_value_contexts(&self) -> usize {
+        match self.lz77 {
+            Some(_) => self.context_map.num_dist().saturating_sub(1),
+            None => self.context_map.num_dist(),
+        }
     }
 }
 
@@ -293,6 +415,7 @@ pub struct EntropyTables {
     context_map_form: ContextMapForm,
     configs: Vec<HybridUintConfig>,
     codes: ClusterCodes,
+    lz77: Option<Lz77EncodeParams>,
 }
 
 impl EntropyTables {
@@ -304,6 +427,14 @@ impl EntropyTables {
     /// inconsistent with the census, or if the tokens the plan produces do not
     /// fit the alphabet its backend allows.
     pub fn build(plan: &EncoderPlan, census: &TokenCensus) -> Result<Self> {
+        if let Some(lz77) = &plan.lz77 {
+            lz77.validate()?;
+            if plan.context_map.num_dist() < 2 {
+                return Err(encode_error!(
+                    "C.2.1: LZ77 requires a distance context, so num_dist must be at least 2"
+                ));
+            }
+        }
         let num_dist = plan.context_map.num_dist();
         if census.num_contexts() != num_dist {
             return Err(encode_error!(
@@ -323,7 +454,8 @@ impl EntropyTables {
         }
 
         // Tokenize the census: raw value counts become token counts, per
-        // cluster, under that cluster's configuration.
+        // cluster, under that cluster's configuration. Direct tokens (LZ77
+        // length triggers) are added without re-tokenization.
         let mut counts: Vec<Vec<u64>> = vec![Vec::new(); num_clusters];
         for ctx in 0..num_dist {
             let cluster = plan.context_map.cluster_of(ctx)?;
@@ -339,6 +471,20 @@ impl EntropyTables {
                 .ok_or_else(|| encode_error!("C.2.1: cluster {cluster} is out of range"))?;
             for (value, count) in histogram.iter() {
                 let token = config.tokenize(value)?.token as usize;
+                if slot.len() <= token {
+                    slot.resize(token + 1, 0);
+                }
+                let entry = slot
+                    .get_mut(token)
+                    .ok_or_else(|| encode_error!("C.2.1: token {token} is out of range"))?;
+                *entry = entry.saturating_add(count);
+            }
+            let direct = census
+                .tokens
+                .get(ctx)
+                .ok_or_else(|| encode_error!("C.2.1: context {ctx} is outside the census"))?;
+            for (token, count) in direct.iter() {
+                let token = token as usize;
                 if slot.len() <= token {
                     slot.resize(token + 1, 0);
                 }
@@ -426,6 +572,7 @@ impl EntropyTables {
             context_map_form: plan.context_map_form,
             configs: plan.configs.clone(),
             codes,
+            lz77: plan.lz77,
         })
     }
 
@@ -458,6 +605,32 @@ impl EntropyTables {
         self.configs.get(cluster).copied()
     }
 
+    /// LZ77 parameters if the bundle enables back-references.
+    #[must_use]
+    pub const fn lz77(&self) -> Option<Lz77EncodeParams> {
+        self.lz77
+    }
+
+    /// Pre-clustered index of the distance context when LZ77 is enabled.
+    #[must_use]
+    pub fn lz_dist_ctx(&self) -> Option<usize> {
+        self.lz77
+            .as_ref()
+            .map(|_| self.context_map.num_dist().saturating_sub(1))
+    }
+
+    /// Number of value contexts (excludes the distance context when LZ77 is on).
+    ///
+    /// Pass this to [`SymbolDecoder::open`](crate::SymbolDecoder::open): the
+    /// decoder appends the distance context itself when it sees the flag.
+    #[must_use]
+    pub fn num_value_contexts(&self) -> usize {
+        match self.lz77 {
+            Some(_) => self.context_map.num_dist().saturating_sub(1),
+            None => self.context_map.num_dist(),
+        }
+    }
+
     /// Writes the distribution bundle (18181-1 C.2.1).
     ///
     /// This stops short of the ANS seed of C.3.2, which belongs to the stream;
@@ -468,10 +641,11 @@ impl EntropyTables {
     /// [`EntropyError::Encode`](crate::EntropyError::Encode) if a table cannot
     /// be expressed, or a bitstream error.
     pub fn write_bundle(&self, w: &mut BitWriter) -> Result<()> {
-        // Table C.1: LZ77 is not emitted (see the module documentation), so the
-        // flag is false and neither min_symbol/min_length nor the distance
-        // context exists.
-        w.write_bool(false);
+        // Table C.1 + optional lz_len_conf (C.2.1).
+        match &self.lz77 {
+            None => w.write_bool(false),
+            Some(params) => params.write_enabled(w)?,
+        }
 
         self.context_map.write(w, self.context_map_form)?;
 
@@ -540,13 +714,24 @@ impl<'a> SymbolEncoder<'a> {
     /// Records one unsigned integer in `ctx` (the inverse of
     /// `DecodeHybridVarLenUint`, 18181-1 C.3.3).
     ///
+    /// When LZ77 is enabled the hybrid-uint **token** must be strictly below
+    /// `min_symbol`; otherwise the decoder would treat it as a copy.
+    ///
     /// # Errors
     ///
     /// [`EntropyError::Encode`](crate::EntropyError::Encode) if `ctx` is
-    /// unknown, or if the value's token is outside the alphabet its cluster's
-    /// code covers — which means the census this stream's tables were built
-    /// from did not include this value.
+    /// unknown, if the token collides with the LZ77 range, or if the value's
+    /// token is outside the alphabet its cluster's code covers — which means
+    /// the census this stream's tables were built from did not include this
+    /// value.
     pub fn push_uint(&mut self, ctx: usize, value: u32) -> Result<()> {
+        if let Some(dist) = self.tables.lz_dist_ctx()
+            && ctx == dist
+        {
+            return Err(encode_error!(
+                "C.3.3: context {ctx} is the LZ77 distance context; use push_copy for distances"
+            ));
+        }
         let cluster = self.tables.context_map.cluster_of(ctx)?;
         let config = self
             .tables
@@ -554,16 +739,92 @@ impl<'a> SymbolEncoder<'a> {
             .get(cluster)
             .ok_or_else(|| encode_error!("C.2.1: cluster {cluster} has no configuration"))?;
         let split = config.tokenize(value)?;
+        if let Some(lz77) = self.tables.lz77
+            && split.token >= lz77.min_symbol
+        {
+            return Err(encode_error!(
+                "C.3.3: literal value {value} tokenizes to {} which is >= min_symbol {}; \
+                 raise min_symbol or change the hybrid-uint configuration",
+                split.token,
+                lz77.min_symbol
+            ));
+        }
+        self.push_event(cluster, split.token, split.extra_bits, split.extra, value)?;
+        Ok(())
+    }
+
+    /// Records an LZ77 back-reference (18181-1 C.3.3).
+    ///
+    /// Emits a length-trigger token on `ctx` (with `lz_len_conf` extra bits)
+    /// followed by a hybrid-uint distance on the distance context. The decoder
+    /// reconstructs `length` symbols from the window at the resolved distance.
+    ///
+    /// `raw_distance` is the value *before* the C.3.3 distance transform: with
+    /// `dist_multiplier == 0` the decoder uses `raw_distance + 1` as the window
+    /// offset, so `0` means "one symbol back".
+    ///
+    /// # Errors
+    ///
+    /// If LZ77 is disabled, `length` is below `min_length`, `ctx` is invalid,
+    /// or either token is missing from the alphabet.
+    pub fn push_copy(&mut self, ctx: usize, length: u32, raw_distance: u32) -> Result<()> {
+        let lz77 = self.tables.lz77.ok_or_else(|| {
+            encode_error!("C.3.3: push_copy requires EncoderPlan::lz77 to be set")
+        })?;
+        let dist_ctx = self.tables.lz_dist_ctx().ok_or_else(|| {
+            encode_error!("C.3.3: LZ77 is enabled but no distance context is present")
+        })?;
+        if let Some(d) = self.tables.lz_dist_ctx()
+            && ctx == d
+        {
+            return Err(encode_error!(
+                "C.3.3: copy trigger must use a value context, not the distance context"
+            ));
+        }
+
+        let length_tok = lz77.tokenize_length(length)?;
+        let value_cluster = self.tables.context_map.cluster_of(ctx)?;
+        self.push_event(
+            value_cluster,
+            length_tok.token,
+            length_tok.extra_bits,
+            length_tok.extra,
+            length_tok.token,
+        )?;
+
+        let dist_cluster = self.tables.context_map.cluster_of(dist_ctx)?;
+        let dist_config =
+            self.tables.configs.get(dist_cluster).ok_or_else(|| {
+                encode_error!("C.2.1: cluster {dist_cluster} has no configuration")
+            })?;
+        let dist_split = dist_config.tokenize(raw_distance)?;
+        self.push_event(
+            dist_cluster,
+            dist_split.token,
+            dist_split.extra_bits,
+            dist_split.extra,
+            raw_distance,
+        )?;
+        Ok(())
+    }
+
+    fn push_event(
+        &mut self,
+        cluster: usize,
+        token: u32,
+        extra_bits: u32,
+        extra: u32,
+        label: u32,
+    ) -> Result<()> {
         match &self.tables.codes {
             ClusterCodes::Prefix(codes) => {
                 let code = codes
                     .get(cluster)
                     .ok_or_else(|| encode_error!("C.2.1: cluster {cluster} has no prefix code"))?;
-                if code.constant_symbol() != Some(split.token) && code.code_length(split.token) == 0
-                {
+                if code.constant_symbol() != Some(token) && code.code_length(token) == 0 {
                     return Err(encode_error!(
-                        "C.2.4: token {} of value {value} is not in the code of cluster {cluster}",
-                        split.token
+                        "C.2.4: token {token} of value {label} is not in the code of cluster \
+                         {cluster}"
                     ));
                 }
             }
@@ -571,20 +832,19 @@ impl<'a> SymbolEncoder<'a> {
                 let table = tables
                     .get(cluster)
                     .ok_or_else(|| encode_error!("C.2.1: cluster {cluster} has no distribution"))?;
-                if table.probability(split.token) == 0 {
+                if table.probability(token) == 0 {
                     return Err(encode_error!(
-                        "C.2.5: token {} of value {value} has no probability mass in cluster \
-                         {cluster}",
-                        split.token
+                        "C.2.5: token {token} of value {label} has no probability mass in cluster \
+                         {cluster}"
                     ));
                 }
             }
         }
         self.events.push(Event {
             cluster,
-            token: split.token,
-            extra_bits: split.extra_bits,
-            extra: split.extra,
+            token,
+            extra_bits,
+            extra,
         });
         Ok(())
     }

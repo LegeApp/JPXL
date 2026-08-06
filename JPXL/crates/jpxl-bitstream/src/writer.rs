@@ -22,42 +22,105 @@ use crate::primitives::{U32Dist, U32Spec};
 ///
 /// Every method either writes exactly what it promises or returns an error
 /// having written nothing; there are no partial writes and no panics.
+///
+/// # Count-only mode
+///
+/// [`BitWriter::counting`] runs the same write path but does not store payload
+/// bytes — only `bit_len` advances. Rate-loop pricing uses this so intermediate
+/// probes pay for entropy encode work without retaining full section buffers.
+/// Sizes from a counting writer match a storing writer for the same sequence
+/// of writes (see the unit test).
 #[derive(Debug, Clone, Default)]
 pub struct BitWriter {
     bytes: Vec<u8>,
     bit_len: u64,
+    /// When false, payload bytes are not retained (Opt-V count-only pricing).
+    store: bool,
 }
 
 impl BitWriter {
-    /// Creates an empty writer.
+    /// Creates an empty writer that stores every written bit.
     #[must_use]
     pub const fn new() -> Self {
         Self {
             bytes: Vec::new(),
             bit_len: 0,
+            store: true,
+        }
+    }
+
+    /// Creates an empty writer that only counts bits (no payload buffer).
+    ///
+    /// `as_bytes` / `into_bytes` return empty; use [`bit_len`](Self::bit_len)
+    /// for the size. All field writers still validate ranges the same way.
+    #[must_use]
+    pub const fn counting() -> Self {
+        Self {
+            bytes: Vec::new(),
+            bit_len: 0,
+            store: false,
+        }
+    }
+
+    /// Whether this writer retains payload bytes.
+    #[must_use]
+    pub const fn stores_bytes(&self) -> bool {
+        self.store
+    }
+
+    /// Creates an empty writer with room for at least `bit_capacity` bits.
+    #[must_use]
+    pub fn with_capacity_bits(bit_capacity: u64) -> Self {
+        let bytes = usize::try_from(bit_capacity.div_ceil(8)).unwrap_or(usize::MAX);
+        Self {
+            bytes: Vec::with_capacity(bytes),
+            bit_len: 0,
+            store: true,
+        }
+    }
+
+    /// Ensures the internal buffer can hold at least `extra_bits` more bits
+    /// without reallocation. No-op for a counting writer.
+    pub fn reserve_bits(&mut self, extra_bits: u64) {
+        if !self.store {
+            return;
+        }
+        let need = match self.bit_len.checked_add(extra_bits) {
+            Some(total) => usize::try_from(total.div_ceil(8)).unwrap_or(usize::MAX),
+            None => usize::MAX,
+        };
+        let have = self.bytes.capacity();
+        if need > have {
+            self.bytes.reserve(need - self.bytes.len());
         }
     }
 
     /// Writes one bit.
     pub fn write_bit(&mut self, set: bool) {
-        if self.bit_len.is_multiple_of(8) {
-            self.bytes.push(0);
-        }
-        if set && let Some(byte) = self.bytes.last_mut() {
-            // `bit_len % 8` is at most 7, so the shift is always defined.
-            *byte |= 1u8 << (self.bit_len % 8);
+        if self.store {
+            if self.bit_len.is_multiple_of(8) {
+                self.bytes.push(0);
+            }
+            if set && let Some(byte) = self.bytes.last_mut() {
+                // `bit_len % 8` is at most 7, so the shift is always defined.
+                *byte |= 1u8 << (self.bit_len % 8);
+            }
         }
         self.bit_len += 1;
     }
 
     /// Writes `u(n)`: the low `n` bits of `value`, least-significant first.
     ///
+    /// Packs by whole bytes into a `u64` staging word rather than looping one
+    /// bit at a time. Output is byte-identical to the previous bit-loop form.
+    /// Counting writers only advance [`bit_len`](Self::bit_len).
+    ///
     /// # Errors
     ///
     /// [`BitstreamError::Overflow`] if `n > 32`, or if `value` has any bit set
     /// at or above position `n`. A silently truncated field is exactly the bug
     /// this crate exists to make impossible, so it is rejected rather than
-    /// masked.
+    /// masked. On error, the writer is left unchanged.
     pub fn write_bits(&mut self, n: u32, value: u32) -> Result<()> {
         if n > 32 {
             return Err(BitstreamError::Overflow);
@@ -65,9 +128,43 @@ impl BitWriter {
         if n < 32 && (value >> n) != 0 {
             return Err(BitstreamError::Overflow);
         }
-        for i in 0..n {
-            self.write_bit((value >> i) & 1 == 1);
+        if n == 0 {
+            return Ok(());
         }
+
+        if !self.store {
+            self.bit_len = self
+                .bit_len
+                .checked_add(u64::from(n))
+                .ok_or(BitstreamError::Overflow)?;
+            return Ok(());
+        }
+
+        let bit_offset = self.bit_len % 8;
+        // At most 7 (offset) + 32 (payload) = 39 bits → five destination bytes.
+        let bytes_needed = usize::try_from((self.bit_len + u64::from(n)).div_ceil(8))
+            .map_err(|_| BitstreamError::Overflow)?;
+        if self.bytes.len() < bytes_needed {
+            self.bytes.resize(bytes_needed, 0);
+        }
+
+        // Shift the payload so its LSB lands on the current bit cursor.
+        let mut packed = u64::from(value) << bit_offset;
+        let mut byte_index =
+            usize::try_from(self.bit_len / 8).map_err(|_| BitstreamError::Overflow)?;
+        let mut bits_out = bit_offset + u64::from(n);
+        while bits_out > 0 {
+            let chunk = u8::try_from(packed & 0xFF).unwrap_or(0);
+            if let Some(slot) = self.bytes.get_mut(byte_index) {
+                *slot |= chunk;
+            } else {
+                return Err(BitstreamError::Overflow);
+            }
+            packed >>= 8;
+            byte_index = byte_index.saturating_add(1);
+            bits_out = bits_out.saturating_sub(8);
+        }
+        self.bit_len += u64::from(n);
         Ok(())
     }
 
@@ -155,16 +252,21 @@ impl BitWriter {
 
     /// Writes `ZeroPadToByte()` (18181-1 B.2.7): zero bits up to the next byte
     /// boundary. A no-op when already aligned.
+    ///
+    /// Unused high bits in the final byte are already zero (bits are only ever
+    /// OR-set), so the cursor can simply advance to the next multiple of eight.
     pub fn zero_pad_to_byte(&mut self) {
-        while !self.bit_len.is_multiple_of(8) {
-            self.write_bit(false);
+        let rem = self.bit_len % 8;
+        if rem != 0 {
+            self.bit_len += 8 - rem;
         }
     }
 
     /// Appends whole bytes, which requires the writer to be byte-aligned.
     ///
     /// This is how a section encoded on its own is spliced into the
-    /// codestream after its length is known.
+    /// codestream after its length is known. Counting writers advance
+    /// [`bit_len`](Self::bit_len) without retaining the payload.
     ///
     /// # Errors
     ///
@@ -173,11 +275,116 @@ impl BitWriter {
         if !self.is_byte_aligned() {
             return Err(BitstreamError::Overflow);
         }
-        self.bytes.extend_from_slice(bytes);
-        self.bit_len += u64::try_from(bytes.len())
+        let add = u64::try_from(bytes.len())
             .map_err(|_| BitstreamError::Overflow)?
             .checked_mul(8)
             .ok_or(BitstreamError::Overflow)?;
+        if self.store {
+            self.bytes.extend_from_slice(bytes);
+        }
+        self.bit_len = self
+            .bit_len
+            .checked_add(add)
+            .ok_or(BitstreamError::Overflow)?;
+        Ok(())
+    }
+
+    /// Advances the cursor by `byte_count` whole bytes of unspecified content.
+    ///
+    /// Used by count-only pricing after a section's length is known: the TOC
+    /// needs the length, not the body. Requires byte alignment.
+    ///
+    /// # Errors
+    ///
+    /// [`BitstreamError::Overflow`] if not byte-aligned or the length overflows.
+    pub fn skip_aligned_bytes(&mut self, byte_count: usize) -> Result<()> {
+        if !self.is_byte_aligned() {
+            return Err(BitstreamError::Overflow);
+        }
+        let add = u64::try_from(byte_count)
+            .map_err(|_| BitstreamError::Overflow)?
+            .checked_mul(8)
+            .ok_or(BitstreamError::Overflow)?;
+        if self.store {
+            let new_len = self
+                .bytes
+                .len()
+                .checked_add(byte_count)
+                .ok_or(BitstreamError::Overflow)?;
+            self.bytes.resize(new_len, 0);
+        }
+        self.bit_len = self
+            .bit_len
+            .checked_add(add)
+            .ok_or(BitstreamError::Overflow)?;
+        Ok(())
+    }
+
+    /// Appends every bit of `other` onto this writer, preserving order.
+    ///
+    /// When both sides are byte-aligned this is `extend_from_slice`. When only
+    /// `self` is aligned, full bytes are extended and a short tail is packed.
+    /// Otherwise whole bytes are shifted through [`write_bits`].
+    ///
+    /// If `other` is a counting writer (no payload), both sides must be
+    /// byte-aligned and this advances by `other.bit_len` only.
+    ///
+    /// # Errors
+    ///
+    /// [`BitstreamError::Overflow`] only if an underlying write overflows bit
+    /// accounting (should not occur for a well-formed source).
+    pub fn append_writer(&mut self, other: &Self) -> Result<()> {
+        if other.bit_len == 0 {
+            return Ok(());
+        }
+
+        // Count-only source: lengths only, no payload to replay.
+        if !other.store {
+            if !(self.is_byte_aligned() && other.is_byte_aligned()) {
+                return Err(BitstreamError::Overflow);
+            }
+            let bytes = usize::try_from(other.bit_len / 8).map_err(|_| BitstreamError::Overflow)?;
+            return self.skip_aligned_bytes(bytes);
+        }
+
+        if self.is_byte_aligned() && other.is_byte_aligned() {
+            return self.write_bytes(other.as_bytes());
+        }
+
+        if self.is_byte_aligned() {
+            let full = usize::try_from(other.bit_len / 8).map_err(|_| BitstreamError::Overflow)?;
+            if full > 0 {
+                let head = other.bytes.get(..full).ok_or(BitstreamError::Overflow)?;
+                self.write_bytes(head)?;
+            }
+            let rem = u32::try_from(other.bit_len % 8).map_err(|_| BitstreamError::Overflow)?;
+            if rem > 0 {
+                let last = *other.bytes.get(full).ok_or(BitstreamError::Overflow)?;
+                let mask = if rem >= 8 {
+                    0xFFu32
+                } else {
+                    (1u32 << rem) - 1
+                };
+                self.write_bits(rem, u32::from(last) & mask)?;
+            }
+            return Ok(());
+        }
+
+        self.reserve_bits(other.bit_len);
+        let full = usize::try_from(other.bit_len / 8).map_err(|_| BitstreamError::Overflow)?;
+        for &byte in other.bytes.get(..full).ok_or(BitstreamError::Overflow)? {
+            self.write_bits(8, u32::from(byte))?;
+        }
+        let rem = u32::try_from(other.bit_len % 8).map_err(|_| BitstreamError::Overflow)?;
+        if rem > 0 {
+            let last = *other.bytes.get(full).ok_or(BitstreamError::Overflow)?;
+            let mask = if rem >= 8 {
+                0xFFu32
+            } else {
+                (1u32 << rem) - 1
+            };
+            self.write_bits(rem, u32::from(last) & mask)?;
+        }
         Ok(())
     }
 
@@ -194,16 +401,23 @@ impl BitWriter {
     }
 
     /// The bytes written so far. A trailing partial byte is zero-padded.
+    /// Empty for a counting writer — use [`bit_len`](Self::bit_len).
     #[must_use]
     pub fn as_bytes(&self) -> &[u8] {
         &self.bytes
     }
 
     /// Consumes the writer and returns its bytes, zero-padded to a byte
-    /// boundary.
+    /// boundary. Empty for a counting writer.
     #[must_use]
     pub fn into_bytes(self) -> Vec<u8> {
         self.bytes
+    }
+
+    /// Byte length of the stream if it were materialised (`ceil(bit_len / 8)`).
+    #[must_use]
+    pub const fn byte_len(&self) -> u64 {
+        self.bit_len.div_ceil(8)
     }
 }
 
@@ -221,6 +435,26 @@ mod tests {
     use crate::reader::BitReader;
 
     #[test]
+    #[test]
+    fn counting_writer_matches_storing_bit_len() {
+        let mut store = BitWriter::new();
+        let mut count = BitWriter::counting();
+        for (n, v) in [(1u32, 1u32), (8, 0xA5), (5, 0x1A), (16, 0x1234), (3, 5)] {
+            store.write_bits(n, v).expect("store");
+            count.write_bits(n, v).expect("count");
+            assert_eq!(store.bit_len(), count.bit_len());
+        }
+        store.zero_pad_to_byte();
+        count.zero_pad_to_byte();
+        assert_eq!(store.bit_len(), count.bit_len());
+        assert_eq!(store.byte_len(), count.byte_len());
+        assert!(count.as_bytes().is_empty());
+        assert!(!store.as_bytes().is_empty());
+        count.skip_aligned_bytes(4).expect("skip");
+        store.skip_aligned_bytes(4).expect("skip");
+        assert_eq!(store.bit_len(), count.bit_len());
+    }
+
     fn first_bit_is_lsb_of_first_byte() {
         let mut w = BitWriter::new();
         w.write_bits(1, 1).expect("one bit");
@@ -392,5 +626,64 @@ mod tests {
         w.write_bytes(&[0xAB, 0xCD]).expect("aligned");
         assert_eq!(w.as_bytes(), &[0x01, 0xAB, 0xCD]);
         assert_eq!(w.bit_len(), 24);
+    }
+
+    #[test]
+    fn append_writer_matches_bit_replay_aligned_and_unaligned() {
+        let mut src = BitWriter::new();
+        src.write_bits(12, 0xA5C).expect("12 bits");
+        src.write_bits(20, 0xABCDE).expect("20 bits");
+
+        for prefix_bits in [0u32, 1, 3, 7, 8, 9, 16] {
+            let mut expected = BitWriter::new();
+            if prefix_bits > 0 {
+                expected
+                    .write_bits(prefix_bits, (1u32 << prefix_bits.min(31)) - 1)
+                    .expect("prefix");
+            }
+            // Bit-at-a-time replay baseline.
+            let bytes = src.as_bytes();
+            for i in 0..src.bit_len() {
+                let idx = usize::try_from(i / 8).expect("idx");
+                let byte = *bytes.get(idx).expect("byte in range");
+                let set = (byte >> (i % 8)) & 1 == 1;
+                expected.write_bit(set);
+            }
+
+            let mut got = BitWriter::new();
+            if prefix_bits > 0 {
+                got.write_bits(prefix_bits, (1u32 << prefix_bits.min(31)) - 1)
+                    .expect("prefix");
+            }
+            got.append_writer(&src).expect("append");
+            assert_eq!(got.as_bytes(), expected.as_bytes(), "prefix={prefix_bits}");
+            assert_eq!(got.bit_len(), expected.bit_len(), "prefix={prefix_bits}");
+        }
+    }
+
+    #[test]
+    fn bulk_write_bits_matches_legacy_bit_loop_on_unaligned_cursor() {
+        // Replay the same field stream with the bulk path against a manual
+        // per-bit reference built with write_bit only.
+        let fields: [(u32, u32); 8] = [
+            (1, 1),
+            (7, 0x55),
+            (8, 0xA5),
+            (9, 0x1AB),
+            (16, 0xBEEF),
+            (24, 0xC0_FFEE),
+            (31, 0x7FFF_FFFF),
+            (32, 0xDEAD_BEEF),
+        ];
+        let mut bulk = BitWriter::new();
+        let mut bit_loop = BitWriter::new();
+        for &(n, value) in &fields {
+            bulk.write_bits(n, value).expect("bulk");
+            for i in 0..n {
+                bit_loop.write_bit((value >> i) & 1 == 1);
+            }
+        }
+        assert_eq!(bulk.as_bytes(), bit_loop.as_bytes());
+        assert_eq!(bulk.bit_len(), bit_loop.bit_len());
     }
 }

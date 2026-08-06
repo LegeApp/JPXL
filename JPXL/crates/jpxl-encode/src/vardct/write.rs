@@ -44,9 +44,10 @@ use jpxl_bitstream::{BitWriter, U32Dist, U32Spec};
 use jpxl_core::varblock::TransformType;
 use jpxl_entropy::HybridUintConfig;
 use jpxl_entropy::encode::{
-    CodingMode, ContextMap, EncoderPlan, EntropyTables, SymbolEncoder, TokenCensus,
+    CodingMode, ContextMap, ContextMapForm, EncoderPlan, EntropyTables, SymbolEncoder, TokenCensus,
 };
 
+use crate::entropy::pack_signed;
 use crate::error::{EncodeError, Result};
 use crate::section::SectionStore;
 use crate::vardct::geometry::VardctGeometry;
@@ -107,6 +108,40 @@ const COLOUR_FACTOR_SPEC: U32Spec = U32Spec::new([
     },
 ]);
 
+/// 18181-1 I.2.2 `ReadThreshold()`:
+/// `U32(u(4), 16 + u(8), 272 + u(16), 65808 + u(32))`.
+const LF_THRESHOLD_SPEC: U32Spec = U32Spec::new([
+    U32Dist::bits(4),
+    U32Dist::BitsOffset {
+        bits: 8,
+        offset: 16,
+    },
+    U32Dist::BitsOffset {
+        bits: 16,
+        offset: 272,
+    },
+    U32Dist::BitsOffset {
+        bits: 32,
+        offset: 65808,
+    },
+]);
+
+/// 18181-1 I.2.2 `qf_thresholds` loop:
+/// `U32(u(2), 4 + u(3), 12 + u(5), 44 + u(8))` of the raw value; the decoder
+/// then adds one, so the wire stores `threshold - 1`.
+const QF_THRESHOLD_SPEC: U32Spec = U32Spec::new([
+    U32Dist::bits(2),
+    U32Dist::BitsOffset { bits: 3, offset: 4 },
+    U32Dist::BitsOffset {
+        bits: 5,
+        offset: 12,
+    },
+    U32Dist::BitsOffset {
+        bits: 8,
+        offset: 44,
+    },
+]);
+
 /// 18181-1 I.3.1: `U32(0x5F, 0x13, 0x00, u(13))` for `used_orders`.
 ///
 /// The third distribution is the constant zero, which is how the clause says
@@ -161,22 +196,19 @@ pub fn check_supported(plan: &EmissionPlan) -> Result<()> {
             "I.2.3",
         ));
     }
-    if spatial.restoration.gaborish || spatial.restoration.epf_iters != 0 {
-        return Err(EncodeError::unsupported(
-            "the restoration filters (they would move every reconstructed \
-             sample away from what the encoder quantized against)",
-            "J.1",
-        ));
+    // Restoration filters may be signalled (slice 20). Without inverse
+    // Gaborish preconditioning of the XYB planes the reconstructed samples
+    // will not match the encoder's quant targets; that preconditioning is a
+    // planner responsibility. Emission only refuses illegal epf_iters.
+    if spatial.restoration.epf_iters > 3 {
+        return Err(EncodeError::ValueOutOfRange {
+            what: "epf_iters",
+            value: i64::from(spatial.restoration.epf_iters),
+        });
     }
-    if plan.entropy.block_context != HfBlockContextPlan::Default {
-        return Err(EncodeError::unsupported(
-            "a custom HF block context map",
-            "I.2.2",
-        ));
-    }
-    if plan.entropy.num_hf_presets != 1 {
-        return Err(EncodeError::unsupported("more than one HF preset", "I.2.6"));
-    }
+    // I.2.2 custom maps and I.2.6 multi-preset counts are written by the
+    // section writers; validate() is the gate for density, bsize, and the
+    // num_hf_presets ≤ num_groups bound.
     for group in &plan.spatial.lf_groups {
         // The square vocabulary is what has decoder-parity evidence today; the
         // walk and the writer are transform-generic, so widening this list is
@@ -219,15 +251,24 @@ pub fn write_codestream(plan: &ValidatedEmissionPlan) -> Result<Vec<u8>> {
 
 /// The exact size of the codestream `plan` emits, without keeping the bytes.
 ///
-/// This is [`emit_codestream`] with the buffer dropped, and that is the whole
-/// design: see [`size`](crate::vardct::size) for why a rate loop must not have
-/// a second implementation of "how big would this be".
+/// Uses the **same** write path as [`emit_codestream`] with count-only
+/// [`BitWriter`]s and a length-only [`SectionStore`]: no second size model.
+/// See [`size`](crate::vardct::size).
 ///
 /// # Errors
 ///
 /// As [`emit_codestream`].
 pub fn price_codestream(plan: &ValidatedEmissionPlan) -> Result<CodestreamSizing> {
-    Ok(emit_codestream(plan)?.sizing)
+    Ok(emit_codestream_mode(plan, EmitMode::Count)?.sizing)
+}
+
+/// Whether section bodies and the final codestream buffer are retained.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EmitMode {
+    /// Full payload for the returned codestream.
+    Store,
+    /// Exact bit accounting only (rate-loop intermediate prices).
+    Count,
 }
 
 /// Encodes a validated plan, reporting where every byte went.
@@ -238,20 +279,32 @@ pub fn price_codestream(plan: &ValidatedEmissionPlan) -> Result<CodestreamSizing
 /// [`EncodeError::Entropy`] if the entropy layer rejects a symbol, and
 /// [`EncodeError::ValueOutOfRange`] for a field that cannot be expressed.
 pub fn emit_codestream(plan: &ValidatedEmissionPlan) -> Result<Emission> {
+    emit_codestream_mode(plan, EmitMode::Store)
+}
+
+fn emit_codestream_mode(plan: &ValidatedEmissionPlan, mode: EmitMode) -> Result<Emission> {
     let inner = plan.plan();
     check_supported(inner)?;
     let geometry = inner.spatial.frame.geometry().map_err(EncodeError::Plan)?;
 
-    let mut w = BitWriter::new();
+    let mut w = match mode {
+        EmitMode::Store => BitWriter::new(),
+        EmitMode::Count => BitWriter::counting(),
+    };
     write_image_headers(&mut w, geometry.width(), geometry.height())?;
     // F.1: every frame starts on a byte boundary, so this division is exact.
     w.zero_pad_to_byte();
     let image_headers = w.bit_len() / 8;
 
-    write_frame_header(&mut w, NEUTRAL_QM_SCALE, NEUTRAL_QM_SCALE)?;
+    write_frame_header(
+        &mut w,
+        NEUTRAL_QM_SCALE,
+        NEUTRAL_QM_SCALE,
+        inner.spatial.restoration,
+    )?;
     let frame_header_bits = w.bit_len() - image_headers * 8;
 
-    let store = write_frame_body(inner, &geometry)?;
+    let store = write_frame_body(inner, &geometry, mode)?;
     let lengths = store.lengths();
     let before_toc = w.bit_len();
     store.write(&mut w)?;
@@ -285,19 +338,31 @@ pub fn emit_codestream(plan: &ValidatedEmissionPlan) -> Result<Emission> {
         })
         .collect();
 
-    let bytes = w.into_bytes();
+    let total = w.byte_len();
+    let bytes = match mode {
+        EmitMode::Store => w.into_bytes(),
+        EmitMode::Count => Vec::new(),
+    };
     let sizing = CodestreamSizing {
-        total: u64::try_from(bytes.len()).unwrap_or(u64::MAX),
+        total,
         image_headers,
         frame_header_bits,
         toc_bits,
         sections,
     };
+    debug_assert!(
+        mode == EmitMode::Count || sizing.total == u64::try_from(bytes.len()).unwrap_or(u64::MAX),
+        "stored emit total must equal buffer length"
+    );
     Ok(Emission { bytes, sizing })
 }
 
 /// Builds every section of the frame, in F.3.1 order.
-fn write_frame_body(plan: &EmissionPlan, geometry: &VardctGeometry) -> Result<SectionStore> {
+fn write_frame_body(
+    plan: &EmissionPlan,
+    geometry: &VardctGeometry,
+    mode: EmitMode,
+) -> Result<SectionStore> {
     let orders = OrderTables::from_order_set(
         &plan
             .entropy
@@ -308,30 +373,57 @@ fn write_frame_body(plan: &EmissionPlan, geometry: &VardctGeometry) -> Result<Se
     );
     let tables = build_entropy_tables(plan, geometry, &orders)?;
 
-    let mut store = SectionStore::new();
+    let mut store = match mode {
+        EmitMode::Store => SectionStore::new(),
+        EmitMode::Count => SectionStore::counting(),
+    };
     if geometry.is_single_section() {
-        let mut body = BitWriter::new();
+        let mut body = match mode {
+            EmitMode::Store => BitWriter::new(),
+            EmitMode::Count => BitWriter::counting(),
+        };
         write_lf_global(plan, &mut body)?;
         write_lf_group(plan, geometry, LfGroupId::new(0), &mut body)?;
         write_hf_global(plan, geometry, &tables, &mut body)?;
         write_pass_group(plan, geometry, &orders, &tables, 0, &mut body)?;
         body.zero_pad_to_byte();
-        store.push(body.into_bytes());
+        if mode == EmitMode::Store {
+            store.push(body.into_bytes());
+        } else {
+            store.push_len(usize::try_from(body.byte_len()).unwrap_or(usize::MAX));
+        }
         return Ok(store);
     }
 
-    store.push(section_bytes(|w| write_lf_global(plan, w))?);
-    for index in 0..geometry.num_lf_groups() {
-        let id = LfGroupId::new(u32::try_from(index).unwrap_or(u32::MAX));
-        store.push(section_bytes(|w| write_lf_group(plan, geometry, id, w))?);
-    }
-    store.push(section_bytes(|w| {
-        write_hf_global(plan, geometry, &tables, w)
-    })?);
-    for group in 0..geometry.num_groups() {
-        store.push(section_bytes(|w| {
-            write_pass_group(plan, geometry, &orders, &tables, group, w)
-        })?);
+    match mode {
+        EmitMode::Store => {
+            store.push(section_bytes(|w| write_lf_global(plan, w))?);
+            for index in 0..geometry.num_lf_groups() {
+                let id = LfGroupId::new(u32::try_from(index).unwrap_or(u32::MAX));
+                store.push(section_bytes(|w| write_lf_group(plan, geometry, id, w))?);
+            }
+            store.push(section_bytes(|w| {
+                write_hf_global(plan, geometry, &tables, w)
+            })?);
+            for group in 0..geometry.num_groups() {
+                store.push(section_bytes(|w| {
+                    write_pass_group(plan, geometry, &orders, &tables, group, w)
+                })?);
+            }
+        }
+        EmitMode::Count => {
+            store.push_len(section_len(|w| write_lf_global(plan, w))?);
+            for index in 0..geometry.num_lf_groups() {
+                let id = LfGroupId::new(u32::try_from(index).unwrap_or(u32::MAX));
+                store.push_len(section_len(|w| write_lf_group(plan, geometry, id, w))?);
+            }
+            store.push_len(section_len(|w| write_hf_global(plan, geometry, &tables, w))?);
+            for group in 0..geometry.num_groups() {
+                store.push_len(section_len(|w| {
+                    write_pass_group(plan, geometry, &orders, &tables, group, w)
+                })?);
+            }
+        }
     }
     Ok(store)
 }
@@ -342,6 +434,80 @@ fn section_bytes(body: impl FnOnce(&mut BitWriter) -> Result<()>) -> Result<Vec<
     body(&mut w)?;
     w.zero_pad_to_byte();
     Ok(w.into_bytes())
+}
+
+/// Runs `body` into a counting writer and returns the byte-aligned length.
+fn section_len(body: impl FnOnce(&mut BitWriter) -> Result<()>) -> Result<usize> {
+    let mut w = BitWriter::counting();
+    body(&mut w)?;
+    w.zero_pad_to_byte();
+    Ok(usize::try_from(w.byte_len()).unwrap_or(usize::MAX))
+}
+
+// ---------------------------------------------------------------------------
+// I.2.2 — HF block context
+// ---------------------------------------------------------------------------
+
+/// Writes the HF block-context model (18181-1 I.2.2).
+///
+/// The default map is one bit. A custom model writes the three LF threshold
+/// vectors, the QF thresholds, and a C.2.2 clustering map of length `bsize`.
+fn write_hf_block_context(model: &HfBlockContextPlan, w: &mut BitWriter) -> Result<()> {
+    match model {
+        HfBlockContextPlan::Default => {
+            w.write_bits(1, 1)?;
+            Ok(())
+        }
+        HfBlockContextPlan::Custom {
+            lf_thresholds,
+            qf_thresholds,
+            map,
+        } => {
+            w.write_bits(1, 0)?;
+            for row in lf_thresholds {
+                let count = u32::try_from(row.len()).map_err(|_| EncodeError::ValueOutOfRange {
+                    what: "nb_lf_thr",
+                    value: i64::try_from(row.len()).unwrap_or(i64::MAX),
+                })?;
+                if count > 15 {
+                    return Err(EncodeError::ValueOutOfRange {
+                        what: "nb_lf_thr",
+                        value: i64::from(count),
+                    });
+                }
+                w.write_bits(4, count)?;
+                for &threshold in row {
+                    w.write_u32(&LF_THRESHOLD_SPEC, pack_signed(threshold))?;
+                }
+            }
+            let qf_count =
+                u32::try_from(qf_thresholds.len()).map_err(|_| EncodeError::ValueOutOfRange {
+                    what: "nb_qf_thr",
+                    value: i64::try_from(qf_thresholds.len()).unwrap_or(i64::MAX),
+                })?;
+            if qf_count > 15 {
+                return Err(EncodeError::ValueOutOfRange {
+                    what: "nb_qf_thr",
+                    value: i64::from(qf_count),
+                });
+            }
+            w.write_bits(4, qf_count)?;
+            for &threshold in qf_thresholds {
+                // Decoder stores `1 + U32(...)`; refuse a zero threshold so the
+                // subtraction cannot wrap.
+                let raw = threshold
+                    .checked_sub(1)
+                    .ok_or(EncodeError::ValueOutOfRange {
+                        what: "qf_threshold",
+                        value: i64::from(threshold),
+                    })?;
+                w.write_u32(&QF_THRESHOLD_SPEC, raw)?;
+            }
+            let context_map = ContextMap::new(map.clone())?;
+            context_map.write(w, ContextMapForm::Auto)?;
+            Ok(())
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -363,8 +529,7 @@ fn write_lf_global(plan: &EmissionPlan, w: &mut BitWriter) -> Result<()> {
     )?;
     w.write_u32(&QUANT_LF_SPEC, plan.spatial.quantizer.quant_lf.get())?;
 
-    // I.2.2 HF block context: the leading u(1) selects the default map.
-    w.write_bits(1, 1)?;
+    write_hf_block_context(&plan.entropy.block_context, w)?;
 
     // I.2.3 LfChannelCorrelation. Slice 15 searches the two biased u8 factors
     // while keeping the divisor and base correlations at their defaults. The
@@ -692,9 +857,10 @@ fn write_pass_group(
     group: u64,
     w: &mut BitWriter,
 ) -> Result<()> {
-    // I.4: hfp is `u(ceil(log2(num_hf_presets)))`, i.e. zero bits at one preset.
+    // I.4: hfp is `u(ceil(log2(num_hf_presets)))`, zero bits at one preset.
     let bits = ceil_log2(u64::from(plan.entropy.num_hf_presets.max(1)));
-    w.write_bits(bits, 0)?;
+    let hfp = group_hfp(plan, group)?;
+    w.write_bits(bits, hfp)?;
 
     let (walk, varblocks) = pass_group_walk(plan, geometry, orders, group)?;
     let mut sink = SymbolSinkAdapter {
@@ -710,6 +876,21 @@ fn write_pass_group(
     // G.4.2 modular group data: no remaining channels, so nothing.
     write_modular_stream(w, &[])?;
     Ok(())
+}
+
+/// I.4's `hfp` for one pass group, from the plan's assignment table.
+fn group_hfp(plan: &EmissionPlan, group: u64) -> Result<u32> {
+    let pass = plan
+        .entropy
+        .passes
+        .first()
+        .ok_or_else(|| EncodeError::unsupported("a frame with no pass", "F.6"))?;
+    let index = usize::try_from(group).unwrap_or(usize::MAX);
+    let preset = pass
+        .group_presets
+        .get(index)
+        .ok_or_else(|| EncodeError::unsupported("a group past the preset table", "I.4"))?;
+    Ok(preset.get())
 }
 
 /// Feeds I.4's events into `jpxl-entropy`'s replay encoder.
@@ -824,14 +1005,18 @@ fn pass_group_walk<'a>(
         });
     }
 
+    let hfp = u64::from(group_hfp(plan, group)?);
+    let nb_block_ctx = plan.entropy.block_context.nb_block_ctx();
+    // I.4: `offset = 495 * nb_block_ctx * hfp`.
+    let offset = 495u64.saturating_mul(nb_block_ctx).saturating_mul(hfp);
+
     Ok((
         PassGroupWalk {
             blocks_w,
             blocks_h,
             block_context: &plan.entropy.block_context,
             orders,
-            // I.4's `offset = 495 * nb_block_ctx * hfp`, and `hfp` is 0 here.
-            offset: 0,
+            offset,
         },
         varblocks,
     ))
@@ -996,8 +1181,8 @@ mod tests {
         let nb_block_ctx = HfBlockContextPlan::Default.nb_block_ctx();
         let pre_contexts = usize::try_from(495 * nb_block_ctx).unwrap_or(0);
 
-        EmissionPlan {
-            spatial: SpatialPlan {
+        EmissionPlan::new(
+            SpatialPlan {
                 frame,
                 quantizer: QuantizerDecision {
                     global_scale: GlobalScale::new(4096).expect("legal"),
@@ -1018,7 +1203,7 @@ mod tests {
                 }]
                 .into_boxed_slice(),
             },
-            quantized: QuantizedFrameIr {
+            QuantizedFrameIr {
                 lf_groups: vec![QuantizedLfGroup {
                     id,
                     lf: LfQuantPlanes::zeros(blocks),
@@ -1027,7 +1212,7 @@ mod tests {
                 }]
                 .into_boxed_slice(),
             },
-            entropy: EntropyPlan {
+            EntropyPlan {
                 block_context: HfBlockContextPlan::Default,
                 num_hf_presets: 1,
                 passes: vec![HfPassEntropyPlan {
@@ -1047,8 +1232,8 @@ mod tests {
                 }]
                 .into_boxed_slice(),
             },
-            sections: SectionLayout::for_geometry(&geometry),
-        }
+            SectionLayout::for_geometry(&geometry),
+        )
     }
 
     /// The composition-direction gate for the F.3.2 writer: two plans with
@@ -1074,7 +1259,7 @@ mod tests {
                 channel[cell] = value + i32::try_from(index).unwrap_or(0);
             }
         }
-        plan.quantized.lf_groups[0].coefficients =
+        plan.quantized_mut().lf_groups[0].coefficients =
             vec![VarblockCoefficients::new(TransformType::Dct8x8, channels).expect("legal")]
                 .into_boxed_slice();
 
@@ -1111,6 +1296,105 @@ mod tests {
         }
     }
 
+    /// I.2.2 custom-map gate: a hand-built non-default block context must
+    /// survive the writer and round-trip through the decoder's independent
+    /// reader with thresholds and map entries bit-exact. Pixels stay equal to
+    /// the default-map encoding of the same coefficients — the model only
+    /// renames contexts.
+    #[test]
+    #[allow(
+        clippy::indexing_slicing,
+        reason = "test-only fixture construction over containers built above"
+    )]
+    fn a_custom_block_context_round_trips_and_keeps_pixels() {
+        use jpxl_bitstream::BitReader;
+        use jpxl_core::limits::{AllocGuard, Limits};
+        use jpxl_decode::vardct::block_ctx::read_hf_block_context;
+
+        let mut plan = tiny_plan();
+        // Non-trivial coefficients so entropy actually fires under both maps.
+        let mut channels: [Vec<i32>; NUM_CHANNELS] = core::array::from_fn(|_| vec![0i32; 64]);
+        for (cell, value) in [(1usize, 4i32), (9, -3), (18, 2), (27, -1), (45, 6)] {
+            for (index, channel) in channels.iter_mut().enumerate() {
+                channel[cell] = value + i32::try_from(index).unwrap_or(0);
+            }
+        }
+        plan.quantized_mut().lf_groups[0].coefficients =
+            vec![VarblockCoefficients::new(TransformType::Dct8x8, channels).expect("legal")]
+                .into_boxed_slice();
+        // One LF threshold per channel and one QF threshold expand bsize to
+        // 39 * 2 * 2^3 = 312; keep the map dense with 8 clusters so the
+        // C.2.2 writer has something non-trivial to emit.
+        let bsize = 39 * 2 * 2 * 2 * 2;
+        let map: Vec<u8> = (0..bsize)
+            .map(|i| u8::try_from(i % 8).unwrap_or(0))
+            .collect();
+        plan.entropy.block_context = HfBlockContextPlan::Custom {
+            lf_thresholds: [vec![0], vec![-1], vec![2]],
+            qf_thresholds: vec![1],
+            map: map.clone(),
+        };
+        // Rebuild the provisional entropy model size for the new nb_block_ctx.
+        let nb = plan.entropy.block_context.nb_block_ctx();
+        let pre = usize::try_from(495 * nb).unwrap_or(0);
+        plan.entropy.passes[0].distributions.context_map =
+            vec![ClusterId::new(0); pre].into_boxed_slice();
+
+        let default_plan = {
+            let mut p = plan.clone();
+            p.entropy.block_context = HfBlockContextPlan::Default;
+            let pre_d = usize::try_from(495 * 15).unwrap_or(0);
+            p.entropy.passes[0].distributions.context_map =
+                vec![ClusterId::new(0); pre_d].into_boxed_slice();
+            p
+        };
+        let default_bytes =
+            write_codestream(&validate(default_plan).expect("legal default")).expect("writes");
+        let custom_bytes =
+            write_codestream(&validate(plan).expect("legal custom")).expect("writes custom");
+        assert_ne!(
+            default_bytes, custom_bytes,
+            "a custom I.2.2 model must reach the wire"
+        );
+
+        // Locate LfGlobal's I.2.2 field by decoding the whole frame: the
+        // public decode path is the oracle; for field-level exactness, re-read
+        // the block-context bits from a hand-written fragment matching what
+        // `write_hf_block_context` emits.
+        let mut fragment = BitWriter::new();
+        write_hf_block_context(
+            &HfBlockContextPlan::Custom {
+                lf_thresholds: [vec![0], vec![-1], vec![2]],
+                qf_thresholds: vec![1],
+                map: map.clone(),
+            },
+            &mut fragment,
+        )
+        .expect("writes fragment");
+        let frag_bytes = fragment.into_bytes();
+        let mut reader = BitReader::new(&frag_bytes);
+        let mut guard = AllocGuard::new(&Limits::default());
+        let decoded = read_hf_block_context(&mut reader, &mut guard).expect("decodes I.2.2");
+        assert_eq!(decoded.lf_thresholds(0), &[0]);
+        assert_eq!(decoded.lf_thresholds(1), &[-1]);
+        assert_eq!(decoded.lf_thresholds(2), &[2]);
+        assert_eq!(decoded.qf_thresholds(), &[1]);
+        assert_eq!(decoded.map(), map.as_slice());
+        assert_eq!(decoded.nb_block_ctx(), 8);
+
+        let limits = Limits::default();
+        let default_image =
+            jpxl_decode::decode::decode(&default_bytes, &limits).expect("default decodes");
+        let custom_image =
+            jpxl_decode::decode::decode(&custom_bytes, &limits).expect("custom decodes");
+        for (a, b) in default_image.planes.iter().zip(custom_image.planes.iter()) {
+            assert_eq!(
+                a.samples, b.samples,
+                "block context renames distributions; it must not move samples"
+            );
+        }
+    }
+
     #[test]
     fn the_smallest_legal_plan_emits_a_codestream() {
         let plan = validate(tiny_plan()).expect("legal plan");
@@ -1123,7 +1407,7 @@ mod tests {
     #[test]
     fn a_group_size_shift_the_frame_header_cannot_signal_is_refused() {
         let mut plan = tiny_plan();
-        plan.spatial.frame.group_size_shift = 2;
+        plan.spatial_mut().frame.group_size_shift = 2;
         // The plan is still *structurally* legal — validate accepts it — and it
         // is the writer that has nowhere to put the field.
         assert!(validate(plan.clone()).is_ok());
@@ -1136,7 +1420,7 @@ mod tests {
     #[test]
     fn adaptive_lf_smoothing_is_refused_rather_than_left_uninverted() {
         let mut plan = tiny_plan();
-        plan.spatial.lf.adaptive_smoothing = true;
+        plan.spatial_mut().lf.adaptive_smoothing = true;
         assert!(matches!(
             check_supported(&plan),
             Err(EncodeError::Unsupported {
@@ -1147,25 +1431,28 @@ mod tests {
     }
 
     #[test]
-    fn the_restoration_filters_are_refused() {
+    fn restoration_filters_may_be_signalled() {
+        // Slice 20: gab/EPF are legal on the wire; inverse preconditioning of
+        // the XYB planes is a planner duty, not an emission refusal.
         let mut plan = tiny_plan();
-        plan.spatial.restoration.gaborish = true;
+        plan.spatial_mut().restoration.gaborish = true;
+        plan.spatial_mut().restoration.epf_iters = 2;
+        assert!(check_supported(&plan).is_ok());
+        let mut plan = tiny_plan();
+        plan.spatial_mut().restoration.epf_iters = 4;
         assert!(matches!(
             check_supported(&plan),
-            Err(EncodeError::Unsupported { clause: "J.1", .. })
-        ));
-        let mut plan = tiny_plan();
-        plan.spatial.restoration.epf_iters = 2;
-        assert!(matches!(
-            check_supported(&plan),
-            Err(EncodeError::Unsupported { clause: "J.1", .. })
+            Err(EncodeError::ValueOutOfRange {
+                what: "epf_iters",
+                ..
+            })
         ));
     }
 
     #[test]
     fn a_non_dct8x8_transform_is_refused() {
         let mut plan = tiny_plan();
-        if let Some(group) = plan.spatial.lf_groups.first_mut()
+        if let Some(group) = plan.spatial_mut().lf_groups.first_mut()
             && let Some(block) = group.blocks.first_mut()
         {
             block.transform = TransformType::Dct4x4;

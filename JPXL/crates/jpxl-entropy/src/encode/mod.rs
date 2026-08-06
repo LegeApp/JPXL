@@ -40,17 +40,23 @@
 //! # }
 //! ```
 //!
+//! # LZ77
+//!
+//! [`EncoderPlan::lz77`] is `None` by default (flag false). Enable with
+//! [`EncoderPlan::identity_with_lz77`] or by setting the field and sizing the
+//! context map with a trailing distance context. Census copies with
+//! [`TokenCensus::record_copy`]; emit with [`SymbolEncoder::push_copy`].
+//!
 //! # What is not implemented
 //!
-//! * **LZ77 emission.** The flag is written as false and the framing around it
-//!   is complete and legal; back-references are a density optimization
-//!   (`docs/PLAN.md` slice 19).
 //! * **Run-length compression of logarithmic counts** (C.2.5's `logcounts ==
 //!   13` escape) and **repeat codes in prefix code lengths** (RFC 7932 section
 //!   3.5's symbols 16 and 17). Both are density optimizations of the *table*
 //!   encodings; the decoder reads them either way.
 //! * **Clustering search.** [`ContextMap`] executes a clustering; choosing one
 //!   is policy and belongs to the policy crate.
+//! * **Match finding.** This crate emits copies the caller chooses; greedy
+//!   search lives in `jpxl-encode`.
 //!
 //! Every path here is **bit-exact** (see `docs/PLAN.md`): the contract is that
 //! this crate's decoder reproduces exactly the values that went in, with the
@@ -60,6 +66,7 @@ pub mod ans;
 pub mod cluster;
 pub mod histogram;
 pub mod hybrid;
+pub mod lz77;
 pub mod prefix;
 pub mod stream;
 
@@ -67,6 +74,7 @@ pub use ans::{AnsEncodeTable, AnsPayload, AnsSymbol, encode_symbols};
 pub use cluster::{ContextMap, ContextMapForm, move_to_front};
 pub use histogram::Histogram;
 pub use hybrid::TokenSplit;
+pub use lz77::{LZ_LENGTH_LOG_ALPHABET_SIZE, LengthToken, Lz77EncodeParams};
 pub use prefix::{PrefixEncoder, canonical_codes, huffman_lengths};
 pub use stream::{
     CodingMode, EncoderPlan, EntropyTables, RawHistogram, SymbolEncoder, TokenCensus,

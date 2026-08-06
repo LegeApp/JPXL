@@ -24,23 +24,52 @@ use crate::error::Result;
 use crate::frame::write_toc;
 
 /// Section bodies held in emission order, each already byte-aligned.
+///
+/// When built in **count-only** mode ([`SectionStore::counting`]), only
+/// lengths are retained; [`write`](Self::write) emits the TOC then advances
+/// the destination by each length without splicing payload bytes.
 #[derive(Debug, Clone, Default)]
 pub struct SectionStore {
     sections: Vec<Vec<u8>>,
+    lengths: Vec<usize>,
+    retain_bodies: bool,
 }
 
 impl SectionStore {
-    /// An empty store.
+    /// An empty store that retains section bodies for a real emit.
     #[must_use]
     pub const fn new() -> Self {
         Self {
             sections: Vec::new(),
+            lengths: Vec::new(),
+            retain_bodies: true,
         }
     }
 
-    /// Appends one section body.
+    /// An empty store that only records lengths (Opt-V count-only pricing).
+    #[must_use]
+    pub const fn counting() -> Self {
+        Self {
+            sections: Vec::new(),
+            lengths: Vec::new(),
+            retain_bodies: false,
+        }
+    }
+
+    /// Appends one section body (or its length alone in count-only mode).
     pub fn push(&mut self, body: Vec<u8>) {
-        self.sections.push(body);
+        self.lengths.push(body.len());
+        if self.retain_bodies {
+            self.sections.push(body);
+        }
+    }
+
+    /// Appends a section known only by its byte length (count-only path).
+    pub fn push_len(&mut self, len: usize) {
+        self.lengths.push(len);
+        if self.retain_bodies {
+            self.sections.push(vec![0; len]);
+        }
     }
 
     /// Appends an empty section, i.e. a zero-length TOC entry.
@@ -48,37 +77,38 @@ impl SectionStore {
     /// F.3.1 NOTE 1 says this is normal in modular mode: the LF-group and
     /// `HfGlobal` sections exist in the table and carry nothing.
     pub fn push_empty(&mut self) {
-        self.sections.push(Vec::new());
+        self.push(Vec::new());
     }
 
     /// How many sections are stored.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.sections.len()
+        self.lengths.len()
     }
 
     /// Whether no section has been stored.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.sections.is_empty()
+        self.lengths.is_empty()
     }
 
     /// The section lengths, in order.
     #[must_use]
     pub fn lengths(&self) -> Vec<usize> {
-        self.sections.iter().map(Vec::len).collect()
+        self.lengths.clone()
     }
 
     /// Total size of every section body.
     #[must_use]
     pub fn total_len(&self) -> usize {
-        self.sections.iter().map(Vec::len).sum()
+        self.lengths.iter().sum()
     }
 
     /// Writes the TOC and then every section body.
     ///
     /// `w` must be positioned immediately after the `FrameHeader`; on return
-    /// it is byte-aligned at the end of the frame.
+    /// it is byte-aligned at the end of the frame. Count-only stores skip the
+    /// payload splice and only advance the cursor by each section length.
     ///
     /// # Errors
     ///
@@ -86,9 +116,15 @@ impl SectionStore {
     /// if a section is too large for the F.3.3 entry distribution, or a bit
     /// writer error.
     pub fn write(self, w: &mut BitWriter) -> Result<()> {
-        write_toc(w, &self.lengths())?;
-        for body in self.sections {
-            w.write_bytes(&body)?;
+        write_toc(w, &self.lengths)?;
+        if self.retain_bodies {
+            for body in self.sections {
+                w.write_bytes(&body)?;
+            }
+        } else {
+            for &len in &self.lengths {
+                w.skip_aligned_bytes(len)?;
+            }
         }
         Ok(())
     }

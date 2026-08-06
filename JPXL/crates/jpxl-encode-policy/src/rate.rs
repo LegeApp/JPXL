@@ -38,26 +38,19 @@
 //! `global_scale` moves **both** planes together and the other two are ratios
 //! against it.
 //!
-//! The coupling policy of this slice is a **fixed ratio**: `quant_lf` is held
-//! at whatever the request names (16 by default, which is also the value
-//! I.2.1's first `U32()` distribution encodes in two bits), and the search
-//! moves `global_scale`. The LF step and the HF step then both scale as
-//! `1 / global_scale`, so the LF/HF *balance* chosen at one rate is the balance
-//! at every rate — the loop changes the rate without silently changing the
-//! character of the reconstruction.
+//! The primary search holds `quant_lf` at the request's value and moves
+//! `global_scale` (then `HfMul` past the scale ceiling). That keeps the LF/HF
+//! *balance* fixed across the ladder so the loop changes rate without silently
+//! changing reconstruction character.
 //!
-//! The alternative — sweeping `quant_lf` jointly with `global_scale` — was
-//! measured, not assumed away (`tests/rate_loop.rs`,
-//! `the_lf_hf_ratio_is_a_distortion_knob_the_loop_holds_fixed`). On the
-//! 300x260 rung at an 8000-byte target, moving `quant_lf` over an 8x range
-//! grows the `LfGroup` sections from about 3.3 kB to about 4.2 kB and the loop
-//! pays for it by coarsening `global_scale` from about 23000 to about 20100 —
-//! **every ratio still lands the same target**. That is the argument for the
-//! split: `quant_lf` decides *where the bits go*, which is a rate-distortion
-//! question and belongs to milestone 7's adaptive quantization, while this loop
-//! decides *how many there are*. Searching both here would have the loop
-//! silently choosing an image's LF/HF character while claiming only to be
-//! choosing its size.
+//! **Secondary LF fill (M8 leftover):** when HF is small (trained entropy),
+//! coarse targets become LF-dominated and adjacent `global_scale` rungs can
+//! cliff by ~kB across a modular dither threshold (wave 13). After the ladder
+//! settles, if undershoot remains and budget allows, a short discrete probe
+//! over legal `quant_lf` values at the winning rung can spend that slack
+//! without reopening the whole R-D search. The request's `quant_lf` remains
+//! the default balance; the fill only moves it when it strictly improves
+//! achieved size under the never-over contract.
 //!
 //! `HfMul` is **not** an independent rate axis at fixed blocks: `HfMul = 2` at
 //! `global_scale = g` is the same HF quantizer as `HfMul = 1` at
@@ -67,10 +60,11 @@
 
 use jpxl_encode::vardct::ids::{GlobalScale, HfMul, MAX_GLOBAL_SCALE, QuantLf};
 use jpxl_encode::vardct::size::CodestreamSizing;
-use jpxl_encode::vardct::{ValidatedEmissionPlan, emit_codestream};
+use jpxl_encode::vardct::{Emission, ValidatedEmissionPlan, emit_codestream, price_codestream};
 
 use crate::error::{PolicyError, Result};
 use crate::request::{EncodeRequest, RateSearchBudget, RateTarget, RateTolerance};
+use crate::{CandidateForwardCache, EntropySearch};
 
 /// How many `HfMul` rungs extend the ladder above `global_scale`'s ceiling.
 ///
@@ -182,7 +176,41 @@ pub enum RatePhase {
     Bisect,
     /// The discrete budget fill: notches above the bisection boundary.
     Fill,
+    /// Secondary fill over legal `quant_lf` at the winning rung (LF cliffs).
+    LfFill,
+    /// Full-entropy refinement after the Fast ladder: re-price the Fast
+    /// incumbent and climb/bisect/fill with the real entropy alternatives so
+    /// the achieved size is not an overestimate-guided undershoot.
+    Final,
 }
+
+/// How many prices to hold back from the Fast ladder for Full refinement.
+///
+/// Fast entropy overestimates size (it skips alternatives that shrink the
+/// stream). The Fast ladder therefore lands coarser than Full would, and the
+/// Full pass must be allowed a geometric climb + bisect — not a one-notch
+/// walk — or the residual undershoot blows the 1% contract.
+fn full_refinement_reserve(max_prices: u32) -> u32 {
+    if max_prices <= 6 {
+        // Tiny budgets: one Full re-plan of the Fast winner; undershoot is
+        // the honest trade for a five-price cap (see the rate_loop test).
+        1
+    } else {
+        // Geometric bracket + bisect + fill on a ~2^17-rung ladder needs on
+        // the order of a dozen prices. Take half the budget, clamp to 8..=20,
+        // and never leave Fast with zero.
+        16u32
+            .min(max_prices / 2)
+            .max(8)
+            .min(max_prices.saturating_sub(1))
+    }
+}
+
+/// Discrete `quant_lf` values tried during [`RatePhase::LfFill`].
+///
+/// All are representable under I.2.1's `U32(16, 1+u(5), 1+u(8), 1+u(16))`.
+/// The set is intentionally sparse: each probe is a full encode.
+const QUANT_LF_FILL: &[u32] = &[8, 12, 16, 24, 32, 48, 64, 96, 128, 192, 256, 512, 1024];
 
 /// One priced candidate. The trace is the loop's evidence, and the tests read
 /// it: an iteration count, a bracket, and where non-monotonicity showed up.
@@ -196,6 +224,47 @@ pub struct RateStep {
     pub bytes: u64,
     /// Whether it fits the target.
     pub feasible: bool,
+}
+
+/// Multiplicity counters for one rate search (Opt-V2 acceptance telemetry).
+///
+/// These are the measured claims behind
+/// `rate-probe-multiplicity-down`: Gaborish and the forward DCT pyramid are
+/// request-scoped, Fast ladder prices skip entropy alternatives, and Full
+/// entropy + kept emissions are limited to the refinement phase.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct RateProbeStats {
+    /// Inverse-Gaborish precondition runs (0 or 1 for a single search).
+    pub gaborish_preconditions: u32,
+    /// Writer prices under [`crate::EntropySearch::Fast`] (ladder + LF fill).
+    pub fast_prices: u32,
+    /// Writer prices under [`crate::EntropySearch::Full`] (Final refinement).
+    pub full_prices: u32,
+    /// Forward-DCT cache hits across every probe.
+    pub dct_cache_hits: u64,
+    /// Forward-DCT first-time fills across every probe.
+    pub dct_cache_misses: u64,
+}
+
+impl RateProbeStats {
+    /// Whether Full-entropy prices stayed inside the refinement budget.
+    ///
+    /// The Fast ladder owns most of a default 40-price budget; Full refinement
+    /// is reserved at most [`full_refinement_reserve`] (≤20). Full may briefly
+    /// outnumber Fast on a short ladder that then climbs with Full — that is
+    /// still "finalist-only Full", not a full-price loop.
+    #[must_use]
+    pub fn full_confined_to_refinement(self) -> bool {
+        self.full_prices > 0
+            && self.fast_prices > 0
+            && self.full_prices <= 20
+    }
+
+    /// Whether the forward pyramid was reused across probes.
+    #[must_use]
+    pub fn dct_cache_reused(self) -> bool {
+        self.dct_cache_hits > 0 && self.dct_cache_hits >= self.dct_cache_misses
+    }
 }
 
 /// What a completed search chose.
@@ -216,6 +285,8 @@ pub struct RateOutcome {
     /// Whether the finest ladder rung was still under target, i.e. the target
     /// was unreachably generous and the loop returned the best it can express.
     pub saturated: bool,
+    /// Multiplicity counters for this search (Opt-V2).
+    pub stats: RateProbeStats,
 }
 
 impl RateOutcome {
@@ -503,11 +574,53 @@ impl<F: FnMut(QuantizerChoice) -> Result<u64>> Search<F> {
     }
 }
 
+/// Persistent state shared across every quantizer probe of one rate search.
+///
+/// This is the Opt-V2 `PreparedSearch` split: geometry, preconditioned frame,
+/// analysis, and the candidate-forward cache live here. Per-probe work
+/// (quantizers, cover rescoring, CfL, entropy, emission) does not rebuild them.
+struct PreparedSearch<'a> {
+    frame: &'a crate::PreparedFrame,
+    transform_frame: &'a crate::PreparedFrame,
+    atlas: &'a crate::AnalysisAtlas,
+    request: &'a EncodeRequest,
+    fwd_cache: CandidateForwardCache,
+    stats: RateProbeStats,
+}
+
+impl<'a> PreparedSearch<'a> {
+    fn plan(
+        &mut self,
+        quantizer: QuantizerChoice,
+        entropy: EntropySearch,
+    ) -> Result<ValidatedEmissionPlan> {
+        crate::plan_at_on(
+            self.frame,
+            self.transform_frame,
+            self.atlas,
+            self.request,
+            quantizer,
+            &mut self.fwd_cache,
+            entropy,
+        )
+    }
+}
+
 /// Runs the rate loop over a real frame and returns the chosen codestream.
 ///
-/// The emission of every feasible candidate is kept until a better one
-/// replaces it, so the winner is never encoded twice: the bytes returned are
-/// the very bytes that were priced.
+/// Two entropy pricing modes share the price budget:
+///
+/// 1. **Fast ladder** — default I.2.2 entropy, no alternatives. Exact writer
+///    sizes, but an *upper bound* on the Full plan at the same quantizer.
+///    Geometric bracket / bisect / fill find an approximate incumbent cheaply.
+/// 2. **Full refinement** — re-runs the same ladder control flow from the Fast
+///    incumbent with Full entropy (slice-18 alternatives). Because Full only
+///    shrinks, the Fast feasible set is a lower bound on the Full feasible
+///    set; the refinement climbs/bisects to spend residual undershoot.
+///
+/// The returned codestream is a Full emission kept during refinement, so the
+/// winner is not encoded twice. Fast probe sizes stay in the trace as ladder
+/// guidance; only [`RatePhase::Final`] steps are Full-priced.
 ///
 /// # Errors
 ///
@@ -521,55 +634,181 @@ pub fn search_frame(
     let target_bytes = target.bytes_for(frame.width(), frame.height());
     let start = QuantizerChoice::from_request(request).rung;
 
-    // The incumbent emission, kept across prices. `search_ladder` defines the
-    // winner as the largest feasible size ever priced, and so does this — one
-    // rule, so the cached bytes cannot belong to a different rung than the one
-    // the search returns.
-    let mut kept: Option<(Rung, ValidatedEmissionPlan, Vec<u8>, CodestreamSizing)> = None;
+    // Inverse-Gaborish is quantizer-independent: once per request, not per probe.
+    let precond_owned;
+    let mut stats = RateProbeStats::default();
+    let transform_frame: &crate::PreparedFrame = if request.restoration.gaborish {
+        precond_owned = crate::prepare_gaborish_frame(frame)?;
+        stats.gaborish_preconditions = 1;
+        &precond_owned
+    } else {
+        frame
+    };
+    let mut prepared = PreparedSearch {
+        frame,
+        transform_frame,
+        atlas,
+        request,
+        fwd_cache: CandidateForwardCache::new(),
+        stats,
+    };
 
-    let search = search_ladder(
+    let max_prices = request.budget.rate.max_prices.max(1);
+    let full_reserve = full_refinement_reserve(max_prices);
+    let fast_cap = max_prices.saturating_sub(full_reserve).max(1);
+    let mut fast_budget = request.budget.rate;
+    fast_budget.max_prices = fast_cap;
+
+    // Incumbent under Fast pricing. Sizes are upper bounds; only the quantizer
+    // identity carries into Full refinement.
+    let mut kept: Option<(Rung, QuantLf, CodestreamSizing)> = None;
+
+    let mut search = search_ladder(
         start,
         request.quant_lf,
         target_bytes,
         request.tolerance,
-        request.budget.rate,
+        fast_budget,
         |quantizer| {
-            let plan = crate::plan_at(frame, atlas, request, quantizer)?;
-            let emission = emit_codestream(&plan)?;
-            let bytes = emission.sizing.total;
-            // The same incumbent rule as `Search::eval`, tie-break included:
-            // one rule, so the cached bytes can never belong to a rung other
-            // than the one the search returns.
-            let better = kept.as_ref().is_none_or(|&(rung, _, _, ref sizing)| {
-                bytes > sizing.total || (bytes == sizing.total && quantizer.rung > rung)
+            let plan = prepared.plan(quantizer, EntropySearch::Fast)?;
+            let sizing = price_codestream(&plan)?;
+            prepared.stats.fast_prices = prepared.stats.fast_prices.saturating_add(1);
+            let bytes = sizing.total;
+            let better = kept.as_ref().is_none_or(|&(rung, _, ref prev)| {
+                bytes > prev.total || (bytes == prev.total && quantizer.rung > rung)
             });
             if bytes <= target_bytes && better {
-                kept = Some((quantizer.rung, plan, emission.bytes, emission.sizing));
+                kept = Some((quantizer.rung, quantizer.quant_lf, sizing));
             }
             Ok(bytes)
         },
     )?;
 
-    let (rung, plan, codestream, sizing) = kept.ok_or(PolicyError::TargetUnreachable {
+    // --- quant_lf secondary fill at the Fast winning rung ---
+    //
+    // Only when the ladder undershoots past tolerance and Fast budget remains.
+    // Probes stay near the caller's intended LF/HF balance.
+    let slack = request.tolerance.bytes_for(target_bytes);
+    let fast_cap_usize = usize::try_from(fast_cap).unwrap_or(1);
+    let lf_probes = usize::try_from(request.budget.rate.lf_fill_probes).unwrap_or(0);
+    let lf_fill = kept
+        .as_ref()
+        .map(|(rung, base_lf, sizing)| (*rung, *base_lf, sizing.total));
+    if let Some((rung, base_lf, base_bytes)) = lf_fill {
+        let undershoot = target_bytes.saturating_sub(base_bytes);
+        if lf_probes > 0 && undershoot > slack {
+            let mut candidates: Vec<u32> = QUANT_LF_FILL.to_vec();
+            candidates.sort_by_key(|&v| v.abs_diff(base_lf.get()));
+            let mut tried = 0usize;
+            for lf_val in candidates {
+                if search.trace.len() >= fast_cap_usize || tried >= lf_probes {
+                    break;
+                }
+                let Ok(lf) = QuantLf::new(lf_val) else {
+                    continue;
+                };
+                if lf == base_lf {
+                    continue;
+                }
+                let Ok(quantizer) = QuantizerChoice::at(rung, lf) else {
+                    continue;
+                };
+                let Ok(plan) = prepared.plan(quantizer, EntropySearch::Fast) else {
+                    continue;
+                };
+                let Ok(sizing) = price_codestream(&plan) else {
+                    continue;
+                };
+                prepared.stats.fast_prices = prepared.stats.fast_prices.saturating_add(1);
+                tried += 1;
+                let bytes = sizing.total;
+                let feasible = bytes <= target_bytes;
+                search.trace.push(RateStep {
+                    phase: RatePhase::LfFill,
+                    quantizer,
+                    bytes,
+                    feasible,
+                });
+                let better = kept
+                    .as_ref()
+                    .is_none_or(|(_, _, prev)| bytes > prev.total);
+                if feasible && better {
+                    kept = Some((rung, lf, sizing));
+                }
+            }
+        }
+    }
+
+    let (rung, quant_lf, _fast_sizing) = kept.ok_or(PolicyError::TargetUnreachable {
         target: target_bytes,
         floor: search.bytes,
     })?;
     if rung != search.rung {
-        // Unreachable while both sides use "largest feasible ever priced";
-        // reported rather than papered over, because a silent mismatch would
-        // return a codestream that is not the one the trace describes.
+        // Ladder incumbent rung must match; LF fill keeps the same rung.
         return Err(PolicyError::Unsupported {
             what: "a rate search whose incumbent and cached emission disagree",
         });
     }
+
+    // Full refinement: same ladder control flow from the Fast incumbent, with
+    // remaining budget. Fast overestimates, so Full at that rung is still
+    // under target and the geometric climb reclaims undershoot.
+    let used = u32::try_from(search.trace.len()).unwrap_or(u32::MAX);
+    let remaining = max_prices.saturating_sub(used).max(1);
+    let mut full_budget = request.budget.rate;
+    full_budget.max_prices = remaining;
+    full_budget.lf_fill_probes = 0;
+
+    let mut full_best: Option<(QuantizerChoice, ValidatedEmissionPlan, Emission)> = None;
+    let full = search_ladder(
+        rung,
+        quant_lf,
+        target_bytes,
+        request.tolerance,
+        full_budget,
+        |quantizer| {
+            let plan = prepared.plan(quantizer, EntropySearch::Full)?;
+            // Keep the emission of the incumbent so the winner is not re-encoded.
+            let emission = emit_codestream(&plan)?;
+            prepared.stats.full_prices = prepared.stats.full_prices.saturating_add(1);
+            let bytes = emission.sizing.total;
+            let better = full_best.as_ref().is_none_or(|(prev_q, _, prev)| {
+                bytes > prev.sizing.total
+                    || (bytes == prev.sizing.total && quantizer.rung > prev_q.rung)
+            });
+            if bytes <= target_bytes && better {
+                full_best = Some((quantizer, plan, emission));
+            }
+            Ok(bytes)
+        },
+    )?;
+
+    for step in full.trace {
+        search.trace.push(RateStep {
+            phase: RatePhase::Final,
+            quantizer: step.quantizer,
+            bytes: step.bytes,
+            feasible: step.feasible,
+        });
+    }
+
+    let (chosen, plan, emission) = full_best.ok_or(PolicyError::TargetUnreachable {
+        target: target_bytes,
+        floor: full.bytes,
+    })?;
+
+    prepared.stats.dct_cache_hits = prepared.fwd_cache.hits();
+    prepared.stats.dct_cache_misses = prepared.fwd_cache.misses();
+
     Ok(RateOutcome {
-        codestream,
-        chosen: QuantizerChoice::at(rung, request.quant_lf)?,
-        sizing,
+        codestream: emission.bytes,
+        chosen,
+        sizing: emission.sizing,
         plan,
         target: target_bytes,
         trace: search.trace,
-        saturated: search.saturated,
+        saturated: full.saturated || chosen.rung == Rung::TOP,
+        stats: prepared.stats,
     })
 }
 
@@ -813,6 +1052,7 @@ mod tests {
         let budget = RateSearchBudget {
             max_prices: 6,
             fill_probes: 4,
+            lf_fill_probes: 0,
         };
         let result = search_ladder(
             Rung::for_global_scale(32_768),

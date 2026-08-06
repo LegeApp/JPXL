@@ -134,6 +134,50 @@ impl PreparedFrame {
         })
     }
 
+    /// Wraps already-converted XYB planes (for example after inverse-Gaborish
+    /// preconditioning).
+    ///
+    /// `grayscale` is a source-domain fact and must be preserved from the
+    /// original RGB conversion — inverse Gaborish does not invent chroma.
+    ///
+    /// # Errors
+    ///
+    /// [`PolicyError::Unsupported`] for a zero dimension and
+    /// [`PolicyError::SampleCountMismatch`] if a plane is not
+    /// `width * height` long.
+    pub fn from_xyb(
+        width: u32,
+        height: u32,
+        x: Vec<f32>,
+        y: Vec<f32>,
+        b: Vec<f32>,
+        grayscale: bool,
+    ) -> Result<Self> {
+        if width == 0 || height == 0 {
+            return Err(PolicyError::Unsupported {
+                what: "a zero frame dimension",
+            });
+        }
+        let expected = u64::from(width) * u64::from(height);
+        for plane in [&x, &y, &b] {
+            let found = plane.len() as u64;
+            if found != expected {
+                return Err(PolicyError::SampleCountMismatch { expected, found });
+            }
+        }
+        Ok(Self {
+            width,
+            height,
+            xyb: XybPlanes {
+                x: PlaneStore::resident(x),
+                y: PlaneStore::resident(y),
+                b: PlaneStore::resident(b),
+            },
+            intensity_target: jpxl_core::color::NOMINAL_INTENSITY_TARGET,
+            grayscale,
+        })
+    }
+
     /// Converts an 8-bit sRGB image, interleaved RGB, to XYB.
     ///
     /// The two stages a decoder runs in reverse: the IEC 61966-2-1 EOTF turns

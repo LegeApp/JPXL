@@ -12,6 +12,28 @@ record jpegxl-rs.track.akr-adoption/1 : track {
     author "GitHub Uploader"
 }
 
+record jpegxl-rs.track.encoder-optimization/1 : track {
+    title "Encoder optimization pass"
+    state proposed
+    intent """
+        Standing encoder optimization pass for Modular lossless and VarDCT. Order is
+        measurement foundation, then remove repeated work and deep copies, then coarse
+        group/section parallelism, then leaf SIMD, then LTO/PGO. Rankings in the source
+        assessment are static findings, not substitutes for flamegraphs.
+        """
+    cadence "one milestone at a time; measure before and after each change"
+    source {
+        kind legacy
+        path "JPXL/optimization-plan.akr"
+        excerpt """
+            The optimization pass should not begin with a general add SIMD and Rayon
+            sweep. First remove repeated transforms, deep coefficient copies, and
+            per-varblock allocations. Then parallelize groups. Then vectorize leaf
+            kernels still visible at the top of the profile.
+            """
+    }
+}
+
 record jpegxl-rs.track.vardct-encoder/1 : track {
     title "VarDCT encoder (M1-M8)"
     state proposed

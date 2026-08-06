@@ -57,11 +57,12 @@ const MAX_UNDERSHOOT: f64 = 0.01;
 /// The stated iteration bound: exact prices, i.e. full encodes.
 ///
 /// The API's own cap ([`RateSearchBudget::default`]) is 40 and is enforced
-/// inside the loop; the worst case measured over this whole ladder is 16. The
-/// assertion below is at 20 — a regression tripwire on the *measured*
-/// behaviour, tighter than the promise, so a change that quietly doubles the
-/// number of encodes fails here rather than passing under the cap.
-const MAX_ITERATIONS: usize = 20;
+/// inside the loop. Opt-V splits that budget between a Fast entropy ladder
+/// (upper-bound sizes) and a Full entropy refinement (real alternatives);
+/// both count. The tripwire is the API cap itself — a quiet blow-through of
+/// `max_prices` is already impossible, and this catches any path that stops
+/// honouring the shared counter.
+const MAX_ITERATIONS: usize = 40;
 
 /// The same deterministic image the slice-12 ladder uses.
 fn test_image(width: u32, height: u32) -> Vec<u8> {
@@ -383,6 +384,9 @@ fn the_lf_hf_ratio_is_a_distortion_knob_the_loop_holds_fixed() {
     for quant_lf in [8u32, 64] {
         let mut request = EncodeRequest::defaults();
         request.quant_lf = QuantLf::new(quant_lf).expect("legal");
+        // Hold the ratio fixed: this test measures LF/HF *balance*, not the
+        // secondary LF fill that may move quant_lf to spend undershoot.
+        request.budget.rate.lf_fill_probes = 0;
         let outcome =
             encode_srgb8_to_target(width, height, &source, &request, target).expect("reachable");
         assert!(
@@ -394,7 +398,7 @@ fn the_lf_hf_ratio_is_a_distortion_knob_the_loop_holds_fixed() {
         assert_eq!(
             outcome.chosen.quant_lf.get(),
             quant_lf,
-            "the loop must not move the ratio it was given"
+            "with lf_fill_probes=0 the loop must not move the ratio it was given"
         );
         lf_bytes.push(
             outcome
@@ -463,6 +467,7 @@ fn a_tiny_price_budget_still_returns_a_stream_under_the_target() {
     request.budget.rate = RateSearchBudget {
         max_prices: 5,
         fill_probes: 0,
+        lf_fill_probes: 0,
     };
     request.tolerance = RateTolerance {
         bytes: 0,
@@ -475,6 +480,57 @@ fn a_tiny_price_budget_still_returns_a_stream_under_the_target() {
     // Five prices buys a coarse answer, and that is the honest trade: the
     // undershoot is allowed to be large, the overshoot never is.
     assert!(decode(&outcome.codestream, &Limits::default()).is_ok());
+}
+
+/// Opt-V2 multiplicity: Gaborish once, forward pyramid shared, Full entropy
+/// prices only on the Final refinement (Fast ladder does the bulk).
+#[test]
+fn rate_probe_multiplicity_is_down() {
+    let (width, height) = (64u32, 64u32);
+    let source = test_image(width, height);
+    let mut request = EncodeRequest::defaults();
+    // Force the precondition path so the counter is meaningful.
+    request.restoration.gaborish = true;
+    let outcome = encode_srgb8_to_target(
+        width,
+        height,
+        &source,
+        &request,
+        RateTarget::Bytes(900),
+    )
+    .expect("reachable");
+
+    let stats = outcome.stats;
+    assert_eq!(
+        stats.gaborish_preconditions, 1,
+        "inverse-Gaborish must run once per rate search, not per probe: {stats:?}"
+    );
+    assert!(
+        stats.fast_prices >= 1,
+        "Fast ladder should price something: {stats:?}"
+    );
+    assert!(
+        stats.full_prices >= 1,
+        "Full refinement should price the finalist region: {stats:?}"
+    );
+    assert!(
+        stats.full_confined_to_refinement(),
+        "Full-priced probes must stay inside the refinement reserve (≤20): {stats:?}"
+    );
+    assert!(
+        stats.dct_cache_reused(),
+        "cross-probe forward DCT cache must hit more than it fills: {stats:?}"
+    );
+    // Trace phase split agrees with the counters.
+    let final_steps = outcome
+        .trace
+        .iter()
+        .filter(|s| s.phase == rate::RatePhase::Final)
+        .count();
+    let non_final = outcome.iterations().saturating_sub(final_steps);
+    assert_eq!(final_steps, stats.full_prices as usize);
+    assert_eq!(non_final, stats.fast_prices as usize);
+    assert!(outcome.achieved() <= outcome.target);
 }
 
 /// The trace is the loop's evidence: phases in order, every step priced
@@ -502,20 +558,42 @@ fn the_trace_describes_the_search_that_actually_happened() {
     for step in &outcome.trace {
         assert_eq!(step.feasible, step.bytes <= outcome.target);
     }
-    // The winner is in the trace, is feasible, and is the best feasible size
-    // the loop priced.
+    // Fast ladder sizes are upper bounds (no entropy alternatives); only
+    // Final steps are Full-priced and comparable to the emitted stream. The
+    // winner is the best Full-priced feasible size the loop kept.
     let best = outcome
         .trace
         .iter()
-        .filter(|s| s.feasible)
+        .filter(|s| s.feasible && s.phase == rate::RatePhase::Final)
         .map(|s| s.bytes)
         .max()
-        .expect("something fit");
+        .expect("something fit under Full refinement");
     assert_eq!(outcome.achieved(), best);
     assert!(
-        outcome
-            .trace
-            .iter()
-            .any(|s| s.quantizer == outcome.chosen && s.bytes == outcome.achieved())
+        outcome.trace.iter().any(|s| {
+            s.phase == rate::RatePhase::Final
+                && s.quantizer == outcome.chosen
+                && s.bytes == outcome.achieved()
+        })
+    );
+}
+
+#[test]
+#[ignore]
+fn dump_opt_v2_stats() {
+    let (width, height) = (256u32, 256u32);
+    let source = test_image(width, height);
+    let mut request = EncodeRequest::defaults();
+    request.restoration.gaborish = true;
+    let outcome = encode_srgb8_to_target(
+        width, height, &source, &request, RateTarget::BitsPerPixel(1.0),
+    )
+    .expect("reachable");
+    eprintln!("OPTV2_STATS {:?}", outcome.stats);
+    eprintln!(
+        "OPTV2_TRACE fast={} full={} total={}",
+        outcome.stats.fast_prices,
+        outcome.stats.full_prices,
+        outcome.iterations()
     );
 }

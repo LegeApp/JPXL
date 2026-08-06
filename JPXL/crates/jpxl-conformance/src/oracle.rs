@@ -389,9 +389,8 @@ pub fn discover() -> Vec<Oracle> {
     // 1. Vendored build.
     let vendored = vendored_oracle_dir();
     for kind in [OracleKind::Djxl, OracleKind::JxlOxide] {
-        let candidate = vendored.join(kind.binary_name());
-        if is_executable_file(&candidate) {
-            push(kind, candidate);
+        if let Some(path) = first_executable_in(&vendored, kind.binary_name()) {
+            push(kind, path);
         }
     }
 
@@ -403,11 +402,10 @@ pub fn discover() -> Vec<Oracle> {
     }
 
     // 3. Cargo's bin directory, which may not be on PATH.
-    if let Some(cargo_bin) = cargo_bin_dir() {
-        let candidate = cargo_bin.join(OracleKind::JxlOxide.binary_name());
-        if is_executable_file(&candidate) {
-            push(OracleKind::JxlOxide, candidate);
-        }
+    if let Some(cargo_bin) = cargo_bin_dir()
+        && let Some(path) = first_executable_in(&cargo_bin, OracleKind::JxlOxide.binary_name())
+    {
+        push(OracleKind::JxlOxide, path);
     }
 
     found
@@ -424,15 +422,57 @@ fn cargo_bin_dir() -> Option<PathBuf> {
     if let Some(cargo_home) = std::env::var_os("CARGO_HOME") {
         return Some(PathBuf::from(cargo_home).join("bin"));
     }
-    std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".cargo").join("bin"))
+    // Unix `$HOME`; Windows uses `USERPROFILE` (and often has no `HOME`).
+    if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
+        return Some(PathBuf::from(home).join(".cargo").join("bin"));
+    }
+    None
 }
 
 /// A tiny `which(1)`: scan `PATH` for an executable file named `name`.
+///
+/// On Windows, also tries `name.exe` (and the other `PATHEXT` suffixes the
+/// shell would), because vendored oracles are installed as `djxl.exe` while
+/// the logical name remains `djxl`.
 fn which(name: &str) -> Option<PathBuf> {
     let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path)
-        .map(|dir| dir.join(name))
+    std::env::split_paths(&path).find_map(|dir| first_executable_in(&dir, name))
+}
+
+/// The first existing executable for `name` under `dir`.
+///
+/// Tries `name` itself, then Windows-style `name.exe` / `PATHEXT` variants.
+/// A bare `name` that is not a PE/script (e.g. a leftover Linux ELF copied
+/// into `tools/oracle-bin/`) is still returned if present — callers on
+/// Windows should install `.exe` and remove foreign binaries.
+fn first_executable_in(dir: &Path, name: &str) -> Option<PathBuf> {
+    executable_candidates(dir, name)
+        .into_iter()
         .find(|candidate| is_executable_file(candidate))
+}
+
+/// Candidate paths for an oracle binary named `name` in `dir`.
+fn executable_candidates(dir: &Path, name: &str) -> Vec<PathBuf> {
+    #[cfg(not(windows))]
+    {
+        vec![dir.join(name)]
+    }
+    #[cfg(windows)]
+    {
+        // Prefer the PE form first so a stale extensionless ELF cannot mask it.
+        let mut out = vec![dir.join(format!("{name}.exe")), dir.join(name)];
+        if let Some(pathext) = std::env::var_os("PATHEXT") {
+            for ext in std::env::split_paths(&pathext) {
+                // PATHEXT entries look like ".COM"; `.exe` is already covered.
+                let ext = ext.to_string_lossy();
+                if ext.eq_ignore_ascii_case(".exe") || ext.is_empty() {
+                    continue;
+                }
+                out.push(dir.join(format!("{name}{ext}")));
+            }
+        }
+        out
+    }
 }
 
 /// Whether `path` is a regular file the current user may execute.
@@ -452,6 +492,19 @@ fn is_executable_file(path: &Path) -> bool {
     {
         // On non-unix hosts there is no execute bit to consult; treat any
         // regular file as a candidate and let the spawn attempt decide.
+        // Prefer PE by looking for the `MZ` DOS header when the path is an
+        // extensionless name that might be a leftover Linux ELF — those
+        // fail at spawn with Win32 error 193 and are not useful oracles.
+        if let Ok(mut file) = std::fs::File::open(path) {
+            use std::io::Read as _;
+            let mut magic = [0u8; 4];
+            if file.read(&mut magic).is_ok() {
+                // ELF: 0x7F 'E' 'L' 'F' — never runnable on Windows.
+                if magic == [0x7F, b'E', b'L', b'F'] {
+                    return false;
+                }
+            }
+        }
         true
     }
 }

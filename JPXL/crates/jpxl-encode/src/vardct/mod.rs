@@ -24,6 +24,7 @@
 pub mod dump;
 pub mod emit;
 pub mod error;
+pub mod gaborish;
 pub mod geometry;
 pub mod headers;
 pub mod ids;
@@ -44,7 +45,7 @@ pub use plan::{
     OrderSet, QuantizedFrameIr, QuantizedLfGroup, QuantizerDecision, RestorationDecision,
     SectionLayout, SharpnessGrid, SpatialPlan, VarblockCoefficients, VarblockDecision,
 };
-pub use sink::{CensusSink, HfEventSink, SymbolSink};
+pub use sink::{CensusSink, HfEventSink};
 pub use size::{CodestreamSizing, Emission, SectionSize};
 pub use validate::{ValidatedEmissionPlan, validate};
 pub use walk::{OrderTables, PassGroupWalk, WalkVarblock, pre_context_count, walk_pass_group};

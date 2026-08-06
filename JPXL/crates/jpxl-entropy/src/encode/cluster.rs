@@ -264,6 +264,7 @@ fn write_nested_payload(
             CodingMode::Ans => Some(log_alphabet_size),
             CodingMode::Prefix => None,
         },
+        lz77: None,
     };
     let tables = EntropyTables::build(&plan, census)?;
     tables.write_bundle(w)?;

@@ -8,9 +8,9 @@
 //!   channels;
 //! * one **`kRegularFrame`**, `is_last`, no crop, no blending, no animation;
 //! * **modular** encoding, one pass, one group grid;
-//! * **no transforms** for greyscale, one **`kRCT`** (YCoCg) for RGB;
-//! * a **one-leaf** MA tree and the **gradient** predictor;
-//! * **prefix-coded** entropy with one context, one cluster and no LZ77;
+//! * greyscale: no transform or optional **palette**; RGB: **`kRCT`** or
+//!   exact-colour **palette** (mutually exclusive in wave 1);
+//! * learned MA tree + ANS residuals + LZ77 when cheaper;
 //! * **restoration filters explicitly disabled**, so the decoded samples are
 //!   the encoded samples.
 //!
@@ -18,11 +18,9 @@
 //!
 //! # What this is for
 //!
-//! Not compression. A gradient-predicted flat prefix code is not competitive
-//! and is not meant to be; the point is to prove the syntax stack end to end
-//! by producing files that **other** decoders accept. The acceptance criteria,
-//! in the order they were established, are: `jpxl-decode` reproduces the input
-//! samples exactly, then `djxl` does, then `jxl-oxide` does.
+//! Slice 19 densifies this path (ANS residuals + predictor selection). The
+//! acceptance criteria remain: `jpxl-decode` reproduces the input samples
+//! exactly, then `djxl` does, then `jxl-oxide` does.
 //!
 //! # Peer, not a layer
 //!
@@ -327,15 +325,25 @@ pub fn encode(image: &Image, options: &EncodeOptions) -> Result<Vec<u8>> {
 /// The choosing is [`lossless::plan_for`] (policy, slice 19); the emitting is
 /// [`encode_codestream_with_plan`], which decides nothing.
 fn encode_codestream(image: &Image, options: &EncodeOptions) -> Result<Vec<u8>> {
-    // H.6.3 is declared in the transform list, so the samples written are the
-    // transformed ones and the decoder inverts them after the last group.
-    let mut planes = image.planes().to_vec();
-    let rct = planes.len() == 3;
-    if rct {
-        modular::apply_rct(&mut planes)?;
-    }
+    // Plan over *source* samples. RCT is applied only when the plan keeps it
+    // (palette and RCT are mutually exclusive in wave 1).
+    let source_planes = image.planes().to_vec();
+    let want_rct = source_planes.len() == 3;
+    let plan = lossless::plan_for(
+        image.width(),
+        image.height(),
+        &source_planes,
+        want_rct,
+        options,
+    )?;
 
-    let plan = lossless::plan_for(&planes, rct, options)?;
+    let planes = if plan.plan().rct {
+        let mut p = source_planes;
+        modular::apply_rct(&mut p)?;
+        p
+    } else {
+        source_planes
+    };
     encode_codestream_with_plan(image, &planes, &plan)
 }
 
@@ -356,12 +364,19 @@ pub fn encode_codestream_with_plan(
     let plan = plan.plan();
     let geometry = Geometry::new(width, height, plan.group_size_shift)?;
 
-    let source = ModularSource {
-        width,
-        height,
-        planes,
-        rct: plan.rct,
-        code: plan.code,
+    let source = if let Some(ref palette) = plan.palette {
+        ModularSource::from_palette(palette.clone(), plan.tree.clone(), true)
+    } else if plan.squeeze {
+        ModularSource::with_default_squeeze(
+            width,
+            height,
+            planes,
+            plan.rct,
+            plan.tree.clone(),
+            true,
+        )?
+    } else {
+        ModularSource::direct(width, height, planes, plan.rct, plan.tree.clone(), true)
     };
 
     let store = build_sections(&source, &geometry)?;
@@ -380,7 +395,7 @@ pub fn encode_codestream_with_plan(
 }
 
 /// Encodes every section of the frame into a [`SectionStore`], in TOC order.
-fn build_sections(source: &ModularSource<'_>, geometry: &Geometry) -> Result<SectionStore> {
+fn build_sections(source: &ModularSource, geometry: &Geometry) -> Result<SectionStore> {
     let mut store = SectionStore::new();
     store.push(modular::encode_lf_global(source, geometry)?);
     if geometry.is_single_section() {
@@ -388,13 +403,25 @@ fn build_sections(source: &ModularSource<'_>, geometry: &Geometry) -> Result<Sec
         return Ok(store);
     }
 
-    // F.3.1 order: LfGlobal, one per LF group, HfGlobal, then the pass groups.
-    // The LF-group sections are empty because nothing here shifts a channel by
-    // 3 (G.2.3), and HfGlobal is VarDCT-only (G.3).
-    for _ in 0..geometry.num_lf_groups() {
-        store.push_empty();
+    // F.3.1 order: LfGlobal, LfGroup[…], HfGlobal, PassGroup[…].
+    // G.2.3: LF groups residual-code channels with hshift≥3 and vshift≥3.
+    // HfGlobal is VarDCT-only (G.3) — always empty for pure modular.
+    for index in 0..geometry.num_lf_groups() {
+        let (x0, y0, width, height) = geometry
+            .lf_group_rect(index)
+            .ok_or_else(|| EncodeError::unsupported("an LF group index past the grid", "G.2"))?;
+        store.push(modular::encode_lf_group(
+            source,
+            Rect {
+                x0,
+                y0,
+                width,
+                height,
+            },
+            geometry,
+        )?);
     }
-    store.push_empty();
+    store.push_empty(); // HfGlobal
     for index in 0..geometry.num_groups() {
         let (x0, y0, width, height) = geometry
             .group_rect(index)
@@ -407,6 +434,7 @@ fn build_sections(source: &ModularSource<'_>, geometry: &Geometry) -> Result<Sec
                 width,
                 height,
             },
+            geometry,
         )?);
     }
     Ok(store)
@@ -415,7 +443,7 @@ fn build_sections(source: &ModularSource<'_>, geometry: &Geometry) -> Result<Sec
 #[cfg(test)]
 mod tests {
     use super::*;
-    use entropy::FlatCode;
+    use modular::{MaTree, Predictor};
 
     #[test]
     fn rejects_degenerate_images() {
@@ -481,13 +509,14 @@ mod tests {
         let planes = vec![vec![0i32; 600 * 520]];
         let image = Image::new(600, 520, 8, planes).expect("valid");
         let geometry = Geometry::new(600, 520, 2).expect("valid");
-        let source = ModularSource {
-            width: 600,
-            height: 520,
-            planes: image.planes(),
-            rct: false,
-            code: FlatCode::new_const(4),
-        };
+        let source = ModularSource::direct(
+            600,
+            520,
+            image.planes(),
+            false,
+            MaTree::single_leaf(Predictor::Gradient),
+            true,
+        );
         let store = build_sections(&source, &geometry).expect("sections");
         assert_eq!(store.len() as u64, geometry.num_sections());
         assert_eq!(store.len(), 2 + 1 + 4);

@@ -8,22 +8,27 @@
 //! how the two copies drift apart. So it is written once, against a sink:
 //!
 //! ```text
-//! event walk ──▶ HfEventSink ──┬──▶ census      (train histograms)
-//!                              ├──▶ price book  (estimate bits)
-//!                              ├──▶ ANS writer  (emit)
-//!                              └──▶ trace       (debug)
+//! event walk ──▶ HfEventSink ──┬──▶ CensusSink     (raw values → policy train)
+//!                              ├──▶ TokenCensus    (jpxl-entropy: ANS tables)
+//!                              ├──▶ SymbolEncoder  (jpxl-entropy: emit)
+//!                              └──▶ trace          (debug)
 //! ```
 //!
-//! # Status
+//! # Two census types on purpose
 //!
-//! Slice 11 defines the interface and ships the census sink; the walk itself
-//! is milestone 2 and the ANS writer behind [`SymbolSink`] is slice 11.5, in
-//! `jpxl-entropy`. [`SymbolSink`] is declared here rather than imported so
-//! that this crate compiles and is testable before that work lands — when it
-//! does, the encoder implements this trait over it rather than the reverse.
-//! Nothing in this module encodes anything.
+//! [`CensusSink`] (this module) counts **raw** PackSigned values per
+//! pre-context. Hybrid-uint configuration is a *cluster* property and is not
+//! known yet when policy trains, so raw is the only legal census at that
+//! stage.
+//!
+//! `jpxl_entropy::encode::TokenCensus` counts **tokens** after a hybrid-uint
+//! config is fixed, which is what ANS table construction needs. The write
+//! path builds one via an `HfEventSink` adapter once the plan's configurations
+//! exist. Unifying the two types would either force premature tokenization
+//! (wrong) or force ANS to re-tokenize twice (waste). They share only the
+//! [`HfEventSink`] event shape.
 
-use crate::vardct::ids::{ClusterId, PreContextId};
+use crate::vardct::ids::PreContextId;
 
 /// A consumer of I.4's coefficient events.
 ///
@@ -36,33 +41,6 @@ pub trait HfEventSink {
 
     /// One quantized coefficient, already in `PackSigned` form.
     fn coefficient(&mut self, context: PreContextId, value: u32);
-}
-
-/// The interface slice 11.5's rANS encoder is expected to satisfy.
-///
-/// Deliberately minimal: a symbol is a cluster plus an unsigned value, and the
-/// hybrid-uint tokenization and reverse-order state handling belong to the
-/// implementation, not to its callers. `finish` exists because rANS is written
-/// backwards — the terminal state (C.3.2) is only known when the last symbol
-/// has been consumed.
-pub trait SymbolSink {
-    /// The error the implementation reports.
-    type Error;
-
-    /// Accepts one symbol.
-    ///
-    /// # Errors
-    ///
-    /// Implementation-defined; a cluster index outside the model is the
-    /// expected case.
-    fn push(&mut self, cluster: ClusterId, value: u32) -> Result<(), Self::Error>;
-
-    /// Finishes the stream and returns its bytes.
-    ///
-    /// # Errors
-    ///
-    /// Implementation-defined.
-    fn finish(self) -> Result<Vec<u8>, Self::Error>;
 }
 
 /// Counts raw values per pre-context: `Encoder-plan1.md` §9.2's census.

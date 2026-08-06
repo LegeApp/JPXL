@@ -1,0 +1,182 @@
+akr 0.1
+project jpegxl-rs
+
+record jpegxl-rs.work.dispose-performance-md/1 : work {
+    title "Dispose PERFORMANCE.md into AKR and scratch"
+    state completed
+    intent """
+        Migrate durable PERFORMANCE.md content into AKR (baseline rules, jpxl bench
+        entry points, retirement decision, preopt observations) and keep full raw
+        measurements only under .agent/scratch/. Replace PERFORMANCE.md with a short
+        stub. Do not implement encoder optimizations as part of this work.
+        """
+    acceptance {
+        check durable-in-akr {
+            statement """
+                Baseline rules, bench entry points, retirement decision, and preopt
+                ladder/flamegraph observations exist as live AKR heads; akr check is clean
+                after akr build.
+                """
+            method command
+            command "akr check"
+            verified_by [ @jpegxl-rs.evidence.performance-md-akr-check/1 ]
+        }
+        check stub-only {
+            statement """
+                JPXL/docs/PERFORMANCE.md is a short stub pointing at AKR observation keys
+                and .agent/scratch paths, without duplicated baseline tables or full rules.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.performance-md-stub/1 ]
+        }
+    }
+    implements [
+        @jpegxl-rs.decision.retire-performance-md,
+        @jpegxl-rs.policy.jpxl-bench-entry-points,
+        @jpegxl-rs.policy.performance-baseline-rules
+    ]
+}
+
+record jpegxl-rs.work.encoder-optimization-plan/1 : work {
+    title "Encoder optimization plan of record"
+    state proposed
+    intent """
+        Authoritative plan for jpegxl-rs.track.encoder-optimization: execute Opt-F
+        through Opt-P in after-order, supported by the static advisor assessment and
+        the optimization decisions and gates.
+        """
+    implements [
+        @jpegxl-rs.decision.optimization-ordering,
+        @jpegxl-rs.decision.optimization-pass-opened
+    ]
+    plan_of_record [ @jpegxl-rs.track.encoder-optimization ]
+    supported_by [ @jpegxl-rs.assessment.encoder-static-optimization ]
+    source {
+        kind legacy
+        path "JPXL/optimization-plan.akr"
+        excerpt """
+            Recommended implementation order: Common foundation; Modular track; VarDCT
+            track; parallel and SIMD; LTO and PGO.
+            """
+    }
+}
+
+record jpegxl-rs.work.opt-benches-and-counters/1 : work {
+    title "Add encode benches and multiplicity counters"
+    state proposed
+    intent """
+        Implement the Opt-F measurement foundation: three encode entry points, optional
+        single-probe VarDCT, feature-gated or tooling-side multiplicity counters, and
+        first promoted baseline observations under
+        @jpegxl-rs.policy.performance-baseline-rules (full logs in .agent/scratch/).
+        Keep research scaffolding out of the normative decode path.
+        """
+    implements [
+        @jpegxl-rs.decision.optimization-ordering,
+        @jpegxl-rs.policy.jpxl-bench-entry-points,
+        @jpegxl-rs.policy.performance-baseline-rules,
+        @jpegxl-rs.policy.research-out-of-core
+    ]
+    part_of [ @jpegxl-rs.milestone.m-opt-foundation ]
+}
+
+record jpegxl-rs.work.opt-bulk-bitwriter/1 : work {
+    title "Bulk BitWriter write_bits and bitspan append"
+    state proposed
+    intent """
+        Replace bit-at-a-time write_bits with bulk LSB packing; add reserve and
+        append_bitspan; fix modular append_bits clone-and-replay; keep byte-identical
+        output.
+        """
+    implements [
+        @jpegxl-rs.decision.optimization-determinism-contract,
+        @jpegxl-rs.policy.optimization-correctness-gates
+    ]
+    part_of [ @jpegxl-rs.milestone.m-opt-bitwriter ]
+}
+
+record jpegxl-rs.work.opt-plan-import/1 : work {
+    title "Disposition advisor optimization-plan.akr into the ledger"
+    state proposed
+    intent """
+        Track migration of JPXL/optimization-plan.akr durable claims into assessment,
+        track, decisions, policy, milestones, and work. Complete when every durable
+        claim is proposed or explicitly declined and the draft remains only as a legacy
+        source citation.
+        """
+    acceptance {
+        check claims-dispositioned {
+            statement """
+                akr check is clean for the new optimization records; ROADMAP shows the
+                optimization track; ACTIVE-WORK lists foundation and bitwriter work.
+                """
+            method command
+            command "akr check"
+        }
+    }
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+    source {
+        kind legacy
+        path "JPXL/optimization-plan.akr"
+        excerpt """
+            Encoder assessment and optimization plan (advisor draft converted to AKR).
+            """
+    }
+}
+
+record jpegxl-rs.work.opt-v1-count-only-and-arenas/1 : work {
+    title "Opt-V1 count-only pricing and coefficient arenas"
+    state completed
+    intent """
+        Finish Opt-V1 structural sharing: count-only BitWriter path for exact
+        price_codestream without retaining section payloads; group-scoped HF
+        coefficient arenas so varblocks share one Arc buffer; reuse quantize
+        scratch. Arc plan payloads and Gaborish-once already land. Fixed-input
+        codestreams stay byte-identical (Contract A).
+        """
+    acceptance {
+        check contract-a-fingerprint {
+            statement """
+                vardct-fixed 256 fingerprint remains 37145644e7e1857f after arenas
+                and count-only pricing.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.opt-v1-count-only-arenas/1 ]
+        }
+        check price-matches-emit {
+            statement """
+                price_codestream sizing equals emit_codestream sizing; unit test
+                a_priced_size_is_the_emitted_size_byte_for_byte passes.
+                """
+            method command
+            command "cd JPXL && cargo test -p jpxl-encode a_priced_size_is_the_emitted_size"
+            verified_by [ @jpegxl-rs.evidence.opt-v1-count-only-arenas/1 ]
+        }
+    }
+    part_of [ @jpegxl-rs.milestone.m-opt-vardct-structure ]
+}
+
+record jpegxl-rs.work.opt-v2-rate-work-sharing/1 : work {
+    title "Opt-V2 PreparedSearch and Fast/Full rate pricing"
+    state completed
+    intent """
+        Implement Opt-V2 rate-loop work sharing: PreparedSearch (shared geometry,
+        preconditioned frame, analysis, cross-probe CandidateForwardCache) vs per-probe
+        quantizer work; Fast entropy ladder for bracket/bisect/fill; Full entropy
+        refinement only for finalist rungs; RateProbeStats multiplicity counters for
+        the rate-probe-multiplicity-down acceptance gate.
+        """
+    acceptance {
+        check multiplicity-test {
+            statement """
+                rate_probe_multiplicity_is_down and the full rate_loop suite pass;
+                RateProbeStats shows gaborish once, DCT cache reuse, Full confined
+                to refinement.
+                """
+            method command
+            command "cd JPXL && cargo test -p jpxl-encode-policy --test rate_loop"
+            verified_by [ @jpegxl-rs.evidence.opt-v2-rate-probe-multiplicity/1 ]
+        }
+    }
+    part_of [ @jpegxl-rs.milestone.m-opt-vardct-rate ]
+}

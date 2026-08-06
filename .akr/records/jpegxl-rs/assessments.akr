@@ -1,0 +1,33 @@
+akr 0.1
+project jpegxl-rs
+
+record jpegxl-rs.assessment.encoder-static-optimization/1 : assessment {
+    title "Encoder static assessment: multiplicity and structure before SIMD"
+    state verified
+    scope [
+        path "JPXL/crates/jpxl-bitstream/**",
+        path "JPXL/crates/jpxl-encode-policy/**",
+        path "JPXL/crates/jpxl-encode/**"
+    ]
+    statement """
+        Static review of the encoder (no measured flamegraph on this snapshot) ranks
+        gains as: (1) bulk BitWriter instead of bit-at-a-time; (2) stop deep-cloning
+        quantized VarDCT plans; (3) cut rate-loop work that re-plans nearly everything
+        per probe; (4) factored scalar DCT32 before vectorizing the dense matrix path;
+        (5) group coefficient arenas instead of per-varblock heap; (6) cache selected
+        transforms within one probe; (7) tiered Modular MA/residual scoring instead of
+        exact-encoding dozens of candidates; (8) shape scalar loops for the compiler
+        before manual SIMD. Profile Modular, VarDCT fixed-quantizer, and VarDCT
+        target-rate separately. Rankings are source findings, not measured percentages.
+        """
+    confidence medium
+    source {
+        kind legacy
+        path "JPXL/optimization-plan.akr"
+        excerpt """
+            The supplied snapshot has no root workspace Cargo.toml, so I could not build
+            and produce measured hotspot percentages. The rankings below are static
+            source findings, not substitutes for the flamegraph.
+            """
+    }
+}

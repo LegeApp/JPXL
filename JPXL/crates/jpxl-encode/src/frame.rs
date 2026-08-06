@@ -217,6 +217,27 @@ impl Geometry {
             self.group_dim.min(self.height.saturating_sub(y0)),
         ))
     }
+
+    /// The rectangle covered by LF group `index` (F.3.1 / G.2.3).
+    ///
+    /// An LF group spans `8 * group_dim` samples on each axis.
+    #[must_use]
+    pub fn lf_group_rect(&self, index: u64) -> Option<(u32, u32, u32, u32)> {
+        if index >= self.num_lf_groups() {
+            return None;
+        }
+        let lf_dim = self.group_dim.checked_mul(8)?;
+        let gx = u32::try_from(index % u64::from(self.lf_groups_x)).ok()?;
+        let gy = u32::try_from(index / u64::from(self.lf_groups_x)).ok()?;
+        let x0 = gx.checked_mul(lf_dim)?;
+        let y0 = gy.checked_mul(lf_dim)?;
+        Some((
+            x0,
+            y0,
+            lf_dim.min(self.width.saturating_sub(x0)),
+            lf_dim.min(self.height.saturating_sub(y0)),
+        ))
+    }
 }
 
 /// Writes the `FrameHeader` of the single modular frame (18181-1 Table F.2).

@@ -33,6 +33,7 @@ Usage:
     jpxl boxes <file.jxl>         List the Part 2 box structure of a container
     jpxl decode <in.jxl> <out>    Decode to a binary PGM (P5) or PPM (P6)
     jpxl encode [opts] <in> <out> Encode a binary PGM (P5) or PPM (P6) losslessly
+    jpxl bench <mode> [opts]      Time one encode path (see `jpxl bench --help`)
     jpxl --help                   Show this message
     jpxl --version                Show the version
 
@@ -53,6 +54,33 @@ Exit codes:
 `encode` accepts P5 and P6 with maxval 255 or 65535 and writes a lossless
 modular codestream: greyscale as-is, RGB through the reversible colour
 transform, split into groups when the image exceeds one group.
+
+`bench` isolates Modular lossless, VarDCT fixed-quantizer, VarDCT target-rate,
+and a single VarDCT probe so flamegraphs are not mixed across paths.
+";
+
+const BENCH_USAGE: &str = "\
+jpxl bench <mode> [options]
+
+Modes (Opt-F measurement entry points):
+    modular         Lossless Modular encode (same path as `jpxl encode`)
+    vardct-fixed    VarDCT at request quantizer scalars (no rate loop)
+    vardct-rate     VarDCT rate loop to a bits-per-pixel target
+    vardct-probe    Exactly one VarDCT plan+emit at the default quantizer
+                    (separates one-encode cost from multi-probe rate search)
+
+Options:
+    --width <n>           Synthetic frame width (default 256)
+    --height <n>          Synthetic frame height (default 256)
+    --iters <n>           Timed iterations after one warm-up (default 3)
+    --bpp <f>             Target bits/pixel for vardct-rate (default 1.0)
+    --input <path.ppm>    Use a real P6 image instead of the synthetic RGB
+
+Prints one line per run: mode, size, iters, wall_ms_total, wall_ms_median,
+output_bytes, output_sha256_prefix. Timing excludes decode validation.
+
+This is tooling, not a baseline: see JPXL/docs/PERFORMANCE.md for the rules
+that turn a run into a published number.
 ";
 
 fn main() -> ExitCode {
@@ -80,6 +108,7 @@ fn run(args: &[String]) -> u8 {
         "boxes" => cmd_boxes(rest),
         "decode" => cmd_decode(rest),
         "encode" => cmd_encode(rest),
+        "bench" => cmd_bench(rest),
         other => {
             fail(&format!("unknown command `{other}`"));
             EXIT_ERROR
@@ -291,6 +320,302 @@ fn cmd_encode(args: &[String]) -> u8 {
             EXIT_ERROR
         }
     }
+}
+
+/// `jpxl bench <mode> [opts]`: time one isolated encode path.
+fn cmd_bench(args: &[String]) -> u8 {
+    let Some(first) = args.first() else {
+        print!("{BENCH_USAGE}");
+        return EXIT_ERROR;
+    };
+    if matches!(first.as_str(), "-h" | "--help" | "help") {
+        print!("{BENCH_USAGE}");
+        return EXIT_OK;
+    }
+
+    let mode = first.as_str();
+    let mut width = 256u32;
+    let mut height = 256u32;
+    let mut iters = 3usize;
+    let mut bpp = 1.0f64;
+    let mut input: Option<&str> = None;
+
+    let mut rest = args.get(1..).unwrap_or(&[]).iter();
+    while let Some(arg) = rest.next() {
+        match arg.as_str() {
+            "--width" => {
+                let Some(v) = rest.next().and_then(|s| s.parse().ok()) else {
+                    fail("`--width` needs a positive integer");
+                    return EXIT_ERROR;
+                };
+                width = v;
+            }
+            "--height" => {
+                let Some(v) = rest.next().and_then(|s| s.parse().ok()) else {
+                    fail("`--height` needs a positive integer");
+                    return EXIT_ERROR;
+                };
+                height = v;
+            }
+            "--iters" => {
+                let Some(v) = rest.next().and_then(|s| s.parse().ok()).filter(|&n| n > 0) else {
+                    fail("`--iters` needs a positive integer");
+                    return EXIT_ERROR;
+                };
+                iters = v;
+            }
+            "--bpp" => {
+                let Some(v) = rest.next().and_then(|s| s.parse().ok()) else {
+                    fail("`--bpp` needs a floating-point number");
+                    return EXIT_ERROR;
+                };
+                bpp = v;
+            }
+            "--input" => {
+                let Some(path) = rest.next() else {
+                    fail("`--input` needs a path");
+                    return EXIT_ERROR;
+                };
+                input = Some(path.as_str());
+            }
+            other => {
+                fail(&format!("unknown `bench` option `{other}`"));
+                return EXIT_ERROR;
+            }
+        }
+    }
+
+    if width == 0 || height == 0 {
+        fail("width and height must be non-zero");
+        return EXIT_ERROR;
+    }
+
+    let rgb = match input {
+        Some(path) => match load_rgb8_ppm(path) {
+            Ok((w, h, bytes)) => {
+                width = w;
+                height = h;
+                bytes
+            }
+            Err(err) => {
+                fail(&err);
+                return EXIT_ERROR;
+            }
+        },
+        None => synthetic_rgb8(width, height),
+    };
+
+    let timed = match mode {
+        "modular" => bench_modular(&rgb, width, height, iters),
+        "vardct-fixed" => bench_vardct_fixed(&rgb, width, height, iters),
+        "vardct-rate" => bench_vardct_rate(&rgb, width, height, bpp, iters),
+        "vardct-probe" => bench_vardct_probe(&rgb, width, height, iters),
+        other => {
+            fail(&format!(
+                "unknown bench mode `{other}` (modular|vardct-fixed|vardct-rate|vardct-probe)"
+            ));
+            return EXIT_ERROR;
+        }
+    };
+
+    match timed {
+        Ok(report) => {
+            println!(
+                "mode={mode} size={width}x{height} iters={iters} \
+                 wall_ms_total={:.3} wall_ms_median={:.3} \
+                 output_bytes={} fingerprint={:016x}",
+                report.wall_ms_total,
+                report.wall_ms_median,
+                report.output_bytes,
+                report.fingerprint
+            );
+            EXIT_OK
+        }
+        Err(err) => {
+            fail(&err);
+            EXIT_ERROR
+        }
+    }
+}
+
+struct BenchReport {
+    wall_ms_total: f64,
+    wall_ms_median: f64,
+    output_bytes: usize,
+    fingerprint: u64,
+}
+
+fn bench_modular(rgb: &[u8], width: u32, height: u32, iters: usize) -> Result<BenchReport, String> {
+    let samples: Vec<u16> = rgb.iter().map(|&b| u16::from(b)).collect();
+    let image = jpxl_encode::Image::from_interleaved(width, height, 3, 8, &samples)
+        .map_err(|e| e.to_string())?;
+    let options = jpxl_encode::EncodeOptions::default();
+    // Warm-up (not timed).
+    let warm = jpxl_encode::encode(&image, &options).map_err(|e| e.to_string())?;
+    time_iters(iters, warm.len(), fnv1a64(&warm), || {
+        jpxl_encode::encode(&image, &options).map_err(|e| e.to_string())
+    })
+}
+
+fn bench_vardct_fixed(
+    rgb: &[u8],
+    width: u32,
+    height: u32,
+    iters: usize,
+) -> Result<BenchReport, String> {
+    let request = jpxl_encode_policy::EncodeRequest::defaults();
+    let warm = jpxl_encode_policy::encode_srgb8_vardct(width, height, rgb, &request)
+        .map_err(|e| e.to_string())?;
+    time_iters(iters, warm.len(), fnv1a64(&warm), || {
+        jpxl_encode_policy::encode_srgb8_vardct(width, height, rgb, &request)
+            .map_err(|e| e.to_string())
+    })
+}
+
+fn bench_vardct_rate(
+    rgb: &[u8],
+    width: u32,
+    height: u32,
+    bpp: f64,
+    iters: usize,
+) -> Result<BenchReport, String> {
+    let mut request = jpxl_encode_policy::EncodeRequest::defaults();
+    let target = jpxl_encode_policy::RateTarget::BitsPerPixel(bpp);
+    request.target = Some(target);
+    let warm = jpxl_encode_policy::encode_srgb8_to_target(width, height, rgb, &request, target)
+        .map_err(|e| e.to_string())?;
+    let warm_len = warm.codestream.len();
+    let warm_fp = fnv1a64(&warm.codestream);
+    time_iters(iters, warm_len, warm_fp, || {
+        jpxl_encode_policy::encode_srgb8_to_target(width, height, rgb, &request, target)
+            .map(|o| o.codestream)
+            .map_err(|e| e.to_string())
+    })
+}
+
+fn bench_vardct_probe(
+    rgb: &[u8],
+    width: u32,
+    height: u32,
+    iters: usize,
+) -> Result<BenchReport, String> {
+    // One predetermined quantizer: plan_frame without a rate target is a single
+    // plan_at + emit — the fourth measurement the advisor asked for.
+    let request = jpxl_encode_policy::EncodeRequest::defaults();
+    let frame = jpxl_encode_policy::PreparedFrame::from_srgb8(width, height, rgb)
+        .map_err(|e| e.to_string())?;
+    let warm_plan = jpxl_encode_policy::plan_frame(&frame, &request).map_err(|e| e.to_string())?;
+    let warm = jpxl_encode::vardct::write_codestream(&warm_plan).map_err(|e| e.to_string())?;
+    time_iters(iters, warm.len(), fnv1a64(&warm), || {
+        let plan = jpxl_encode_policy::plan_frame(&frame, &request).map_err(|e| e.to_string())?;
+        jpxl_encode::vardct::write_codestream(&plan).map_err(|e| e.to_string())
+    })
+}
+
+fn time_iters<F>(
+    iters: usize,
+    output_bytes: usize,
+    fingerprint: u64,
+    mut run: F,
+) -> Result<BenchReport, String>
+where
+    F: FnMut() -> Result<Vec<u8>, String>,
+{
+    let mut samples_ms = Vec::with_capacity(iters);
+    let start_all = std::time::Instant::now();
+    for _ in 0..iters {
+        let t0 = std::time::Instant::now();
+        let out = run()?;
+        let ms = t0.elapsed().as_secs_f64() * 1000.0;
+        if out.len() != output_bytes {
+            return Err(format!(
+                "output size changed across iterations ({} vs {output_bytes})",
+                out.len()
+            ));
+        }
+        if fnv1a64(&out) != fingerprint {
+            return Err("output bytes changed across iterations".to_owned());
+        }
+        samples_ms.push(ms);
+    }
+    let wall_ms_total = start_all.elapsed().as_secs_f64() * 1000.0;
+    samples_ms.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let mid = samples_ms.len() / 2;
+    let wall_ms_median = if samples_ms.len().is_multiple_of(2) && samples_ms.len() >= 2 {
+        let lo = samples_ms.get(mid - 1).copied().unwrap_or(0.0);
+        let hi = samples_ms.get(mid).copied().unwrap_or(0.0);
+        (lo + hi) / 2.0
+    } else {
+        samples_ms.get(mid).copied().unwrap_or(0.0)
+    };
+    Ok(BenchReport {
+        wall_ms_total,
+        wall_ms_median,
+        output_bytes,
+        fingerprint,
+    })
+}
+
+/// Deterministic synthetic RGB for reproducible benches (not a corpus fixture).
+fn synthetic_rgb8(width: u32, height: u32) -> Vec<u8> {
+    let n = usize::try_from(u64::from(width) * u64::from(height) * 3).unwrap_or(0);
+    let mut out = Vec::with_capacity(n);
+    for y in 0..height {
+        for x in 0..width {
+            let ramp = (x.wrapping_mul(170) / width.max(1)) + (y.wrapping_mul(70) / height.max(1));
+            let checker = if (x / 16 + y / 16).is_multiple_of(2) {
+                12
+            } else {
+                0
+            };
+            let luma = u8::try_from((20 + ramp + checker).min(255)).unwrap_or(255);
+            out.extend_from_slice(&[
+                luma,
+                u8::try_from(u16::from(luma) * 4 / 5).unwrap_or(255),
+                u8::try_from(u16::from(luma) * 3 / 5).unwrap_or(255),
+            ]);
+        }
+    }
+    out
+}
+
+fn load_rgb8_ppm(path: &str) -> Result<(u32, u32, Vec<u8>), String> {
+    let bytes = std::fs::read(Path::new(path)).map_err(|e| format!("{path}: {e}"))?;
+    let image = decode_netpbm(&bytes)?;
+    if image.num_channels() != 3 || image.bits_per_sample() != 8 {
+        return Err("bench --input requires 8-bit RGB (P6 maxval 255)".to_owned());
+    }
+    let mut rgb = Vec::with_capacity(
+        usize::try_from(u64::from(image.width()) * u64::from(image.height()) * 3).unwrap_or(0),
+    );
+    let planes = image.planes();
+    let (Some(r), Some(g), Some(b)) = (planes.first(), planes.get(1), planes.get(2)) else {
+        return Err("expected three RGB planes".to_owned());
+    };
+    if r.len() != g.len() || g.len() != b.len() {
+        return Err("RGB plane lengths disagree".to_owned());
+    }
+    for i in 0..r.len() {
+        let rv = r.get(i).copied().unwrap_or(0);
+        let gv = g.get(i).copied().unwrap_or(0);
+        let bv = b.get(i).copied().unwrap_or(0);
+        rgb.push(u8::try_from(rv).unwrap_or(0));
+        rgb.push(u8::try_from(gv).unwrap_or(0));
+        rgb.push(u8::try_from(bv).unwrap_or(0));
+    }
+    Ok((image.width(), image.height(), rgb))
+}
+
+/// FNV-1a 64-bit fingerprint for cross-iteration identity (not a crypto hash).
+fn fnv1a64(bytes: &[u8]) -> u64 {
+    const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+    const PRIME: u64 = 0x0000_0100_0000_01b3;
+    let mut hash = OFFSET;
+    for &b in bytes {
+        hash ^= u64::from(b);
+        hash = hash.wrapping_mul(PRIME);
+    }
+    hash
 }
 
 /// Parses a binary PGM (P5) or PPM (P6) with `maxval` 255 or 65535.

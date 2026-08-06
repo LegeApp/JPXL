@@ -206,6 +206,85 @@ record jpegxl-rs.evidence.markdown-cutover/2 : evidence {
     author "GitHub Uploader"
 }
 
+record jpegxl-rs.evidence.opt-f-bench-entry-points/1 : evidence {
+    title "Four jpxl bench modes ran successfully on the pre-opt ladder; raw numbers in scratch artifact."
+    state verified
+    result pass
+    method command
+    observed_at git:788a3b4ebce146cacbe3412b12de6f712da58304
+    command "JPXL/target/release/jpxl bench modular|vardct-fixed|vardct-rate|vardct-probe"
+    artifact ".agent/scratch/preopt-baseline-2026-08-06.md"
+    summary """
+        Four jpxl bench modes ran successfully on the pre-opt ladder; raw numbers in scratch artifact.
+        """
+}
+
+record jpegxl-rs.evidence.opt-v1-count-only-arenas/1 : evidence {
+    title "Count-only BitWriter price_codestream matches emit sizing; group HF coeff arenas; rate_loop 11/11; vardct-fixed 256 fingerprint 37145644e7e1857f (Contract A). Scratch: .agent/scratch/preopt-baseline-2026-08-06.md"
+    state verified
+    result pass
+    method command
+    observed_at git:788a3b4ebce146cacbe3412b12de6f712da58304
+    command "cd JPXL && cargo test -p jpxl-encode a_priced_size_is_the_emitted_size && cargo test -p jpxl-encode-policy --lib && cargo test -p jpxl-encode-policy --test rate_loop"
+    artifact ".agent/scratch/preopt-baseline-2026-08-06.md"
+    summary """
+        Count-only BitWriter price_codestream matches emit sizing; group HF coeff arenas; rate_loop 11/11; vardct-fixed 256 fingerprint 37145644e7e1857f (Contract A). Scratch: .agent/scratch/preopt-baseline-2026-08-06.md
+        """
+}
+
+record jpegxl-rs.evidence.opt-v2-rate-probe-multiplicity/1 : evidence {
+    title "Opt-V2 PreparedSearch + Fast/Full rate pricing: rate_loop 11/11; multiplicity counters show Gaborish once, DCT cache hits>>misses, Full confined to Final refinement. See .agent/scratch/preopt-baseline-2026-08-06.md"
+    state verified
+    result pass
+    method command
+    observed_at git:788a3b4ebce146cacbe3412b12de6f712da58304
+    command "cd JPXL && cargo test -p jpxl-encode-policy --test rate_loop"
+    artifact ".agent/scratch/preopt-baseline-2026-08-06.md"
+    summary """
+        Opt-V2 PreparedSearch + Fast/Full rate pricing: rate_loop 11/11; multiplicity counters show Gaborish once, DCT cache hits>>misses, Full confined to Final refinement. See .agent/scratch/preopt-baseline-2026-08-06.md
+        """
+}
+
+record jpegxl-rs.evidence.performance-md-akr-check/1 : evidence {
+    title "Pending: will re-verify after akr build; durable records proposed/revised for baseline rules, bench entry points, retirement decision, preopt observations."
+    state superseded
+    result pass
+    method command
+    observed_at git:788a3b4ebce146cacbe3412b12de6f712da58304
+    command "akr check"
+    summary """
+        Pending: will re-verify after akr build; durable records proposed/revised for baseline rules, bench entry points, retirement decision, preopt observations.
+        """
+}
+
+record jpegxl-rs.evidence.performance-md-akr-check/2 : evidence {
+    title "akr check after PERFORMANCE.md disposition"
+    state verified
+    result pass
+    method command
+    observed_at git:788a3b4ebce146cacbe3412b12de6f712da58304
+    command "akr check"
+    summary """
+        akr build succeeded; stages A-D clean. Under --strict the only diagnostic is
+        AKR-G004 (uncommitted changes on watched paths), expected before commit. Durable
+        records for baseline rules, jpxl bench entry points, retirement decision, revised
+        preopt observations, and dispose work are live heads.
+        """
+    supersedes [ @jpegxl-rs.evidence.performance-md-akr-check/1 ]
+}
+
+record jpegxl-rs.evidence.performance-md-stub/1 : evidence {
+    title "PERFORMANCE.md replaced with short stub pointing at AKR policies/observations and .agent/scratch paths; tables and full rules removed."
+    state verified
+    result pass
+    method observation
+    observed_at git:788a3b4ebce146cacbe3412b12de6f712da58304
+    artifact "JPXL/docs/PERFORMANCE.md"
+    summary """
+        PERFORMANCE.md replaced with short stub pointing at AKR policies/observations and .agent/scratch paths; tables and full rules removed.
+        """
+}
+
 record jpegxl-rs.evidence.rulings-captured/1 : evidence {
     title "HANDOFF Already-fixed and Traps plus LESSONS captured as 5 decisions, 12 policies, 6 constraints"
     state verified

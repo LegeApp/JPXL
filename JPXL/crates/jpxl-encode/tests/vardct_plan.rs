@@ -115,8 +115,8 @@ fn legal_plan(width: u32, height: u32, shift: u32) -> EmissionPlan {
             sharpness: SharpnessGrid::zeros(grid),
         });
     }
-    EmissionPlan {
-        spatial: SpatialPlan {
+    EmissionPlan::new(
+        SpatialPlan {
             frame,
             quantizer: QuantizerDecision {
                 global_scale: GlobalScale::new(4096).unwrap(),
@@ -126,19 +126,19 @@ fn legal_plan(width: u32, height: u32, shift: u32) -> EmissionPlan {
             restoration: RestorationDecision::default(),
             lf_groups: lf_groups.into_boxed_slice(),
         },
-        quantized: QuantizedFrameIr {
+        QuantizedFrameIr {
             lf_groups: quantized.into_boxed_slice(),
         },
-        entropy: entropy_for(&geometry),
-        sections: SectionLayout::for_geometry(&geometry),
-    }
+        entropy_for(&geometry),
+        SectionLayout::for_geometry(&geometry),
+    )
 }
 
 /// Replaces LF group 0's varblocks, keeping the IR consistent with them, so
 /// that a cover test breaks the cover and nothing else.
 fn set_group0_blocks(plan: &mut EmissionPlan, blocks: Vec<VarblockDecision>) {
-    plan.quantized.lf_groups[0].coefficients = coefficients_for(&blocks);
-    plan.spatial.lf_groups[0].blocks = blocks.into_boxed_slice();
+    plan.quantized_mut().lf_groups[0].coefficients = coefficients_for(&blocks);
+    plan.spatial_mut().lf_groups[0].blocks = blocks.into_boxed_slice();
 }
 
 #[track_caller]
@@ -233,28 +233,28 @@ fn the_emitter_accepts_a_validated_plan_and_rejects_a_mismatched_store() {
 #[test]
 fn rejects_a_zero_frame_dimension() {
     let mut plan = legal_plan(64, 64, 1);
-    plan.spatial.frame.width = 0;
+    plan.spatial_mut().frame.width = 0;
     rejected_as(plan, "frame width");
 }
 
 #[test]
 fn rejects_an_out_of_range_group_size_shift() {
     let mut plan = legal_plan(64, 64, 1);
-    plan.spatial.frame.group_size_shift = 4;
+    plan.spatial_mut().frame.group_size_shift = 4;
     rejected_as(plan, "group_size_shift");
 }
 
 #[test]
 fn rejects_an_out_of_range_pass_count() {
     let mut plan = legal_plan(64, 64, 1);
-    plan.spatial.frame.num_passes = 12;
+    plan.spatial_mut().frame.num_passes = 12;
     rejected_as(plan, "num_passes");
 }
 
 #[test]
 fn rejects_a_wrong_lf_group_count() {
     let mut plan = legal_plan(64, 64, 1);
-    plan.spatial.lf_groups = Box::new([]);
+    plan.spatial_mut().lf_groups = Box::new([]);
     rejected_as(plan, "LF group count");
 }
 
@@ -262,8 +262,8 @@ fn rejects_a_wrong_lf_group_count() {
 fn rejects_out_of_order_lf_group_ids() {
     // 4200x40 at shift 1 spans three 2048-wide LF groups.
     let mut plan = legal_plan(4200, 40, 1);
-    plan.spatial.lf_groups.swap(0, 1);
-    plan.quantized.lf_groups.swap(0, 1);
+    plan.spatial_mut().lf_groups.swap(0, 1);
+    plan.quantized_mut().lf_groups.swap(0, 1);
     rejected_as(plan, "LF group raster order");
 }
 
@@ -274,28 +274,28 @@ fn rejects_out_of_order_lf_group_ids() {
 #[test]
 fn rejects_an_out_of_range_extra_precision() {
     let mut plan = legal_plan(64, 64, 1);
-    plan.spatial.lf.extra_precision = 4;
+    plan.spatial_mut().lf.extra_precision = 4;
     rejected_as(plan, "extra_precision");
 }
 
 #[test]
 fn rejects_a_non_finite_lf_dequant_weight() {
     let mut plan = legal_plan(64, 64, 1);
-    plan.spatial.lf.channel_dequant[1] = f32::NAN;
+    plan.spatial_mut().lf.channel_dequant[1] = f32::NAN;
     rejected_as(plan, "LF channel dequantization weight");
 }
 
 #[test]
 fn rejects_an_out_of_range_epf_iteration_count() {
     let mut plan = legal_plan(64, 64, 1);
-    plan.spatial.restoration.epf_iters = 4;
+    plan.spatial_mut().restoration.epf_iters = 4;
     rejected_as(plan, "epf_iters");
 }
 
 #[test]
 fn rejects_a_zero_colour_factor() {
     let mut plan = legal_plan(64, 64, 1);
-    plan.spatial.lf.correlation.colour_factor = 0;
+    plan.spatial_mut().lf.correlation.colour_factor = 0;
     rejected_as(plan, "colour_factor");
 }
 
@@ -449,7 +449,7 @@ fn rejects_more_varblocks_than_the_block_grid_holds() {
 #[test]
 fn rejects_a_cfl_grid_of_the_wrong_shape() {
     let mut plan = legal_plan(600, 520, 1);
-    plan.spatial.lf_groups[0].cfl = CflGrid::zeros(BlockGrid {
+    plan.spatial_mut().lf_groups[0].cfl = CflGrid::zeros(BlockGrid {
         width: 1,
         height: 1,
     });
@@ -459,7 +459,7 @@ fn rejects_a_cfl_grid_of_the_wrong_shape() {
 #[test]
 fn rejects_a_sharpness_grid_of_the_wrong_shape() {
     let mut plan = legal_plan(600, 520, 1);
-    plan.spatial.lf_groups[0].sharpness = SharpnessGrid::zeros(BlockGrid {
+    plan.spatial_mut().lf_groups[0].sharpness = SharpnessGrid::zeros(BlockGrid {
         width: 2,
         height: 2,
     });
@@ -475,7 +475,7 @@ fn rejects_an_out_of_range_sharpness_sample() {
     };
     let mut values = vec![0u8; 8];
     values[5] = 8; // J.4.3's lookup has eight entries, 0..=7.
-    plan.spatial.lf_groups[0].sharpness = SharpnessGrid::new(grid, values).unwrap();
+    plan.spatial_mut().lf_groups[0].sharpness = SharpnessGrid::new(grid, values).unwrap();
     rejected_as(plan, "Sharpness sample");
 }
 
@@ -486,14 +486,14 @@ fn rejects_an_out_of_range_sharpness_sample() {
 #[test]
 fn rejects_a_quantized_lf_group_count_mismatch() {
     let mut plan = legal_plan(64, 64, 1);
-    plan.quantized.lf_groups = Box::new([]);
+    plan.quantized_mut().lf_groups = Box::new([]);
     rejected_as(plan, "quantized LF group count");
 }
 
 #[test]
 fn rejects_lf_quant_planes_of_the_wrong_shape() {
     let mut plan = legal_plan(600, 520, 1);
-    plan.quantized.lf_groups[0].lf = LfQuantPlanes::zeros(BlockGrid {
+    plan.quantized_mut().lf_groups[0].lf = LfQuantPlanes::zeros(BlockGrid {
         width: 4,
         height: 4,
     });
@@ -505,7 +505,7 @@ fn rejects_a_coefficient_set_count_mismatch() {
     let mut plan = legal_plan(32, 16, 1);
     let mut coefficients = plan.quantized.lf_groups[0].coefficients.to_vec();
     coefficients.pop();
-    plan.quantized.lf_groups[0].coefficients = coefficients.into_boxed_slice();
+    plan.quantized_mut().lf_groups[0].coefficients = coefficients.into_boxed_slice();
     rejected_as(plan, "coefficient set count");
 }
 
@@ -514,7 +514,7 @@ fn rejects_varblock_coefficients_of_the_wrong_length() {
     let mut plan = legal_plan(32, 16, 1);
     // A DCT16x16-sized coefficient set under a DCT8x8 varblock: 256 values
     // where I.3.2 calls for 64.
-    plan.quantized.lf_groups[0].coefficients[2] =
+    plan.quantized_mut().lf_groups[0].coefficients[2] =
         VarblockCoefficients::zeros(TransformType::Dct16x16);
     rejected_as(plan, "varblock coefficient count");
 }

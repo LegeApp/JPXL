@@ -25,3 +25,7 @@ target/
 
 # Claude Code personal settings
 .claude/settings.local.json
+
+# AKR: a rebuildable cache and disposable agent notes.
+.akr/cache/
+.agent/scratch/

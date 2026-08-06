@@ -785,6 +785,153 @@ fn both_oracles_decode_a_custom_order_stream() {
     }
 }
 
+/// Slice 18d: a multi-group mixed frame whose mass fingerprint can split
+/// HF presets. When `num_hf_presets > 1` lands on the wire, both external
+/// oracles must accept the stream and agree with jpxl-decode within one
+/// code point. A single-preset outcome is still a valid encode (exact-price
+/// gate preferred it) and is decoded as a regression check.
+#[test]
+fn both_oracles_decode_a_multi_preset_candidate_stream() {
+    let case = Case {
+        name: "presets-512x512",
+        width: 512,
+        height: 512,
+        grey: false,
+    };
+    let mut source = Vec::with_capacity((case.width * case.height * 3) as usize);
+    for y in 0..case.height {
+        for x in 0..case.width {
+            let luma = if x < case.width / 2 {
+                128u8
+            } else {
+                let hash = (x.wrapping_mul(0x9E37).wrapping_add(y.wrapping_mul(0x79B9)))
+                    .wrapping_mul(0x85EB_CA6B);
+                u8::try_from(64 + ((hash >> 24) & 0x7F)).unwrap_or(128)
+            };
+            source.extend_from_slice(&[luma, luma, luma]);
+        }
+    }
+    let frame = PreparedFrame::from_srgb8(case.width, case.height, &source).expect("frame");
+    let plan = plan_frame(&frame, &EncodeRequest::defaults()).expect("a legal plan");
+    let num_presets = plan.plan().entropy.num_hf_presets;
+    let groups = plan
+        .plan()
+        .spatial
+        .frame
+        .geometry()
+        .expect("geo")
+        .num_groups();
+    assert!(groups >= 2, "fixture must be multi-group, got {groups}");
+    println!("num_hf_presets={num_presets} groups={groups}");
+    let codestream = jpxl_encode::vardct::write_codestream(&plan).expect("encodes");
+
+    let dir = scratch("presets");
+    let jxl = dir.join(format!("{}.jxl", case.name));
+    std::fs::write(&jxl, &codestream).expect("write");
+    let ours = ours(&codestream);
+
+    for kind in [OracleKind::Djxl, OracleKind::JxlOxide] {
+        let Some(oracle) = oracle::find(kind) else {
+            println!("skipping {kind:?}: not installed");
+            continue;
+        };
+        let (out, format) = match kind {
+            OracleKind::Djxl => (dir.join(format!("{}.ppm", case.name)), OutputFormat::Ppm),
+            _ => (dir.join(format!("{}.npy", case.name)), OutputFormat::Npy),
+        };
+        match oracle.decode(&jxl, &out, format) {
+            Ok(()) => {}
+            Err(err) if err.is_unavailable() => {
+                println!("skipping {kind:?}: {err}");
+                continue;
+            }
+            Err(err) => panic!(
+                "{kind:?} refused a multi-preset candidate stream ({} bytes, presets {num_presets}): {err}",
+                codestream.len()
+            ),
+        }
+        let bytes = std::fs::read(&out).expect("read oracle output");
+        let samples: Vec<u8> = match kind {
+            OracleKind::Djxl => PnmImage::from_ppm(&bytes)
+                .expect("ppm")
+                .samples
+                .iter()
+                .map(|&v| u8::try_from(v.min(255)).unwrap_or(0))
+                .collect(),
+            _ => read_npy_f32(&bytes)
+                .expect("npy")
+                .iter()
+                .map(|&v| u8::try_from((v.clamp(0.0, 1.0) * 255.0).round() as i32).unwrap_or(255))
+                .collect(),
+        };
+        let (peak, rmse) = error(&samples, &ours);
+        assert!(
+            peak <= MAX_PEAK_BETWEEN_DECODERS,
+            "{kind:?} and jpxl-decode disagree by {peak} on multi-preset stream (RMSE {rmse:.3})"
+        );
+    }
+}
+
+/// Inverse-Gaborish preconditioned encode: external decoders must agree with
+/// ours after applying J.3 (within one 8-bit code point).
+#[test]
+fn external_decoders_agree_on_gaborish_stream() {
+    let source = test_image(64, 64, false);
+    let mut request = EncodeRequest::defaults();
+    request.restoration.gaborish = true;
+    let codestream = encode_srgb8_vardct(64, 64, &source, &request).expect("encodes");
+    let dir = scratch("gaborish");
+    let jxl = dir.join("gaborish-64x64.jxl");
+    std::fs::write(&jxl, &codestream).expect("write");
+    let ours = ours(&codestream);
+
+    for kind in [OracleKind::Djxl, OracleKind::JxlOxide] {
+        let Some(oracle) = oracle::find(kind) else {
+            println!("skipping {kind:?}: not installed");
+            continue;
+        };
+        let (out, format) = match kind {
+            OracleKind::Djxl => (dir.join("gaborish-64x64.ppm"), OutputFormat::Ppm),
+            _ => (dir.join("gaborish-64x64.npy"), OutputFormat::Npy),
+        };
+        match oracle.decode(&jxl, &out, format) {
+            Ok(()) => {}
+            Err(err) if err.is_unavailable() => {
+                println!("skipping {kind:?}: {err}");
+                continue;
+            }
+            Err(err) => panic!(
+                "{kind:?} refused gaborish stream ({} bytes): {err}",
+                codestream.len()
+            ),
+        }
+        let bytes = std::fs::read(&out).expect("read oracle output");
+        let samples: Vec<u8> = match kind {
+            OracleKind::Djxl => PnmImage::from_ppm(&bytes)
+                .expect("ppm")
+                .samples
+                .iter()
+                .map(|&v| u8::try_from(v.min(255)).unwrap_or(0))
+                .collect(),
+            _ => read_npy_f32(&bytes)
+                .expect("npy")
+                .iter()
+                .map(|&v| u8::try_from((v.clamp(0.0, 1.0) * 255.0).round() as i32).unwrap_or(255))
+                .collect(),
+        };
+        let (peak, rmse) = error(&samples, &ours);
+        assert!(
+            peak <= MAX_PEAK_BETWEEN_DECODERS,
+            "{kind:?} and jpxl-decode disagree by {peak} on gaborish stream (RMSE {rmse:.3})"
+        );
+        let (peak_src, rmse_src) = error(&samples, &source);
+        assert!(
+            rmse_src <= MAX_RMSE_VS_SOURCE,
+            "{kind:?} vs source RMSE {rmse_src:.3} (peak {peak_src})"
+        );
+    }
+}
+
 /// A corrupted stream must be refused, never silently mis-decoded.
 ///
 /// The ANS terminal state of C.3.2 is the check that makes this cheap: a

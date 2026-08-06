@@ -1,0 +1,90 @@
+akr 0.1
+project jpegxl-rs
+
+record jpegxl-rs.papercut.akr-check-strict-exits-1-on-akr-g004-alone-when/1 : papercut {
+    title "akr check --strict exits 1 on AKR-G004 alone when watched paths have…"
+    state verified
+    statement """
+        akr check --strict exits 1 on AKR-G004 alone when watched paths have uncommitted edits during a disposition; lenient is clean. Makes 'akr check is clean' acceptance awkward mid-session before commit.
+        """
+    observed_at git:788a3b4ebce146cacbe3412b12de6f712da58304
+    author "grok-build"
+    created_at 2026-08-06
+}
+
+record jpegxl-rs.papercut.akr-import-of-performance-md-dry-run-proposed/1 : papercut {
+    title "akr import of PERFORMANCE.md --dry-run proposed every section as kind…"
+    state verified
+    statement """
+        akr import of PERFORMANCE.md --dry-run proposed every section as kind work (including rules and measurements), so manual propose/revise was required for policy/decision/observation disposition.
+        """
+    observed_at git:788a3b4ebce146cacbe3412b12de6f712da58304
+    author "grok-build"
+    created_at 2026-08-06
+}
+
+record jpegxl-rs.papercut.akr-mcp-install-setup-akr-mcp-sh-cp-fails-with/1 : papercut {
+    title "akr-mcp install: setup-akr-mcp.sh cp fails with Text file busy when an…"
+    state verified
+    statement """
+        akr-mcp install: setup-akr-mcp.sh cp fails with Text file busy when an MCP client holds the old binary open; atomic mv over a .new file works. setup script should install via rename.
+        """
+    observed_at git:788a3b4ebce146cacbe3412b12de6f712da58304
+    author "grok-4.5"
+    created_at 2026-08-06
+}
+
+record jpegxl-rs.papercut.akr-propose-from-rejects-slot-only-bodies/1 : papercut {
+    title "akr propose --from rejects slot-only bodies; requires full akr 0.1…"
+    state verified
+    statement """
+        akr propose --from rejects slot-only bodies; requires full akr 0.1 project header + record { ... } even though help says 'a file holding the record body'. First attempt failed with AKR-C031.
+        """
+    observed_at git:788a3b4ebce146cacbe3412b12de6f712da58304
+    author "grok-build"
+    created_at 2026-08-06
+}
+
+record jpegxl-rs.papercut.akr-view-active-work-current-state-etc-returned/1 : papercut {
+    title "akr view ACTIVE-WORK/CURRENT-STATE/etc returned AKR-E003 (renderer…"
+    state verified
+    statement """
+        akr view ACTIVE-WORK/CURRENT-STATE/etc returned AKR-E003 (renderer arrives later) on an intermediate binary while roadmap worked; full akr build needed for other views. Confusing when only roadmap is available.
+        """
+    observed_at git:788a3b4ebce146cacbe3412b12de6f712da58304
+    author "grok-4.5"
+    created_at 2026-08-06
+}
+
+record jpegxl-rs.papercut.hybrid-intel-plain-cycles-u-records-cpu-atom/1 : papercut {
+    title "Hybrid Intel: plain cycles:u records cpu_atom+cpu_core; atom samples…"
+    state verified
+    statement """
+        Hybrid Intel: plain cycles:u records cpu_atom+cpu_core; atom samples can dominate collapsed stacks (vardct-rate first pass looked like only synthetic_rgb8). Always use -e cpu_core/cycles/u and taskset to P-cores for reusable flamegraphs.
+        """
+    observed_at git:788a3b4ebce146cacbe3412b12de6f712da58304
+    author "grok-4.5"
+    created_at 2026-08-06
+}
+
+record jpegxl-rs.papercut.jpxl-bench-fingerprints-outputs-with-fnv-1a-64/1 : papercut {
+    title "jpxl bench fingerprints outputs with FNV-1a-64, but PERFORMANCE.md…"
+    state verified
+    statement """
+        jpxl bench fingerprints outputs with FNV-1a-64, but PERFORMANCE.md baselines require a cryptographic hash of codestream and binary; need --sha256 or a post-pass so promotion is not hand work.
+        """
+    observed_at git:788a3b4ebce146cacbe3412b12de6f712da58304
+    author "grok-4.5"
+    created_at 2026-08-06
+}
+
+record jpegxl-rs.papercut.opt-f-multiplicity-counters-are-still-only/1 : papercut {
+    title "Opt-F multiplicity counters are still only listed in PERFORMANCE.md —…"
+    state verified
+    statement """
+        Opt-F multiplicity counters are still only listed in PERFORMANCE.md — no feature-gated EncodeStats in policy/encode — so flamegraphs cannot yet separate repeated DCT from expensive DCT.
+        """
+    observed_at git:788a3b4ebce146cacbe3412b12de6f712da58304
+    author "grok-4.5"
+    created_at 2026-08-06
+}

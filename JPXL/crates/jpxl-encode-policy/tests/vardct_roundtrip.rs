@@ -256,6 +256,32 @@ fn a_coarser_quantizer_makes_a_smaller_file_and_a_worse_image() {
     );
 }
 
+/// Milestone 9: inverse-Gaborish preconditioned path through the full
+/// encode → self-decode ladder (64×64 RGB, same R-D class as rung 3).
+#[test]
+fn gaborish_precondition_round_trips_within_unfiltered_class() {
+    let source = test_image(64, 64, false);
+    let mut request = EncodeRequest::defaults();
+    request.restoration.gaborish = true;
+    let codestream = encode_srgb8_vardct(64, 64, &source, &request).expect("encodes");
+    assert_eq!(codestream.get(..2), Some(&[0xFFu8, 0x0A][..]));
+
+    let plan = plan_frame(
+        &PreparedFrame::from_srgb8(64, 64, &source).expect("prepares"),
+        &request,
+    )
+    .expect("plans");
+    assert!(plan.plan().spatial.restoration.gaborish);
+
+    let decoded = decode_to_srgb8(&codestream, 64, 64);
+    let (peak, rmse) = error(&source, &decoded);
+    assert!(
+        peak <= 70 && rmse <= 9.0,
+        "gaborish 64x64: peak {peak} (max 70), RMSE {rmse:.3} (max 9.0), {} bytes",
+        codestream.len()
+    );
+}
+
 /// The one constant this slice had to state twice: Table L.1's `quant_bias`.
 ///
 /// `jpxl-core` holds it for the encoder (which must choose integers against

@@ -49,6 +49,7 @@ use jpxl_bitstream::{BitWriter, U32Dist, U32Spec};
 
 use crate::error::{EncodeError, Result};
 use crate::headers::write_size_header;
+use crate::vardct::plan::RestorationDecision;
 
 /// 18181-1 D.1: the signature as a `u(16)` value, i.e. `FF 0A` read LSB-first.
 const SIGNATURE: u32 = 0x0AFF;
@@ -134,11 +135,19 @@ pub fn write_image_headers(w: &mut BitWriter, width: u32, height: u32) -> Result
 ///
 /// `x_qm_scale` and `b_qm_scale` are I.5.3's per-channel exponents; pass
 /// [`NEUTRAL_QM_SCALE`] for both unless the caller has a reason not to.
+/// `restoration` is Table J.1; the production default is filters off
+/// ([`RestorationDecision::default`]).
 ///
 /// # Errors
 ///
-/// [`EncodeError::ValueOutOfRange`] if a `qm_scale` exceeds the `u(3)` field.
-pub fn write_frame_header(w: &mut BitWriter, x_qm_scale: u32, b_qm_scale: u32) -> Result<()> {
+/// [`EncodeError::ValueOutOfRange`] if a `qm_scale` exceeds the `u(3)` field
+/// or `epf_iters > 3`.
+pub fn write_frame_header(
+    w: &mut BitWriter,
+    x_qm_scale: u32,
+    b_qm_scale: u32,
+    restoration: RestorationDecision,
+) -> Result<()> {
     for (what, value) in [("x_qm_scale", x_qm_scale), ("b_qm_scale", b_qm_scale)] {
         if value > MAX_QM_SCALE {
             return Err(EncodeError::ValueOutOfRange {
@@ -146,6 +155,12 @@ pub fn write_frame_header(w: &mut BitWriter, x_qm_scale: u32, b_qm_scale: u32) -
                 value: i64::from(value),
             });
         }
+    }
+    if restoration.epf_iters > 3 {
+        return Err(EncodeError::ValueOutOfRange {
+            what: "epf_iters",
+            value: i64::from(restoration.epf_iters),
+        });
     }
 
     w.write_bool(false); // all_default
@@ -175,15 +190,31 @@ pub fn write_frame_header(w: &mut BitWriter, x_qm_scale: u32, b_qm_scale: u32) -
     // save_before_ct.
     w.write_u32(&NAME_LEN_SPEC, 0)?;
 
-    // RestorationFilter (Table J.1): the defaults enable gab and two EPF
-    // iterations, both of which would move every reconstructed sample away from
-    // what this encoder quantized against.
-    w.write_bool(false); // all_default
-    w.write_bool(false); // gab
-    w.write_bits(2, 0)?; // epf_iters
-    w.write_u64(0)?; // restoration-filter extensions
+    write_restoration_filter(w, restoration)?;
 
     w.write_u64(0)?; // frame extensions
+    Ok(())
+}
+
+/// Writes Table J.1 with default weights (no custom gab/epf tables).
+fn write_restoration_filter(w: &mut BitWriter, restoration: RestorationDecision) -> Result<()> {
+    // Always non-all_default so we can force gab/epf off without taking the
+    // Table J.1 defaults (gab=true, epf_iters=2).
+    w.write_bool(false); // all_default
+    w.write_bool(restoration.gaborish); // gab
+    if restoration.gaborish {
+        w.write_bool(false); // gab_custom — use Table J.1 defaults
+    }
+    w.write_bits(2, u32::from(restoration.epf_iters))?;
+    if restoration.epf_iters != 0 {
+        // kVarDCT: epf_sharp_custom, epf_weight_custom, epf_sigma_custom all false
+        // when present (gated on !all_default and epf_iters).
+        w.write_bool(false); // epf_sharp_custom
+        w.write_bool(false); // epf_weight_custom
+        w.write_bool(false); // epf_sigma_custom
+        // epf_sigma_for_modular is kModular-only — absent here.
+    }
+    w.write_u64(0)?; // restoration-filter extensions
     Ok(())
 }
 
@@ -238,7 +269,13 @@ mod tests {
     fn the_frame_header_round_trips_as_kvardct_with_smoothing_and_filters_off() {
         let metadata = xyb_metadata();
         let mut w = BitWriter::new();
-        write_frame_header(&mut w, NEUTRAL_QM_SCALE, NEUTRAL_QM_SCALE).expect("header");
+        write_frame_header(
+            &mut w,
+            NEUTRAL_QM_SCALE,
+            NEUTRAL_QM_SCALE,
+            RestorationDecision::default(),
+        )
+        .expect("header");
         let written = w.bit_len();
         w.zero_pad_to_byte();
         let bytes = w.into_bytes();
@@ -273,14 +310,40 @@ mod tests {
     }
 
     #[test]
+    fn frame_header_with_default_gab_and_epf_parses() {
+        let metadata = xyb_metadata();
+        let mut w = BitWriter::new();
+        write_frame_header(
+            &mut w,
+            NEUTRAL_QM_SCALE,
+            NEUTRAL_QM_SCALE,
+            RestorationDecision {
+                gaborish: true,
+                epf_iters: 2,
+            },
+        )
+        .expect("header");
+        w.zero_pad_to_byte();
+        let bytes = w.into_bytes();
+        let limits = Limits::default();
+        let mut guard = AllocGuard::new(&limits);
+        let mut r = BitReader::new(&bytes);
+        let header =
+            read_frame_header(&mut r, &metadata, 64, 64, &limits, &mut guard).expect("valid");
+        assert!(header.restoration_filter.gab);
+        assert_eq!(header.restoration_filter.epf.iters, 2);
+        assert!(!header.restoration_filter.gab_custom);
+    }
+
+    #[test]
     fn an_unrepresentable_qm_scale_is_rejected() {
         let mut w = BitWriter::new();
         assert!(matches!(
-            write_frame_header(&mut w, 8, 2),
+            write_frame_header(&mut w, 8, 2, RestorationDecision::default()),
             Err(EncodeError::ValueOutOfRange { .. })
         ));
         assert!(matches!(
-            write_frame_header(&mut w, 2, 8),
+            write_frame_header(&mut w, 2, 8, RestorationDecision::default()),
             Err(EncodeError::ValueOutOfRange { .. })
         ));
     }

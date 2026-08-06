@@ -279,15 +279,56 @@ fn the_legacy_grey8_entry_point_still_works() {
 
 #[test]
 fn a_constant_image_is_small() {
-    // Not a compression claim, a sanity check: with the gradient predictor
-    // every residual of a constant image is zero, so each sample costs the
-    // token bits and nothing else.
+    // Slice 19: ANS + a one-mass residual alphabet should collapse a constant
+    // plane to well under a byte per sample (headers dominate).
     let image = Image::new(64, 64, 8, vec![vec![42; 64 * 64]]).expect("valid image");
     let bytes = round_trip("constant", &image, &EncodeOptions::default());
     assert!(
-        bytes.len() < 64 * 64 / 2 + 64,
-        "a constant 64x64 image should not exceed half a byte per sample, got {}",
+        bytes.len() < 256,
+        "a constant 64x64 grey image should be header-sized under ANS, got {}",
         bytes.len()
+    );
+}
+
+/// Slice 19 density gate: smooth content compresses hard under ANS; noise
+/// stays under ~1 bpp (table overhead dominates tiny frames).
+#[test]
+fn slice19_density_gate_smooth_and_noise() {
+    // Smooth ramp: Gradient residuals are tiny → ANS should crush them.
+    let mut ramp = vec![0i32; 128 * 128];
+    for (i, slot) in ramp.iter_mut().enumerate() {
+        *slot = ((i % 128) * 2) as i32;
+    }
+    let ramp_img = Image::new(128, 128, 8, vec![ramp]).expect("valid");
+    let ramp_bytes = round_trip("density-ramp", &ramp_img, &EncodeOptions::default());
+    assert!(
+        ramp_bytes.len() < 800,
+        "smooth 128x128 grey should be ≪1 bpp under ANS, got {}",
+        ramp_bytes.len()
+    );
+
+    // Hash noise: near-incompressible; tripwire is "still under 1 bpp".
+    let mut noise = vec![0i32; 64 * 64];
+    for (i, slot) in noise.iter_mut().enumerate() {
+        let x = (i % 64) as u32;
+        let y = (i / 64) as u32;
+        let hash = x
+            .wrapping_mul(0x9E37)
+            .wrapping_add(y.wrapping_mul(0x79B9))
+            .wrapping_mul(0x85EB_CA6B);
+        *slot = i32::from((hash >> 24) as u8);
+    }
+    let noise_img = Image::new(64, 64, 8, vec![noise]).expect("valid");
+    let noise_bytes = round_trip("density-noise", &noise_img, &EncodeOptions::default());
+    assert!(
+        noise_bytes.len() < 64 * 64,
+        "noise 64x64 grey must stay under 1 bpp, got {}",
+        noise_bytes.len()
+    );
+    eprintln!(
+        "slice-19 density: ramp128 {} B, noise64 {} B",
+        ramp_bytes.len(),
+        noise_bytes.len()
     );
 }
 

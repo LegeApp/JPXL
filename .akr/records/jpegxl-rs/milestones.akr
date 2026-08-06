@@ -71,6 +71,247 @@ record jpegxl-rs.milestone.history-backfilled/1 : milestone {
     author "GitHub Uploader"
 }
 
+record jpegxl-rs.milestone.m-opt-bitwriter/1 : milestone {
+    title "Opt-B - Bulk BitWriter"
+    state proposed
+    intent """
+        BitWriter::write_bits packs LSB-first words without a per-bit loop; bitspan and
+        writer append avoid clone-and-replay; zero_pad_to_byte is O(1) when high bits are
+        already zero. All existing encode tests remain byte-identical.
+        """
+    acceptance {
+        check byte-identical-writer {
+            statement """
+                Full workspace encode/decode tests pass and golden bitstreams that cover
+                entropy emission remain byte-identical to pre-change baselines.
+                """
+            method command
+            command "cargo test --workspace"
+        }
+    }
+    after [ @jpegxl-rs.milestone.m-opt-foundation ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+    source {
+        kind legacy
+        path "JPXL/optimization-plan.akr"
+        excerpt """
+            BitWriter::write_bits currently writes one bit at a time. This is probably
+            the first patch I would make. This entire patch should produce
+            byte-identical output.
+            """
+    }
+}
+
+record jpegxl-rs.milestone.m-opt-dct32-scalar/1 : milestone {
+    title "Opt-D - Factored scalar DCT32"
+    state proposed
+    intent """
+        A factored scalar 32-point DCT-II (and DCT-III if the shared core needs it)
+        replaces the dense matrix path for production encode; the dense matrix remains
+        the reference oracle and fallback; random, impulse, constant, and extreme
+        vectors cross-check.
+        """
+    acceptance {
+        check dct32-oracle-match {
+            statement """
+                Factored DCT32 matches the dense-matrix oracle within stated float
+                tolerance on the unit suite; forced-DCT32 encodes still decode under the
+                project decoder and libjxl.
+                """
+            method observation
+        }
+    }
+    after [ @jpegxl-rs.milestone.m-opt-vardct-structure ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+    source {
+        kind legacy
+        path "JPXL/optimization-plan.akr"
+        excerpt """
+            DCT32 is currently an algorithmic hotspot, not yet a SIMD hotspot. Implement
+            a factored scalar 32-point DCT-II. Retain the dense matrix as reference
+            oracle. Only after scalar factorization is correct should it be vectorized.
+            """
+    }
+}
+
+record jpegxl-rs.milestone.m-opt-foundation/1 : milestone {
+    title "Opt-F - Measurement foundation"
+    state proposed
+    intent """
+        Separate Modular lossless, VarDCT fixed-quantizer, and VarDCT target-rate
+        encode benchmarks exist; multiplicity counters distinguish repeated work from
+        genuine hot kernels; promoted baselines (when any exist) are AKR observations
+        meeting @jpegxl-rs.policy.performance-baseline-rules with full logs in
+        .agent/scratch/; Modular density versus cjxl is measured as a metric, not a
+        micro-optimization.
+        """
+    acceptance {
+        check performance-baselines {
+            statement """
+                At least one Modular and one VarDCT encode measurement exist as AKR
+                observations with provenance-complete scratch logs, and any promoted
+                baseline meets @jpegxl-rs.policy.performance-baseline-rules (hashes, host
+                state, size class, decode gate). Pre-opt ladder
+                @jpegxl-rs.observation.preopt-encode-baseline-2026-08-06 is development
+                reference until promotion criteria are met.
+                """
+            method observation
+        }
+        check three-bench-entry-points {
+            statement """
+                Documented runnable entry points isolate Modular lossless, VarDCT fixed
+                quantizer, and VarDCT target-rate encodes, with optional single-probe
+                VarDCT measurement (@jpegxl-rs.policy.jpxl-bench-entry-points).
+                """
+            method observation
+        }
+    }
+    after [ @jpegxl-rs.milestone.m8-entropy-opt ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+    source {
+        kind legacy
+        path "JPXL/optimization-plan.akr"
+        excerpt """
+            Create at least three benchmark entry points: Modular lossless, VarDCT
+            fixed quantizer, VarDCT target rate. Add multiplicity and memory
+            measurements alongside flamegraphs.
+            """
+    }
+}
+
+record jpegxl-rs.milestone.m-opt-modular-planner/1 : milestone {
+    title "Opt-M - Modular planner and residual path"
+    state proposed
+    intent """
+        Modular MA/residual planning uses tiered scoring: one raster analysis, cheap
+        candidate ranking, exact pricing only for finalists. Residual collection uses
+        validated row-based access. Optional later: parallel independent group sections
+        under Contract A.
+        """
+    acceptance {
+        check fewer-exact-candidate-prices {
+            statement """
+                Multiplicity counters show full exact residual prices only for finalists
+                on a large-frame fixture, not for every property/threshold trial, while
+                three-decoder bit-exact Modular roundtrip still holds.
+                """
+            method observation
+        }
+    }
+    after [ @jpegxl-rs.milestone.m-opt-bitwriter ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+    source {
+        kind legacy
+        path "JPXL/optimization-plan.akr"
+        excerpt """
+            Do not solve Modular planning by running 56 candidate encodes in Rayon. Use
+            a tiered planner: Stage A one raster analysis; Stage B cheap candidate
+            scoring; Stage C exact finalist pricing.
+            """
+    }
+}
+
+record jpegxl-rs.milestone.m-opt-parallel-simd/1 : milestone {
+    title "Opt-P - Coarse parallel then leaf SIMD"
+    state proposed
+    intent """
+        Coarse group and section parallelism exists behind EncodeResources with fixed
+        reduction order (Contract A). Leaf SIMD (wide, then std::arch only where
+        measured) covers only profiled kernels such as batched DCT, quantize, and
+        interior Gaborish. LTO/PGO considered only after those land.
+        """
+    acceptance {
+        check thread-count-byte-identity {
+            statement """
+                One-thread and N-thread encodes of pinned fixtures produce identical
+                bytes for paths under Contract A; any Contract B kernel documents metric
+                bounds and remains decode-valid.
+                """
+            method observation
+        }
+    }
+    after [
+        @jpegxl-rs.milestone.m-opt-dct32-scalar,
+        @jpegxl-rs.milestone.m-opt-modular-planner,
+        @jpegxl-rs.milestone.m-opt-vardct-rate
+    ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+    source {
+        kind legacy
+        path "JPXL/optimization-plan.akr"
+        excerpt """
+            Where Rayon belongs: group and section frontiers, not per-block tasks. SIMD
+            only on remaining leaf kernels after structural cleanup.
+            """
+    }
+}
+
+record jpegxl-rs.milestone.m-opt-vardct-rate/1 : milestone {
+    title "Opt-V2 - VarDCT rate-loop work sharing"
+    state completed
+    intent """
+        Rate search splits PreparedSearch (geometry, preconditioned frame, analysis,
+        candidate transform cache) from QuantizerProbe state. Exact full codestream
+        prices run only for final rungs after approximate or count-only bracketing;
+        final selection still passes the exact writer.
+        """
+    acceptance {
+        check rate-probe-multiplicity-down {
+            statement """
+                On a target-rate encode, counters show Gaborish and full candidate DCT
+                pyramids are not recomputed per regular price probe; full exact emissions
+                are limited to finalist quantizers while still hitting the rate target
+                gate.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.opt-v2-rate-probe-multiplicity/1 ]
+        }
+    }
+    after [ @jpegxl-rs.milestone.m-opt-vardct-structure ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+    source {
+        kind legacy
+        path "JPXL/optimization-plan.akr"
+        excerpt """
+            Refactor the rate path into persistent and probe-specific state. After
+            eliminating avoidable work inside each probe, add a two-tier rate search.
+            """
+    }
+}
+
+record jpegxl-rs.milestone.m-opt-vardct-structure/1 : milestone {
+    title "Opt-V1 - VarDCT plan sharing and arenas"
+    state completed
+    intent """
+        EmissionPlan alternatives share immutable spatial and quantized payloads (Arc or
+        equivalent); quantized coefficients live in group arenas; selected transforms are
+        not recomputed for CfL and quantize within one probe; the 21-node superblock
+        hierarchy uses fixed DP state; Gaborish preconditioning runs once per request.
+        """
+    acceptance {
+        check no-payload-clone-for-entropy-alts {
+            statement """
+                Entropy-order and block-context alternatives do not deep-clone quantized
+                coefficient payloads; counters or allocation metrics show plan clones are
+                lightweight overlays; byte-identical codestreams for fixed inputs.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.opt-v1-count-only-arenas/1 ]
+        }
+    }
+    after [ @jpegxl-rs.milestone.m-opt-bitwriter ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+    source {
+        kind legacy
+        path "JPXL/optimization-plan.akr"
+        excerpt """
+            Cloning a plan for natural order, custom order, custom block contexts, or
+            presets must not clone coefficients. Flatten per-varblock coefficient storage
+            into group arenas. Cache selected transform coefficients within one probe.
+            """
+    }
+}
+
 record jpegxl-rs.milestone.m1-plan-ir/1 : milestone {
     title "M1 - VarDCT plan IR and structural split"
     state completed

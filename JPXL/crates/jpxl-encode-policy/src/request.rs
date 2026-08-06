@@ -6,6 +6,7 @@
 //! [`SearchBudget`] is ever read inside a kernel.
 
 use jpxl_encode::vardct::ids::{GlobalScale, HfMul, QuantLf};
+use jpxl_encode::vardct::plan::RestorationDecision;
 
 /// How the cover search explores.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -131,10 +132,16 @@ impl Default for RateTolerance {
 /// about 2^17 rungs, and a real search settles in well under half the cap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RateSearchBudget {
-    /// Hard cap on exact prices — bracket, bisect and fill together.
+    /// Hard cap on exact prices — bracket, bisect, fill and LF fill together.
     pub max_prices: u32,
     /// How many one-notch refinements the discrete budget fill may try.
     pub fill_probes: u32,
+    /// Secondary `quant_lf` probes after the ladder settles (0 disables).
+    ///
+    /// Used at LF-dominated coarse targets where adjacent `global_scale`
+    /// rungs cliff; leave 0 when the caller needs the request's `quant_lf`
+    /// held fixed as a distortion knob.
+    pub lf_fill_probes: u32,
 }
 
 impl Default for RateSearchBudget {
@@ -142,6 +149,7 @@ impl Default for RateSearchBudget {
         Self {
             max_prices: 40,
             fill_probes: 4,
+            lf_fill_probes: 8,
         }
     }
 }
@@ -156,7 +164,7 @@ impl Default for RateSearchBudget {
 pub struct SearchBudget {
     /// How the cover search explores.
     pub cover_mode: CoverMode,
-    /// How adaptive quantization points its field (milestone 7).
+    /// How adaptive quantization points its field (default Masking).
     pub aq_mode: crate::field::AqMode,
     /// What the rate loop may spend (milestone 4).
     pub rate: RateSearchBudget,
@@ -192,6 +200,14 @@ pub struct EncodeRequest {
     pub target: Option<RateTarget>,
     /// How much of the target the loop may leave unspent.
     pub tolerance: RateTolerance,
+    /// J.1 restoration-filter decisions written into the frame header.
+    ///
+    /// Default is all off (the unfiltered R-D baseline). When
+    /// [`RestorationDecision::gaborish`] is set, the planner inverse-Gaborish
+    /// preconditions the XYB planes before DCT so decoder J.3 restores the
+    /// intended samples. `epf_iters > 0` is signalled on the wire but has no
+    /// encoder-side inverse yet (deeper EPF is a later filter-planning item).
+    pub restoration: RestorationDecision,
 }
 
 impl EncodeRequest {
@@ -225,6 +241,7 @@ impl EncodeRequest {
             budget: SearchBudget::default(),
             target: None,
             tolerance: RateTolerance::default(),
+            restoration: RestorationDecision::default(),
         }
     }
 
@@ -254,7 +271,16 @@ mod tests {
         assert_eq!(request.hf_mul.get(), 1);
         assert_eq!(request.group_size_shift, 1);
         assert_eq!(request.budget.cover_mode, CoverMode::Hierarchical);
+        assert_eq!(
+            request.budget.aq_mode,
+            crate::field::AqMode::Masking,
+            "production AQ default is Masking"
+        );
         assert_eq!(request.target, None, "the default path has no rate loop");
+        assert!(
+            !request.restoration.gaborish && request.restoration.epf_iters == 0,
+            "default path keeps filters off"
+        );
     }
 
     #[test]

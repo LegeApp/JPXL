@@ -289,6 +289,132 @@ record jpegxl-rs.observation.patches-k3/1 : observation {
     }
 }
 
+record jpegxl-rs.observation.preopt-encode-baseline-2026-08-06/1 : observation {
+    title "Pre-optimization encode wall-time ladder (release jpxl bench)"
+    state superseded
+    scope [
+        path "JPXL/crates/jpxl-cli/**",
+        path "JPXL/crates/jpxl-encode-policy/**",
+        path "JPXL/crates/jpxl-encode/**"
+    ]
+    statement """
+        On 2026-08-06 a release jpxl (sha256 6886ab9a…f8985b, commit 788a3b4e, rustc 1.97.1)
+        was timed with jpxl bench on host dk-82y3 (i7-13700H, warm-process, synthetic RGB).
+        Median wall times (ms): 256² modular 629 / vardct-fixed 164 / vardct-rate 5250;
+        1024² modular 9872 / fixed 1083 / rate 40859; 2048² modular 31391 / fixed 4238 /
+        rate 139616 (1 iter). Rate-loop cost is ~25–40× a single fixed quantizer encode at
+        the same size. Modular is slower than fixed VarDCT on this synthetic input.
+        Full provenance and raw lines: .agent/scratch/preopt-baseline-2026-08-06.md.
+        Gaps before PERFORMANCE.md promotion: no ≥12MP class, no decode gate in the
+        timed path, FNV fingerprint not SHA-256, loadavg was non-idle.
+        """
+    observed_at git:788a3b4ebce146cacbe3412b12de6f712da58304
+    source {
+        kind internal
+        path ".agent/scratch/preopt-baseline-2026-08-06.md"
+        excerpt """
+            Pre-optimization encode baseline (scratch). Median wall times from jpxl bench
+            release ladder 256/1024/2048 with modular, vardct-fixed, vardct-probe, vardct-rate.
+            """
+    }
+}
+
+record jpegxl-rs.observation.preopt-encode-baseline-2026-08-06/2 : observation {
+    title "Pre-optimization encode wall-time ladder (release jpxl bench)"
+    state verified
+    scope [
+        path "JPXL/crates/jpxl-cli/**",
+        path "JPXL/crates/jpxl-encode-policy/**",
+        path "JPXL/crates/jpxl-encode/**"
+    ]
+    statement """
+        On 2026-08-06 a release jpxl (sha256 6886ab9a…f8985b, commit 788a3b4e, rustc 1.97.1)
+        was timed with jpxl bench on host dk-82y3 (i7-13700H, warm-process, synthetic RGB).
+        Median wall times (ms): 256² modular 629 / vardct-fixed 164 / vardct-rate 5250;
+        1024² modular 9872 / fixed 1083 / rate 40859; 2048² modular 31391 / fixed 4238 /
+        rate 139616 (1 iter). Rate-loop cost is ~25–40× a single fixed quantizer encode at
+        the same size. Modular is slower than fixed VarDCT on this synthetic input.
+        Full provenance and raw lines: .agent/scratch/preopt-baseline-2026-08-06.md.
+        Not a promoted baseline under @jpegxl-rs.policy.performance-baseline-rules: no
+        ≥12 MP class, no decode gate in the timed path, FNV fingerprint not SHA-256,
+        loadavg was non-idle.
+
+        Takeaways for profiling (not claims of optimality): rate-loop multiplicity is the
+        first VarDCT structural target; fixed ≈ probe unit cost; Modular per-pixel cost on
+        this synthetic path makes Opt-M tiered planning as important as VarDCT structure;
+        BitWriter bulk (Opt-B) is already in tree for this ladder.
+        """
+    observed_at git:788a3b4ebce146cacbe3412b12de6f712da58304
+    supersedes [ @jpegxl-rs.observation.preopt-encode-baseline-2026-08-06/1 ]
+    source {
+        kind internal
+        path ".agent/scratch/preopt-baseline-2026-08-06.md"
+        excerpt """
+            Pre-optimization encode baseline (scratch). Median wall times from jpxl bench
+            release ladder 256/1024/2048 with modular, vardct-fixed, vardct-probe, vardct-rate.
+            """
+    }
+}
+
+record jpegxl-rs.observation.preopt-flamegraphs-2026-08-06/1 : observation {
+    title "Pre-opt P-core flamegraphs: ANS/BitWriter modular; HfQuantizer+matrix DCT VarDCT"
+    state superseded
+    scope [ path "JPXL/crates/**" ]
+    statement """
+        Reusable folded stacks and SVGs live under
+        .agent/scratch/flamegraphs/preopt-2026-08-06/ (*.v2.folded, *.v2.svg, HOTSPOTS.md).
+        Capture: release jpxl 6886ab9a…, commit 788a3b4e, cpu_core/cycles/u @997Hz, dwarf
+        call-graphs, taskset -c 0-5. Modular 1024² top leaves: ANS encode_symbols ~11%,
+        HybridUint tokenize ~6%, BitWriter::write_bits ~4.5%, residual/MA collection ~5%,
+        palette memcmp ~3%. VarDCT fixed 2048²: HfQuantizer::choose ~22%, matrix_pass ~8%
+        (dense DCT32 path), reconstruct/clamp/bias/dequant ~15% combined. VarDCT rate 1024²
+        multiplies the same HfQuantizer+matrix_pass leaves (choose ~16%) — multiplicity of
+        plan_at, not a different kernel. Prefer .v2 artifacts; first-pass cycles:u data was
+        discarded as hybrid-PMU polluted.
+        """
+    observed_at git:788a3b4ebce146cacbe3412b12de6f712da58304
+    source {
+        kind internal
+        path ".agent/scratch/flamegraphs/preopt-2026-08-06/HOTSPOTS.md"
+        excerpt """
+            Hotspot summary from *.v2.folded leaf weights for modular-1024, vardct-fixed-2048,
+            vardct-rate-1024 under cpu_core/cycles/u.
+            """
+    }
+}
+
+record jpegxl-rs.observation.preopt-flamegraphs-2026-08-06/2 : observation {
+    title "Pre-opt P-core flamegraphs: ANS/BitWriter modular; HfQuantizer+matrix DCT VarDCT"
+    state verified
+    scope [ path "JPXL/crates/**" ]
+    statement """
+        Reusable folded stacks and SVGs live under
+        .agent/scratch/flamegraphs/preopt-2026-08-06/ (canonical: *.v2.folded, *.v2.svg,
+        HOTSPOTS.md, PROVENANCE.md). Capture: release jpxl 6886ab9a…, commit 788a3b4e,
+        cpu_core/cycles/u @997Hz, dwarf call-graphs, taskset -c 0-5. Stems: modular-1024.v2
+        (Modular 1024² ×3), vardct-fixed-2048.v2 (VarDCT fixed 2048² ×3),
+        vardct-rate-1024.v2 (VarDCT rate 1024² ×1 @1 bpp). Modular top leaves: ANS
+        encode_symbols ~11%, HybridUint tokenize ~6%, BitWriter::write_bits ~4.5%,
+        residual/MA collection ~5%, palette memcmp ~3%. VarDCT fixed: HfQuantizer::choose
+        ~22%, matrix_pass ~8% (dense DCT32), reconstruct/clamp/bias/dequant ~15% combined.
+        VarDCT rate multiplies the same HfQuantizer+matrix_pass leaves (choose ~16%) —
+        multiplicity of plan_at, not a different kernel. Prefer .v2 artifacts; first-pass
+        cycles:u data was discarded as hybrid-PMU polluted. Recipe in PROVENANCE.md.
+        Next targets from this data: Opt-V (cut rate-loop re-entry), Opt-D factored scalar
+        DCT32, Opt-M residual/MA exact-price multiplicity, then entropy/ANS leaf work.
+        """
+    observed_at git:788a3b4ebce146cacbe3412b12de6f712da58304
+    supersedes [ @jpegxl-rs.observation.preopt-flamegraphs-2026-08-06/1 ]
+    source {
+        kind internal
+        path ".agent/scratch/flamegraphs/preopt-2026-08-06/HOTSPOTS.md"
+        excerpt """
+            Hotspot summary from *.v2.folded leaf weights for modular-1024, vardct-fixed-2048,
+            vardct-rate-1024 under cpu_core/cycles/u.
+            """
+    }
+}
+
 record jpegxl-rs.observation.vardct-extra-channels-blending/1 : observation {
     title "Extra channels in VarDCT frames and F.8 blending"
     state verified

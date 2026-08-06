@@ -10,11 +10,12 @@
 //! number nobody emits.
 //!
 //! So there is no model. [`price_codestream`](super::price_codestream) runs the
-//! **real writer** ([`emit_codestream`](super::emit_codestream)) into a scratch
-//! buffer and reports the lengths it produced. The cost is one encode per
-//! candidate, which is what "exact" costs; the benefit is that a priced size
-//! and an emitted size cannot disagree, and the tests that assert that are
-//! trivial rather than aspirational.
+//! **same write path** as [`emit_codestream`](super::emit_codestream) with
+//! count-only [`BitWriter`](jpxl_bitstream::BitWriter)s (bit length only, no
+//! payload buffers). The cost is still one encode per candidate; the benefit
+//! is that a priced size and an emitted size cannot disagree, intermediate
+//! rate probes do not retain full section bodies, and the tests that assert
+//! equality are trivial rather than aspirational.
 //!
 //! # What "per-section" means here
 //!

@@ -69,6 +69,123 @@ record jpegxl-rs.decision.ledger-conventions/1 : decision {
     author "GitHub Uploader"
 }
 
+record jpegxl-rs.decision.optimization-determinism-contract/1 : decision {
+    title "Default Contract A: bit-identical streams for structural optimization"
+    state proposed
+    scope [
+        path "JPXL/crates/jpxl-bitstream/**",
+        path "JPXL/crates/jpxl-encode-policy/**",
+        path "JPXL/crates/jpxl-encode/**",
+        path "JPXL/crates/jpxl-entropy/**"
+    ]
+    topic optimization-determinism
+    decision """
+        Default to Contract A for optimization changes: same source and options produce
+        identical codestream bytes across thread counts, scheduling, and scalar versus
+        optimized integer/bitstream paths. Structural refactors (BitWriter bulk path,
+        plan Arc-sharing, coefficient arenas, scratch reuse, Rayon section encoding,
+        integer SIMD) must prove byte-identical output. Contract B (decode-valid and
+        metric-equivalent streams that may differ in bytes) is allowed only for float
+        transform or RD-search changes that deliberately alter cover or quant decisions,
+        and only after an explicit revise of this decision naming the metric bounds.
+        """
+    context """
+        VarDCT RD ties are sensitive to tiny float differences. wide and hand SIMD can
+        change NaN patterns and wrapping. The project already requires software-defined
+        float conversion without fast-math for the reference pair.
+        """
+    consequences """
+        Every structural PR needs scalar-vs-optimized and 1-vs-N-thread byte equality
+        tests where applicable. Float kernel work may not claim Contract A without proof.
+        """
+    implements [ @jpegxl-rs.constraint.correctness-before-speed ]
+    supported_by [ @jpegxl-rs.assessment.encoder-static-optimization ]
+    source {
+        kind legacy
+        path "JPXL/optimization-plan.akr"
+        excerpt """
+            Contract A: bit-identical codestreams across thread counts, scheduling,
+            supported SIMD paths. Contract B: semantically and metrically equivalent
+            codestreams. Determinism must be decided before SIMD and Rayon.
+            """
+    }
+}
+
+record jpegxl-rs.decision.optimization-ordering/1 : decision {
+    title "Optimization order: structure, then parallel, then SIMD"
+    state proposed
+    scope [
+        path "JPXL/crates/jpxl-bitstream/**",
+        path "JPXL/crates/jpxl-core/**",
+        path "JPXL/crates/jpxl-encode-policy/**",
+        path "JPXL/crates/jpxl-encode/**"
+    ]
+    topic optimization-ordering
+    decision """
+        Within the encoder optimization pass, implement in this order: (1) separate
+        Modular and VarDCT benchmarks plus multiplicity counters; (2) remove repeated
+        full-frame work, deep plan clones, and per-varblock allocation; (3) replace
+        known-bad algorithms (bit-at-a-time writer, dense DCT32 fallback when factored
+        scalar exists, brute-force LZ only if hot); (4) reshape hot scalar loops for
+        the compiler; (5) coarse group and section parallelism with a single resource
+        policy; (6) explicit SIMD only on remaining leaf kernels; (7) LTO and PGO last.
+        Do not start with a general SIMD or Rayon sweep.
+        """
+    context """
+        Advisor static assessment. Aligns with correctness-before-speed (scalar before
+        parallelism before SIMD).
+        """
+    implements [
+        @jpegxl-rs.constraint.correctness-before-speed,
+        @jpegxl-rs.constraint.forbid-unsafe-by-default
+    ]
+    supported_by [ @jpegxl-rs.assessment.encoder-static-optimization ]
+    source {
+        kind legacy
+        path "JPXL/optimization-plan.akr"
+        excerpt """
+            First remove repeated transforms, repeated whole-frame scans, repeated
+            emissions, deep coefficient copies, and per-varblock allocations. Then
+            parallelize groups. Then vectorize the small number of arithmetic kernels
+            still visible at the top of the profile.
+            """
+    }
+}
+
+record jpegxl-rs.decision.optimization-pass-opened/1 : decision {
+    title "Open the encoder optimization pass under AKR"
+    state proposed
+    scope [ path "JPXL/crates/**" ]
+    topic optimization-pass-opened
+    decision """
+        Begin the encoder optimization pass now that M1-M8 exist. PLAN/AGENTS language
+        that deferred SIMD and Rayon for the scalar reference phase remains the default
+        outside this track; work on this track may introduce coarse parallelism and
+        leaf SIMD only after the measurement foundation and structural multiplicity
+        fixes land, and only under correctness-before-speed and forbid-unsafe-by-default.
+        """
+    context """
+        VarDCT M1-M8 and Modular density work (slice 19+) are feature-complete enough
+        for a performance baseline. PERFORMANCE.md still has no rows. An external advisor
+        assessment is captured as jpegxl-rs.assessment.encoder-static-optimization.
+        """
+    consequences """
+        Optimization work is planned as jpegxl-rs.track.encoder-optimization milestones.
+        Density-pin vs cjxl becomes a Modular metric under the foundation milestone, not
+        an excuse to skip benches.
+        """
+    implements [ @jpegxl-rs.constraint.correctness-before-speed ]
+    supported_by [ @jpegxl-rs.assessment.encoder-static-optimization ]
+    source {
+        kind legacy
+        path "JPXL/optimization-plan.akr"
+        excerpt """
+            Recommended implementation order: Common foundation, then Modular track,
+            then VarDCT track, then parallel and SIMD, finish with LTO and PGO.
+            """
+    }
+}
+
 record jpegxl-rs.decision.quant-bias-defaults/1 : decision {
     title "quant_bias defaults are 1 minus x"
     state proposed
@@ -101,6 +218,41 @@ record jpegxl-rs.decision.read-u32-wraps/1 : decision {
         returned Overflow; the fix carries a clause citation.
         """
     author "GitHub Uploader"
+}
+
+record jpegxl-rs.decision.retire-performance-md/1 : decision {
+    title "Retire PERFORMANCE.md as plan-of-record for performance"
+    state proposed
+    scope [ path ".agent/scratch/**", path "JPXL/docs/**" ]
+    topic performance-docs-authority
+    decision """
+        JPXL/docs/PERFORMANCE.md is no longer the plan-of-record for performance
+        baselines, measurement rules, or profiling results. Authority is split:
+
+        - Durable claims (baseline rules, bench entry points, summary observations,
+          decisions): AKR records under jpegxl-rs.policy.performance-baseline-rules,
+          jpegxl-rs.policy.jpxl-bench-entry-points, and jpegxl-rs.observation.preopt-*
+          (and successors).
+        - Full raw run logs, flamegraph artifacts, HOTSPOTS/PROVENANCE: .agent/scratch/
+          (not pruned by akr build). Current ladder:
+          .agent/scratch/preopt-baseline-2026-08-06.md; current flamegraphs:
+          .agent/scratch/flamegraphs/preopt-2026-08-06/.
+
+        PERFORMANCE.md remains only as a short stub pointing at those AKR keys and
+        scratch paths. Do not re-accumulate tables or rules in the markdown file.
+        Frozen experiment writeups may still go in JPXL/docs/experiments/ when an
+        experiment report is warranted.
+        """
+    context """
+        PERFORMANCE.md duplicated material that already lived as AKR observations and
+        was drifting from scratch logs. AGENTS.md living-docs discipline prefers small
+        generated views over hand-maintained performance tables.
+        """
+    consequences """
+        Opt-F acceptance and work language that required PERFORMANCE.md baseline rows
+        must be revised to AKR observations + baseline-rules policy. Agents update
+        observations and scratch, not long tables in PERFORMANCE.md.
+        """
 }
 
 record jpegxl-rs.decision.xyb-inverse-matrix-normative/1 : decision {

@@ -1,0 +1,571 @@
+akr 0.1
+project jpegxl-rs
+
+record jpegxl-rs.work.encoder-assessment-and-optimization-plan/1 : work {
+    title "Encoder assessment and optimization plan"
+    state proposed
+    intent """
+        Capture the source findings and recommended optimization order for the encoder:
+        separate Modular and VarDCT benchmarks, prioritize repeated work removal, deep-copy reduction,
+        algorithmic fallback replacement, compiler-friendly scalar loops, coarse parallelism, and leaf-kernel SIMD.
+        """
+    source {
+        kind legacy
+        path "akr-source.prompt.md"
+        excerpt """
+Overall assessment
+The encoder was designed around the correct boundaries: policy and search produce typed intermediate representations, while the normative writer remains separate. That is a much better starting point than a monolithic encoder state.
+The optimization pass should not begin with a general “add SIMD and Rayon” sweep. In this source, the larger likely gains come from:
+Removing work that is repeated dozens of times.
+Removing deep copies and per-varblock heap allocations.
+Replacing one clearly slow algorithmic fallback.
+Making hot scalar loops compiler-friendly.
+Adding coarse parallelism.
+Adding explicit SIMD only to the remaining leaf kernels.
+The supplied snapshot has no root workspace Cargo.toml, so I could not build and produce measured hotspot percentages. The rankings below are static source findings, not substitutes for the flamegraph. Several of them are direct enough that they are worth addressing even before the first full profile.
+Profile the two encoders separately
+The current CLI jpxl encode path is explicitly lossless Modular and calls jpxl_encode::encode in crates/jpxl-cli/src/main.rs:219-294. The VarDCT encoder, cover search, AQ, CfL, and rate loop live behind the separate jpxl-encode-policy API.
+A flamegraph of the CLI will therefore tell you almost nothing about VarDCT.
+Create at least three benchmark entry points:
+BenchmarkWhat it isolates
+Modular lossless
+The current CLI encoder, MA-tree search, residual collection, LZ77, entropy and bit writing
+VarDCT fixed quantizer
+Transform selection, transforms, CfL, quantization, entropy and emission without rate-loop multiplication
+VarDCT target rate
+The complete repeated planning and exact-price loop
+For VarDCT, also record a fourth measurement that runs exactly one predetermined quantizer probe. That separates “one encode is slow” from “the rate loop performs too many encodes.”
+Highest-priority source findings
+1. BitWriter::write_bits currently writes one bit at a time
+This is probably the first patch I would make.
+crates/jpxl-bitstream/src/writer.rs:61-70 implements every write_bits(n, value) as:
+for i in 0..n {
+    self.write_bit((value >> i) & 1 == 1);
+}
+
+That means:
+Each 16-bit ANS word takes 16 iterations.
+Each 32-bit ANS initial state takes 32 iterations.
+Every histogram field and entropy extra-bit field passes through the same path.
+Each iteration checks byte alignment and potentially obtains the last byte again.
+This is not a SIMD problem. It is a scalar word-packing problem.
+Implement a bulk LSB-first path using a u64 staging value:
+Validate n and value before modifying the writer.
+Compute the current bit offset within the last byte.
+Resize the byte buffer once.
+Shift value into a u64.
+OR up to five resulting bytes into the destination.
+Advance bit_len once.
+The same change should include:
+reserve_bits or capacity-aware construction.
+append_bitspan/append_writer.
+A byte-aligned fast path that uses extend_from_slice.
+An unaligned path that shifts whole bytes rather than replaying individual bits.
+A constant-time zero_pad_to_byte; the unused high bits in the final byte are already zero, so the cursor can generally just be rounded upward.
+There is another particularly poor path at crates/jpxl-encode/src/modular/mod.rs:1461-1474: append_bits clones a BitWriter into bytes and then replays every individual bit into the destination. The source writer already exposes as_bytes(), so the clone is unnecessary even before adding a proper bitspan append method.
+This entire patch should produce byte-identical output. No compression or quality tolerance is needed.
+2. VarDCT plans deeply clone the complete quantized coefficient image
+EmissionPlan derives Clone and directly contains QuantizedFrameIr, which recursively owns every varblock’s three boxed coefficient arrays:
+crates/jpxl-encode/src/vardct/plan.rs:798-807
+crates/jpxl-encode/src/vardct/plan.rs:464-530
+The policy then clones these plans repeatedly:
+provisional.clone() at jpxl-encode-policy/src/lib.rs:370
+another provisional.clone() at :479
+best.plan().clone() at :394
+additional clones for default versus custom block contexts and coefficient orders
+For a 12-megapixel frame, the integer coefficient payload alone is roughly:
+12,000,000 samples × 3 channels × 4 bytes ≈ 144 MB
+
+That excludes padding, LF data, allocation metadata, and temporary plans. A plan clone can therefore mean copying on the order of a hundred megabytes and allocating thousands of buffers.
+The right representation is something like:
+struct FramePayload {
+    spatial: SpatialPlan,
+    quantized: QuantizedFrameIr,
+    sections: SectionLayout,
+}
+
+struct EmissionPlan {
+    payload: Arc<FramePayload>,
+    entropy: EntropyPlan,
+}
+
+The exact split can differ, but the principle is:
+Spatial and quantized payloads are immutable and shared.
+Entropy alternatives are lightweight overlays.
+One Arc should cover a frame or group payload—not one Arc per varblock.
+Cloning a plan for natural order, custom order, custom block contexts, or presets must not clone coefficients.
+The planned CoeffStore abstraction is also the right eventual location for resident versus spill-backed storage. This refactor is likely to reduce both runtime and peak RSS before any arithmetic optimization.
+3. The VarDCT rate loop repeats nearly the entire encoder
+The default budget allows up to 40 exact prices, four discrete-fill probes, and eight LF-fill probes in jpxl-encode-policy/src/request.rs:127-154.
+Every regular price currently performs:
+let plan = crate::plan_at(...)?;
+let emission = emit_codestream(&plan)?;
+
+at jpxl-encode-policy/src/rate.rs:537-560. LF-fill probes do the same at :580-613.
+Each plan_at can repeat:
+Gaborish preconditioning: lib.rs:231-241
+AQ and quantizer construction: :243-252
+hierarchical cover selection: :258-295
+CfL estimation: :297-304
+transforms and quantization: :306-334
+entropy census and training
+coefficient-order alternatives
+custom block-context alternatives
+preset alternatives
+exact pricing
+This is where multiplicity counters matter more than a flat flamegraph. Record:
+rate probes
+Gaborish preconditions
+DCT8/DCT16/DCT32 calls
+candidate transforms computed
+selected transforms
+selected transforms recomputed
+CfL coefficient walks
+quantization walks
+entropy censuses
+entropy model builds
+exact section emissions
+EmissionPlan clone bytes
+
+Refactor the rate path into persistent and probe-specific state
+A useful split would be:
+PreparedSearch
+    geometry
+    preconditioned frame
+    analysis atlas
+    candidate geometry
+    transform cache or transform summaries
+
+QuantizerProbe
+    AQ/quantizers
+    selected cover
+    CfL
+    quantized coefficients
+    entropy choices
+    exact price
+
+The preconditioned frame must be computed once per request, not once per quantizer.
+Raw forward-transform coefficients are quantizer-independent. Cover decisions are not necessarily quantizer-independent, so do not cache one selected cover and blindly reuse it. Cache the candidate transforms or sufficient statistics from which each quantizer can rescore its cover.
+A good unit is the existing aligned 32×32 superblock. Its complete hierarchy contains exactly:
+16 DCT8 candidates
+4 DCT16 candidates
+1 DCT32 candidate
+That is a fixed 21-node tree. It should be represented as a fixed dynamic-programming object, not recursive Vec construction.
+Holding all three-channel f32 coefficients for this complete hierarchy costs approximately 36 KiB per 32×32 superblock. Across one 256×256 pass group, the aligned DCT8/DCT16/DCT32 pyramid is approximately 2.25 MiB. That is a manageable group-scoped cache, but a full-frame version can reach hundreds of megabytes. Therefore:
+Resident group cache for normal images/high-memory mode.
+Spill-backed or compact-summary mode for large images.
+Full coefficients only for common candidates or finalists.
+Compact RD summaries for candidates already rejected by early tests.
+Reduce the number of full exact prices later
+After eliminating avoidable work inside each probe, add a two-tier rate search:
+Cheap or cached approximate pricing for bracketing.
+Full exact entropy training and emission only for the final few rungs and neighboring discrete choices.
+The final selection must still pass the exact writer. The goal is not to replace exact pricing with an estimator; it is to stop paying for a complete exact codestream at every intermediate search decision.
+4. DCT32 is currently an algorithmic hotspot, not yet a SIMD hotspot
+The dedicated factored kernels stop at 16 points. At 32 points and above, jpxl-core/src/dct.rs:400-409 deliberately uses a cached dense DCT matrix and f64 accumulation. matrix_pass at :462-473 performs a full matrix-vector multiply, and the generic dispatch routes DCT32 through it at :478-508.
+Meanwhile, the hierarchical cover actively tests DCT32 candidates.
+Before touching intrinsics:
+Implement a factored scalar 32-point DCT-II.
+Implement the matching DCT-III if the shared core needs it.
+Retain the dense matrix implementation as the reference oracle and fallback.
+Cross-check random vectors, impulses, constants, and extreme finite values.
+Measure both transform error and effect on final cover/bitstream decisions.
+Only after the scalar factorization is correct should it be vectorized.
+For SIMD, the best lane orientation is likely across independent rows or independent blocks, rather than trying to place one complete butterfly dependency chain in SIMD lanes. This reduces shuffle pressure:
+lane 0 = row/block 0
+lane 1 = row/block 1
+...
+
+A factorized scalar DCT32 can plausibly outperform a vectorized dense matrix by a large margin. Vectorizing the existing matrix fallback first would preserve the wrong asymptotic structure.
+5. VarDCT has excessive per-varblock allocation and fragmented coefficient storage
+quantize_square_varblock allocates, for every varblock:
+Three Vec<i32> coefficient arrays
+d_y_lf
+d_y_hf
+lf_scratch
+at jpxl-encode-policy/src/lib.rs:931-950.
+The three coefficient vectors are then converted to three separate boxed slices in VarblockCoefficients::new.
+An all-DCT8 12MP image contains approximately 187,500 varblocks. The current representation can therefore create approximately 562,500 persistent coefficient allocations, before temporary scratch allocations.
+Replace this with group arenas:
+QuantizedLfGroup
+    X coefficient arena
+    Y coefficient arena
+    B coefficient arena
+    varblock descriptors / offsets
+
+Because the cover is exact, the total coefficient count per channel for a group is known from its block area. Allocate each channel once at the group boundary and write every varblock into its assigned range.
+This gives:
+Three coefficient allocations per group instead of three per varblock.
+Contiguous entropy traversal.
+Better cache locality.
+Cheap capacity calculation.
+Easier spill support.
+Easier parallel ownership.
+Much cheaper cloning if a clone remains temporarily necessary.
+Similarly, replace the recursive return type:
+Result<(f64, Vec<VarblockDecision>)>
+
+in tile_region with fixed-size DP state for the 21-node hierarchy. The current implementation allocates leaf vectors, appends child vectors, creates a single-candidate vector, and finally sorts the result at lib.rs:1572-1708. A fixed tree can record “split versus merged” decisions and emit the final raster sequence once.
+6. Selected transforms are recomputed several times within one VarDCT probe
+The current flow is approximately:
+select_blocks computes candidate transforms while evaluating the cover.
+estimate_cfl creates another ForwardScratch and transforms every selected varblock again.
+quantize_group transforms selected varblocks again.
+Relevant regions include:
+ForwardScratch: lib.rs:779-795
+block-cost transform: :1503-1516
+CfL setup and traversal: :1093 onward
+quantization: :306-334 and the later quantize_group implementation
+At minimum, a selected candidate should carry a coefficient-cache handle:
+struct SelectedVarblock {
+    decision: VarblockDecision,
+    coeffs: CandidateCoeffRef,
+}
+
+The cover search computes each candidate transform once. CfL and quantization then consume the selected cached coefficients.
+This within-probe reuse should be implemented before the more ambitious cross-rate-probe cache. It has a simpler lifetime and lower memory cost.
+7. The current lossless Modular planner may exact-encode roughly 72 candidates on a large frame
+For frames larger than 64×64, the MA-tree search is capped to one split. That keeps it bounded, but it still performs:
+Six single-predictor exact prices.
+Seven properties × eight thresholds = 56 split prices.
+Up to ten per-leaf predictor refinements.
+Palette and squeeze trials afterward.
+Each total_cost invokes exact residual section encoding through residual_stream_cost_source at crates/jpxl-encode/src/lossless.rs:282-371.
+This means the current CLI path may repeatedly:
+Traverse every relevant sample.
+Traverse the MA tree.
+Compute the same neighborhood properties.
+Build residual events.
+Train entropy.
+Try plain and LZ77 streams.
+Write complete bitstreams.
+Do not solve this initially by running 56 candidate encodes in Rayon. That parallelizes waste and multiplies memory traffic.
+Use a tiered planner:
+Stage A: one raster analysis
+For each sample, compute once:
+All needed neighboring values.
+The static split properties.
+Residuals for the six predictor candidates, or sufficient histogram data for them.
+Avoid necessarily storing six full residual images. For large sections, worker-local property buckets and histograms are more memory-efficient.
+Stage B: cheap candidate scoring
+Use cached residual histograms/property partitions to rank:
+Baseline predictors.
+Property/threshold splits.
+Per-leaf predictors.
+Do not invoke LZ77 or write complete ANS bitstreams for all 56 split candidates.
+Stage C: exact finalist pricing
+Exact-price the best few candidates through the unchanged normative writer. The chosen tree still receives a real final ANS/LZ77 price.
+This retains compression decisions while eliminating the largest repeated scans.
+8. Memory access should be cleaned up before trusting compiler auto-vectorization
+Several hot-looking loops currently contain checked accesses, conversions, fallible calls, and per-element branching:
+PlaneStore::at performs u64 index calculation, conversion, get, and Option handling for every sample: source.rs:54-63.
+gather_square repeats edge min, saturating_sub, get_mut, and PlaneStore::at for every sample: lib.rs:802-825.
+AnalysisAtlas::analyze calls PlaneStore::at inside every 8×8/channel loop: analysis.rs:82-113.
+block_cost repeatedly checks LLF status, calls fallible choose, and uses checked slice accesses: lib.rs:1503-1564.
+collect_plane_residuals uses a closure that performs checked arithmetic and optional indexing for every current and neighboring sample: modular/mod.rs:1609-1643.
+Refactor these into checked boundaries and unchecked-in-principle—but still safe—inner loops:
+Validate dimensions and slice lengths once.
+Obtain row slices.
+Use chunks_exact, direct iteration, or indices whose bounds are structurally proven.
+Split interior and boundary kernels.
+Copy interior transform rows with copy_from_slice.
+Use a separate edge-replication path only for the final block row/column.
+Make validated quantizers expose an infallible hot-loop method.
+Separate the LLF rectangle from HF coefficient ranges instead of calling is_llf_cell for every coefficient.
+LLVM’s loop and SLP vectorizers are enabled by default, but complicated control flow and unvectorizable calls are common reasons loops are rejected. LLVM emits diagnostics for successful, missed, and analyzed vectorization, and rustc exposes optimization remarks through -C remark. ([Rust Documentation](https://doc.rust-lang.org/rustc/codegen-options/index.html "Codegen Options - The rustc book"))
+“Let the compiler handle it” should therefore mean:
+The loop has first been shaped for vectorization.
+Optimization remarks show it was vectorized.
+Assembly shows appropriate vector instructions for the intended target.
+The vectorized version wins in the real benchmark.
+It should not mean simply writing a scalar iterator and assuming LLVM did something useful.
+Where SIMD belongs
+Strong SIMD candidates after structural cleanup
+KernelInitial strategy
+DCT8/DCT16/DCT32
+Scalar factorization first; then lanes across independent rows or blocks
+HF quantize/reconstruct
+Contiguous SIMD over coefficient arrays, with steps and biases precomputed
+Gaborish filtering
+Interior stencil SIMD; separate scalar boundary path
+Opsin matrix multiplication
+SIMD matrix arithmetic, though cbrt may remain dominant
+Analysis sums and squared sums
+Auto-vectorization first; explicit SIMD only if reductions remain hot
+Simple dequantization or coefficient scaling
+Auto-vectorization first
+RGB byte deinterleaving
+LUT plus chunked loads; explicit SIMD only if it profiles materially
+Poor SIMD candidates
+These are branch-, dependency-, or metadata-heavy and should not be early manual-SIMD work:
+MA-tree traversal
+ANS state emission
+Bitstream control
+Histogram clustering
+Recursive cover decisions
+LZ77 match search
+Context-map traversal
+Rate-loop control
+For LZ77, the current bounded brute-force match finder at modular/mod.rs:1386-1441 should become a small hash-chain or rolling-hash search if it profiles hot. SIMD over the brute-force comparison loop would again optimize the inferior algorithm.
+An easy non-SIMD color win
+PreparedFrame::from_srgb8 calls srgb_to_linear three times per pixel, and the nonlinear branch uses powf(2.4):
+source.rs:194-219
+jpxl-core/src/color.rs:234-245
+For 8-bit input, replace this with an exact 256-entry lookup table. That eliminates every powf in this stage without changing the mapping.
+The following linear-RGB-to-XYB transform still performs three cbrt calls per pixel at color.rs:84-96. SIMD matrix operations around those calls may produce only a small gain if cbrt dominates. Measure that stage separately before building a large vector math implementation.
+wide versus hand-written intrinsics
+wide does not schedule work. Rayon schedules tasks; wide provides SIMD-compatible vector types.
+As of August 2026, wide 1.6.0 uses explicit SIMD where possible, may rely on LLVM vectorization as a fallback, and may ultimately generate scalar operations where suitable SIMD is unavailable. Its documented floating-point NaN bit-pattern behavior and wrapping integer semantics differ in some respects from ordinary scalar operations, which matters for a reproducibility contract. ([Docs.rs](https://docs.rs/wide/latest/wide/?search=CmpGe "wide - Rust"))
+My recommended ladder is:
+1. Scalar reference kernel
+Keep the existing correct implementation or dense reference alongside every optimized kernel.
+2. Compiler-friendly scalar production kernel
+Fix layout, allocations, branches, and checked access. Inspect optimizer remarks and assembly.
+3. wide prototype behind a feature
+Use wide for two or three proven leaf kernels:
+quantization
+batched DCT butterflies
+possibly Gaborish
+Benchmark f32x4 and f32x8; the widest type is not automatically the fastest across x86 and ARM.
+4. std::arch only where wide leaves measurable performance behind
+Hand-written intrinsics are justified when:
+wide generates poor shuffles or redundant loads.
+AVX2 and NEON require materially different lane organization.
+A target has a useful instruction with no adequate portable expression.
+Runtime ISA dispatch is required.
+The kernel is large enough in the end-to-end profile to repay the maintenance cost.
+Do not handroll 100% of the arithmetic. Keep architecture-specific code inside one small kernels module and dispatch once per encode, group, or transform batch—not once per coefficient.
+std::simd is still a nightly-only experimental API in Rust 1.97.1, dated July 14, 2026. It provides portable behavior but can still scalarize where a target lacks relevant SIMD. ([Rust Documentation](https://doc.rust-lang.org/std/simd/index.html "std::simd - Rust"))
+That leaves three practical options:
+Stable Rust and wide: best initial portable experiment.
+Nightly and std::simd: reasonable if the project already accepts API churn.
+Stable std::arch: best final target-specific kernels, but highest maintenance and unsafe burden.
+A repository-wide search of this snapshot found no current unsafe, Rayon, wide, std::simd, or std::arch use. Preserve that clean boundary by isolating all manual target-specific work rather than leaking it into policy and writer code.
+Runtime dispatch
+For local benchmark builds, -C target-cpu=native is useful. It generates code for the host processor. A distributed binary should instead retain a baseline path and select AVX2/other kernels at runtime. Rust’s code-generation documentation notes that target-cpu=native is host-specific and that globally forcing target features can cause undefined behavior when run on unsupported processors. ([Rust Documentation](https://doc.rust-lang.org/rustc/codegen-options/index.html "Codegen Options - The rustc book"))
+A portable vector crate does not by itself provide a tuned multi-versioned binary. Keep a kernel table:
+struct Kernels {
+    dct8_batch: Dct8Fn,
+    dct16_batch: Dct16Fn,
+    dct32_batch: Dct32Fn,
+    quantize: QuantizeFn,
+    gaborish: GaborishFn,
+}
+
+Select it once at encoder initialization.
+Where Rayon belongs
+The existing JPEG XL section and group structure provides the right coarse frontier.
+Good Rayon boundaries
+For VarDCT:
+LF-group cover analysis
+Group candidate-transform generation
+Per-group CfL sufficient-statistic collection
+Group quantization after global CfL factors are fixed
+Pass-group event generation
+Pass-group section emission after global entropy tables are finalized
+Large row bands during source conversion and analysis
+For Modular:
+Independent pass-group residual collection and section encoding after the MA tree is fixed
+LF-group sections
+Possibly coarse candidate batches after residual/property caching exists
+The writer already emits independent section buffers in write_frame_body, vardct/write.rs:336-373. Once global entropy tables exist, the pass-group section loop is a natural parallel map producing indexed section buffers. Store results by section ID and concatenate in normative order.
+Bad Rayon boundaries
+Do not create:
+One task per DCT8 block.
+One task per coefficient array.
+One task per MA-tree property/threshold while every task rescans the image.
+Parallel rate probes.
+Nested image × group × candidate × channel parallelism.
+Shared atomic entropy histograms updated per symbol.
+Rayon lets a pool use an explicit maximum thread count, and indexed parallel iterators support minimum job lengths to prevent over-splitting. The exact execution order of independent tasks is deliberately not guaranteed. ([Docs.rs](https://docs.rs/rayon/latest/rayon/struct.ThreadPoolBuilder.html "ThreadPoolBuilder in rayon - Rust"))
+One owner for the parallel budget
+Expose a resource policy rather than calling par_iter() opportunistically:
+pub struct EncodeResources<'a> {
+    pub threads: usize,
+    pub memory_limit_bytes: usize,
+    pub axis: ParallelAxis,
+    pub pool: Option<&'a rayon::ThreadPool>,
+}
+
+pub enum ParallelAxis {
+    Serial,
+    Images,
+    Groups,
+}
+
+For a batch encoder:
+Parallelize images.
+Keep each image mostly serial or minimally parallel.
+Avoid every image independently occupying the entire global pool.
+For one large image:
+Parallelize groups and sections.
+Use per-worker scratch.
+Cap concurrency by both CPU and memory.
+A useful runtime bound is conceptually:
+workers =
+    min(
+        requested_threads,
+        ready_groups,
+        memory_budget / worst_case_worker_memory
+    )
+
+The transform cache, event arrays, entropy tables, and encoded section buffers can make the memory limit more restrictive than the CPU count.
+Deterministic reductions
+For CfL and entropy census:
+Each worker produces local integer counts or floating sufficient statistics.
+Results are stored by group ID.
+The coordinator merges them in fixed raster order.
+Do not depend on Rayon task completion order. That gives reproducible plans across thread counts and avoids shared atomic contention.
+Determinism must be decided before SIMD and Rayon
+Define one of these contracts explicitly:
+Contract A: bit-identical codestreams
+Same source and options must produce identical bytes across:
+thread counts
+scheduling
+supported SIMD paths
+CPUs, within any stated floating-point limits
+This requires:
+Fixed reduction order.
+Stable tie-breaking.
+No global fast-math/reassociation.
+Controlled FMA behavior.
+No approximate cbrt or DCT substitutions unless exactly reconciled.
+Scalar versus SIMD byte-equality tests.
+One-thread versus N-thread byte-equality tests.
+Contract B: semantically and metrically equivalent codestreams
+Streams may differ, but they must:
+Decode correctly in the project decoder and libjxl.
+Meet the same rate target/tolerance.
+Stay within explicit reconstruction metric bounds.
+Avoid output-size regressions beyond a defined budget.
+VarDCT decisions sit near quantization and RD tie boundaries. Tiny floating-point differences can select a different cover or coefficient order even though the numerical transform error is small. This is not necessarily wrong, but it should be a deliberate contract rather than a surprise.
+The wide documentation’s different NaN-pattern and integer-wrapping semantics are another reason to keep scalar equivalence tests around every SIMD kernel. ([Docs.rs](https://docs.rs/wide/latest/wide/?search=CmpGe "wide - Rust"))
+Correctness gates by change type
+ChangeRequired gate
+Bulk bit writer
+Byte-identical codestream
+Plan-sharing/Arc refactor
+Byte-identical codestream
+Flat coefficient arena
+Byte-identical codestream
+Scratch reuse
+Byte-identical codestream
+Rayon section encoding
+Byte-identical across thread counts
+Integer SIMD
+Byte-identical scalar versus SIMD
+Floating DCT SIMD/factorization
+Decode validity plus declared bit-identical or metric-equivalent contract
+Search pruning or approximate prices
+Size, quality, target adherence, and exact final-price gate
+LZ77 algorithm change
+Byte equality if tie rules are preserved; otherwise equal or better exact stream size
+Continue using both libjxl and the project decoder. The in-project decoder protects internal integration; libjxl protects against an encoder and decoder agreeing on the same bug. Decode validation should run adjacent to the benchmark, but decoding itself should not be included in encode timing.
+Benchmark and telemetry additions
+docs/PERFORMANCE.md already has the correct baseline discipline. Add multiplicity and memory measurements alongside flamegraphs.
+Workloads
+At minimum:
+Tiny/overhead-sensitive: approximately 256×256 or 1MP.
+Normal: approximately 4MP.
+Large: at least 12MP.
+Memory stress: 40–50MP.
+Grayscale and RGB.
+Flat/gradient.
+Hard edges and text.
+Normal photograph.
+Fine texture/noise.
+Filters off and on.
+VarDCT fixed quantizer and target-rate modes.
+Modular direct, palette-friendly, and predictor-friendly inputs.
+Measurements
+Record:
+wall time
+CPU time
+cycles/pixel
+instructions/pixel
+branch misses
+cache misses
+allocation count and bytes
+peak RSS
+output bytes
+decoded correctness
+quality metric, where lossy
+
+Encoder counters
+Add:
+BitWriter write_bits calls and total bits
+bitspan append calls and bits
+full source sample visits
+residual samples generated
+full lossless candidate prices
+plain ANS attempts
+LZ77 attempts
+rate probes
+DCT calls by size
+candidate transforms versus selected transforms
+selected-transform recomputations
+coefficient-cache hits/misses
+quantized coefficient count
+EmissionPlan clone count and estimated payload bytes
+entropy census walks
+entropy model builds
+full codestream prices
+sections emitted
+per-worker scratch high-water
+resident/spilled coefficient bytes
+
+A flamegraph showing “DCT 35%” is insufficient. These counters distinguish:
+A genuinely expensive DCT.
+The same selected DCT being run three times.
+Every rate probe rerunning all DCT candidates.
+Allocation and gathering around an otherwise cheap DCT.
+Build-level optimization comes last
+After structural, threading, and SIMD work:
+Benchmark opt-level=2 and opt-level=3.
+Benchmark thin LTO.
+Benchmark fat LTO if build time is acceptable.
+Test codegen-units=1.
+Produce a local target-cpu=native build.
+Run PGO using a representative mixed corpus.
+Cargo documents that LTO enables cross-crate optimization and that reducing codegen units can improve generated code at the cost of compile time. Rustc supports instrumented profile-guided optimization for branch, layout, register-allocation, and inlining decisions. ([Rust Documentation](https://doc.rust-lang.org/rustc/profile-guided-optimization.html "Profile-guided Optimization - The rustc book"))
+Do not sprinkle #[inline(always)] throughout the codec before trying LTO and inspecting code generation. Excessive inlining and transform monomorphization can increase instruction-cache pressure. Use it only on measured small leaf functions.
+Recommended implementation order
+Common foundation
+Add separate Modular, VarDCT fixed-quantizer, and VarDCT rate benchmarks.
+Add the multiplicity counters above.
+Replace bit-at-a-time BitWriter::write_bits.
+Add efficient bitspan/writer append.
+Establish scalar/thread/SIMD reproducibility tests.
+Current CLI / lossless Modular track
+Bulk bit writing and append.
+Instrument how many complete candidate prices plan_for performs.
+Add cached predictor/property analysis and cheap candidate ranking.
+Exact-price only finalists.
+Replace checked residual access with validated row-based access.
+Compact (usize, u32) event representation; usize is unnecessarily large for context IDs.
+Avoid simultaneously materializing plain and LZ encoded outputs when a counting pass can select first.
+Replace brute-force LZ77 with a bounded hash-chain only if it remains hot.
+Parallelize independent group sections.
+Consider SIMD only for any residual arithmetic loop that remains substantial.
+SIMD is likely to be a relatively minor part of the Modular speed story. Planning multiplicity, bit writing, event memory, and entropy work are more likely to dominate.
+VarDCT track
+Make EmissionPlan alternatives share immutable spatial/quantized payloads.
+Flatten per-varblock coefficient storage into group arenas.
+Cache selected transform coefficients within one probe.
+Replace recursive 21-candidate superblock allocation with fixed DP state.
+Implement a factored scalar DCT32.
+Cache Gaborish preconditioning outside the rate loop.
+Add group-scoped candidate-transform caches or spill-backed storage.
+Add exact count-only pricing using the same normative write logic.
+Avoid re-emitting the selected default/custom/order plan inside one probe.
+Reduce full exact rate probes.
+Add coarse group and section Rayon.
+Add wide implementations for quantization and batched DCT kernels.
+Handwrite AVX2/NEON only where portable SIMD demonstrably leaves meaningful end-to-end performance behind.
+Finish with LTO and PGO.
+The central rule for this pass is:
+First remove repeated transforms, repeated whole-frame scans, repeated emissions, deep coefficient copies, and per-varblock allocations. Then parallelize groups. Then vectorize the small number of arithmetic kernels still visible at the top of the profile.
+That ordering is substantially more likely to produce a large encoder-level improvement than piecemeal SIMD work on the current loops.
+        """
+    }
+}

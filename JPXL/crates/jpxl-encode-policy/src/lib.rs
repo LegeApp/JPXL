@@ -54,7 +54,10 @@
 //!   integer representation I.6 consumes;
 //! * **no entropy search** — [`cluster_of`] is a fixed six-way split and the
 //!   coefficient orders are I.3.2's natural ones (milestone 8);
-//! * **no filter planning** — gaborish and EPF are off (milestone 9).
+//! * **filter planning (partial)** — [`EncodeRequest::restoration`] defaults
+//!   off; with `gaborish` set the planner inverse-Gaborish preconditions XYB
+//!   before DCT (milestone 9 start). EPF iters may be signalled but have no
+//!   encoder-side inverse yet.
 //!
 //! Each of those is where the compression is; what exists here is a correct
 //! pipeline for them to improve.
@@ -83,8 +86,7 @@ use jpxl_encode::vardct::plan::{
     CflGrid, EmissionPlan, EntropyModelPlan, EntropyPlan, FrameDecision, HfBlockContextPlan,
     HfPassEntropyPlan, HistogramPlan, HybridUintPlan, LfCorrelationDecision, LfDecision,
     LfGroupPlan, LfQuantPlanes, OrderSet, QuantizedFrameIr, QuantizedLfGroup, QuantizerDecision,
-    RestorationDecision, SectionLayout, SharpnessGrid, SpatialPlan, VarblockCoefficients,
-    VarblockDecision,
+    SectionLayout, SharpnessGrid, SpatialPlan, VarblockCoefficients, VarblockDecision,
 };
 use jpxl_encode::vardct::{ValidatedEmissionPlan, VardctGeometry, census_frame, validate};
 
@@ -99,12 +101,16 @@ pub use field::AqMode;
 
 use field::{DesiredQuantField, mul_lattice};
 pub use rate::{
-    LadderSearch, QuantizerChoice, RateOutcome, RatePhase, RateStep, Rung, search_frame,
+    LadderSearch, QuantizerChoice, RateOutcome, RatePhase, RateProbeStats, RateStep, Rung,
+    search_frame,
 };
 pub use request::{
     CoverMode, EncodeRequest, RateSearchBudget, RateTarget, RateTolerance, SearchBudget,
 };
 pub use source::PreparedFrame;
+// Re-export so callers can set [`EncodeRequest::restoration`] without a
+// second dependency path into the writer crate's plan module.
+pub use jpxl_encode::vardct::plan::RestorationDecision;
 
 /// I.4's per-block-context share of the `non_zeros` contexts.
 const NON_ZEROS_CONTEXTS: u64 = 37;
@@ -168,6 +174,21 @@ pub fn plan_frame_with_atlas(
     )
 }
 
+/// How hard the planner works on entropy alternatives (Opt-V2 rate search).
+///
+/// **Fast** trains default block-context + natural coefficient orders only.
+/// Its coded size is an **upper bound** on **Full**, because Full only adopts
+/// custom orders / block contexts / multi-presets when they strictly shrink
+/// the exact price. The rate loop prices with Fast and re-plans the winner
+/// with Full so intermediate probes skip several full `price_codestream`s.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum EntropySearch {
+    /// Default I.2.2 map, natural orders, one census + train.
+    Fast,
+    /// Slice-18 alternatives with exact-price adopt gates.
+    Full,
+}
+
 /// Plans one frame at an explicitly chosen, already-representable quantizer.
 ///
 /// This is the function the rate loop calls once per exact price, and the one
@@ -185,21 +206,70 @@ pub(crate) fn plan_at(
     request: &EncodeRequest,
     quantizer: QuantizerChoice,
 ) -> Result<ValidatedEmissionPlan> {
-    plan_at_with_cfl(frame, atlas, request, quantizer, true)
+    let mut cache = CandidateForwardCache::new();
+    plan_at_with_cfl(
+        frame,
+        atlas,
+        request,
+        quantizer,
+        true,
+        None,
+        &mut cache,
+        EntropySearch::Full,
+    )
+}
+
+/// Like [`plan_at`], but reuses a caller-prepared transform frame and a
+/// cross-probe forward-transform cache (rate loop).
+pub(crate) fn plan_at_on(
+    frame: &PreparedFrame,
+    transform_frame: &PreparedFrame,
+    atlas: &AnalysisAtlas,
+    request: &EncodeRequest,
+    quantizer: QuantizerChoice,
+    cache: &mut CandidateForwardCache,
+    entropy: EntropySearch,
+) -> Result<ValidatedEmissionPlan> {
+    plan_at_with_cfl(
+        frame,
+        atlas,
+        request,
+        quantizer,
+        true,
+        Some(transform_frame),
+        cache,
+        entropy,
+    )
 }
 
 /// [`plan_at`] with the Slice-15 search switch exposed for regression tests.
 ///
 /// Production always enables CfL. The disabled arm exists only to preserve a
 /// byte-for-byte pre-slice-15 baseline for the exit evidence; it is not a
-/// public encoder knob.
+/// public encoder knobs.
+///
+/// `transform_override`, when `Some`, is the XYB frame DCT/quantize must see
+/// (preconditioned). When `None`, inverse-Gaborish is applied here if the
+/// request asks for it — once per call, which the rate loop must not do.
+///
+/// `cache` holds quantizer-independent forward DCTs so cover search, CfL, and
+/// quantization share them, and so the rate loop reuses them across probes.
 fn plan_at_with_cfl(
     frame: &PreparedFrame,
     atlas: &AnalysisAtlas,
     request: &EncodeRequest,
     quantizer: QuantizerChoice,
     enable_cfl: bool,
+    transform_override: Option<&PreparedFrame>,
+    cache: &mut CandidateForwardCache,
+    entropy_search: EntropySearch,
 ) -> Result<ValidatedEmissionPlan> {
+    if request.restoration.epf_iters > 3 {
+        return Err(PolicyError::Unsupported {
+            what: "epf_iters outside 0..=3",
+        });
+    }
+
     let decision = FrameDecision {
         width: frame.width(),
         height: frame.height(),
@@ -217,6 +287,22 @@ fn plan_at_with_cfl(
         "the atom grid and the block grid are the same grid"
     );
 
+    // When Gaborish will run on the decoder, DCT/quantize against the
+    // inverse-filtered planes so J.3 restores the intended XYB. Analysis
+    // (AQ masking) stays on the source planes — those describe the image the
+    // user sees after restoration. The rate loop passes a precomputed
+    // transform frame so this precondition runs once per request, not once
+    // per quantizer probe.
+    let precond_frame;
+    let transform_frame: &PreparedFrame = if let Some(tf) = transform_override {
+        tf
+    } else if request.restoration.gaborish {
+        precond_frame = prepare_gaborish_frame(frame)?;
+        &precond_frame
+    } else {
+        frame
+    };
+
     // §7.2's factorization first: with an AQ field the wire quantizer scalars
     // differ from the request's (exactly compensated), and everything below
     // quantizes against the wire values.
@@ -232,8 +318,11 @@ fn plan_at_with_cfl(
     // regresses over the coefficients of the *selected* transforms, so the
     // block map must exist first. Selection itself scores with neutral CfL —
     // block choice is dominated by luma structure (see `block_cost`).
-    let mut group_shapes = Vec::new();
-    let mut maps = Vec::new();
+    // Cover selection, then one forward transform per *selected* varblock.
+    // CfL estimation and HF quantization both consume those coefficients so
+    // a selected DCT is not recomputed (Opt-V within-probe cache).
+    let mut groups = Vec::new();
+    let mut fwd_scratch = ForwardScratch::new();
     for index in 0..geometry.num_lf_groups() {
         let id = LfGroupId::new(u32::try_from(index).unwrap_or(u32::MAX));
         let blocks = geometry
@@ -258,29 +347,57 @@ fn plan_at_with_cfl(
                 varblocks
             }
             CoverMode::Hierarchical => {
-                select_blocks(frame, &hf_quants, blocks, (rect.x0, rect.y0), &aq)?
+                select_blocks(
+                    transform_frame,
+                    &hf_quants,
+                    blocks,
+                    (rect.x0, rect.y0),
+                    &aq,
+                    cache,
+                    &mut fwd_scratch,
+                )?
             }
         };
-        group_shapes.push((id, blocks, rect));
-        maps.push(varblocks);
+        let forwards = forward_selected(
+            transform_frame,
+            &varblocks,
+            (rect.x0, rect.y0),
+            cache,
+            &mut fwd_scratch,
+        )?;
+        groups.push((id, blocks, rect, varblocks, forwards));
     }
 
-    let cfl = estimate_cfl(frame, &geometry, &maps, &lf_quant, &hf_quants, enable_cfl)?;
+    let maps: Vec<&[VarblockDecision]> = groups
+        .iter()
+        .map(|(_, _, _, varblocks, _)| varblocks.as_slice())
+        .collect();
+    let forwards_ref: Vec<&[VarblockForward]> = groups
+        .iter()
+        .map(|(_, _, _, _, forwards)| forwards.as_slice())
+        .collect();
+    let cfl = estimate_cfl(
+        &geometry,
+        &maps,
+        &forwards_ref,
+        &lf_quant,
+        &hf_quants,
+        enable_cfl && !frame.is_grayscale(),
+    )?;
 
     let mut lf_groups = Vec::new();
     let mut quantized = Vec::new();
-    for (index, ((id, blocks, rect), varblocks)) in group_shapes.into_iter().zip(maps).enumerate() {
+    for (index, (id, blocks, _rect, varblocks, forwards)) in groups.into_iter().enumerate() {
         let group_cfl = cfl.groups.get(index).ok_or(PolicyError::Unsupported {
             what: "a missing CfL grid for an LF group",
         })?;
         let quantized_group = quantize_group(
-            frame,
             &lf_quant,
             &hf_quants,
             &cfl.correlation,
             group_cfl,
             &varblocks,
-            (rect.x0, rect.y0),
+            &forwards,
             blocks,
         )?;
 
@@ -306,7 +423,7 @@ fn plan_at_with_cfl(
             quant_lf: aq.quant_lf,
         },
         lf,
-        restoration: RestorationDecision::default(),
+        restoration: request.restoration,
         lf_groups: lf_groups.into_boxed_slice(),
     };
 
@@ -316,44 +433,177 @@ fn plan_at_with_cfl(
     // histograms replace the provisional ones. The walk lives in `jpxl-encode`
     // so that the counts trained here and the symbols emitted there cannot
     // come from two different traversals.
-    let provisional = EmissionPlan {
-        spatial,
-        quantized: QuantizedFrameIr {
-            lf_groups: quantized.into_boxed_slice(),
-        },
-        entropy: entropy_plan(&geometry, placeholder_histograms())?,
-        sections: SectionLayout::for_geometry(&geometry),
+    let quantized_ir = QuantizedFrameIr {
+        lf_groups: quantized.into_boxed_slice(),
     };
-    // Slice 18: the context map, the per-cluster hybrid-uint configurations
-    // and the distributions are trained from the census (§9.2 steps 2–5,
-    // §9.3). At fixed coefficient orders one census is exact — the event
-    // stream depends only on the block context model and the orders.
-    let census = census_frame(&provisional, &geometry)?;
+    let provisional = EmissionPlan::new(
+        spatial,
+        quantized_ir,
+        entropy_plan(
+            &geometry,
+            placeholder_histograms(),
+            HfBlockContextPlan::Default,
+        )?,
+        SectionLayout::for_geometry(&geometry),
+    );
+    // Slice 18 / 18b: train under the default I.2.2 map, then optionally
+    // adopt custom coefficient orders on an exact price win (Full only).
+    let with_default =
+        train_entropy_with_orders(provisional.clone(), &geometry, entropy_search)?;
+
+    // Fast rate probes stop here: default map + natural orders is an upper
+    // bound on Full's size (Full only adopts alternatives that strictly win).
+    if entropy_search == EntropySearch::Fast {
+        return Ok(with_default);
+    }
+
+    // Slice 18c: a custom I.2.2 block context changes every pre-context id,
+    // so it gets its own census + train + order pass, and is adopted only
+    // when the writer's exact price is strictly smaller. Flat / constant-mul
+    // content proposes Default and skips the second walk.
+    let mut best = with_default;
+    let candidate_bc =
+        entropy::propose_block_context(best.plan().spatial.as_ref(), best.plan().quantized.as_ref());
+    if !matches!(candidate_bc, HfBlockContextPlan::Default) {
+        let mut custom_walk = provisional.clone();
+        custom_walk.entropy = entropy_plan(&geometry, placeholder_histograms(), candidate_bc)?;
+        let with_custom =
+            train_entropy_with_orders(custom_walk, &geometry, EntropySearch::Full)?;
+        let best_size = jpxl_encode::vardct::price_codestream(&best)?.total;
+        let custom_size = jpxl_encode::vardct::price_codestream(&with_custom)?.total;
+        if custom_size < best_size {
+            best = with_custom;
+        }
+    }
+
+    // Slice 18d: multi-preset assignment. Needs ≥2 pass groups; changes the
+    // walk's I.4 offset per group, so re-census + retrain + exact price.
+    if let Some((num_presets, assignment)) = entropy::propose_presets(
+        &geometry,
+        best.plan().spatial.as_ref(),
+        best.plan().quantized.as_ref(),
+    ) {
+        let mut multi = best.plan().clone();
+        multi.entropy.num_hf_presets = num_presets;
+        if let Some(pass) = multi.entropy.passes.first_mut() {
+            // Stretch the provisional context map to the multi-preset
+            // pre-context count so census_frame has a legal plan shape; the
+            // trainer replaces it immediately after the walk.
+            let nb = multi.entropy.block_context.nb_block_ctx();
+            let pre = 495 * u64::from(num_presets) * nb;
+            let map_len = usize::try_from(pre).unwrap_or(0);
+            pass.group_presets = assignment.into_boxed_slice();
+            pass.distributions.context_map = (0..map_len)
+                .map(|ctx| ClusterId::new(cluster_of(u64::try_from(ctx).unwrap_or(0), nb.max(1))))
+                .collect::<Vec<_>>()
+                .into_boxed_slice();
+            // Histograms stay the provisional six; train_entropy_with_orders
+            // rebuilds them from the multi-offset census.
+        }
+        if let Ok(with_presets) =
+            train_entropy_with_orders(multi, &geometry, EntropySearch::Full)
+        {
+            let best_size = jpxl_encode::vardct::price_codestream(&best)?.total;
+            let multi_size = jpxl_encode::vardct::price_codestream(&with_presets)?.total;
+            if multi_size < best_size {
+                best = with_presets;
+            }
+        }
+    }
+
+    Ok(best)
+}
+
+/// Test hook: sizes of the default-map plan and of a forced custom-map plan
+/// over the same spatial/quantized IR, used to measure whether a proposal
+/// can win before the adopt gate runs.
+#[cfg(test)]
+fn price_default_and_custom(
+    spatial: SpatialPlan,
+    quantized: QuantizedFrameIr,
+    geometry: &VardctGeometry,
+    candidate: HfBlockContextPlan,
+) -> Result<(u64, u64)> {
+    let provisional = EmissionPlan::new(
+        spatial,
+        quantized,
+        entropy_plan(
+            geometry,
+            placeholder_histograms(),
+            HfBlockContextPlan::Default,
+        )?,
+        SectionLayout::for_geometry(geometry),
+    );
+    let with_default =
+        train_entropy_with_orders(provisional.clone(), geometry, EntropySearch::Full)?;
+    let mut custom_walk = provisional;
+    custom_walk.entropy = entropy_plan(geometry, placeholder_histograms(), candidate)?;
+    let with_custom = train_entropy_with_orders(custom_walk, geometry, EntropySearch::Full)?;
+    Ok((
+        jpxl_encode::vardct::price_codestream(&with_default)?.total,
+        jpxl_encode::vardct::price_codestream(&with_custom)?.total,
+    ))
+}
+
+/// Trains clusters / hybrid-uint from a census of `provisional`, then optionally
+/// runs the §9.4 order candidate and keeps it only on an exact price win.
+fn train_entropy_with_orders(
+    provisional: EmissionPlan,
+    geometry: &VardctGeometry,
+    entropy_search: EntropySearch,
+) -> Result<ValidatedEmissionPlan> {
+    let block_context = provisional.entropy.block_context.clone();
+    let num_hf_presets = provisional.entropy.num_hf_presets;
+    let group_presets: Vec<PresetId> = provisional
+        .entropy
+        .passes
+        .first()
+        .map(|p| p.group_presets.to_vec())
+        .unwrap_or_default();
+    let census = census_frame(&provisional, geometry)?;
     let model = entropy::train(&census)?;
-    let orders = entropy::candidate_orders(&provisional.spatial, &provisional.quantized)?;
+    // Arc-clone spatial/quantized; only entropy is rebuilt.
     let natural = validate(EmissionPlan {
-        entropy: trained_entropy_plan(&geometry, model, OrderSet::natural())?,
+        entropy: trained_entropy_plan(
+            geometry,
+            model,
+            OrderSet::natural(),
+            block_context.clone(),
+            num_hf_presets,
+            group_presets.clone(),
+        )?,
         ..provisional.clone()
     })?;
+    if entropy_search == EntropySearch::Fast {
+        return Ok(natural);
+    }
+
+    let orders = entropy::candidate_orders(
+        provisional.spatial.as_ref(),
+        provisional.quantized.as_ref(),
+    )?;
     if orders.overrides().is_empty() {
         return Ok(natural);
     }
 
-    // Slice 18b, §9.4 + §9's ONE bounded refinement pass: the candidate
-    // orders change the event stream (contexts depend on order position), so
-    // the census is retaken under them and the model retrained — exactly
-    // once — and the reordered plan is adopted only when the writer's exact
-    // price says it is smaller. Ties keep the natural order: it signals no
-    // F.3.2 stream.
     let mut reordered_walk = provisional;
     if let Some(pass) = reordered_walk.entropy.passes.first_mut() {
         pass.orders = orders.clone();
     }
-    let census = census_frame(&reordered_walk, &geometry)?;
+    let census = census_frame(&reordered_walk, geometry)?;
     let model = entropy::train(&census)?;
     let reordered = validate(EmissionPlan {
-        entropy: trained_entropy_plan(&geometry, model, orders)?,
-        ..reordered_walk
+        entropy: trained_entropy_plan(
+            geometry,
+            model,
+            orders,
+            block_context,
+            num_hf_presets,
+            group_presets,
+        )?,
+        spatial: reordered_walk.spatial,
+        quantized: reordered_walk.quantized,
+        sections: reordered_walk.sections,
     })?;
 
     let natural_size = jpxl_encode::vardct::price_codestream(&natural)?.total;
@@ -607,6 +857,31 @@ impl HfQuantizers {
     }
 }
 
+/// Inverse-Gaborish precondition of the source XYB planes (default J.1 weights).
+///
+/// Analysis stays on the caller's `frame`; this clone is only for DCT,
+/// cover search, CfL, and quantization.
+pub(crate) fn prepare_gaborish_frame(frame: &PreparedFrame) -> Result<PreparedFrame> {
+    let width = usize::try_from(frame.width()).unwrap_or(0);
+    let height = usize::try_from(frame.height()).unwrap_or(0);
+    // API order is (Y, X, B); PreparedFrame stores X, Y, B.
+    let (y, x, b) = jpxl_encode::vardct::gaborish::precondition_xyb_planes(
+        frame.xyb().y.samples(),
+        frame.xyb().x.samples(),
+        frame.xyb().b.samples(),
+        width,
+        height,
+    );
+    PreparedFrame::from_xyb(
+        frame.width(),
+        frame.height(),
+        x,
+        y,
+        b,
+        frame.is_grayscale(),
+    )
+}
+
 /// Reusable per-varblock forward-transform buffers, sized for the largest
 /// square transform (DCT32x32).
 struct ForwardScratch {
@@ -624,6 +899,113 @@ impl ForwardScratch {
             coeffs: core::array::from_fn(|_| vec![0.0; max]),
         }
     }
+}
+
+/// Owned forward coefficients for one varblock (Opt-V transform cache).
+///
+/// Channel order matches [`gather_square`]: 0 = X, 1 = Y, 2 = B.
+#[derive(Clone)]
+struct VarblockForward {
+    coeffs: [Vec<f32>; NUM_CHANNELS],
+}
+
+/// Key for a candidate forward: pixel origin + transform type.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct ForwardKey {
+    px: u32,
+    py: u32,
+    transform: u8,
+}
+
+/// Cross-probe / within-probe cache of quantizer-independent forward DCTs.
+///
+/// Built lazily: cover search and post-cover CfL/quantize all hit the same
+/// map. The rate loop keeps one cache across quantizer probes so a given
+/// (origin, transform) is transformed at most once per request.
+#[derive(Default)]
+pub(crate) struct CandidateForwardCache {
+    entries: std::collections::HashMap<ForwardKey, VarblockForward>,
+    /// Times a probe reused a previously computed forward.
+    hits: u64,
+    /// Times a forward was computed for the first time.
+    misses: u64,
+}
+
+impl CandidateForwardCache {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    /// Hit count for Opt-V2 rate-loop telemetry.
+    pub(crate) fn hits(&self) -> u64 {
+        self.hits
+    }
+
+    /// Miss count for Opt-V2 rate-loop telemetry.
+    pub(crate) fn misses(&self) -> u64 {
+        self.misses
+    }
+
+    fn key(transform: TransformType, px: u32, py: u32) -> ForwardKey {
+        ForwardKey {
+            px,
+            py,
+            transform: transform as u8,
+        }
+    }
+
+    /// Returns cached coefficients, computing them on first use.
+    fn get_or_insert(
+        &mut self,
+        frame: &PreparedFrame,
+        transform: TransformType,
+        px: u32,
+        py: u32,
+        scratch: &mut ForwardScratch,
+    ) -> Result<&VarblockForward> {
+        let key = Self::key(transform, px, py);
+        if self.entries.contains_key(&key) {
+            self.hits = self.hits.saturating_add(1);
+        } else {
+            let side = forward_square(frame, transform, px, py, scratch)?;
+            let cells = side * side;
+            let fwd = VarblockForward {
+                coeffs: core::array::from_fn(|channel| {
+                    scratch
+                        .coeffs
+                        .get(channel)
+                        .map(|c| c.get(..cells).unwrap_or(&[]).to_vec())
+                        .unwrap_or_default()
+                }),
+            };
+            self.entries.insert(key, fwd);
+            self.misses = self.misses.saturating_add(1);
+        }
+        self.entries
+            .get(&key)
+            .ok_or(PolicyError::Unsupported {
+                what: "a missing forward-cache entry after insert",
+            })
+    }
+}
+
+/// Resolves forward coefficients for every selected varblock via `cache`.
+fn forward_selected(
+    frame: &PreparedFrame,
+    varblocks: &[VarblockDecision],
+    origin: (u32, u32),
+    cache: &mut CandidateForwardCache,
+    scratch: &mut ForwardScratch,
+) -> Result<Vec<VarblockForward>> {
+    let (x0, y0) = origin;
+    let mut out = Vec::with_capacity(varblocks.len());
+    for vb in varblocks {
+        let px = x0 + vb.origin.bx() * 8;
+        let py = y0 + vb.origin.by() * 8;
+        let fwd = cache.get_or_insert(frame, vb.transform, px, py, scratch)?;
+        out.push(fwd.clone());
+    }
+    Ok(out)
 }
 
 /// Copies a `side x side` sample window out of one XYB plane, replicating the
@@ -755,9 +1137,35 @@ fn set_lf(
     }
 }
 
+/// Reused per-varblock temporaries for [`quantize_square_varblock`].
+struct QuantScratch {
+    d_y_lf: Vec<f32>,
+    d_y_hf: Vec<f32>,
+    lf_scratch: Vec<f32>,
+}
+
+impl QuantScratch {
+    fn new() -> Self {
+        Self {
+            d_y_lf: Vec::new(),
+            d_y_hf: Vec::new(),
+            lf_scratch: Vec::new(),
+        }
+    }
+
+    fn resize(&mut self, n: usize, cells: usize) {
+        self.d_y_lf.resize(n * n, 0.0);
+        self.d_y_hf.resize(cells, 0.0);
+        self.lf_scratch.resize(n * n, 0.0);
+        self.d_y_lf.fill(0.0);
+        self.d_y_hf.fill(0.0);
+        self.lf_scratch.fill(0.0);
+    }
+}
+
 /// Quantizes one square varblock: LF samples into `lf_planes`, HF coefficients
-/// returned. Y first, because X and B decorrelate against the reconstructed
-/// `dY` (I.6), never the source Y.
+/// into the three channel slices (length `side*side` each). Y first, because
+/// X and B decorrelate against the reconstructed `dY` (I.6), never the source Y.
 #[allow(clippy::too_many_arguments)]
 fn quantize_square_varblock(
     coeffs: &[Vec<f32>; NUM_CHANNELS],
@@ -766,26 +1174,35 @@ fn quantize_square_varblock(
     hf_quant: &HfQuantizer,
     cfl: VarblockCfl,
     scratch: &mut TransformScratch,
+    qscratch: &mut QuantScratch,
     bx: u32,
     by: u32,
     lf_width: u32,
     lf_planes: &mut [Vec<i32>; NUM_CHANNELS],
-) -> Result<VarblockCoefficients> {
+    quant: &mut [i32],
+) -> Result<()> {
     let n = transform.block_dims().0;
     let side = transform.sample_cols();
     let cells = side * side;
-    let mut quant: [Vec<i32>; NUM_CHANNELS] = core::array::from_fn(|_| vec![0i32; cells]);
-    let mut d_y_lf = vec![0.0f32; n * n];
-    let mut d_y_hf = vec![0.0f32; cells];
-    let mut lf_scratch = vec![0.0f32; n * n];
+    if quant.len() < cells * NUM_CHANNELS {
+        return Err(PolicyError::Unsupported {
+            what: "a coefficient arena slice shorter than three full channels",
+        });
+    }
+    quant[..cells * NUM_CHANNELS].fill(0);
+    qscratch.resize(n, cells);
+
+    // Channel layout in `quant`: X | Y | B, each `cells` long.
+    let (qx, rest) = quant.split_at_mut(cells);
+    let (qy, qb) = rest.split_at_mut(cells);
 
     // --- Y (channel 1): independent, and everything else needs it ---
     let y_coeff = coeffs.get(1).ok_or(PolicyError::Unsupported {
         what: "the Y coefficient channel",
     })?;
-    lf_samples_of(y_coeff, transform, n, side, scratch, &mut lf_scratch)?;
+    lf_samples_of(y_coeff, transform, n, side, scratch, &mut qscratch.lf_scratch)?;
     for idx in 0..n * n {
-        let q = lf_quant.quantize(lf_scratch.get(idx).copied().unwrap_or(0.0), 1)?;
+        let q = lf_quant.quantize(qscratch.lf_scratch.get(idx).copied().unwrap_or(0.0), 1)?;
         set_lf(
             lf_planes,
             1,
@@ -794,7 +1211,7 @@ fn quantize_square_varblock(
             lf_width,
             q,
         );
-        if let Some(slot) = d_y_lf.get_mut(idx) {
+        if let Some(slot) = qscratch.d_y_lf.get_mut(idx) {
             *slot = lf_quant.reconstruct(q, 1);
         }
     }
@@ -803,16 +1220,16 @@ fn quantize_square_varblock(
             continue;
         }
         let q = hf_quant.choose(y_coeff.get(cell).copied().unwrap_or(0.0), 1, cell)?;
-        if let Some(slot) = quant.get_mut(1).and_then(|c| c.get_mut(cell)) {
+        if let Some(slot) = qy.get_mut(cell) {
             *slot = q;
         }
-        if let Some(slot) = d_y_hf.get_mut(cell) {
+        if let Some(slot) = qscratch.d_y_hf.get_mut(cell) {
             *slot = hf_quant.reconstruct(q, 1, cell);
         }
     }
 
     // --- X and B: X = dX + kX*dY, B = dB + kB*dY (I.6) ---
-    for &channel in &[0usize, 2usize] {
+    for (channel, out) in [(0usize, &mut *qx), (2usize, &mut *qb)] {
         let (k_lf, k_hf) = if channel == 0 {
             (cfl.k_x_lf, cfl.k_x_hf)
         } else {
@@ -821,10 +1238,10 @@ fn quantize_square_varblock(
         let coeff = coeffs.get(channel).ok_or(PolicyError::Unsupported {
             what: "a chroma coefficient channel",
         })?;
-        lf_samples_of(coeff, transform, n, side, scratch, &mut lf_scratch)?;
+        lf_samples_of(coeff, transform, n, side, scratch, &mut qscratch.lf_scratch)?;
         for idx in 0..n * n {
-            let target = lf_scratch.get(idx).copied().unwrap_or(0.0)
-                - k_lf * d_y_lf.get(idx).copied().unwrap_or(0.0);
+            let target = qscratch.lf_scratch.get(idx).copied().unwrap_or(0.0)
+                - k_lf * qscratch.d_y_lf.get(idx).copied().unwrap_or(0.0);
             let q = lf_quant.quantize(target, channel)?;
             set_lf(
                 lf_planes,
@@ -840,16 +1257,15 @@ fn quantize_square_varblock(
                 continue;
             }
             let target = coeff.get(cell).copied().unwrap_or(0.0)
-                - k_hf * d_y_hf.get(cell).copied().unwrap_or(0.0);
+                - k_hf * qscratch.d_y_hf.get(cell).copied().unwrap_or(0.0);
             let q = hf_quant.choose(target, channel, cell)?;
-            if let Some(slot) = quant.get_mut(channel).and_then(|c| c.get_mut(cell)) {
+            if let Some(slot) = out.get_mut(cell) {
                 *slot = q;
             }
         }
     }
 
-    let [x, y, b] = quant;
-    Ok(VarblockCoefficients::new(transform, [x, y, b])?)
+    Ok(())
 }
 
 /// The tile (64x64) chroma-from-luma multipliers for a varblock at group-local
@@ -900,15 +1316,18 @@ fn varblock_cfl(
 /// over nearby stored factors using reconstructed `dY`, quantizing the chroma
 /// residual through the exact quantizers (including I.5.3's bias). Grayscale is
 /// a hard source-domain no-op, so its stream is byte-identical to neutral CfL.
+///
+/// `forwards` must align with `maps` (one forward per selected varblock).
 fn estimate_cfl(
-    frame: &PreparedFrame,
     geometry: &VardctGeometry,
-    maps: &[Vec<VarblockDecision>],
+    maps: &[&[VarblockDecision]],
+    forwards: &[&[VarblockForward]],
     lf_quant: &LfQuantizer,
     hf_quants: &HfQuantizers,
     enabled: bool,
 ) -> Result<CflEstimate> {
-    if !enabled || frame.is_grayscale() {
+    // Grayscale / disabled: no need for the forward cache.
+    if !enabled {
         let groups = (0..geometry.num_lf_groups())
             .filter_map(|index| {
                 let id = LfGroupId::new(u32::try_from(index).ok()?);
@@ -920,11 +1339,12 @@ fn estimate_cfl(
             groups,
         });
     }
-
+    // Detect grayscale from empty chroma energy in the first forward sample if
+    // any group is empty; the caller still passes enable_cfl=false for grey.
     let mut lf_x = CflSamples::default();
     let mut lf_b = CflSamples::default();
     let mut hf_groups = Vec::new();
-    let mut scratch = ForwardScratch::new();
+    let mut llf_scratch = TransformScratch::for_transform(TransformType::Dct32x32);
 
     for index in 0..geometry.num_lf_groups() {
         let id = LfGroupId::new(u32::try_from(index).unwrap_or(u32::MAX));
@@ -933,9 +1353,6 @@ fn estimate_cfl(
             .ok_or(PolicyError::Unsupported {
                 what: "an LF group outside the frame's grid",
             })?;
-        let rect = geometry.lf_group_rect(id).ok_or(PolicyError::Unsupported {
-            what: "an LF group outside the frame's grid",
-        })?;
         let tile_count = usize::try_from(tiles.area()).unwrap_or(0);
         let mut group = HfCflSamples {
             tiles,
@@ -944,20 +1361,26 @@ fn estimate_cfl(
         };
         let map = maps
             .get(usize::try_from(index).unwrap_or(usize::MAX))
+            .copied()
             .ok_or(PolicyError::Unsupported {
                 what: "a missing block map for an LF group",
             })?;
+        let group_fwd = forwards
+            .get(usize::try_from(index).unwrap_or(usize::MAX))
+            .copied()
+            .ok_or(PolicyError::Unsupported {
+                what: "a missing forward cache for an LF group",
+            })?;
+        if map.len() != group_fwd.len() {
+            return Err(PolicyError::Unsupported {
+                what: "a forward cache length that does not match the block map",
+            });
+        }
 
-        for vb in map {
+        for (vb, fwd) in map.iter().zip(group_fwd.iter()) {
             let transform = vb.transform;
             let n = transform.block_dims().0;
-            let side = forward_square(
-                frame,
-                transform,
-                rect.x0 + vb.origin.bx() * 8,
-                rect.y0 + vb.origin.by() * 8,
-                &mut scratch,
-            )?;
+            let side = transform.sample_cols();
             let cells = side * side;
             let hf_quant = hf_quants.get(transform, vb.hf_mul)?;
             let tile = usize::try_from(
@@ -971,27 +1394,27 @@ fn estimate_cfl(
             let mut x_lf = vec![0.0f32; n * n];
             let mut b_lf = vec![0.0f32; n * n];
             lf_samples_of(
-                &scratch.coeffs[1],
+                fwd.coeffs.get(1).map_or(&[][..], Vec::as_slice),
                 transform,
                 n,
                 side,
-                &mut scratch.transform,
+                &mut llf_scratch,
                 &mut y_lf,
             )?;
             lf_samples_of(
-                &scratch.coeffs[0],
+                fwd.coeffs.get(0).map_or(&[][..], Vec::as_slice),
                 transform,
                 n,
                 side,
-                &mut scratch.transform,
+                &mut llf_scratch,
                 &mut x_lf,
             )?;
             lf_samples_of(
-                &scratch.coeffs[2],
+                fwd.coeffs.get(2).map_or(&[][..], Vec::as_slice),
                 transform,
                 n,
                 side,
-                &mut scratch.transform,
+                &mut llf_scratch,
                 &mut b_lf,
             )?;
             for idx in 0..n * n {
@@ -1008,29 +1431,22 @@ fn estimate_cfl(
             // the DCT8x8 quantizer as the common scale and its matrix has no
             // entries beyond 8x8.
             let fold = side / 8;
+            let cx = fwd.coeffs.get(0).map_or(&[][..], Vec::as_slice);
+            let cy = fwd.coeffs.get(1).map_or(&[][..], Vec::as_slice);
+            let cb = fwd.coeffs.get(2).map_or(&[][..], Vec::as_slice);
             for cell in 0..cells {
                 if is_llf_cell(cell, side, n) {
                     continue;
                 }
                 let cell8 = (cell / side / fold.max(1)) * 8 + (cell % side / fold.max(1));
-                let y = scratch.coeffs[1].get(cell).copied().unwrap_or(0.0);
+                let y = cy.get(cell).copied().unwrap_or(0.0);
                 let q_y = hf_quant.choose(y, 1, cell)?;
                 let d_y = hf_quant.reconstruct(q_y, 1, cell);
                 if let Some(t) = group.x.get_mut(tile) {
-                    t.push(
-                        scratch.coeffs[0].get(cell).copied().unwrap_or(0.0),
-                        y,
-                        d_y,
-                        cell8,
-                    );
+                    t.push(cx.get(cell).copied().unwrap_or(0.0), y, d_y, cell8);
                 }
                 if let Some(t) = group.b.get_mut(tile) {
-                    t.push(
-                        scratch.coeffs[2].get(cell).copied().unwrap_or(0.0),
-                        y,
-                        d_y,
-                        cell8,
-                    );
+                    t.push(cb.get(cell).copied().unwrap_or(0.0), y, d_y, cell8);
                 }
             }
         }
@@ -1250,46 +1666,79 @@ struct QuantizedGroup {
 }
 
 /// Quantizes one LF group's **selected** varblocks, in their `BlockInfo` order.
+///
+/// `forwards` are the precomputed coefficient arrays from [`forward_selected`]
+/// (same length and order as `varblocks`). HF coefficients for every varblock
+/// share one group arena ([`VarblockCoefficients::from_arena`]) so entropy
+/// alternatives do not re-allocate per-varblock coefficient boxes.
 #[allow(clippy::too_many_arguments)]
 fn quantize_group(
-    frame: &PreparedFrame,
     lf_quant: &LfQuantizer,
     hf_quants: &HfQuantizers,
     correlation: &LfCorrelationDecision,
     cfl: &CflGrid,
     varblocks: &[VarblockDecision],
-    origin: (u32, u32),
+    forwards: &[VarblockForward],
     blocks: jpxl_encode::vardct::BlockGrid,
 ) -> Result<QuantizedGroup> {
-    let (x0, y0) = origin;
+    if varblocks.len() != forwards.len() {
+        return Err(PolicyError::Unsupported {
+            what: "a forward cache length that does not match the block map",
+        });
+    }
     let cells = usize::try_from(blocks.area()).unwrap_or(0);
     let mut lf_planes: [Vec<i32>; NUM_CHANNELS] = core::array::from_fn(|_| vec![0i32; cells]);
-    let mut coefficients = Vec::with_capacity(varblocks.len());
-    let mut scratch = ForwardScratch::new();
+    let mut tscratch = TransformScratch::for_transform(TransformType::Dct32x32);
+    let mut qscratch = QuantScratch::new();
 
+    // One arena: for each varblock, three channels of `side*side` i32s.
+    let mut arena_cap = 0usize;
     for vb in varblocks {
+        let side = vb.transform.sample_cols();
+        arena_cap = arena_cap
+            .saturating_add(side.saturating_mul(side).saturating_mul(NUM_CHANNELS));
+    }
+    let mut arena = vec![0i32; arena_cap];
+    let mut starts: Vec<[usize; NUM_CHANNELS]> = Vec::with_capacity(varblocks.len());
+    let mut cursor = 0usize;
+
+    for (vb, fwd) in varblocks.iter().zip(forwards.iter()) {
         let transform = vb.transform;
+        let side = transform.sample_cols();
+        let ch_cells = side * side;
+        let span = ch_cells.saturating_mul(NUM_CHANNELS);
+        let end = cursor.saturating_add(span);
+        let slot = arena.get_mut(cursor..end).ok_or(PolicyError::Unsupported {
+            what: "a coefficient arena that ran short of capacity",
+        })?;
         let (bx, by) = (vb.origin.bx(), vb.origin.by());
-        forward_square(frame, transform, x0 + bx * 8, y0 + by * 8, &mut scratch)?;
         let factors = varblock_cfl(correlation, cfl, bx, by);
-        let ForwardScratch {
-            transform: tscratch,
-            coeffs,
-            ..
-        } = &mut scratch;
-        let vc = quantize_square_varblock(
-            coeffs,
+        quantize_square_varblock(
+            &fwd.coeffs,
             transform,
             lf_quant,
             hf_quants.get(transform, vb.hf_mul)?,
             factors,
-            tscratch,
+            &mut tscratch,
+            &mut qscratch,
             bx,
             by,
             blocks.width,
             &mut lf_planes,
+            slot,
         )?;
-        coefficients.push(vc);
+        starts.push([cursor, cursor + ch_cells, cursor + ch_cells * 2]);
+        cursor = end;
+    }
+
+    let arena: std::sync::Arc<[i32]> = arena.into();
+    let mut coefficients = Vec::with_capacity(varblocks.len());
+    for (vb, channel_starts) in varblocks.iter().zip(starts) {
+        coefficients.push(VarblockCoefficients::from_arena(
+            vb.transform,
+            std::sync::Arc::clone(&arena),
+            channel_starts,
+        )?);
     }
 
     Ok(QuantizedGroup {
@@ -1338,10 +1787,12 @@ fn block_cost(
     hf_mul: HfMul,
     px: u32,
     py: u32,
+    cache: &mut CandidateForwardCache,
     scratch: &mut ForwardScratch,
     d_y_hf: &mut [f32],
 ) -> Result<f64> {
-    let side = forward_square(frame, transform, px, py, scratch)?;
+    let fwd = cache.get_or_insert(frame, transform, px, py, scratch)?;
+    let side = transform.sample_cols();
     let n = transform.block_dims().0;
     let cells = side * side;
     let hf_quant = hf_quants.get(transform, hf_mul)?;
@@ -1352,13 +1803,16 @@ fn block_cost(
         reason = "side is at most 32; exact in f64"
     )]
     let to_sample_domain = (side * side) as f64;
+    let cy = fwd.coeffs.get(1).map_or(&[][..], Vec::as_slice);
+    let cx = fwd.coeffs.get(0).map_or(&[][..], Vec::as_slice);
+    let cb = fwd.coeffs.get(2).map_or(&[][..], Vec::as_slice);
     let mut bits = 0u64;
     let mut weighted_sse = 0.0f64;
     for cell in 0..cells {
         if is_llf_cell(cell, side, n) {
             continue;
         }
-        let coeff = scratch.coeffs[1].get(cell).copied().unwrap_or(0.0);
+        let coeff = cy.get(cell).copied().unwrap_or(0.0);
         let q = hf_quant.choose(coeff, 1, cell)?;
         bits = bits.saturating_add(residual_bits(q));
         let recon = hf_quant.reconstruct(q, 1, cell);
@@ -1367,19 +1821,14 @@ fn block_cost(
             *slot = recon;
         }
     }
-    for &channel in &[0usize, 2usize] {
+    for &(channel, plane) in &[(0usize, cx), (2usize, cb)] {
         let k = if channel == 0 { 0.0 } else { 1.0 };
         for cell in 0..cells {
             if is_llf_cell(cell, side, n) {
                 continue;
             }
-            let target = scratch
-                .coeffs
-                .get(channel)
-                .and_then(|c| c.get(cell))
-                .copied()
-                .unwrap_or(0.0)
-                - k * d_y_hf.get(cell).copied().unwrap_or(0.0);
+            let target =
+                plane.get(cell).copied().unwrap_or(0.0) - k * d_y_hf.get(cell).copied().unwrap_or(0.0);
             let q = hf_quant.choose(target, channel, cell)?;
             bits = bits.saturating_add(residual_bits(q));
             let recon = hf_quant.reconstruct(q, channel, cell);
@@ -1410,6 +1859,7 @@ fn tile_region(
     aq: &AqSetup,
     x0: u32,
     y0: u32,
+    cache: &mut CandidateForwardCache,
     scratch: &mut ForwardScratch,
     d_y_hf: &mut [f32],
 ) -> Result<(f64, Vec<VarblockDecision>)> {
@@ -1430,6 +1880,7 @@ fn tile_region(
             hf_mul,
             x0 + bx * 8,
             y0 + by * 8,
+            cache,
             scratch,
             d_y_hf,
         )? + PER_VARBLOCK_BITS
@@ -1454,7 +1905,7 @@ fn tile_region(
         (bx + half, by + half),
     ] {
         let (c, mut b) = tile_region(
-            frame, hf_quants, grid, qx, qy, half, aq, x0, y0, scratch, d_y_hf,
+            frame, hf_quants, grid, qx, qy, half, aq, x0, y0, cache, scratch, d_y_hf,
         )?;
         split_cost += c;
         split_blocks.append(&mut b);
@@ -1471,6 +1922,7 @@ fn tile_region(
                 hf_mul,
                 x0 + bx * 8,
                 y0 + by * 8,
+                cache,
                 scratch,
                 d_y_hf,
             )? + PER_VARBLOCK_BITS
@@ -1504,9 +1956,10 @@ fn select_blocks(
     grid: jpxl_encode::vardct::BlockGrid,
     origin: (u32, u32),
     aq: &AqSetup,
+    cache: &mut CandidateForwardCache,
+    scratch: &mut ForwardScratch,
 ) -> Result<Vec<VarblockDecision>> {
     let (x0, y0) = origin;
-    let mut scratch = ForwardScratch::new();
     let mut d_y_hf = vec![0.0f32; 32 * 32];
     let mut blocks = Vec::new();
     let mut sby = 0u32;
@@ -1523,7 +1976,8 @@ fn select_blocks(
                 aq,
                 x0,
                 y0,
-                &mut scratch,
+                cache,
+                scratch,
                 &mut d_y_hf,
             )?;
             blocks.append(&mut region);
@@ -1539,15 +1993,22 @@ fn select_blocks(
     Ok(blocks)
 }
 
-/// The trained model as a full [`EntropyPlan`]: I.2.2's default block
-/// contexts (a trained map needs its writer first), natural orders, one
-/// preset, and the trainer's map, configurations and distributions.
+/// The trained model as a full [`EntropyPlan`]: the caller's block-context
+/// model, preset count / assignment, the chosen orders, and the trainer's
+/// map / configurations / distributions.
 fn trained_entropy_plan(
     geometry: &VardctGeometry,
     model: entropy::TrainedModel,
     orders: OrderSet,
+    block_context: HfBlockContextPlan,
+    num_hf_presets: u32,
+    group_presets: Vec<PresetId>,
 ) -> Result<EntropyPlan> {
     let num_groups = usize::try_from(geometry.num_groups()).unwrap_or(0);
+    let mut presets = group_presets;
+    if presets.len() != num_groups {
+        presets = vec![PresetId::new(0); num_groups];
+    }
     let distributions = EntropyModelPlan {
         context_map: model.context_map.into_boxed_slice(),
         histograms: model.histograms.into_boxed_slice(),
@@ -1556,21 +2017,25 @@ fn trained_entropy_plan(
     let pass = HfPassEntropyPlan {
         orders,
         distributions,
-        group_presets: vec![PresetId::new(0); num_groups].into_boxed_slice(),
+        group_presets: presets.into_boxed_slice(),
     };
     Ok(EntropyPlan {
-        block_context: HfBlockContextPlan::Default,
-        num_hf_presets: 1,
+        block_context,
+        num_hf_presets,
         passes: vec![pass].into_boxed_slice(),
     })
 }
 
-/// The provisional entropy model the census pass walks with: I.2.2's default
-/// block contexts, natural orders, one preset, and [`cluster_of`]'s six
-/// clusters. Nothing it carries reaches the wire — slice 18's trained model
-/// replaces it before validation.
-fn entropy_plan(geometry: &VardctGeometry, histograms: Vec<HistogramPlan>) -> Result<EntropyPlan> {
-    let block_context = HfBlockContextPlan::Default;
+/// The provisional entropy model the census pass walks with: the given block
+/// context, natural orders, one preset, and [`cluster_of`]'s six clusters.
+/// Nothing it carries reaches the wire — the trained model replaces it before
+/// validation. The block context *does* affect the walk's pre-context ids, so
+/// it must match the model the trainer will later attach.
+fn entropy_plan(
+    geometry: &VardctGeometry,
+    histograms: Vec<HistogramPlan>,
+    block_context: HfBlockContextPlan,
+) -> Result<EntropyPlan> {
     let nb_block_ctx = block_context.nb_block_ctx();
     let num_hf_presets = 1u32;
     let pre_contexts = 495 * u64::from(num_hf_presets) * nb_block_ctx;
@@ -1582,8 +2047,8 @@ fn entropy_plan(geometry: &VardctGeometry, histograms: Vec<HistogramPlan>) -> Re
     // C.2.3: `split_exponent = 4` puts every value below 16 in its own token,
     // which is where the overwhelming majority of quantized coefficients live,
     // and `msb_in_token = 2` keeps the leading bits of the tail in the token
-    // rather than in raw bits. One configuration for every cluster: choosing
-    // per-cluster configurations is milestone 8's job.
+    // rather than in raw bits. One configuration for every cluster until the
+    // trainer replaces these with per-cluster choices.
     let hybrid_uint = vec![
         HybridUintPlan {
             split_exponent: 4,
@@ -1743,12 +2208,16 @@ mod tests {
     fn encode_with_cfl(frame: &PreparedFrame, enabled: bool) -> Vec<u8> {
         let request = EncodeRequest::defaults();
         let atlas = AnalysisAtlas::analyze(frame);
+        let mut cache = CandidateForwardCache::new();
         let plan = plan_at_with_cfl(
             frame,
             &atlas,
             &request,
             QuantizerChoice::from_request(&request),
             enabled,
+            None,
+            &mut cache,
+            EntropySearch::Full,
         )
         .expect("a legal plan");
         jpxl_encode::vardct::write_codestream(&plan).expect("encodes")
@@ -1833,12 +2302,16 @@ mod tests {
         let frame = PreparedFrame::from_srgb8(256, 256, &rgb).expect("frame");
         let request = EncodeRequest::defaults();
         let atlas = AnalysisAtlas::analyze(&frame);
+        let mut cache = CandidateForwardCache::new();
         let plan = plan_at_with_cfl(
             &frame,
             &atlas,
             &request,
             QuantizerChoice::from_request(&request),
             true,
+            None,
+            &mut cache,
+            EntropySearch::Full,
         )
         .expect("a legal plan");
         let non_neutral_lf = plan.plan().spatial.lf.correlation != LfCorrelationDecision::default();
@@ -2283,6 +2756,119 @@ mod tests {
     }
 
     #[test]
+    fn multi_preset_can_reach_the_wire_on_a_mixed_multi_group_frame() {
+        // Slice 18d: half-flat / half-noise over a 2×2 group grid so the
+        // mass fingerprint splits groups. Exact-price adopt may keep one
+        // preset; if two win, both external-oracle path and self-decode
+        // must accept the stream.
+        let w = 512u32;
+        let h = 512u32;
+        let mut rgb = vec![128u8; (w * h * 3) as usize];
+        for y in 0..h {
+            for x in (w / 2)..w {
+                let n = ((x.wrapping_mul(17) ^ y.wrapping_mul(31)) & 0xff) as u8;
+                let i = ((y * w + x) * 3) as usize;
+                if let Some(px) = rgb.get_mut(i..i + 3) {
+                    let vals = [n, n.wrapping_add(3), n.wrapping_add(7)];
+                    for (slot, &v) in px.iter_mut().zip(vals.iter()) {
+                        *slot = v;
+                    }
+                }
+            }
+        }
+        let plan = plan_frame(
+            &PreparedFrame::from_srgb8(w, h, &rgb).expect("frame"),
+            &EncodeRequest::defaults(),
+        )
+        .expect("plan");
+        let geometry = plan.plan().spatial.frame.geometry().expect("geometry");
+        assert!(
+            geometry.num_groups() >= 2,
+            "fixture must span multiple HF groups"
+        );
+        let presets = plan.plan().entropy.num_hf_presets;
+        let assignment: Vec<u32> = plan
+            .plan()
+            .entropy
+            .passes
+            .first()
+            .map(|p| p.group_presets.iter().map(|id| id.get()).collect())
+            .unwrap_or_default();
+        eprintln!(
+            "18d presets: num={presets}, assignment={assignment:?}, groups={}",
+            geometry.num_groups()
+        );
+        let bytes = jpxl_encode::vardct::write_codestream(&plan).expect("writes");
+        let decoded = jpxl_decode::decode::decode(&bytes, &jpxl_core::limits::Limits::default())
+            .expect("multi-preset or single-preset stream must decode");
+        assert_eq!(decoded.width, w);
+        assert_eq!(decoded.height, h);
+        if presets > 1 {
+            assert!(
+                assignment.iter().any(|&p| p > 0),
+                "multi-preset must assign at least one group to preset 1"
+            );
+        }
+    }
+
+    #[test]
+    fn a_trimmed_block_context_beats_default_on_fixed_dct8x8() {
+        // Slice 18c density gate: FixedDct8x8 only fires shape class 0, so a
+        // trimmed I.2.2 map collapses `nb_block_ctx` well below 15. On a
+        // non-flat frame that saving must show up as fewer stream bytes at
+        // identical pixels (model-only change).
+        let rgb = half_flat_half_noise(256, 256);
+        let mut request = EncodeRequest::defaults();
+        request.budget.cover_mode = CoverMode::FixedDct8x8;
+        let frame = PreparedFrame::from_srgb8(256, 256, &rgb).expect("frame");
+        let plan = plan_frame(&frame, &request).expect("plan");
+        let shapes: std::collections::BTreeSet<usize> = plan
+            .plan()
+            .spatial
+            .lf_groups
+            .iter()
+            .flat_map(|g| g.blocks.iter().map(|b| b.transform.order_id()))
+            .collect();
+        assert_eq!(
+            shapes,
+            [0].into_iter().collect(),
+            "fixed cover is shape 0 only"
+        );
+        assert!(
+            !matches!(
+                plan.plan().entropy.block_context,
+                HfBlockContextPlan::Default
+            ),
+            "trimmed map must win on a single-shape frame"
+        );
+        let nb = plan.plan().entropy.block_context.nb_block_ctx();
+        assert!(
+            nb < 15,
+            "trimmed nb_block_ctx {nb} must undercut the default 15"
+        );
+
+        let geometry = plan.plan().spatial.frame.geometry().expect("geometry");
+        let (default_b, custom_b) = price_default_and_custom(
+            plan.plan().spatial.as_ref().clone(),
+            plan.plan().quantized.as_ref().clone(),
+            &geometry,
+            plan.plan().entropy.block_context.clone(),
+        )
+        .expect("prices");
+        eprintln!("trimmed I.2.2: default {default_b} B vs custom {custom_b} B, nb={nb}");
+        assert!(
+            custom_b < default_b,
+            "trimmed map must be smaller ({custom_b} vs {default_b})"
+        );
+
+        let bytes = jpxl_encode::vardct::write_codestream(&plan).expect("writes");
+        let decoded = jpxl_decode::decode::decode(&bytes, &jpxl_core::limits::Limits::default())
+            .expect("custom I.2.2 must decode");
+        assert_eq!(decoded.width, 256);
+        assert_eq!(decoded.height, 256);
+    }
+
+    #[test]
     fn frequency_trained_orders_reach_the_wire_and_beat_the_natural_baseline() {
         // Slice 18b: the half-noise fixture at defaults measured 10221 B with
         // the trained model at natural orders; the §9.4 candidate is adopted
@@ -2330,5 +2916,69 @@ mod tests {
             muls.len() >= 2,
             "the field must still vary the mul row, got {muls:?}"
         );
+    }
+
+    #[test]
+    fn gaborish_request_signals_restoration_and_preconditions() {
+        // Milestone 9 start: enable gab → plan carries RestorationDecision and
+        // the bitstream differs from the unfiltered path (preconditioned coeffs).
+        let rgb = synthetic_rgb(64, 64, false);
+        let frame = PreparedFrame::from_srgb8(64, 64, &rgb).expect("frame");
+        let off = plan_frame(&frame, &EncodeRequest::defaults()).expect("off");
+        assert!(!off.plan().spatial.restoration.gaborish);
+
+        let mut request = EncodeRequest::defaults();
+        request.restoration.gaborish = true;
+        let on = plan_frame(&frame, &request).expect("on");
+        assert!(on.plan().spatial.restoration.gaborish);
+        assert_eq!(on.plan().spatial.restoration.epf_iters, 0);
+
+        let off_bytes = jpxl_encode::vardct::write_codestream(&off).expect("writes");
+        let on_bytes = jpxl_encode::vardct::write_codestream(&on).expect("writes");
+        assert_ne!(
+            off_bytes, on_bytes,
+            "gaborish precondition + header must change the codestream"
+        );
+
+        // Self-decode must succeed with filters applied (J.3).
+        let image = decode(&on_bytes, &Limits::default()).expect("decodes with gaborish");
+        assert_eq!((image.width, image.height), (64, 64));
+    }
+
+    #[test]
+    fn gaborish_path_stays_within_lossy_source_tolerance() {
+        // Same class as the unfiltered 64x64 rung (peak ≤70, RMSE ≤9): inverse
+        // Jacobi is approximate, but at default quantizer it must not destroy
+        // the R-D baseline.
+        let rgb = synthetic_rgb(64, 64, false);
+        let mut request = EncodeRequest::defaults();
+        request.restoration.gaborish = true;
+        let bytes = encode_srgb8_vardct(64, 64, &rgb, &request).expect("encodes");
+        let decoded = decoded_rgb(&bytes);
+        let (peak, rmse) = {
+            let mut peak = 0u32;
+            let mut sum = 0f64;
+            for (&p, &q) in rgb.iter().zip(&decoded) {
+                let d = u32::from(p.abs_diff(q));
+                peak = peak.max(d);
+                sum += f64::from(d) * f64::from(d);
+            }
+            (peak, (sum / rgb.len() as f64).sqrt())
+        };
+        assert!(
+            peak <= 70 && rmse <= 9.0,
+            "gaborish path peak {peak} RMSE {rmse:.3} outside the unfiltered 64x64 class"
+        );
+    }
+
+    #[test]
+    fn epf_iters_out_of_range_is_refused() {
+        let frame = grey_frame(16, 16);
+        let mut request = EncodeRequest::defaults();
+        request.restoration.epf_iters = 4;
+        assert!(matches!(
+            plan_frame(&frame, &request),
+            Err(PolicyError::Unsupported { .. })
+        ));
     }
 }
