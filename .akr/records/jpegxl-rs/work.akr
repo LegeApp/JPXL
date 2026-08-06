@@ -55,7 +55,10 @@ record jpegxl-rs.work.dispose-performance-md/2 : work {
                 """
             method command
             command "akr check"
-            verified_by [ @jpegxl-rs.evidence.performance-md-akr-check-at-head/1 ]
+            verified_by [
+                @jpegxl-rs.evidence.performance-md-akr-check-at-head/1,
+                @jpegxl-rs.evidence.performance-md-recheck-opt-p/1
+            ]
         }
         check stub-only {
             statement """
@@ -63,7 +66,10 @@ record jpegxl-rs.work.dispose-performance-md/2 : work {
                 and .agent/scratch paths, without duplicated baseline tables or full rules.
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.performance-md-stub-at-head/1 ]
+            verified_by [
+                @jpegxl-rs.evidence.performance-md-recheck-opt-p/1,
+                @jpegxl-rs.evidence.performance-md-stub-at-head/1
+            ]
         }
     }
     implements [
@@ -134,7 +140,7 @@ record jpegxl-rs.work.opt-bulk-bitwriter/1 : work {
 
 record jpegxl-rs.work.opt-p-coarse-section-parallel/1 : work {
     title "Opt-P coarse section parallelism (std::thread, Contract A)"
-    state proposed
+    state completed
     intent """
         Introduce EncodeResources with a groups axis and ordered_map over
         independent LF/pass-group section bodies using std::thread::scope (no
@@ -150,6 +156,7 @@ record jpegxl-rs.work.opt-p-coarse-section-parallel/1 : work {
                 """
             method command
             command "cd JPXL && cargo test -p jpxl-encode multi_section_modular_is_byte_identical --lib && cargo test -p jpxl-encode-policy multi_group_vardct_is_byte_identical --lib"
+            verified_by [ @jpegxl-rs.evidence.opt-p-thread-byte-identity-at-head/1 ]
         }
     }
     part_of [ @jpegxl-rs.milestone.m-opt-parallel-simd ]
@@ -233,7 +240,10 @@ record jpegxl-rs.work.opt-v1-count-only-and-arenas/2 : work {
                 and count-only pricing.
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.opt-v1-count-only-arenas-at-head/1 ]
+            verified_by [
+                @jpegxl-rs.evidence.opt-v1-count-only-arenas-at-head/1,
+                @jpegxl-rs.evidence.opt-v1-recheck-opt-p/1
+            ]
         }
         check price-matches-emit {
             statement """
@@ -242,7 +252,10 @@ record jpegxl-rs.work.opt-v1-count-only-and-arenas/2 : work {
                 """
             method command
             command "cd JPXL && cargo test -p jpxl-encode a_priced_size_is_the_emitted_size"
-            verified_by [ @jpegxl-rs.evidence.opt-v1-count-only-arenas-at-head/1 ]
+            verified_by [
+                @jpegxl-rs.evidence.opt-v1-count-only-arenas-at-head/1,
+                @jpegxl-rs.evidence.opt-v1-recheck-opt-p/1
+            ]
         }
     }
     part_of [ @jpegxl-rs.milestone.m-opt-vardct-structure ]
@@ -293,7 +306,10 @@ record jpegxl-rs.work.opt-v2-rate-work-sharing/2 : work {
                 """
             method command
             command "cd JPXL && cargo test -p jpxl-encode-policy --test rate_loop"
-            verified_by [ @jpegxl-rs.evidence.opt-v2-rate-multiplicity-at-head/1 ]
+            verified_by [
+                @jpegxl-rs.evidence.opt-v2-rate-multiplicity-at-head/1,
+                @jpegxl-rs.evidence.opt-v2-recheck-opt-p/1
+            ]
         }
     }
     part_of [ @jpegxl-rs.milestone.m-opt-vardct-rate ]

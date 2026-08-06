@@ -279,6 +279,18 @@ record jpegxl-rs.evidence.opt-p-thread-byte-identity/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.opt-p-thread-byte-identity-at-head/1 : evidence {
+    title "Opt-P Contract A at commit with parallel emission: modular multi-section and VarDCT multi-group byte-identical at 1 vs 4 workers."
+    state verified
+    result pass
+    method command
+    observed_at git:9442fef0f8f7c567eacd986959d0310509fb2145
+    command "cd JPXL && cargo test -p jpxl-encode multi_section_modular_is_byte_identical --lib && cargo test -p jpxl-encode-policy multi_group_vardct_is_byte_identical --lib"
+    summary """
+        Opt-P Contract A at commit with parallel emission: modular multi-section and VarDCT multi-group byte-identical at 1 vs 4 workers.
+        """
+}
+
 record jpegxl-rs.evidence.opt-v1-count-only-arenas/1 : evidence {
     title "Count-only BitWriter price_codestream matches emit sizing; group HF coeff arenas; rate_loop 11/11; vardct-fixed 256 fingerprint 37145644e7e1857f (Contract A). Scratch: .agent/scratch/preopt-baseline-2026-08-06.md"
     state verified
@@ -304,6 +316,18 @@ record jpegxl-rs.evidence.opt-v1-count-only-arenas-at-head/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.opt-v1-recheck-opt-p/1 : evidence {
+    title "Opt-V1 recheck after Opt-P: price matches emit; Contract A fingerprint still held."
+    state verified
+    result pass
+    method command
+    observed_at git:9442fef0f8f7c567eacd986959d0310509fb2145
+    command "cd JPXL && cargo test -p jpxl-encode a_priced_size_is_the_emitted_size"
+    summary """
+        Opt-V1 recheck after Opt-P: price matches emit; Contract A fingerprint still held.
+        """
+}
+
 record jpegxl-rs.evidence.opt-v2-rate-multiplicity-at-head/1 : evidence {
     title "Re-check after Opt-M: rate_probe_multiplicity_is_down still holds with Fast/Full + PreparedSearch stats."
     state verified
@@ -326,6 +350,18 @@ record jpegxl-rs.evidence.opt-v2-rate-probe-multiplicity/1 : evidence {
     artifact ".agent/scratch/preopt-baseline-2026-08-06.md"
     summary """
         Opt-V2 PreparedSearch + Fast/Full rate pricing: rate_loop 11/11; multiplicity counters show Gaborish once, DCT cache hits>>misses, Full confined to Final refinement. See .agent/scratch/preopt-baseline-2026-08-06.md
+        """
+}
+
+record jpegxl-rs.evidence.opt-v2-recheck-opt-p/1 : evidence {
+    title "Opt-V2 recheck after Opt-P: rate_probe_multiplicity_is_down still passes."
+    state verified
+    result pass
+    method command
+    observed_at git:9442fef0f8f7c567eacd986959d0310509fb2145
+    command "cd JPXL && cargo test -p jpxl-encode-policy --test rate_loop rate_probe_multiplicity"
+    summary """
+        Opt-V2 recheck after Opt-P: rate_probe_multiplicity_is_down still passes.
         """
 }
 
@@ -366,6 +402,17 @@ record jpegxl-rs.evidence.performance-md-akr-check-at-head/1 : evidence {
     command "akr check"
     summary """
         akr check clean for PERFORMANCE.md disposition after Opt-M ledger closeout.
+        """
+}
+
+record jpegxl-rs.evidence.performance-md-recheck-opt-p/1 : evidence {
+    title "PERFORMANCE.md stub and AKR disposition still valid after Opt-P."
+    state verified
+    result pass
+    method observation
+    observed_at git:9442fef0f8f7c567eacd986959d0310509fb2145
+    summary """
+        PERFORMANCE.md stub and AKR disposition still valid after Opt-P.
         """
 }
 
