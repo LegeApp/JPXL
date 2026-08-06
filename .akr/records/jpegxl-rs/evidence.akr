@@ -267,6 +267,18 @@ record jpegxl-rs.evidence.opt-m-tiered-planner/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.opt-p-leaf-simd-rayon/1 : evidence {
+    title "Leaf SIMD (wide f32x4 on DCT-8/16 butterflies, Gaborish interior+Jacobi, HF quantize candidates) and rayon ordered_map under default parallel+simd features. Contract A thread-identity still green; --no-default-features encode lib tests pass."
+    state verified
+    result pass
+    method command
+    observed_at git:ffc9a0fcf712f2aa14f4eae80bd8eaaa3be8a613
+    command "cd JPXL && cargo test -p jpxl-core --lib dct:: && cargo test -p jpxl-encode --lib && cargo test -p jpxl-encode-policy multi_group_vardct --lib && cargo test -p jpxl-encode --lib --no-default-features"
+    summary """
+        Leaf SIMD (wide f32x4 on DCT-8/16 butterflies, Gaborish interior+Jacobi, HF quantize candidates) and rayon ordered_map under default parallel+simd features. Contract A thread-identity still green; --no-default-features encode lib tests pass.
+        """
+}
+
 record jpegxl-rs.evidence.opt-p-thread-byte-identity/1 : evidence {
     title "Opt-P Contract A: modular multi-section and VarDCT multi-group encodes are byte-identical at 1 vs 4 section workers (EncodeResources::groups). ordered_map reduces in fixed index order via std::thread::scope; no Rayon dependency."
     state verified

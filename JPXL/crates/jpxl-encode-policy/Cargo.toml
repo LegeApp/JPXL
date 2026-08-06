@@ -10,12 +10,19 @@ license.workspace = true
 # `jpxl-encode` must never gain a dependency on this crate — that direction is
 # what keeps heuristics out of the writer (docs/Encoder-plan1.md §1).
 [dependencies]
-jpxl-core.workspace = true
-jpxl-encode.workspace = true
+jpxl-core = { workspace = true }
+jpxl-encode = { workspace = true }
 # Slice 18: the entropy trainer tokenizes census values with the exact C.2.3
 # hybrid-uint arithmetic the writer will use. In-workspace, same clean-room
 # boundary; the one-way policy/encoder edge above is unaffected.
 jpxl-entropy.workspace = true
+wide = { workspace = true, optional = true }
+
+[features]
+default = ["parallel", "simd"]
+parallel = ["jpxl-encode/parallel"]
+# Leaf SIMD for HF quantize choose (and transitive DCT/Gaborish).
+simd = ["dep:wide", "jpxl-encode/simd", "jpxl-core/simd"]
 
 # Peer oracles, tests only. `jpxl-decode` must never appear in [dependencies]:
 # an encoder bug its paired decoder happens to accept would prove itself

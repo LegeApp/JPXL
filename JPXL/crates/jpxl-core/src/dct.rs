@@ -291,14 +291,41 @@ fn dct_iii_4(v: &mut [f32; 4]) {
 /// Orthonormal 8-point DCT-II (forward transform), in place.
 ///
 /// Output `v[u]` is the coefficient for frequency `u`; `v[0]` is DC.
+///
+/// With the `simd` feature, the even/odd split and scale use `wide::f32x4`
+/// (Opt-P leaf kernel). Without it, pure scalar arithmetic is used.
 pub fn dct_ii_8(v: &mut [f32; 8]) {
-    let mut even = [v[0] + v[7], v[1] + v[6], v[2] + v[5], v[3] + v[4]];
-    let mut odd = [v[0] - v[7], v[1] - v[6], v[2] - v[5], v[3] - v[4]];
-    dct_ii_4(&mut even);
-    dct_iv_4(&mut odd);
-    for k in 0..4 {
-        v[2 * k] = even[k] * FRAC_1_SQRT_2;
-        v[2 * k + 1] = odd[k] * FRAC_1_SQRT_2;
+    #[cfg(feature = "simd")]
+    {
+        use wide::f32x4;
+        let lo = f32x4::new([v[0], v[1], v[2], v[3]]);
+        let hi = f32x4::new([v[7], v[6], v[5], v[4]]);
+        let mut even = (lo + hi).to_array();
+        let mut odd = (lo - hi).to_array();
+        dct_ii_4(&mut even);
+        dct_iv_4(&mut odd);
+        let scale = f32x4::splat(FRAC_1_SQRT_2);
+        let e = (f32x4::new(even) * scale).to_array();
+        let o = (f32x4::new(odd) * scale).to_array();
+        v[0] = e[0];
+        v[1] = o[0];
+        v[2] = e[1];
+        v[3] = o[1];
+        v[4] = e[2];
+        v[5] = o[2];
+        v[6] = e[3];
+        v[7] = o[3];
+    }
+    #[cfg(not(feature = "simd"))]
+    {
+        let mut even = [v[0] + v[7], v[1] + v[6], v[2] + v[5], v[3] + v[4]];
+        let mut odd = [v[0] - v[7], v[1] - v[6], v[2] - v[5], v[3] - v[4]];
+        dct_ii_4(&mut even);
+        dct_iv_4(&mut odd);
+        for k in 0..4 {
+            v[2 * k] = even[k] * FRAC_1_SQRT_2;
+            v[2 * k + 1] = odd[k] * FRAC_1_SQRT_2;
+        }
     }
 }
 
@@ -325,15 +352,66 @@ pub fn dct_iii_8(v: &mut [f32; 8]) {
 pub fn dct_ii_16(v: &mut [f32; 16]) {
     let mut even = [0.0f32; 8];
     let mut odd = [0.0f32; 8];
-    for k in 0..8 {
-        even[k] = v[k] + v[15 - k];
-        odd[k] = v[k] - v[15 - k];
+    #[cfg(feature = "simd")]
+    {
+        use wide::f32x4;
+        // Two f32x4 chunks cover the 8 even/odd pairs.
+        for chunk in 0..2 {
+            let base = chunk * 4;
+            let lo = f32x4::new([
+                v[base],
+                v[base + 1],
+                v[base + 2],
+                v[base + 3],
+            ]);
+            let hi = f32x4::new([
+                v[15 - base],
+                v[14 - base],
+                v[13 - base],
+                v[12 - base],
+            ]);
+            let e = (lo + hi).to_array();
+            let o = (lo - hi).to_array();
+            even[base..base + 4].copy_from_slice(&e);
+            odd[base..base + 4].copy_from_slice(&o);
+        }
+    }
+    #[cfg(not(feature = "simd"))]
+    {
+        for k in 0..8 {
+            even[k] = v[k] + v[15 - k];
+            odd[k] = v[k] - v[15 - k];
+        }
     }
     dct_ii_8(&mut even);
     dct_iv_8(&mut odd);
-    for k in 0..8 {
-        v[2 * k] = even[k] * FRAC_1_SQRT_2;
-        v[2 * k + 1] = odd[k] * FRAC_1_SQRT_2;
+    #[cfg(feature = "simd")]
+    {
+        use wide::f32x4;
+        let scale = f32x4::splat(FRAC_1_SQRT_2);
+        for chunk in 0..2 {
+            let base = chunk * 4;
+            let e = f32x4::new([
+                even[base],
+                even[base + 1],
+                even[base + 2],
+                even[base + 3],
+            ]) * scale;
+            let o = f32x4::new([odd[base], odd[base + 1], odd[base + 2], odd[base + 3]]) * scale;
+            let ea = e.to_array();
+            let oa = o.to_array();
+            for i in 0..4 {
+                v[2 * (base + i)] = ea[i];
+                v[2 * (base + i) + 1] = oa[i];
+            }
+        }
+    }
+    #[cfg(not(feature = "simd"))]
+    {
+        for k in 0..8 {
+            v[2 * k] = even[k] * FRAC_1_SQRT_2;
+            v[2 * k + 1] = odd[k] * FRAC_1_SQRT_2;
+        }
     }
 }
 

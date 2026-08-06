@@ -267,6 +267,10 @@ impl HfQuantizer {
     /// Ties go to the smaller magnitude, so a coefficient that reconstructs
     /// equally well as `0` or `±1` costs the fewest bits.
     ///
+    /// With the `simd` feature, the four-candidate error comparison uses
+    /// `wide::f32x4` (Opt-P leaf). The candidate set and tie-break rules are
+    /// unchanged.
+    ///
     /// # Errors
     ///
     /// [`PolicyError::Unsupported`] if the step is degenerate or the target
@@ -285,19 +289,58 @@ impl HfQuantizer {
         }
         let estimate = clamp_round(target / step)?;
 
-        let mut best = 0i32;
-        let mut best_error = f32::INFINITY;
-        for q in [0, estimate - 1, estimate, estimate + 1] {
-            if q.abs() > MAX_QUANT {
-                continue;
+        let candidates = [0, estimate - 1, estimate, estimate + 1];
+
+        #[cfg(feature = "simd")]
+        {
+            use wide::f32x4;
+            // Reconstruct each candidate: bias_adjust(q) * scale * m
+            let scale_m = self.scale.get(channel).copied().unwrap_or(0.0) * m;
+            let mut recon = [0.0f32; 4];
+            let mut legal = [false; 4];
+            for (i, &q) in candidates.iter().enumerate() {
+                if q.abs() > MAX_QUANT {
+                    recon[i] = f32::INFINITY;
+                    legal[i] = false;
+                } else {
+                    recon[i] = self.bias_adjust(q, channel) * scale_m;
+                    legal[i] = true;
+                }
             }
-            let error = (self.reconstruct(q, channel, cell) - target).abs();
-            if error < best_error || (error == best_error && q.abs() < best.abs()) {
-                best = q;
-                best_error = error;
+            let r = f32x4::new(recon);
+            let t = f32x4::splat(target);
+            let err = (r - t).abs().to_array();
+            let mut best = 0i32;
+            let mut best_error = f32::INFINITY;
+            for (i, &q) in candidates.iter().enumerate() {
+                if !legal[i] {
+                    continue;
+                }
+                let error = err[i];
+                if error < best_error || (error == best_error && q.abs() < best.abs()) {
+                    best = q;
+                    best_error = error;
+                }
             }
+            return Ok(best);
         }
-        Ok(best)
+
+        #[cfg(not(feature = "simd"))]
+        {
+            let mut best = 0i32;
+            let mut best_error = f32::INFINITY;
+            for q in candidates {
+                if q.abs() > MAX_QUANT {
+                    continue;
+                }
+                let error = (self.reconstruct(q, channel, cell) - target).abs();
+                if error < best_error || (error == best_error && q.abs() < best.abs()) {
+                    best = q;
+                    best_error = error;
+                }
+            }
+            Ok(best)
+        }
     }
 }
 

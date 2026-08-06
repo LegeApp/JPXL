@@ -8,6 +8,12 @@ license.workspace = true
 
 [dependencies]
 jpxl-bitstream.workspace = true
+wide = { workspace = true, optional = true }
+
+[features]
+default = ["simd"]
+# Portable SIMD for factored DCT butterflies (Opt-P leaf kernels).
+simd = ["dep:wide"]
 
 [lints]
 workspace = true

@@ -8,11 +8,20 @@ license.workspace = true
 
 [dependencies]
 jpxl-bitstream.workspace = true
-jpxl-core.workspace = true
+jpxl-core = { workspace = true }
 # The write side of Annex C (slice 11.5). The read side of the same crate is a
 # peer, not a layer: nothing here calls it, and the round-trip tests are what
 # prove the two agree.
 jpxl-entropy.workspace = true
+rayon = { workspace = true, optional = true }
+wide = { workspace = true, optional = true }
+
+[features]
+default = ["parallel", "simd"]
+# Coarse section parallelism via rayon (falls back to std::thread::scope).
+parallel = ["dep:rayon"]
+# Leaf SIMD: Gaborish interior + core DCT when jpxl-core/simd is on.
+simd = ["dep:wide", "jpxl-core/simd"]
 
 [dev-dependencies]
 jpxl-conformance.workspace = true

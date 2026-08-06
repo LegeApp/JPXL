@@ -11,11 +11,16 @@ name = "jpxl"
 path = "src/main.rs"
 
 [dependencies]
-jpxl-core.workspace = true
+jpxl-core = { workspace = true }
 jpxl-decode.workspace = true
-jpxl-encode.workspace = true
-jpxl-encode-policy.workspace = true
+jpxl-encode = { workspace = true }
+jpxl-encode-policy = { workspace = true }
 jpxl-conformance.workspace = true
+
+[features]
+default = ["parallel", "simd"]
+parallel = ["jpxl-encode/parallel", "jpxl-encode-policy/parallel"]
+simd = ["jpxl-encode/simd", "jpxl-encode-policy/simd", "jpxl-core/simd"]
 
 [lints]
 workspace = true

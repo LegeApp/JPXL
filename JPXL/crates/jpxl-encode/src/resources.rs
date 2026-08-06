@@ -1,12 +1,12 @@
 //! Resource policy for coarse parallelism (Opt-P).
 //!
 //! One owner for the worker budget: callers set [`EncodeResources::threads`]
-//! instead of spawning ad-hoc Rayon pools. Section emission maps independent
-//! work units and **reduces in fixed TOC / raster order** so Contract A holds
-//! across thread counts (`optimization-plan.akr`: deterministic reductions).
+//! instead of spawning ad-hoc pools. Section emission maps independent work
+//! units and **reduces in fixed TOC / raster order** so Contract A holds
+//! across thread counts.
 //!
-//! No third-party thread pool: workers use [`std::thread::scope`]. Rayon remains
-//! an optional future choice behind an explicit dependency decision.
+//! With the default **`parallel`** feature, workers use a capped **rayon**
+//! pool. Without it, [`std::thread::scope`] is used.
 
 use core::num::NonZeroUsize;
 
@@ -21,14 +21,10 @@ pub enum ParallelAxis {
 }
 
 /// Cap on workers for one encode.
-///
-/// Memory and CPU share this budget: the implementation never starts more
-/// workers than `threads` and never more than the number of ready work items.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EncodeResources {
     /// Maximum worker threads for parallel section emission. `1` (or `0`) is
-    /// fully serial. Values above the number of independent sections are
-    /// clamped.
+    /// fully serial.
     pub threads: usize,
     /// Which axis may fan out.
     pub axis: ParallelAxis,
@@ -82,15 +78,9 @@ impl EncodeResources {
 
 /// Map `0..n` with `f`, reducing results in index order (Contract A).
 ///
-/// When `workers == 1`, runs serially on the calling thread. Otherwise splits
-/// the index range across scoped threads; each worker writes only its own
-/// indices into a shared slot array, and the coordinator drains `0..n` in
-/// order after the scope joins.
-///
 /// # Errors
 ///
-/// The first `Err` in index order is returned (not "whichever worker finished
-/// first"), so error choice is also deterministic.
+/// The first `Err` in index order is returned.
 pub(crate) fn ordered_map<T, E, F>(n: usize, workers: usize, f: F) -> Result<Vec<T>, E>
 where
     T: Send,
@@ -112,9 +102,59 @@ where
         return Ok(out);
     }
 
-    // Slots filled by workers; drained in index order after join.
+    #[cfg(feature = "parallel")]
+    {
+        ordered_map_rayon(n, workers, f)
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        ordered_map_std(n, workers, f)
+    }
+}
+
+#[cfg(feature = "parallel")]
+fn ordered_map_rayon<T, E, F>(n: usize, workers: usize, f: F) -> Result<Vec<T>, E>
+where
+    T: Send,
+    E: Send,
+    F: Fn(usize) -> Result<T, E> + Sync,
+{
+    use rayon::prelude::*;
+
+    // Build a local pool capped at `workers` so we do not oversubscribe the
+    // global pool when the caller requested a small budget.
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(workers)
+        .build()
+        .unwrap_or_else(|_| rayon::ThreadPoolBuilder::new().build().expect("rayon pool"));
+
     let mut slots: Vec<Option<Result<T, E>>> = (0..n).map(|_| None).collect();
-    // Split into disjoint mutable sub-slices so each worker owns its range.
+    pool.install(|| {
+        slots
+            .par_iter_mut()
+            .enumerate()
+            .for_each(|(i, slot)| *slot = Some(f(i)));
+    });
+
+    let mut out = Vec::with_capacity(n);
+    for (i, slot) in slots.into_iter().enumerate() {
+        match slot {
+            Some(Ok(v)) => out.push(v),
+            Some(Err(e)) => return Err(e),
+            None => out.push(f(i)?),
+        }
+    }
+    Ok(out)
+}
+
+#[cfg(not(feature = "parallel"))]
+fn ordered_map_std<T, E, F>(n: usize, workers: usize, f: F) -> Result<Vec<T>, E>
+where
+    T: Send,
+    E: Send,
+    F: Fn(usize) -> Result<T, E> + Sync,
+{
+    let mut slots: Vec<Option<Result<T, E>>> = (0..n).map(|_| None).collect();
     let chunk = n.div_ceil(workers);
     let f = &f;
     std::thread::scope(|scope| {
@@ -141,7 +181,6 @@ where
         match slot {
             Some(Ok(v)) => out.push(v),
             Some(Err(e)) => return Err(e),
-            // Defensive: recompute if a worker failed to fill (should not happen).
             None => out.push(f(i)?),
         }
     }

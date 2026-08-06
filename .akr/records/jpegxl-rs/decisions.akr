@@ -69,6 +69,25 @@ record jpegxl-rs.decision.ledger-conventions/1 : decision {
     author "GitHub Uploader"
 }
 
+record jpegxl-rs.decision.opt-p-wide-rayon-deps/1 : decision {
+    title "wide and rayon are feature-gated default dependencies for Opt-P"
+    state proposed
+    scope [ path "JPXL/crates/**" ]
+    topic opt-p-wide-rayon-deps
+    decision """
+        The encoder optimization track may depend on the `wide` (portable SIMD)
+        and `rayon` (work-stealing pool) crates. Both are optional Cargo features
+        named `simd` and `parallel`, enabled by default on jpxl-core (simd),
+        jpxl-encode, jpxl-encode-policy, and jpxl-cli. Builds with
+        --no-default-features remain pure-scalar and std::thread-only. Contract A
+        holds across thread counts for section emission; SIMD kernels may use
+        Contract B float semantics relative to scalar builds and stay decode-valid.
+        """
+    context """
+        Approved during Opt-P leaf-SIMD work after coarse section parallelism landed.
+        """
+}
+
 record jpegxl-rs.decision.optimization-determinism-contract/1 : decision {
     title "Default Contract A: bit-identical streams for structural optimization"
     state proposed
