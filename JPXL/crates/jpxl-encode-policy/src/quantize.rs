@@ -148,12 +148,14 @@ impl LfQuantizer {
 /// I.5.3's HF quantizer for one transform type, over all three channels.
 #[derive(Debug, Clone)]
 pub struct HfQuantizer {
-    matrices: [DequantMatrix; NUM_CHANNELS],
-    /// `Mul * qm` per channel, i.e. everything but the matrix entry.
-    scale: [f32; NUM_CHANNELS],
     quant_bias: [f32; NUM_CHANNELS],
     quant_bias_numerator: f32,
-    cols: usize,
+    /// Flattened `Mul * qm * matrix[c](x,y)` in coefficient order, per channel.
+    /// Phase-1: avoid matrix lookups and multiplies on every [`Self::choose`].
+    steps: [Box<[f32]>; NUM_CHANNELS],
+    /// `0.5 * quant_bias[c] * steps[c][cell]` — zero wins under the nearest-
+    /// reconstruction + lower-magnitude tie rule when `|target| <=` this.
+    zero_threshold: [Box<[f32]>; NUM_CHANNELS],
 }
 
 impl HfQuantizer {
@@ -210,13 +212,36 @@ impl HfQuantizer {
             mul * qm_multiplier(b_qm_scale),
         ];
         let cols = transform.coeff_cols();
+        let rows = transform.coeff_rows();
+        let cells = cols.saturating_mul(rows);
+        let quant_bias = jpxl_core::color::DEFAULT_QUANT_BIAS;
+        let mut steps: [Box<[f32]>; NUM_CHANNELS] =
+            core::array::from_fn(|_| vec![0.0f32; cells].into_boxed_slice());
+        let mut zero_threshold: [Box<[f32]>; NUM_CHANNELS] =
+            core::array::from_fn(|_| vec![0.0f32; cells].into_boxed_slice());
+        for channel in 0..NUM_CHANNELS {
+            let sc = scale.get(channel).copied().unwrap_or(0.0);
+            let bias = quant_bias.get(channel).copied().unwrap_or(1.0);
+            let matrix = &matrices[channel];
+            for cell in 0..cells {
+                let (x, y) = (cell % cols.max(1), cell / cols.max(1));
+                let step = sc * matrix.at(x, y);
+                if let Some(slot) = steps[channel].get_mut(cell) {
+                    *slot = step;
+                }
+                if let Some(slot) = zero_threshold[channel].get_mut(cell) {
+                    // |recon(±1)| = bias * step; ties prefer smaller |q|, so
+                    // zero wins when |target| <= 0.5 * |recon(±1)|.
+                    *slot = 0.5 * bias * step;
+                }
+            }
+        }
 
         Ok(Self {
-            matrices,
-            scale,
-            quant_bias: jpxl_core::color::DEFAULT_QUANT_BIAS,
+            quant_bias,
             quant_bias_numerator: jpxl_core::color::DEFAULT_QUANT_BIAS_NUMERATOR,
-            cols,
+            steps,
+            zero_threshold,
         })
     }
 
@@ -234,15 +259,19 @@ impl HfQuantizer {
         }
     }
 
+    /// Precomputed step for `(channel, cell)`, or 0 if out of range.
+    #[inline]
+    fn step_at(&self, channel: usize, cell: usize) -> f32 {
+        self.steps
+            .get(channel)
+            .and_then(|s| s.get(cell).copied())
+            .unwrap_or(0.0)
+    }
+
     /// I.5.3's full reconstruction of one coefficient, before I.6.
     #[must_use]
     pub fn reconstruct(&self, q: i32, channel: usize, cell: usize) -> f32 {
-        let (x, y) = (cell % self.cols.max(1), cell / self.cols.max(1));
-        let m = self
-            .matrices
-            .get(channel)
-            .map_or(0.0, |matrix| matrix.at(x, y));
-        self.bias_adjust(q, channel) * self.scale.get(channel).copied().unwrap_or(0.0) * m
+        self.bias_adjust(q, channel) * self.step_at(channel, cell)
     }
 
     /// I.5.3's quantization step for one cell: `Mul * qm * dequant_matrix`.
@@ -251,12 +280,7 @@ impl HfQuantizer {
     /// distortion in the same units [`Self::choose`] quantizes in.
     #[must_use]
     pub fn step(&self, channel: usize, cell: usize) -> f32 {
-        let (x, y) = (cell % self.cols.max(1), cell / self.cols.max(1));
-        let m = self
-            .matrices
-            .get(channel)
-            .map_or(0.0, |matrix| matrix.at(x, y));
-        self.scale.get(channel).copied().unwrap_or(0.0) * m
+        self.step_at(channel, cell)
     }
 
     /// The integer whose reconstruction is nearest `target`.
@@ -267,35 +291,38 @@ impl HfQuantizer {
     /// Ties go to the smaller magnitude, so a coefficient that reconstructs
     /// equally well as `0` or `±1` costs the fewest bits.
     ///
-    /// With the `simd` feature, the four-candidate error comparison uses
-    /// `wide::f32x4` (Opt-P leaf). The candidate set and tie-break rules are
-    /// unchanged.
+    /// Phase-1: precomputed steps, exact zero early-out (output-identical),
+    /// and optional `wide` comparison of the four candidates.
     ///
     /// # Errors
     ///
     /// [`PolicyError::Unsupported`] if the step is degenerate or the target
     /// needs an integer outside [`MAX_QUANT`].
     pub fn choose(&self, target: f32, channel: usize, cell: usize) -> Result<i32> {
-        let (x, y) = (cell % self.cols.max(1), cell / self.cols.max(1));
-        let m = self
-            .matrices
-            .get(channel)
-            .map_or(0.0, |matrix| matrix.at(x, y));
-        let step = self.scale.get(channel).copied().unwrap_or(0.0) * m;
+        crate::diagnostics::note_choose();
+        let step = self.step_at(channel, cell);
         if !(step.is_finite() && step > 0.0) {
             return Err(PolicyError::Unsupported {
                 what: "a degenerate HF quantization step",
             });
         }
-        let estimate = clamp_round(target / step)?;
+        // Exact zero shortcut: |target| <= 0.5 * quant_bias * step ⇒ zero
+        // reconstructs at least as close as ±1 and wins ties by magnitude.
+        let thr = self
+            .zero_threshold
+            .get(channel)
+            .and_then(|t| t.get(cell).copied())
+            .unwrap_or(0.0);
+        if target.abs() <= thr {
+            return Ok(0);
+        }
 
+        let estimate = clamp_round(target / step)?;
         let candidates = [0, estimate - 1, estimate, estimate + 1];
 
         #[cfg(feature = "simd")]
         {
             use wide::f32x4;
-            // Reconstruct each candidate: bias_adjust(q) * scale * m
-            let scale_m = self.scale.get(channel).copied().unwrap_or(0.0) * m;
             let mut recon = [0.0f32; 4];
             let mut legal = [false; 4];
             for (i, &q) in candidates.iter().enumerate() {
@@ -303,7 +330,7 @@ impl HfQuantizer {
                     recon[i] = f32::INFINITY;
                     legal[i] = false;
                 } else {
-                    recon[i] = self.bias_adjust(q, channel) * scale_m;
+                    recon[i] = self.bias_adjust(q, channel) * step;
                     legal[i] = true;
                 }
             }
@@ -333,7 +360,7 @@ impl HfQuantizer {
                 if q.abs() > MAX_QUANT {
                     continue;
                 }
-                let error = (self.reconstruct(q, channel, cell) - target).abs();
+                let error = (self.bias_adjust(q, channel) * step - target).abs();
                 if error < best_error || (error == best_error && q.abs() < best.abs()) {
                     best = q;
                     best_error = error;

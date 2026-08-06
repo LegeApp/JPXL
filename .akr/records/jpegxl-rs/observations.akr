@@ -289,6 +289,43 @@ record jpegxl-rs.observation.patches-k3/1 : observation {
     }
 }
 
+record jpegxl-rs.observation.phase0-diag-12mp-2026-08-06/1 : observation {
+    title "Phase-0 measured multiplicity at 4000x3000 (threads 1 vs auto)"
+    state verified
+    statement """
+        Instrumented jpxl bench --diag on 4000x3000 test-set image (log
+        .agent/scratch/phase0-diag-12mp-20260806T084836Z.log). Modular: residual_scans=69,
+        plane_clone_bytes=10080000000 (~10.08 GiB traffic), wall ~44.2s threads=1 vs
+        ~43.2s auto (fingerprint identical). VarDCT defaults labeled fixed: choose_total=
+        372874320 with cover=105934500 cfl_y=11812500 cfl_factor=219689820 final=35437500
+        other=0; stage_ms cover~3.8 cfl~4.7-5.0 quant~0.82 entropy~3.7-3.9; cand_bytes=
+        430464000 sel_bytes=144000000 cfl_sample_bytes=384000000; wall ~14.7s threads=1
+        vs ~15.0s auto (no planning speedup). Confirms outside-advice static counts and
+        that rayon emit does not move the VarDCT wall.
+        """
+    observed_at git:81de004fdfd13c35e9f107faed21a697989c979b
+    method command
+    author "grok-build"
+}
+
+record jpegxl-rs.observation.phase1-diag-12mp-2026-08-06/1 : observation {
+    title "Phase-1 12MP: byte-identical, modular 33.5s, VarDCT 8.3s"
+    state verified
+    statement """
+        After Phase-1 output-preserving fixes on the same 4000x3000 PPM: modular
+        fingerprint dc380915d983b360 matches Phase-0; wall_ms_median 33489 (was ~43223);
+        plane_clone_bytes 432000000 (was 10080000000). VarDCT fingerprint
+        4d17f83b7523b2c2 matches Phase-0; wall_ms_median 8269 (was ~15014); choose_total
+        285647118 (was 372874320) with cover 84.1M / cfl_factor 154.3M (was 105.9M /
+        219.7M); stage_ms cover 1792 cfl 972 quant 285 entropy 3682. Log:
+        .agent/scratch/phase1-diag-12mp-20260806T090329Z.log. cargo test -p jpxl-encode
+        -p jpxl-encode-policy --lib --release: 103+59 pass.
+        """
+    observed_at git:81de004fdfd13c35e9f107faed21a697989c979b
+    method command
+    author "grok-build"
+}
+
 record jpegxl-rs.observation.preopt-encode-baseline-2026-08-06/1 : observation {
     title "Pre-optimization encode wall-time ladder (release jpxl bench)"
     state superseded
@@ -413,6 +450,22 @@ record jpegxl-rs.observation.preopt-flamegraphs-2026-08-06/2 : observation {
             vardct-rate-1024 under cpu_core/cycles/u.
             """
     }
+}
+
+record jpegxl-rs.observation.realworld-encode-vs-cjxl-2026-08-06/1 : observation {
+    title "Real-world encode times: test-set vs cjxl (0.8/4/12 MP)"
+    state verified
+    statement """
+        On host dk-82y3 (nproc=20), jpxl 0.1.0 and cjxl v0.13.0, median wall after
+        warm+3: 4000x3000 modular 38.0s / 9.80 MB vs cjxl -d0 -e7 1.24s / 6.92 MB
+        and -d0 -e1 0.32s / 9.87 MB; VarDCT-fixed (defaults) 14.4s / 1.53 MB vs
+        cjxl -d1 -e7 0.97s / 1.65 MB and -d1 -e1 0.45s / 1.82 MB. Mid 2400x1800
+        modular 12.8s, VarDCT 5.97s. Small 1024x768 modular 2.61s, VarDCT 1.82s.
+        Artifacts under .agent/scratch/realworld-bench-20260806T072202Z/.
+        """
+    observed_at git:81de004fdfd13c35e9f107faed21a697989c979b
+    method command
+    author "grok-build"
 }
 
 record jpegxl-rs.observation.vardct-extra-channels-blending/1 : observation {

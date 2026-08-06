@@ -3,9 +3,15 @@
 
 # Copyrighted ISO standard scans and derived conversions — must never enter history.
 # Agents read these from disk; see AGENTS.md and STANDARDS_INDEX.md.
+# Prefer the sources/ layout; keep legacy root paths ignored too.
 /original-pdfs-do-not-read-first-if-markdown-exists/
 /markdowns/
 /latex/
+/sources/original-pdfs-do-not-read-first-if-markdown-exists/
+/sources/markdowns/
+/sources/latex/
+# External advice under sources/ is retained and tracked via AKR (see
+# sources/outside-advice.STATUS.md); do not ignore sources/*.md.
 
 # Large local test corpora (fixtures used by tests live under JPXL/tests/fixtures)
 /test-set/

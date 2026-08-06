@@ -78,12 +78,17 @@ Options:
     --bpp <f>             Target bits/pixel for vardct-rate (default 1.0)
     --threads <n>         Section-parallel workers (default: auto; 1 = serial)
     --input <path.ppm>    Use a real P6 image instead of the synthetic RGB
+    --diag                After the timed run, print Phase-0 architecture
+                          counters (choose stages, residual scans, plane clones)
 
 Prints one line per run: mode, size, iters, wall_ms_total, wall_ms_median,
-output_bytes, output_sha256_prefix. Timing excludes decode validation.
+output_bytes, fingerprint. With --diag, a second `diag=...` line follows.
 
-This is tooling, not a baseline: see JPXL/docs/PERFORMANCE.md for the rules
-that turn a run into a published number.
+Note: vardct-fixed still uses EncodeRequest::defaults (hierarchical cover,
+CfL, AQ) — only the rate loop is off. See sources/outside-advice.md §2.
+
+This is tooling, not a baseline: AKR performance-baseline-rules govern
+promoted numbers; raw logs live under .agent/scratch/.
 ";
 
 fn main() -> ExitCode {
@@ -354,10 +359,14 @@ fn cmd_bench(args: &[String]) -> u8 {
     let mut bpp = 1.0f64;
     let mut input: Option<&str> = None;
     let mut resources = jpxl_encode::EncodeResources::auto();
+    let mut diag = false;
 
     let mut rest = args.get(1..).unwrap_or(&[]).iter();
     while let Some(arg) = rest.next() {
         match arg.as_str() {
+            "--diag" => {
+                diag = true;
+            }
             "--width" => {
                 let Some(v) = rest.next().and_then(|s| s.parse().ok()) else {
                     fail("`--width` needs a positive integer");
@@ -455,6 +464,19 @@ fn cmd_bench(args: &[String]) -> u8 {
                 report.output_bytes,
                 report.fingerprint
             );
+            if diag {
+                match mode {
+                    "modular" => {
+                        let m = jpxl_encode::lossless::last_plan_multiplicity();
+                        println!("diag={}", m.summary_line());
+                    }
+                    "vardct-fixed" | "vardct-rate" | "vardct-probe" => {
+                        let d = jpxl_encode_policy::last_encode_diag();
+                        println!("diag={}", d.summary_line());
+                    }
+                    _ => {}
+                }
+            }
             EXIT_OK
         }
         Err(err) => {

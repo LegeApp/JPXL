@@ -38,6 +38,46 @@ record jpegxl-rs.decision.c26-alias-mapping/1 : decision {
     author "GitHub Uploader"
 }
 
+record jpegxl-rs.decision.encoder-architecture-phases/1 : decision {
+    title "Reorient encoder work to architecture phases 0-6 (outside-advice)"
+    state active
+    scope [
+        path "JPXL/crates/jpxl-cli/**",
+        path "JPXL/crates/jpxl-encode-policy/**",
+        path "JPXL/crates/jpxl-encode/**",
+        path "JPXL/crates/jpxl-entropy/**"
+    ]
+    topic encoder-architecture-phases
+    decision """
+        After Opt-F through Opt-P leaf work, further leaf SIMD/LTO/PGO is deferred.
+        Implementation follows sources/outside-advice.md phases: (0) instrumentation
+        and matched-quality harness foundations; (1) output-preserving corrections;
+        (2) replace VarDCT quant/CfL unit of work; (3) replace candidate coefficient
+        retention with summaries; (4) rebuild modular planning; (5) perceptual
+        parity calibration; (6) entropy specialization and low-level opts last.
+        Phase completion is marked in AKR only. Clean-room boundary still forbids
+        porting libjxl architecture; behavioral comparison and black-box timing
+        remain allowed.
+        """
+    context """
+        Real-world benches showed ~15x VarDCT and ~30-100x Modular gaps with
+        parallel+simd features already default-on. Flamegraphs and outside advice
+        attribute the gap to call multiplicity and multi-pass planning, not missing
+        AVX kernels on leaves that are already small fractions of wall time.
+        """
+    consequences """
+        jpegxl-rs.work.encoder-optimization-plan and Opt-* leaf milestones remain
+        historical; new work items attach to architecture-phase work under this
+        decision. sources/outside-advice.md is retained per policy.
+        """
+    implements [
+        @jpegxl-rs.constraint.correctness-before-speed,
+        @jpegxl-rs.policy.sources-advice-completion
+    ]
+    supported_by [ @jpegxl-rs.assessment.encoder-architecture-outside-advice ]
+    author "grok-build"
+}
+
 record jpegxl-rs.decision.ledger-conventions/1 : decision {
     title "AKR ledger conventions for jpegxl-rs"
     state proposed

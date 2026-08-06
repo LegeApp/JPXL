@@ -141,12 +141,22 @@ pub fn plan_for(
     };
     let score_planes: &[Plane] = rct_planes_storage.as_deref().unwrap_or(planes);
 
+    // Phase-1: wrap score planes once; every trial Arc-clones only.
+    let shared_score: Vec<modular::SharedPlane> = score_planes
+        .iter()
+        .map(|p| {
+            let bytes = (p.len() as u64).saturating_mul(4);
+            note_plane_clone_bytes(bytes);
+            std::sync::Arc::<[i32]>::from(p.as_slice())
+        })
+        .collect();
+
     for &predictor in PREDICTOR_CANDIDATES {
         let tree = MaTree::single_leaf(predictor);
-        let cost = total_cost(
+        let cost = total_cost_shared(
             width,
             height,
-            score_planes,
+            &shared_score,
             &tree,
             group_size_shift,
             PriceTier::Cheap,
@@ -182,10 +192,10 @@ pub fn plan_for(
                     if candidate.depth() > max_depth || candidate.num_contexts() > max_leaves {
                         continue;
                     }
-                    let cost = total_cost(
+                    let cost = total_cost_shared(
                         width,
                         height,
-                        score_planes,
+                        &shared_score,
                         &candidate,
                         group_size_shift,
                         PriceTier::Cheap,
@@ -222,10 +232,10 @@ pub fn plan_for(
             let Ok(candidate) = best_tree.with_leaf_predictor(ctx, predictor) else {
                 continue;
             };
-            let cost = total_cost(
+            let cost = total_cost_shared(
                 width,
                 height,
-                score_planes,
+                &shared_score,
                 &candidate,
                 group_size_shift,
                 PriceTier::Cheap,
@@ -238,8 +248,14 @@ pub fn plan_for(
     }
 
     // Stage C: exact residual price of the MA finalist (baseline for transforms).
-    let ma_source =
-        modular::ModularSource::direct(width, height, score_planes, false, best_tree.clone(), false);
+    let ma_source = modular::ModularSource::direct_shared(
+        width,
+        height,
+        &shared_score,
+        false,
+        best_tree.clone(),
+        false,
+    );
     best_cost = total_cost_source(&ma_source, group_size_shift, PriceTier::Exact)?;
 
     // Nested palette trial on *source* samples (not RCT). Exact-price gate.
@@ -315,13 +331,31 @@ enum PriceTier {
     Exact,
 }
 
-/// Multiplicity counters for one [`plan_for`] call (Opt-M acceptance).
+/// Multiplicity counters for one [`plan_for`] call (Opt-M + Phase-0 diagnostics).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct PlanMultiplicity {
     /// Exact residual stream prices (finalists + palette/squeeze trials).
     pub exact_residual_prices: u32,
     /// Cheap ranking scores during tree search.
     pub cheap_scores: u32,
+    /// Full residual-field scans (cheap + exact combined).
+    pub residual_scans: u32,
+    /// Approximate bytes deep-cloned when building modular sources (planes × 4).
+    pub plane_clone_bytes: u64,
+}
+
+impl PlanMultiplicity {
+    /// One-line summary for CLI diagnostics.
+    #[must_use]
+    pub fn summary_line(self) -> String {
+        format!(
+            "cheap_scores={} exact_prices={} residual_scans={} plane_clone_bytes={}",
+            self.cheap_scores,
+            self.exact_residual_prices,
+            self.residual_scans,
+            self.plane_clone_bytes
+        )
+    }
 }
 
 std::thread_local! {
@@ -329,6 +363,8 @@ std::thread_local! {
         const { std::cell::Cell::new(PlanMultiplicity {
             exact_residual_prices: 0,
             cheap_scores: 0,
+            residual_scans: 0,
+            plane_clone_bytes: 0,
         }) };
 }
 
@@ -348,6 +384,16 @@ fn bump_exact() {
     LAST_PLAN_MULTIPLICITY.with(|c| {
         let mut m = c.get();
         m.exact_residual_prices = m.exact_residual_prices.saturating_add(1);
+        m.residual_scans = m.residual_scans.saturating_add(1);
+        c.set(m);
+    });
+}
+
+/// Records plane deep-clone traffic from modular source construction (Phase-0).
+pub(crate) fn note_plane_clone_bytes(bytes: u64) {
+    LAST_PLAN_MULTIPLICITY.with(|c| {
+        let mut m = c.get();
+        m.plane_clone_bytes = m.plane_clone_bytes.saturating_add(bytes);
         c.set(m);
     });
 }
@@ -356,20 +402,22 @@ fn bump_cheap() {
     LAST_PLAN_MULTIPLICITY.with(|c| {
         let mut m = c.get();
         m.cheap_scores = m.cheap_scores.saturating_add(1);
+        m.residual_scans = m.residual_scans.saturating_add(1);
         c.set(m);
     });
 }
 
-/// Residual-section bits plus measured MA tree bits for direct planes.
-fn total_cost(
+/// Residual-section bits for shared plane Arcs (Phase-1 plan trials).
+fn total_cost_shared(
     width: u32,
     height: u32,
-    planes: &[Plane],
+    planes: &[modular::SharedPlane],
     tree: &MaTree,
     group_size_shift: u32,
     tier: PriceTier,
 ) -> Result<u64> {
-    let source = modular::ModularSource::direct(width, height, planes, false, tree.clone(), false);
+    let source =
+        modular::ModularSource::direct_shared(width, height, planes, false, tree.clone(), false);
     total_cost_source(&source, group_size_shift, tier)
 }
 

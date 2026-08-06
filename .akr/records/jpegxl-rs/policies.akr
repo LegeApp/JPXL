@@ -293,6 +293,29 @@ record jpegxl-rs.policy.restoration-filter-off/1 : policy {
     author "GitHub Uploader"
 }
 
+record jpegxl-rs.policy.sources-advice-completion/1 : policy {
+    title "Retain external advice under sources/; mark completion in AKR"
+    state active
+    scope [ all ]
+    topic sources-advice
+    rule """
+        External architecture and optimization advice documents are retained under
+        the repository sources/ tree (for example sources/outside-advice.md) and
+        must not be deleted solely because their recommendations were adopted.
+        Progress against such a document is recorded only through AKR: propose or
+        revise work and milestones for each phase, attach evidence, and complete
+        those records when acceptance checks pass. Do not rewrite the advice
+        document into a checklist of strikethroughs or a second plan-of-record;
+        cite its path from AKR records instead.
+        """
+    rationale """
+        Outside advice is durable source material. Living plans and completion
+        state belong in AKR so agents and views stay consistent without editing
+        large narrative files mid-implementation.
+        """
+    author "grok-build"
+}
+
 record jpegxl-rs.policy.suspect-transcription-pipeline/1 : policy {
     title "When every transcription agrees on nonsense, suspect the pipeline"
     state proposed

@@ -64,6 +64,7 @@
 
 pub mod analysis;
 pub mod block;
+pub mod diagnostics;
 mod entropy;
 pub mod error;
 pub mod field;
@@ -96,6 +97,9 @@ use quantize::{
 };
 
 pub use analysis::{AnalysisAtlas, AtomGrid};
+pub use diagnostics::{
+    ChooseStage, EncodeDiag, last_encode_diag, reset_encode_diag, take_encode_diag,
+};
 pub use error::{PolicyError, Result};
 pub use field::AqMode;
 
@@ -264,6 +268,8 @@ fn plan_at_with_cfl(
     cache: &mut CandidateForwardCache,
     entropy_search: EntropySearch,
 ) -> Result<ValidatedEmissionPlan> {
+    // Phase-0: one clean snapshot per plan_at (rate probes overwrite; last wins).
+    diagnostics::reset_encode_diag();
     if request.restoration.epf_iters > 3 {
         return Err(PolicyError::Unsupported {
             what: "epf_iters outside 0..=3",
@@ -321,52 +327,57 @@ fn plan_at_with_cfl(
     // Cover selection, then one forward transform per *selected* varblock.
     // CfL estimation and HF quantization both consume those coefficients so
     // a selected DCT is not recomputed (Opt-V within-probe cache).
-    let mut groups = Vec::new();
     let mut fwd_scratch = ForwardScratch::new();
-    for index in 0..geometry.num_lf_groups() {
-        let id = LfGroupId::new(u32::try_from(index).unwrap_or(u32::MAX));
-        let blocks = geometry
-            .lf_group_blocks(id)
-            .ok_or(PolicyError::Unsupported {
-                what: "an LF group outside the frame's grid",
-            })?;
-        let rect = geometry.lf_group_rect(id).ok_or(PolicyError::Unsupported {
-            what: "an LF group outside the frame's grid",
-        })?;
-        let varblocks = match request.budget.cover_mode {
-            CoverMode::FixedDct8x8 => {
-                let mut varblocks = block::fixed_dct8x8(blocks, aq.baseline)?;
-                for vb in &mut varblocks {
-                    vb.hf_mul = aq.mul_for_footprint(
-                        rect.x0 / 8 + vb.origin.bx(),
-                        rect.y0 / 8 + vb.origin.by(),
-                        1,
-                        1,
-                    );
-                }
-                varblocks
-            }
-            CoverMode::Hierarchical => {
-                select_blocks(
+    let groups = diagnostics::time_stage(diagnostics::StageTimer::Cover, || {
+        diagnostics::with_choose_stage(diagnostics::ChooseStage::Cover, || {
+            let mut groups = Vec::new();
+            for index in 0..geometry.num_lf_groups() {
+                let id = LfGroupId::new(u32::try_from(index).unwrap_or(u32::MAX));
+                let blocks = geometry
+                    .lf_group_blocks(id)
+                    .ok_or(PolicyError::Unsupported {
+                        what: "an LF group outside the frame's grid",
+                    })?;
+                let rect = geometry.lf_group_rect(id).ok_or(PolicyError::Unsupported {
+                    what: "an LF group outside the frame's grid",
+                })?;
+                let varblocks = match request.budget.cover_mode {
+                    CoverMode::FixedDct8x8 => {
+                        let mut varblocks = block::fixed_dct8x8(blocks, aq.baseline)?;
+                        for vb in &mut varblocks {
+                            vb.hf_mul = aq.mul_for_footprint(
+                                rect.x0 / 8 + vb.origin.bx(),
+                                rect.y0 / 8 + vb.origin.by(),
+                                1,
+                                1,
+                            );
+                        }
+                        varblocks
+                    }
+                    CoverMode::Hierarchical => {
+                        select_blocks(
+                            transform_frame,
+                            &hf_quants,
+                            blocks,
+                            (rect.x0, rect.y0),
+                            &aq,
+                            cache,
+                            &mut fwd_scratch,
+                        )?
+                    }
+                };
+                let forwards = forward_selected(
                     transform_frame,
-                    &hf_quants,
-                    blocks,
+                    &varblocks,
                     (rect.x0, rect.y0),
-                    &aq,
                     cache,
                     &mut fwd_scratch,
-                )?
+                )?;
+                groups.push((id, blocks, rect, varblocks, forwards));
             }
-        };
-        let forwards = forward_selected(
-            transform_frame,
-            &varblocks,
-            (rect.x0, rect.y0),
-            cache,
-            &mut fwd_scratch,
-        )?;
-        groups.push((id, blocks, rect, varblocks, forwards));
-    }
+            Ok::<_, PolicyError>(groups)
+        })
+    })?;
 
     let maps: Vec<&[VarblockDecision]> = groups
         .iter()
@@ -376,14 +387,16 @@ fn plan_at_with_cfl(
         .iter()
         .map(|(_, _, _, _, forwards)| forwards.as_slice())
         .collect();
-    let cfl = estimate_cfl(
-        &geometry,
-        &maps,
-        &forwards_ref,
-        &lf_quant,
-        &hf_quants,
-        enable_cfl && !frame.is_grayscale(),
-    )?;
+    let cfl = diagnostics::time_stage(diagnostics::StageTimer::Cfl, || {
+        estimate_cfl(
+            &geometry,
+            &maps,
+            &forwards_ref,
+            &lf_quant,
+            &hf_quants,
+            enable_cfl && !frame.is_grayscale(),
+        )
+    })?;
 
     let mut lf_groups = Vec::new();
     let mut quantized = Vec::new();
@@ -391,15 +404,19 @@ fn plan_at_with_cfl(
         let group_cfl = cfl.groups.get(index).ok_or(PolicyError::Unsupported {
             what: "a missing CfL grid for an LF group",
         })?;
-        let quantized_group = quantize_group(
-            &lf_quant,
-            &hf_quants,
-            &cfl.correlation,
-            group_cfl,
-            &varblocks,
-            &forwards,
-            blocks,
-        )?;
+        let quantized_group = diagnostics::time_stage(diagnostics::StageTimer::Quantize, || {
+            diagnostics::with_choose_stage(diagnostics::ChooseStage::Final, || {
+                quantize_group(
+                    &lf_quant,
+                    &hf_quants,
+                    &cfl.correlation,
+                    group_cfl,
+                    &varblocks,
+                    &forwards,
+                    blocks,
+                )
+            })
+        })?;
 
         lf_groups.push(LfGroupPlan {
             id,
@@ -448,8 +465,9 @@ fn plan_at_with_cfl(
     );
     // Slice 18 / 18b: train under the default I.2.2 map, then optionally
     // adopt custom coefficient orders on an exact price win (Full only).
-    let with_default =
-        train_entropy_with_orders(provisional.clone(), &geometry, entropy_search)?;
+    let with_default = diagnostics::time_stage(diagnostics::StageTimer::Entropy, || {
+        train_entropy_with_orders(provisional.clone(), &geometry, entropy_search)
+    })?;
 
     // Fast rate probes stop here: default map + natural orders is an upper
     // bound on Full's size (Full only adopts alternatives that strictly win).
@@ -467,8 +485,9 @@ fn plan_at_with_cfl(
     if !matches!(candidate_bc, HfBlockContextPlan::Default) {
         let mut custom_walk = provisional.clone();
         custom_walk.entropy = entropy_plan(&geometry, placeholder_histograms(), candidate_bc)?;
-        let with_custom =
-            train_entropy_with_orders(custom_walk, &geometry, EntropySearch::Full)?;
+        let with_custom = diagnostics::time_stage(diagnostics::StageTimer::Entropy, || {
+            train_entropy_with_orders(custom_walk, &geometry, EntropySearch::Full)
+        })?;
         let best_size = jpxl_encode::vardct::price_codestream(&best)?.total;
         let custom_size = jpxl_encode::vardct::price_codestream(&with_custom)?.total;
         if custom_size < best_size {
@@ -501,7 +520,9 @@ fn plan_at_with_cfl(
             // rebuilds them from the multi-offset census.
         }
         if let Ok(with_presets) =
-            train_entropy_with_orders(multi, &geometry, EntropySearch::Full)
+            diagnostics::time_stage(diagnostics::StageTimer::Entropy, || {
+                train_entropy_with_orders(multi, &geometry, EntropySearch::Full)
+            })
         {
             let best_size = jpxl_encode::vardct::price_codestream(&best)?.total;
             let multi_size = jpxl_encode::vardct::price_codestream(&with_presets)?.total;
@@ -639,6 +660,7 @@ struct CflSamples {
 
 impl CflSamples {
     fn push(&mut self, source: f32, regression_y: f32, reconstructed_y: f32, cell: usize) {
+        diagnostics::note_cfl_samples(1);
         self.regression.add(regression_y, source);
         self.samples.push(CflSample {
             source,
@@ -978,6 +1000,8 @@ impl CandidateForwardCache {
                         .unwrap_or_default()
                 }),
             };
+            let n_f32 = fwd.coeffs.iter().map(Vec::len).sum::<usize>();
+            diagnostics::note_candidate_forward(n_f32);
             self.entries.insert(key, fwd);
             self.misses = self.misses.saturating_add(1);
         }
@@ -1003,6 +1027,8 @@ fn forward_selected(
         let px = x0 + vb.origin.bx() * 8;
         let py = y0 + vb.origin.by() * 8;
         let fwd = cache.get_or_insert(frame, vb.transform, px, py, scratch)?;
+        let n_f32 = fwd.coeffs.iter().map(Vec::len).sum::<usize>();
+        diagnostics::note_selected_forward_clone(n_f32);
         out.push(fwd.clone());
     }
     Ok(out)
@@ -1434,21 +1460,24 @@ fn estimate_cfl(
             let cx = fwd.coeffs.get(0).map_or(&[][..], Vec::as_slice);
             let cy = fwd.coeffs.get(1).map_or(&[][..], Vec::as_slice);
             let cb = fwd.coeffs.get(2).map_or(&[][..], Vec::as_slice);
-            for cell in 0..cells {
-                if is_llf_cell(cell, side, n) {
-                    continue;
+            diagnostics::with_choose_stage(diagnostics::ChooseStage::CflY, || {
+                for cell in 0..cells {
+                    if is_llf_cell(cell, side, n) {
+                        continue;
+                    }
+                    let cell8 = (cell / side / fold.max(1)) * 8 + (cell % side / fold.max(1));
+                    let y = cy.get(cell).copied().unwrap_or(0.0);
+                    let q_y = hf_quant.choose(y, 1, cell)?;
+                    let d_y = hf_quant.reconstruct(q_y, 1, cell);
+                    if let Some(t) = group.x.get_mut(tile) {
+                        t.push(cx.get(cell).copied().unwrap_or(0.0), y, d_y, cell8);
+                    }
+                    if let Some(t) = group.b.get_mut(tile) {
+                        t.push(cb.get(cell).copied().unwrap_or(0.0), y, d_y, cell8);
+                    }
                 }
-                let cell8 = (cell / side / fold.max(1)) * 8 + (cell % side / fold.max(1));
-                let y = cy.get(cell).copied().unwrap_or(0.0);
-                let q_y = hf_quant.choose(y, 1, cell)?;
-                let d_y = hf_quant.reconstruct(q_y, 1, cell);
-                if let Some(t) = group.x.get_mut(tile) {
-                    t.push(cx.get(cell).copied().unwrap_or(0.0), y, d_y, cell8);
-                }
-                if let Some(t) = group.b.get_mut(tile) {
-                    t.push(cb.get(cell).copied().unwrap_or(0.0), y, d_y, cell8);
-                }
-            }
+                Ok::<(), PolicyError>(())
+            })?;
         }
         hf_groups.push(group);
     }
@@ -1578,14 +1607,34 @@ fn refine_lf_factors(
     let x_candidates = factor_candidates(x_seed, -128, 127);
     let b_candidates = factor_candidates(b_seed, -128, 127);
 
-    let neutral_cost = lf_residual_cost(x, 0.0, 0, 0, quantizer)?
-        .saturating_add(lf_residual_cost(b, 1.0, 0, 2, quantizer)?);
+    // Phase-1: residual costs are independent across channels — compute once
+    // per candidate, then combine (was re-pricing B inside every X pair).
+    let x_costs: Result<Vec<(i32, u64)>> = x_candidates
+        .iter()
+        .map(|&f| Ok((f, lf_residual_cost(x, 0.0, f, 0, quantizer)?)))
+        .collect();
+    let x_costs = x_costs?;
+    let b_costs: Result<Vec<(i32, u64)>> = b_candidates
+        .iter()
+        .map(|&f| Ok((f, lf_residual_cost(b, 1.0, f, 2, quantizer)?)))
+        .collect();
+    let b_costs = b_costs?;
+
+    let neutral_x = x_costs
+        .iter()
+        .find(|(f, _)| *f == 0)
+        .map(|(_, c)| *c)
+        .unwrap_or(0);
+    let neutral_b = b_costs
+        .iter()
+        .find(|(f, _)| *f == 0)
+        .map(|(_, c)| *c)
+        .unwrap_or(0);
     let mut best = (0i32, 0i32);
-    let mut best_cost = neutral_cost;
-    for &x_factor in &x_candidates {
-        let x_cost = lf_residual_cost(x, 0.0, x_factor, 0, quantizer)?;
-        for &b_factor in &b_candidates {
-            let mut cost = x_cost.saturating_add(lf_residual_cost(b, 1.0, b_factor, 2, quantizer)?);
+    let mut best_cost = neutral_x.saturating_add(neutral_b);
+    for &(x_factor, x_cost) in &x_costs {
+        for &(b_factor, b_cost) in &b_costs {
+            let mut cost = x_cost.saturating_add(b_cost);
             if x_factor != 0 || b_factor != 0 {
                 cost = cost
                     .saturating_add(LF_BUNDLE_EXTRA_BITS)
@@ -1603,14 +1652,17 @@ fn refine_lf_factors(
     Ok(best)
 }
 
-/// The residual bit-cost of one candidate HF factor over a tile.
-fn hf_residual_cost(
+/// Residual bit-cost of one HF CfL factor. When `cutoff` is set, returns
+/// `None` as soon as the running cost cannot beat the cutoff (ties retain the
+/// previous best, so `>=` is safe).
+fn hf_residual_cost_bounded(
     samples: &CflSamples,
     base: f32,
     factor: i32,
     channel: usize,
     quantizer: &HfQuantizer,
-) -> Result<u64> {
+    cutoff: Option<u64>,
+) -> Result<Option<u64>> {
     let k = cfl_multiplier(base, factor, DEFAULT_COLOUR_FACTOR);
     let mut bits = 0u64;
     for sample in &samples.samples {
@@ -1620,8 +1672,15 @@ fn hf_residual_cost(
             sample.cell,
         )?;
         bits = bits.saturating_add(residual_bits(q));
+        if let Some(cut) = cutoff {
+            // Strict > so equal residual+signalling costs still finish for
+            // magnitude tie-breaks toward neutral/smaller factor.
+            if bits > cut {
+                return Ok(None);
+            }
+        }
     }
-    Ok(bits)
+    Ok(Some(bits))
 }
 
 /// The best HF factor for one 64x64 tile: the candidate whose residual-plus-
@@ -1639,24 +1698,41 @@ fn refine_hf_factor(
     channel: usize,
     quantizer: &HfQuantizer,
 ) -> Result<i32> {
-    let seed =
-        samples
-            .regression
-            .best_factor(base, DEFAULT_COLOUR_FACTOR, HF_FACTOR_MIN, HF_FACTOR_MAX);
-    let mut best_factor = 0i32;
-    let mut best_cost = hf_residual_cost(samples, base, 0, channel, quantizer)?;
-    for factor in factor_candidates(seed, HF_FACTOR_MIN, HF_FACTOR_MAX) {
-        if factor == 0 {
-            continue;
+    diagnostics::with_choose_stage(diagnostics::ChooseStage::CflFactor, || {
+        let seed = samples.regression.best_factor(
+            base,
+            DEFAULT_COLOUR_FACTOR,
+            HF_FACTOR_MIN,
+            HF_FACTOR_MAX,
+        );
+        let mut best_factor = 0i32;
+        let mut best_cost = hf_residual_cost_bounded(samples, base, 0, channel, quantizer, None)?
+            .unwrap_or(u64::MAX);
+        for factor in factor_candidates(seed, HF_FACTOR_MIN, HF_FACTOR_MAX) {
+            if factor == 0 {
+                continue;
+            }
+            // Challenger needs residual + signalling < best (ties keep prior).
+            let residual_cutoff = best_cost.saturating_sub(factor_bits(factor));
+            let Some(residual) = hf_residual_cost_bounded(
+                samples,
+                base,
+                factor,
+                channel,
+                quantizer,
+                Some(residual_cutoff),
+            )?
+            else {
+                continue;
+            };
+            let cost = residual.saturating_add(factor_bits(factor));
+            if cost < best_cost || (cost == best_cost && factor.abs() < best_factor.abs()) {
+                best_cost = cost;
+                best_factor = factor;
+            }
         }
-        let cost = hf_residual_cost(samples, base, factor, channel, quantizer)?
-            .saturating_add(factor_bits(factor));
-        if cost < best_cost || (cost == best_cost && factor.abs() < best_factor.abs()) {
-            best_cost = cost;
-            best_factor = factor;
-        }
-    }
-    Ok(best_factor)
+        Ok(best_factor)
+    })
 }
 
 /// One LF group's quantized integers.
@@ -1779,8 +1855,10 @@ fn mul_signal_bits(hf_mul: HfMul, baseline: HfMul) -> f64 {
 /// transform's dequant matrix has finer steps at the same `global_scale`, so
 /// it spends more bits to buy quality nobody asked for and a bits-only
 /// comparison mistakes that for compaction.
+/// §4.3 objective for one square candidate. When `cutoff` is set, returns
+/// `None` as soon as the partial cost cannot beat the split (ties keep split).
 #[allow(clippy::too_many_arguments)]
-fn block_cost(
+fn block_cost_bounded(
     frame: &PreparedFrame,
     hf_quants: &HfQuantizers,
     transform: TransformType,
@@ -1790,7 +1868,8 @@ fn block_cost(
     cache: &mut CandidateForwardCache,
     scratch: &mut ForwardScratch,
     d_y_hf: &mut [f32],
-) -> Result<f64> {
+    cutoff: Option<f64>,
+) -> Result<Option<f64>> {
     let fwd = cache.get_or_insert(frame, transform, px, py, scratch)?;
     let side = transform.sample_cols();
     let n = transform.block_dims().0;
@@ -1808,6 +1887,19 @@ fn block_cost(
     let cb = fwd.coeffs.get(2).map_or(&[][..], Vec::as_slice);
     let mut bits = 0u64;
     let mut weighted_sse = 0.0f64;
+    let check = |bits: u64, weighted_sse: f64| -> bool {
+        if let Some(cut) = cutoff {
+            #[allow(
+                clippy::cast_precision_loss,
+                reason = "bit counts stay far inside f64's exact integer range"
+            )]
+            let partial = bits as f64 + weighted_sse;
+            // Ties keep the split, so >= is a correct prune.
+            partial >= cut
+        } else {
+            false
+        }
+    };
     for cell in 0..cells {
         if is_llf_cell(cell, side, n) {
             continue;
@@ -1819,6 +1911,9 @@ fn block_cost(
         weighted_sse += hf_quants.lambda[1] * to_sample_domain * f64::from(recon - coeff).powi(2);
         if let Some(slot) = d_y_hf.get_mut(cell) {
             *slot = recon;
+        }
+        if check(bits, weighted_sse) {
+            return Ok(None);
         }
     }
     for &(channel, plane) in &[(0usize, cx), (2usize, cb)] {
@@ -1835,13 +1930,36 @@ fn block_cost(
             weighted_sse += hf_quants.lambda.get(channel).copied().unwrap_or(0.0)
                 * to_sample_domain
                 * f64::from(recon - target).powi(2);
+            if check(bits, weighted_sse) {
+                return Ok(None);
+            }
         }
     }
     #[allow(
         clippy::cast_precision_loss,
         reason = "bit counts stay far inside f64's exact integer range"
     )]
-    Ok(bits as f64 + weighted_sse)
+    Ok(Some(bits as f64 + weighted_sse))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn block_cost(
+    frame: &PreparedFrame,
+    hf_quants: &HfQuantizers,
+    transform: TransformType,
+    hf_mul: HfMul,
+    px: u32,
+    py: u32,
+    cache: &mut CandidateForwardCache,
+    scratch: &mut ForwardScratch,
+    d_y_hf: &mut [f32],
+) -> Result<f64> {
+    block_cost_bounded(
+        frame, hf_quants, transform, hf_mul, px, py, cache, scratch, d_y_hf, None,
+    )?
+    .ok_or(PolicyError::Unsupported {
+        what: "an unbounded block cost that returned None",
+    })
 }
 
 /// The quadtree cover of one aligned `size`-atom region, choosing at each level
@@ -1915,7 +2033,16 @@ fn tile_region(
     let single = match square_transform(size) {
         Some(transform) if fits => {
             let hf_mul = aq.mul_for_footprint(x0 / 8 + bx, y0 / 8 + by, size, size);
-            let cost = block_cost(
+            let fixed = PER_VARBLOCK_BITS
+                + NON_DCT8X8_SIGNAL_BITS
+                + mul_signal_bits(hf_mul, aq.baseline);
+            // Fixed metadata alone can already lose to the split.
+            if fixed >= split_cost {
+                return Ok((split_cost, split_blocks));
+            }
+            // Phase-1: prune when partial R-D already loses to the split.
+            let cutoff = split_cost - fixed;
+            match block_cost_bounded(
                 frame,
                 hf_quants,
                 transform,
@@ -1925,17 +2052,21 @@ fn tile_region(
                 cache,
                 scratch,
                 d_y_hf,
-            )? + PER_VARBLOCK_BITS
-                + NON_DCT8X8_SIGNAL_BITS
-                + mul_signal_bits(hf_mul, aq.baseline);
-            Some((
-                cost,
-                vec![VarblockDecision {
-                    origin: LfBlockPos::new(bx, by),
-                    transform,
-                    hf_mul,
-                }],
-            ))
+                Some(cutoff),
+            )? {
+                Some(rd) => {
+                    let cost = rd + fixed;
+                    Some((
+                        cost,
+                        vec![VarblockDecision {
+                            origin: LfBlockPos::new(bx, by),
+                            transform,
+                            hf_mul,
+                        }],
+                    ))
+                }
+                None => None,
+            }
         }
         _ => None,
     };

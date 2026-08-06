@@ -80,7 +80,7 @@ pub fn default_params(channels: &[CodedChannel], nb_meta_channels: usize) -> Vec
 #[must_use]
 pub fn default_would_run(width: u32, height: u32, num_channels: usize) -> bool {
     let channels: Vec<CodedChannel> = (0..num_channels)
-        .map(|_| CodedChannel::full(width, height, Vec::new()))
+        .map(|_| CodedChannel::full_shared(width, height, std::sync::Arc::from(Vec::new().into_boxed_slice())))
         .collect();
     !default_params(&channels, 0).is_empty()
 }
@@ -154,7 +154,7 @@ fn apply_one_step(channels: &mut Vec<CodedChannel>, step: SqueezeParams) -> Resu
                 height: lo_h,
                 hshift: lo_hshift,
                 vshift: lo_vshift,
-                data: lo,
+                data: std::sync::Arc::from(lo.into_boxed_slice()),
             };
         }
         let at = r
@@ -173,7 +173,7 @@ fn apply_one_step(channels: &mut Vec<CodedChannel>, step: SqueezeParams) -> Resu
                 height: hi_h,
                 hshift: hi_hshift,
                 vshift: hi_vshift,
-                data: hi,
+                data: std::sync::Arc::from(hi.into_boxed_slice()),
             },
         );
     }

@@ -1,6 +1,94 @@
 akr 0.1
 project jpegxl-rs
 
+record jpegxl-rs.work.arch-phase0-instrumentation/1 : work {
+    title "Phase 0: encode diagnostics and thread-scaling counters"
+    state active
+    intent """
+        Instrument VarDCT plan stages (choose calls by cover/cfl_y/cfl_factor/final,
+        stage wall times, candidate-forward and CfL sample memory proxies) and
+        Modular plan multiplicity (residual scans, plane clone bytes). Expose via
+        jpxl bench --diag. Measure 12 MP one-thread vs auto-thread for modular and
+        vardct-fixed. Do not change encode outputs in this work.
+        """
+    acceptance {
+        check counters-available {
+            statement """
+                jpxl bench --diag prints choose_total (or residual_scans) on a
+                release binary for modular and vardct-fixed modes.
+                """
+            method command
+        }
+        check twelve-mp-diag-logged {
+            statement """
+                A scratch log under .agent/scratch/ records 12 MP diag lines for
+                threads=1 and threads=auto for at least one VarDCT and one Modular
+                path.
+                """
+            method observation
+        }
+    }
+    implements [
+        @jpegxl-rs.decision.encoder-architecture-phases,
+        @jpegxl-rs.policy.sources-advice-completion
+    ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+    supported_by [ @jpegxl-rs.assessment.encoder-architecture-outside-advice ]
+    author "grok-build"
+    source {
+        kind external
+        path "sources/outside-advice.md"
+        excerpt """
+            Phase 0: Instrumentation and matched-quality testing
+            """
+    }
+}
+
+record jpegxl-rs.work.arch-phase1-output-preserving/1 : work {
+    title "Phase 1: output-preserving encode speed fixes"
+    state active
+    intent """
+        Output-preserving corrections from sources/outside-advice.md Phase 1:
+        exact zero return and precomputed steps in HfQuantizer::choose; bounded
+        block_cost and CfL residual cost; precomputed LF X/B factor costs;
+        shared modular plane storage (no per-trial deep clone); specialized
+        single-leaf residual paths for Gradient/Zero/West. Codestreams must
+        stay byte-identical to the pre-Phase-1 encoder for the same requests.
+        """
+    acceptance {
+        check byte-identical-default-paths {
+            statement """
+                Existing modular and VarDCT encode tests remain green; a golden
+                fingerprint check (or unit tests asserting choose/cover identity)
+                shows no output change for fixed inputs.
+                """
+            method command
+            command "cd JPXL && cargo test -p jpxl-encode -p jpxl-encode-policy --lib --release"
+        }
+        check plane-clone-down {
+            statement """
+                On a multi-megapixel modular encode, plane_clone_bytes from
+                plan_for is far below the Phase-0 ~10GB (shared Arc path).
+                """
+            method observation
+        }
+    }
+    implements [
+        @jpegxl-rs.decision.encoder-architecture-phases,
+        @jpegxl-rs.policy.sources-advice-completion
+    ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+    supported_by [ @jpegxl-rs.assessment.encoder-architecture-outside-advice ]
+    author "grok-build"
+    source {
+        kind external
+        path "sources/outside-advice.md"
+        excerpt """
+            Phase 1: Output-preserving corrections
+            """
+    }
+}
+
 record jpegxl-rs.work.dispose-performance-md/1 : work {
     title "Dispose PERFORMANCE.md into AKR and scratch"
     state superseded

@@ -735,6 +735,9 @@ pub struct Rect {
     pub height: u32,
 }
 
+/// Shared residual plane storage (Phase-1: plan trials Arc-clone, not deep-copy).
+pub type SharedPlane = std::sync::Arc<[i32]>;
+
 /// One residual-coded channel after the transform list (may differ in size).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodedChannel {
@@ -746,14 +749,22 @@ pub struct CodedChannel {
     pub hshift: i32,
     /// Vertical subsample shift.
     pub vshift: i32,
-    /// Raster-order samples, length `width * height`.
-    pub data: Plane,
+    /// Raster-order samples, length `width * height` (shared across plan trials).
+    pub data: SharedPlane,
 }
 
 impl CodedChannel {
-    /// Full-resolution colour/data channel.
+    /// Full-resolution colour/data channel from an owned plane (one deep copy into Arc).
     #[must_use]
     pub fn full(width: u32, height: u32, data: Plane) -> Self {
+        let bytes = (data.len() as u64).saturating_mul(4);
+        crate::lossless::note_plane_clone_bytes(bytes);
+        Self::full_shared(width, height, std::sync::Arc::from(data.into_boxed_slice()))
+    }
+
+    /// Full-resolution channel wrapping an already-shared plane (cheap Arc clone).
+    #[must_use]
+    pub fn full_shared(width: u32, height: u32, data: SharedPlane) -> Self {
         Self {
             width,
             height,
@@ -766,6 +777,20 @@ impl CodedChannel {
     /// Palette meta-channel (unrelated shifts).
     #[must_use]
     pub fn meta(width: u32, height: u32, data: Plane) -> Self {
+        let bytes = (data.len() as u64).saturating_mul(4);
+        crate::lossless::note_plane_clone_bytes(bytes);
+        Self {
+            width,
+            height,
+            hshift: -1,
+            vshift: -1,
+            data: std::sync::Arc::from(data.into_boxed_slice()),
+        }
+    }
+
+    /// Meta channel from shared storage.
+    #[must_use]
+    pub fn meta_shared(width: u32, height: u32, data: SharedPlane) -> Self {
         Self {
             width,
             height,
@@ -863,6 +888,9 @@ pub struct ModularSource {
 
 impl ModularSource {
     /// Direct planes (optional RCT already applied to samples).
+    ///
+    /// Each plane is copied into an [`SharedPlane`] once. Prefer
+    /// [`Self::direct_shared`] when the same planes are scored many times.
     #[must_use]
     pub fn direct(
         width: u32,
@@ -872,9 +900,30 @@ impl ModularSource {
         tree: MaTree,
         allow_lz77: bool,
     ) -> Self {
+        let shared: Vec<SharedPlane> = planes
+            .iter()
+            .map(|p| {
+                let bytes = (p.len() as u64).saturating_mul(4);
+                crate::lossless::note_plane_clone_bytes(bytes);
+                std::sync::Arc::<[i32]>::from(p.as_slice())
+            })
+            .collect();
+        Self::direct_shared(width, height, &shared, rct, tree, allow_lz77)
+    }
+
+    /// Direct planes already held as shared Arcs (Phase-1 plan trials).
+    #[must_use]
+    pub fn direct_shared(
+        width: u32,
+        height: u32,
+        planes: &[SharedPlane],
+        rct: bool,
+        tree: MaTree,
+        allow_lz77: bool,
+    ) -> Self {
         let channels = planes
             .iter()
-            .map(|p| CodedChannel::full(width, height, p.clone()))
+            .map(|p| CodedChannel::full_shared(width, height, std::sync::Arc::clone(p)))
             .collect();
         let transforms = if rct {
             vec![ModularTransform::Rct {
@@ -1681,6 +1730,43 @@ fn collect_plane_residuals(
             .and_then(|i| plane.get(i))
             .map_or(0, |&v| i64::from(v))
     };
+
+    // Phase-1: specialized single-leaf paths skip MA tree walks.
+    if tree.num_contexts() == 1 {
+        let predictor = tree.primary_predictor();
+        match predictor {
+            Predictor::Zero => {
+                for y in 0..rect.height {
+                    for x in 0..rect.width {
+                        let residual = i32::try_from(at(x, y)).map_err(|_| {
+                            EncodeError::ValueOutOfRange {
+                                what: "modular residual",
+                                value: at(x, y),
+                            }
+                        })?;
+                        out.push((0, pack_signed(residual)));
+                    }
+                }
+                return Ok(());
+            }
+            Predictor::West | Predictor::North | Predictor::Gradient => {
+                for y in 0..rect.height {
+                    for x in 0..rect.width {
+                        let prediction = predict(&at, x, y, predictor);
+                        let residual = at(x, y) - prediction;
+                        let residual =
+                            i32::try_from(residual).map_err(|_| EncodeError::ValueOutOfRange {
+                                what: "modular residual",
+                                value: residual,
+                            })?;
+                        out.push((0, pack_signed(residual)));
+                    }
+                }
+                return Ok(());
+            }
+            Predictor::AverageWestNorth | Predictor::Select => {}
+        }
+    }
 
     for y in 0..rect.height {
         for x in 0..rect.width {
