@@ -63,6 +63,7 @@ pub mod frame;
 pub mod headers;
 pub mod lossless;
 pub mod modular;
+pub mod resources;
 pub mod section;
 pub mod vardct;
 
@@ -75,6 +76,7 @@ use modular::{ModularSource, Plane, Rect};
 use section::SectionStore;
 
 pub use error::{EncodeError, Result};
+pub use resources::{EncodeResources, ParallelAxis};
 
 /// The largest bit depth this encoder writes (18181-1 D.7 carries more; the
 /// modular residual range and the CLI's Netpbm I/O both stop at 16).
@@ -233,6 +235,10 @@ pub struct EncodeOptions {
     /// Implies [`EncodeOptions::container`]: a fragmented codestream has
     /// nowhere to live outside a container.
     pub jxlp_fragment_size: Option<usize>,
+    /// Resource policy for coarse section parallelism (Opt-P). Default is
+    /// serial. Under Contract A the codestream must not depend on
+    /// [`EncodeResources::threads`].
+    pub resources: EncodeResources,
 }
 
 /// An 8-bit greyscale image in raster order.
@@ -344,7 +350,7 @@ fn encode_codestream(image: &Image, options: &EncodeOptions) -> Result<Vec<u8>> 
     } else {
         source_planes
     };
-    encode_codestream_with_plan(image, &planes, &plan)
+    encode_codestream_with_plan_resources(image, &planes, &plan, options.resources)
 }
 
 /// Emits the codestream a validated plan describes.
@@ -359,6 +365,20 @@ pub fn encode_codestream_with_plan(
     image: &Image,
     planes: &[Plane],
     plan: &ValidatedLosslessPlan,
+) -> Result<Vec<u8>> {
+    encode_codestream_with_plan_resources(image, planes, plan, EncodeResources::serial())
+}
+
+/// As [`encode_codestream_with_plan`], with an explicit resource policy.
+///
+/// # Errors
+///
+/// As [`encode_codestream_with_plan`].
+pub fn encode_codestream_with_plan_resources(
+    image: &Image,
+    planes: &[Plane],
+    plan: &ValidatedLosslessPlan,
+    resources: EncodeResources,
 ) -> Result<Vec<u8>> {
     let (width, height) = (image.width(), image.height());
     let plan = plan.plan();
@@ -379,7 +399,7 @@ pub fn encode_codestream_with_plan(
         ModularSource::direct(width, height, planes, plan.rct, plan.tree.clone(), true)
     };
 
-    let store = build_sections(&source, &geometry)?;
+    let store = build_sections(&source, &geometry, resources)?;
 
     let mut w = BitWriter::new();
     headers::write_signature(&mut w)?;
@@ -395,7 +415,14 @@ pub fn encode_codestream_with_plan(
 }
 
 /// Encodes every section of the frame into a [`SectionStore`], in TOC order.
-fn build_sections(source: &ModularSource, geometry: &Geometry) -> Result<SectionStore> {
+///
+/// Independent LF-group and pass-group bodies may run on multiple workers;
+/// results are reduced in F.3.1 index order (Contract A).
+fn build_sections(
+    source: &ModularSource,
+    geometry: &Geometry,
+    resources: EncodeResources,
+) -> Result<SectionStore> {
     let mut store = SectionStore::new();
     store.push(modular::encode_lf_global(source, geometry)?);
     if geometry.is_single_section() {
@@ -404,13 +431,13 @@ fn build_sections(source: &ModularSource, geometry: &Geometry) -> Result<Section
     }
 
     // F.3.1 order: LfGlobal, LfGroup[…], HfGlobal, PassGroup[…].
-    // G.2.3: LF groups residual-code channels with hshift≥3 and vshift≥3.
-    // HfGlobal is VarDCT-only (G.3) — always empty for pure modular.
-    for index in 0..geometry.num_lf_groups() {
+    let n_lf = usize::try_from(geometry.num_lf_groups()).unwrap_or(0);
+    let lf_workers = resources.workers_for(n_lf);
+    let lf_bodies = resources::ordered_map(n_lf, lf_workers, |index| {
         let (x0, y0, width, height) = geometry
-            .lf_group_rect(index)
+            .lf_group_rect(u64::try_from(index).unwrap_or(u64::MAX))
             .ok_or_else(|| EncodeError::unsupported("an LF group index past the grid", "G.2"))?;
-        store.push(modular::encode_lf_group(
+        modular::encode_lf_group(
             source,
             Rect {
                 x0,
@@ -419,14 +446,20 @@ fn build_sections(source: &ModularSource, geometry: &Geometry) -> Result<Section
                 height,
             },
             geometry,
-        )?);
+        )
+    })?;
+    for body in lf_bodies {
+        store.push(body);
     }
-    store.push_empty(); // HfGlobal
-    for index in 0..geometry.num_groups() {
+    store.push_empty(); // HfGlobal — VarDCT-only (G.3)
+
+    let n_pg = usize::try_from(geometry.num_groups()).unwrap_or(0);
+    let pg_workers = resources.workers_for(n_pg);
+    let pg_bodies = resources::ordered_map(n_pg, pg_workers, |index| {
         let (x0, y0, width, height) = geometry
-            .group_rect(index)
+            .group_rect(u64::try_from(index).unwrap_or(u64::MAX))
             .ok_or_else(|| EncodeError::unsupported("a group index past the grid", "G.4"))?;
-        store.push(modular::encode_group(
+        modular::encode_group(
             source,
             Rect {
                 x0,
@@ -435,7 +468,10 @@ fn build_sections(source: &ModularSource, geometry: &Geometry) -> Result<Section
                 height,
             },
             geometry,
-        )?);
+        )
+    })?;
+    for body in pg_bodies {
+        store.push(body);
     }
     Ok(store)
 }
@@ -444,6 +480,32 @@ fn build_sections(source: &ModularSource, geometry: &Geometry) -> Result<Section
 mod tests {
     use super::*;
     use modular::{MaTree, Predictor};
+
+    /// Opt-P Contract A: multi-section modular encode is byte-identical at
+    /// 1 worker and N workers (fixed reduction order).
+    #[test]
+    fn multi_section_modular_is_byte_identical_across_thread_counts() {
+        let width = 300u32;
+        let height = 200u32;
+        let plane: Plane = (0..height)
+            .flat_map(|y| (0..width).map(move |x| ((x + 3 * y) % 200) as i32))
+            .collect();
+        let image = Image::new(width, height, 8, vec![plane]).expect("image");
+        let mut serial = EncodeOptions {
+            group_size_shift: Some(0), // group_dim 128 → multi-section
+            ..EncodeOptions::default()
+        };
+        serial.resources = EncodeResources::serial();
+        let mut parallel = serial;
+        parallel.resources = EncodeResources::groups(4);
+
+        let a = encode(&image, &serial).expect("serial");
+        let b = encode(&image, &parallel).expect("parallel");
+        assert_eq!(
+            a, b,
+            "Contract A: 1-thread and 4-thread modular multi-section must match"
+        );
+    }
 
     #[test]
     fn rejects_degenerate_images() {
@@ -517,7 +579,7 @@ mod tests {
             MaTree::single_leaf(Predictor::Gradient),
             true,
         );
-        let store = build_sections(&source, &geometry).expect("sections");
+        let store = build_sections(&source, &geometry, EncodeResources::serial()).expect("sections");
         assert_eq!(store.len() as u64, geometry.num_sections());
         assert_eq!(store.len(), 2 + 1 + 4);
     }

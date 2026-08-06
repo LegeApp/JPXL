@@ -132,6 +132,29 @@ record jpegxl-rs.work.opt-bulk-bitwriter/1 : work {
     part_of [ @jpegxl-rs.milestone.m-opt-bitwriter ]
 }
 
+record jpegxl-rs.work.opt-p-coarse-section-parallel/1 : work {
+    title "Opt-P coarse section parallelism (std::thread, Contract A)"
+    state proposed
+    intent """
+        Introduce EncodeResources with a groups axis and ordered_map over
+        independent LF/pass-group section bodies using std::thread::scope (no
+        Rayon dep). Reduce in fixed F.3.1 index order so 1-thread and N-thread
+        modular and VarDCT multi-group encodes are byte-identical. Leaf SIMD
+        deferred to a follow-up after profiles; LTO/PGO still last.
+        """
+    acceptance {
+        check thread-byte-identity {
+            statement """
+                multi_section_modular_is_byte_identical_across_thread_counts and
+                multi_group_vardct_is_byte_identical_across_thread_counts pass.
+                """
+            method command
+            command "cd JPXL && cargo test -p jpxl-encode multi_section_modular_is_byte_identical --lib && cargo test -p jpxl-encode-policy multi_group_vardct_is_byte_identical --lib"
+        }
+    }
+    part_of [ @jpegxl-rs.milestone.m-opt-parallel-simd ]
+}
+
 record jpegxl-rs.work.opt-plan-import/1 : work {
     title "Disposition advisor optimization-plan.akr into the ledger"
     state proposed

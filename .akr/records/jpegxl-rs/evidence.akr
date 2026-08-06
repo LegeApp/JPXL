@@ -267,6 +267,18 @@ record jpegxl-rs.evidence.opt-m-tiered-planner/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.opt-p-thread-byte-identity/1 : evidence {
+    title "Opt-P Contract A: modular multi-section and VarDCT multi-group encodes are byte-identical at 1 vs 4 section workers (EncodeResources::groups). ordered_map reduces in fixed index order via std::thread::scope; no Rayon dependency."
+    state verified
+    result pass
+    method command
+    observed_at git:a6ad54744c0e7f09ab7413bb0ba70f00b279b336
+    command "cd JPXL && cargo test -p jpxl-encode multi_section_modular_is_byte_identical --lib && cargo test -p jpxl-encode-policy multi_group_vardct_is_byte_identical --lib"
+    summary """
+        Opt-P Contract A: modular multi-section and VarDCT multi-group encodes are byte-identical at 1 vs 4 section workers (EncodeResources::groups). ordered_map reduces in fixed index order via std::thread::scope; no Rayon dependency.
+        """
+}
+
 record jpegxl-rs.evidence.opt-v1-count-only-arenas/1 : evidence {
     title "Count-only BitWriter price_codestream matches emit sizing; group HF coeff arenas; rate_loop 11/11; vardct-fixed 256 fingerprint 37145644e7e1857f (Contract A). Scratch: .agent/scratch/preopt-baseline-2026-08-06.md"
     state verified

@@ -249,6 +249,19 @@ pub fn write_codestream(plan: &ValidatedEmissionPlan) -> Result<Vec<u8>> {
     Ok(emit_codestream(plan)?.bytes)
 }
 
+/// As [`write_codestream`], with an explicit resource policy for section
+/// parallelism (Opt-P).
+///
+/// # Errors
+///
+/// As [`emit_codestream`].
+pub fn write_codestream_with(
+    plan: &ValidatedEmissionPlan,
+    resources: crate::EncodeResources,
+) -> Result<Vec<u8>> {
+    Ok(emit_codestream_with(plan, resources)?.bytes)
+}
+
 /// The exact size of the codestream `plan` emits, without keeping the bytes.
 ///
 /// Uses the **same** write path as [`emit_codestream`] with count-only
@@ -259,7 +272,7 @@ pub fn write_codestream(plan: &ValidatedEmissionPlan) -> Result<Vec<u8>> {
 ///
 /// As [`emit_codestream`].
 pub fn price_codestream(plan: &ValidatedEmissionPlan) -> Result<CodestreamSizing> {
-    Ok(emit_codestream_mode(plan, EmitMode::Count)?.sizing)
+    Ok(emit_codestream_mode(plan, EmitMode::Count, crate::EncodeResources::serial())?.sizing)
 }
 
 /// Whether section bodies and the final codestream buffer are retained.
@@ -279,10 +292,29 @@ enum EmitMode {
 /// [`EncodeError::Entropy`] if the entropy layer rejects a symbol, and
 /// [`EncodeError::ValueOutOfRange`] for a field that cannot be expressed.
 pub fn emit_codestream(plan: &ValidatedEmissionPlan) -> Result<Emission> {
-    emit_codestream_mode(plan, EmitMode::Store)
+    emit_codestream_with(plan, crate::EncodeResources::serial())
 }
 
-fn emit_codestream_mode(plan: &ValidatedEmissionPlan, mode: EmitMode) -> Result<Emission> {
+/// As [`emit_codestream`], with an explicit resource policy.
+///
+/// Independent multi-section bodies may run on multiple workers; results are
+/// reduced in F.3.1 order so Contract A holds across thread counts.
+///
+/// # Errors
+///
+/// As [`emit_codestream`].
+pub fn emit_codestream_with(
+    plan: &ValidatedEmissionPlan,
+    resources: crate::EncodeResources,
+) -> Result<Emission> {
+    emit_codestream_mode(plan, EmitMode::Store, resources)
+}
+
+fn emit_codestream_mode(
+    plan: &ValidatedEmissionPlan,
+    mode: EmitMode,
+    resources: crate::EncodeResources,
+) -> Result<Emission> {
     let inner = plan.plan();
     check_supported(inner)?;
     let geometry = inner.spatial.frame.geometry().map_err(EncodeError::Plan)?;
@@ -304,7 +336,7 @@ fn emit_codestream_mode(plan: &ValidatedEmissionPlan, mode: EmitMode) -> Result<
     )?;
     let frame_header_bits = w.bit_len() - image_headers * 8;
 
-    let store = write_frame_body(inner, &geometry, mode)?;
+    let store = write_frame_body(inner, &geometry, mode, resources)?;
     let lengths = store.lengths();
     let before_toc = w.bit_len();
     store.write(&mut w)?;
@@ -362,6 +394,7 @@ fn write_frame_body(
     plan: &EmissionPlan,
     geometry: &VardctGeometry,
     mode: EmitMode,
+    resources: crate::EncodeResources,
 ) -> Result<SectionStore> {
     let orders = OrderTables::from_order_set(
         &plan
@@ -395,37 +428,67 @@ fn write_frame_body(
         return Ok(store);
     }
 
-    match mode {
-        EmitMode::Store => {
-            store.push(section_bytes(|w| write_lf_global(plan, w))?);
-            for index in 0..geometry.num_lf_groups() {
-                let id = LfGroupId::new(u32::try_from(index).unwrap_or(u32::MAX));
-                store.push(section_bytes(|w| write_lf_group(plan, geometry, id, w))?);
-            }
-            store.push(section_bytes(|w| {
-                write_hf_global(plan, geometry, &tables, w)
-            })?);
-            for group in 0..geometry.num_groups() {
-                store.push(section_bytes(|w| {
-                    write_pass_group(plan, geometry, &orders, &tables, group, w)
-                })?);
-            }
-        }
-        EmitMode::Count => {
-            store.push_len(section_len(|w| write_lf_global(plan, w))?);
-            for index in 0..geometry.num_lf_groups() {
-                let id = LfGroupId::new(u32::try_from(index).unwrap_or(u32::MAX));
-                store.push_len(section_len(|w| write_lf_group(plan, geometry, id, w))?);
-            }
-            store.push_len(section_len(|w| write_hf_global(plan, geometry, &tables, w))?);
-            for group in 0..geometry.num_groups() {
-                store.push_len(section_len(|w| {
-                    write_pass_group(plan, geometry, &orders, &tables, group, w)
-                })?);
-            }
-        }
+    // Globals serial; LF groups and pass groups are independent given the plan
+    // and entropy tables — map them, reduce in TOC index order.
+    store_push(
+        &mut store,
+        mode,
+        section_result(mode, |w| write_lf_global(plan, w))?,
+    );
+
+    let n_lf = usize::try_from(geometry.num_lf_groups()).unwrap_or(0);
+    let lf_workers = resources.workers_for(n_lf);
+    let lf_parts = crate::resources::ordered_map(n_lf, lf_workers, |index| {
+        let id = LfGroupId::new(u32::try_from(index).unwrap_or(u32::MAX));
+        section_result(mode, |w| write_lf_group(plan, geometry, id, w))
+    })?;
+    for part in lf_parts {
+        store_push(&mut store, mode, part);
+    }
+
+    store_push(
+        &mut store,
+        mode,
+        section_result(mode, |w| write_hf_global(plan, geometry, &tables, w))?,
+    );
+
+    let n_pg = usize::try_from(geometry.num_groups()).unwrap_or(0);
+    let pg_workers = resources.workers_for(n_pg);
+    let pg_parts = crate::resources::ordered_map(n_pg, pg_workers, |group| {
+        let group = u64::try_from(group).unwrap_or(u64::MAX);
+        section_result(mode, |w| {
+            write_pass_group(plan, geometry, &orders, &tables, group, w)
+        })
+    })?;
+    for part in pg_parts {
+        store_push(&mut store, mode, part);
     }
     Ok(store)
+}
+
+/// One section as either retained bytes or a count-only length.
+enum SectionPart {
+    Bytes(Vec<u8>),
+    Len(usize),
+}
+
+fn section_result(
+    mode: EmitMode,
+    body: impl FnOnce(&mut BitWriter) -> Result<()>,
+) -> Result<SectionPart> {
+    match mode {
+        EmitMode::Store => Ok(SectionPart::Bytes(section_bytes(body)?)),
+        EmitMode::Count => Ok(SectionPart::Len(section_len(body)?)),
+    }
+}
+
+fn store_push(store: &mut SectionStore, mode: EmitMode, part: SectionPart) {
+    match (mode, part) {
+        (EmitMode::Store, SectionPart::Bytes(b)) => store.push(b),
+        (EmitMode::Count, SectionPart::Len(n)) => store.push_len(n),
+        (EmitMode::Store, SectionPart::Len(n)) => store.push(vec![0; n]),
+        (EmitMode::Count, SectionPart::Bytes(b)) => store.push_len(b.len()),
+    }
 }
 
 /// Runs `body` into a fresh byte-aligned section buffer.

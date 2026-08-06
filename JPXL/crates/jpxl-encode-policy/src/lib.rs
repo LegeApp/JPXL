@@ -2140,6 +2140,30 @@ pub fn encode_srgb8_vardct(
     Ok(jpxl_encode::vardct::write_codestream(&plan)?)
 }
 
+/// As [`encode_srgb8_vardct`], with an explicit section-parallel resource policy.
+///
+/// Rate-targeted encodes still plan serially; only emission fans out under
+/// Contract A (fixed TOC reduction order).
+///
+/// # Errors
+///
+/// As [`encode_srgb8_vardct`].
+pub fn encode_srgb8_vardct_with_resources(
+    width: u32,
+    height: u32,
+    rgb: &[u8],
+    request: &EncodeRequest,
+    resources: jpxl_encode::EncodeResources,
+) -> Result<Vec<u8>> {
+    if request.target.is_some() {
+        // Rate loop already multiplies encodes; keep emission serial for now.
+        return encode_srgb8_vardct(width, height, rgb, request);
+    }
+    let frame = PreparedFrame::from_srgb8(width, height, rgb)?;
+    let plan = plan_frame(&frame, request)?;
+    Ok(jpxl_encode::vardct::write_codestream_with(&plan, resources)?)
+}
+
 /// Encodes an 8-bit sRGB image to a byte or bits-per-pixel target.
 ///
 /// Returns the chosen quantizer, the exact achieved size, the per-section
@@ -2172,6 +2196,37 @@ mod tests {
         let n = (width * height) as usize;
         PreparedFrame::from_linear_srgb(width, height, vec![0.4; n], vec![0.4; n], vec![0.4; n])
             .expect("legal frame")
+    }
+
+    /// Opt-P Contract A: multi-group VarDCT emission is byte-identical at
+    /// 1 and N section workers.
+    #[test]
+    fn multi_group_vardct_is_byte_identical_across_thread_counts() {
+        let (width, height) = (300u32, 260u32); // >256 → multi pass-group
+        let rgb = synthetic_rgb(width, height, false);
+        let request = EncodeRequest::defaults();
+        let serial = encode_srgb8_vardct_with_resources(
+            width,
+            height,
+            &rgb,
+            &request,
+            jpxl_encode::EncodeResources::serial(),
+        )
+        .expect("serial");
+        let parallel = encode_srgb8_vardct_with_resources(
+            width,
+            height,
+            &rgb,
+            &request,
+            jpxl_encode::EncodeResources::groups(4),
+        )
+        .expect("parallel");
+        assert_eq!(
+            serial, parallel,
+            "Contract A: 1-thread and 4-thread VarDCT multi-group must match"
+        );
+        let image = decode(&serial, &Limits::default()).expect("decodes");
+        assert_eq!((image.width, image.height), (width, height));
     }
 
     fn synthetic_rgb(width: u32, height: u32, grayscale: bool) -> Vec<u8> {
