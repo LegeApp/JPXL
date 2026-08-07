@@ -59,6 +59,21 @@ pub struct EncodeDiag {
     /// — the complementary share of `stage_cover_ns` to
     /// [`Self::stage_cover_forward_ns`].
     pub stage_cover_score_ns: u64,
+    /// S8 Phase D (`s8-cover-prune` feature only): wall nanoseconds spent
+    /// computing the cheap staged lower-bound checks
+    /// (`HfQuantizer::cell_lower_bound`) that gate `score_channel_lanes`.
+    /// Overlaps `stage_cover_ns`, not `stage_cover_score_ns` — this is the
+    /// prune's own cost, to be weighed against the `stage_cover_score_ns`
+    /// time it manages to skip.
+    pub stage_cover_prune_ns: u64,
+    /// S8 Phase D: staged bound checks attempted (one per Y/X/B checkpoint
+    /// per candidate, only when a `cutoff` exists).
+    pub cover_prune_checks: u64,
+    /// S8 Phase D: of `cover_prune_checks`, how many actually pruned
+    /// (skipped that channel's exact `choose`/`choose_lane4` loop). The
+    /// live analogue of Phase C's `PruneSummary::prune_rate`, measured on
+    /// real corpora rather than the Phase C fixture.
+    pub cover_prune_hits: u64,
     /// Wall nanoseconds spent in CfL sample construction and factor search.
     pub stage_cfl_ns: u64,
     /// Wall nanoseconds spent in final `quantize_group` over selected blocks.
@@ -102,6 +117,7 @@ impl EncodeDiag {
             "choose_total={} cover={} cfl_y={} cfl_factor={} final={} other={} \
              cover_ms={:.1} cfl_ms={:.1} quant_ms={:.1} entropy_ms={:.1} \
              cover_forward_ms={:.1} cover_score_ms={:.1} \
+             cover_prune_ms={:.1} cover_prune_checks={} cover_prune_hits={} \
              cand_fwd={} cand_bytes={} sel_clones={} sel_bytes={} \
              cfl_samples={} cfl_sample_bytes={}",
             self.choose_total(),
@@ -116,6 +132,9 @@ impl EncodeDiag {
             self.stage_entropy_ns as f64 / 1e6,
             self.stage_cover_forward_ns as f64 / 1e6,
             self.stage_cover_score_ns as f64 / 1e6,
+            self.stage_cover_prune_ns as f64 / 1e6,
+            self.cover_prune_checks,
+            self.cover_prune_hits,
             self.candidate_forwards,
             self.candidate_forward_bytes,
             self.selected_forward_clones,
@@ -136,6 +155,9 @@ std::thread_local! {
         stage_cover_ns: 0,
         stage_cover_forward_ns: 0,
         stage_cover_score_ns: 0,
+        stage_cover_prune_ns: 0,
+        cover_prune_checks: 0,
+        cover_prune_hits: 0,
         stage_cfl_ns: 0,
         stage_quantize_ns: 0,
         stage_entropy_ns: 0,
@@ -214,6 +236,9 @@ pub fn note_stage_ns(which: StageTimer, ns: u64) {
             StageTimer::CoverScore => {
                 d.stage_cover_score_ns = d.stage_cover_score_ns.saturating_add(ns);
             }
+            StageTimer::CoverPrune => {
+                d.stage_cover_prune_ns = d.stage_cover_prune_ns.saturating_add(ns);
+            }
             StageTimer::Cfl => d.stage_cfl_ns = d.stage_cfl_ns.saturating_add(ns),
             StageTimer::Quantize => d.stage_quantize_ns = d.stage_quantize_ns.saturating_add(ns),
             StageTimer::Entropy => d.stage_entropy_ns = d.stage_entropy_ns.saturating_add(ns),
@@ -230,6 +255,11 @@ pub enum StageTimer {
     CoverForward,
     /// S8 Phase B sub-stage of [`Self::Cover`]: the choose-loop scoring pass.
     CoverScore,
+    /// S8 Phase D sub-stage of [`Self::Cover`] (`s8-cover-prune` feature
+    /// only): the cheap staged lower-bound checks, timed separately from
+    /// [`Self::CoverScore`] so the prune's own cost can be weighed against
+    /// the scoring time it manages to skip.
+    CoverPrune,
     Cfl,
     Quantize,
     Entropy,
@@ -262,6 +292,26 @@ pub fn note_selected_forward_clone(n_f32: usize) {
         d.selected_forward_clones = d.selected_forward_clones.saturating_add(1);
         let bytes = (n_f32 as u64).saturating_mul(4);
         d.selected_forward_bytes = d.selected_forward_bytes.saturating_add(bytes);
+        c.set(d);
+    });
+}
+
+/// Records one S8 Phase D staged cheap-bound check attempt
+/// (`s8-cover-prune` feature only).
+pub fn note_cover_prune_check() {
+    DIAG.with(|c| {
+        let mut d = c.get();
+        d.cover_prune_checks = d.cover_prune_checks.saturating_add(1);
+        c.set(d);
+    });
+}
+
+/// Records one S8 Phase D staged cheap-bound check that actually pruned
+/// (`s8-cover-prune` feature only).
+pub fn note_cover_prune_hit() {
+    DIAG.with(|c| {
+        let mut d = c.get();
+        d.cover_prune_hits = d.cover_prune_hits.saturating_add(1);
         c.set(d);
     });
 }

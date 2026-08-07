@@ -654,6 +654,18 @@ record jpegxl-rs.evidence.s8-phase-c-prune-bound-verified-postcommit/1 : evidenc
         """
 }
 
+record jpegxl-rs.evidence.s8-phase-d-prune-wired-verified/1 : evidence {
+    title "s8-cover-prune wired, decision-preserving (byte-identical fingerprints, both configs), tests green both configs; measured speed regression (honest negative) documented, flag stays off default."
+    state verified
+    result pass
+    method command
+    observed_at git:c0b0597d37fc4fdc2da524d3f9235e0b3f6d4487
+    command "cargo test -p jpxl-encode-policy --lib --release && cargo test -p jpxl-encode-policy --lib --release --features s8-cover-prune -- --nocapture wired_prune && cargo test -p jpxl-encode-policy --test vardct_roundtrip --test vardct_oracle --release && cargo test -p jpxl-encode-policy --test vardct_roundtrip --test vardct_oracle --release --features s8-cover-prune && cargo build --workspace --release && jpxl bench vardct-rate --width 512 --height 512 --bpp 1.0 --iters 3 --diag [off vs --features jpxl-encode-policy/s8-cover-prune] && jpxl bench vardct-rate --input small_0p8MP.ppm --bpp 1.0 --iters 3 --diag [off vs on]"
+    summary """
+        s8-cover-prune wired, decision-preserving (byte-identical fingerprints, both configs), tests green both configs; measured speed regression (honest negative) documented, flag stays off default.
+        """
+}
+
 record jpegxl-rs.evidence.spine-builds/1 : evidence {
     title "akr build emits docs/generated (7 views) and akr check reports no diagnostics"
     state verified

@@ -7,6 +7,96 @@
 Dated working ledger. **Prepend** new entries — newest first. Each entry: what
 changed, what is now proved, what is next, what is blocked.
 
+## 2026-08-07 (9) — S8 Phase D: prune wired behind a flag; safe and decision-preserving, but slower — flag stays off
+
+**What changed:**
+- `Cargo.toml`: new `s8-cover-prune` feature, **not** in `default` — with it
+  off, `block_cost_bounded` compiles byte-for-byte as before this phase (the
+  new code is entirely behind `#[cfg(feature = "s8-cover-prune")]`).
+- `lib.rs`: `cheap_stage_would_prune` — the Phase C-proved staged bound,
+  checked with the running `bits`/`weighted_sse` already accumulated from
+  prior channels, at the same Y-then-X-then-B checkpoints
+  `block_cost_bounded` visits, *before* that channel's exact
+  `choose`/`choose_lane4` loop runs. Only fires when `cutoff.is_some()`
+  (merge-candidate scoring, same as the existing exact `check` cutoff);
+  `block_cost`'s unbounded calls (`cutoff: None`) are untouched.
+- `diagnostics.rs`: `stage_cover_prune_ns`, `cover_prune_checks`,
+  `cover_prune_hits` — the live analogue of Phase C's
+  `PruneSummary`/`prune_rate`, timed separately from `stage_cover_score_ns`
+  so the prune's own cost can be weighed against what it skips.
+- `regret.rs`: `wired_prune_does_not_change_tile_regions_decisions`
+  (`s8-cover-prune`-only test) — with the prune *actually* live inside
+  `tile_region`'s real cutoff-bounded calls, `tile_region`'s total cost must
+  still exactly match the harness's independent, never-pruned ground truth,
+  over two fixtures (`ramp_frame`'s mild texture, a new `noisy_frame` —
+  gradient-plus-hash-noise, same construction as `vardct_oracle.rs`'s AQ
+  fixture — for more guaranteed-nonzero cells). `(tile_region_total -
+  harness_total).abs() < 1e-6` on both. This is the *wiring's* proof, on top
+  of Phase C's proof that the *primitive* is safe in isolation.
+
+**Proved, both statically and by direct measurement:**
+1. Lib tests: 65/65 with the feature off (unchanged), 66/66 with it on.
+   `vardct_roundtrip` 12/12 both configs. `vardct_oracle` 9/10 both configs,
+   identically — `both_oracles_decode_a_stream_from_the_hf_mul_segment`
+   fails with the exact same numbers (peak 255, RMSE 119.627) regardless of
+   the flag: still the same pre-existing, unrelated failure documented in
+   Phase C.
+2. **Real byte-identity**, not just the harness's cost-total proxy: `jpxl
+   bench vardct-rate --diag`, flag off vs flag on, same input —
+   - Synthetic 512×512, bpp=1.0: `fingerprint=cf22c12684ce773a` both runs,
+     `output_bytes=31495` both. `cover_prune_checks=3072
+     cover_prune_hits=277` (9.0% prune rate) with the flag on.
+   - Real photo, 1024×768 (`.agent/scratch/realworld-bench-20260806T072202Z/small_0p8MP.ppm`),
+     bpp=1.0: `fingerprint=576ebe32464ae23a` both runs, `output_bytes=97769`
+     both. `cover_prune_checks=7943 cover_prune_hits=765` (9.6% prune rate).
+   Fingerprint and byte count identical in every case: the wired prune
+   changes zero bits of encoder output, on real content, not only on the
+   two unit-test fixtures. Consistent with Phase C's 10% prune rate on its
+   own fixture.
+
+**Measured, honestly negative — the exit gate's "confirm the win
+materializes" clause did not pass:**
+- Synthetic 512×512: `cover_ms` 13.1 → 15.7ms (+20%). `cover_score_ms` did
+  drop slightly (11.9 → 10.8ms — the skipped exact loops are real), but
+  `cover_prune_ms` (3.4ms) costs more than that saving.
+- Real photo 1024×768: `cover_ms` 36.9 → 46.3ms (+25%). Same shape:
+  `cover_score_ms` 31.9 → 30.8ms, `cover_prune_ms` 10.5ms — net loss.
+- Total wall time barely moves either way (cover scoring is a small slice
+  of total encode time next to CfL/entropy/quantize), but the mechanism
+  itself, measured in isolation, is a net loss, not a win.
+
+**Why, most likely:** the cheap bound's per-cell loop is scalar
+(`HfQuantizer::cell_lower_bound`, one call per cell) while the exact loop it
+sometimes replaces is SIMD-batched (`choose_lane4`, 4 cells/call) — and
+`choose` already has its own zero-threshold fast path for the
+guaranteed-zero case, the same one `cell_lower_bound` reuses, so a
+guaranteed-zero cell was already cheap before this phase. Checking *every*
+candidate at *all three* stages to catch the ~9-10% that turn out prunable
+costs more than it saves. This is the honest negative result the plan
+explicitly allowed for ("if not, an honest negative result... is an
+acceptable outcome, not a failure to fix by loosening a check") — not a bug
+to chase.
+
+**Decision:** the infrastructure lands, proven safe and decision-preserving
+by both the exhaustive Phase C proof and this phase's real-content
+byte-identity measurement — but `s8-cover-prune` is **not** promoted to
+`default` and should not be turned on. If a future session wants to revisit
+this, the fix is architectural (batch `cell_lower_bound` the way
+`choose_lane4` batches `choose`, or check only at Y — the stage where the
+running total is smallest and the check is cheapest relative to what
+remains) — not a reason to touch the safety proof.
+
+Evidence: `jpegxl-rs.evidence.s8-phase-d-prune-wired-verified`. Work item
+`jpegxl-rs.work.arch-s8-phase-d-prune-wired` completed; parent scoping
+record `jpegxl-rs.work.arch-s8-full-redesign-scoped` updated.
+
+**Next: Phase E** (corpus provenance — required before any *new* fixture
+from this plan can merge; Phase D introduced none, reusing existing
+fixtures, so E's trigger condition may not even fire) or **Phase F**
+(explicitly staged out, gated on a Phase D win that did not materialize —
+if pursued at all, it would need its own justification, not inherit Phase
+D's).
+
 Two sections at the bottom are permanent and must be kept current:
 "Already fixed — do not redo" and "Traps — do not fix these by loosening a
 check". When a diagnosis turns out to be wrong, correct it **in place** and

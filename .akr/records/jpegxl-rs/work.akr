@@ -729,36 +729,70 @@ record jpegxl-rs.work.arch-s8-full-redesign-scoped/2 : work {
         case; (2) regret.rs's PruneSummary over an independent quadtree walk,
         safety_violations=0 asserted as the exit gate, prune_rate recorded
         (0.10 on the Phase C fixture) as the separate usefulness measurement, not
-        asserted against a threshold (that is Phase D's decision). Purely
+        asserted against a threshold (that was Phase D's decision). Purely
         additive: lib.rs (the production cover-scoring path) is untouched by this
         phase -- no --diag byte-identity check applies, unlike Phase B's
         instrumentation which did wrap production call sites. Evidence:
         jpegxl-rs.evidence.s8-phase-c-prune-bound-verified.
 
-        Phase D (NEXT) -- wire the safe prune behind a feature flag, survivors
-        still scored exactly (block_cost_bounded unchanged) so winners' bits/sse
-        stay exact. vardct_oracle.rs's external-decoder tests prove PLACEMENT
-        conformance only, not decision quality -- new decision-quality fixtures
-        required, driven by the Phase-A harness with an explicit tail-regret
-        budget. Honest negative result (flag stays off) is acceptable if the
-        realistic (low-teens percent, not 31-35%) win doesn't materialize. Keep
-        the same flag-off byte-identity discipline the instrumentation already
-        established -- unlike Phase A/B/C's pure measurement, the prune IS a
-        decision-path change when enabled.
+        Phase D -- COMPLETE, see jpegxl-rs.work.arch-s8-phase-d-prune-wired. Wired
+        Phase C's bound into block_cost_bounded's real Y-then-X-then-B
+        cutoff-bounded calls, behind a new `s8-cover-prune` Cargo feature NOT in
+        default (flag off compiles byte-identical to before this phase). Added
+        cheap_stage_would_prune (lib.rs) and diagnostics counters
+        (stage_cover_prune_ns, cover_prune_checks, cover_prune_hits). Decision
+        quality proved TWO ways: (1) regret.rs's wired_prune_does_not_change_-
+        tile_regions_decisions (s8-cover-prune-only test) -- tile_region's real
+        total cost with the prune live matches the harness's independent
+        never-pruned ground truth to 1e-6, over ramp_frame and a new noisy_frame
+        (gradient+hash-noise, more guaranteed-nonzero cells); (2) real-content
+        byte-identity via `jpxl bench vardct-rate --diag`, flag off vs on:
+        IDENTICAL fingerprint and output_bytes on both a synthetic 512x512 frame
+        (fingerprint=cf22c12684ce773a, prune_checks=3072 hits=277, ~9.0% prune
+        rate) and a real 1024x768 photo (fingerprint=576ebe32464ae23a,
+        prune_checks=7943 hits=765, ~9.6% prune rate, matching Phase C's ~10%).
+        The wired prune changes zero bits of encoder output on real content, not
+        just synthetic unit-test fixtures.
+
+        HONEST NEGATIVE RESULT on speed, the exit gate's hardest clause: cover_ms
+        INCREASED with the flag on in both measurements (synthetic 13.1->15.7ms,
+        +20%; real photo 36.9->46.3ms, +25%). cover_score_ms did drop slightly
+        (the skipped exact loops are real: 11.9->10.8ms synthetic, 31.9->30.8ms
+        photo) but cover_prune_ms's own cost exceeds that saving (3.4ms synthetic,
+        10.5ms photo). Likely cause: cell_lower_bound's per-cell loop is scalar,
+        while the exact loop it sometimes replaces is SIMD-batched via
+        choose_lane4 (4 cells/call) -- and choose already has its own
+        zero-threshold fast path for the guaranteed-zero case (the same one
+        cell_lower_bound reuses), so a guaranteed-zero cell was already cheap.
+        Checking every candidate at all three stages to catch the ~9-10% that
+        prune costs more than it saves. Total wall time barely moves (cover
+        scoring is a small slice of total encode time), but the mechanism itself
+        is a net loss in isolation -- an acceptable, plan-sanctioned honest
+        negative result, not a bug to chase.
+
+        DECISION: infrastructure lands (proven safe + decision-preserving by both
+        Phase C's exhaustive proof and this phase's real-content measurement), but
+        `s8-cover-prune` is NOT promoted to default and should not be turned on.
+        A future fix, if pursued, is architectural (batch cell_lower_bound the way
+        choose_lane4 batches choose, or check only at the cheapest-relative-to-
+        remaining stage) -- not a reason to revisit the safety proof. Evidence:
+        jpegxl-rs.evidence.s8-phase-d-prune-wired-verified.
 
         Phase E -- test-set/ has no provenance sidecars (AGENTS.md §9 violation)
-        and isn't stratified per outside-advice §19; required before Phase D's
-        fixtures can merge. ADDED per the advisor: fold in a natural-photo
-        (non-synthetic, non-repetitive) re-run of the Phase-B winner-stability
-        measurement to check whether the i=9 churn anomaly is a real, general
-        phenomenon or an artifact of the synthetic ramp+checkerboard fixture's
-        locally-identical atoms sharing a merge/split tie-threshold -- not blocking
-        Phase C, but should land before Phase D's fixtures do.
+        and isn't stratified per outside-advice §19. Phase D introduced no NEW
+        fixtures (reused ramp_frame/noisy_frame-style synthetic generators and an
+        existing .agent/scratch/ photo already used by a prior real-world bench
+        run), so Phase E's original trigger ("required before Phase D's fixtures
+        can merge") may not fire -- re-assess before starting E. The advisor's
+        added natural-photo re-run of the Phase-B i=9 winner-churn anomaly is
+        still open and independently worth doing regardless of Phase D's outcome.
 
         Phase F -- explicitly NOT attempted: the tight, continuous, closed-form
-        rate estimate (§8's ambitious half). Gated on Phase A live + Phase D's
-        measured tail-regret ceiling; named explicitly so it isn't silently
-        smuggled into an earlier phase under time pressure.
+        rate estimate (§8's ambitious half). Was gated on Phase D's measured
+        tail-regret ceiling; Phase D's speed result was negative, so Phase F's
+        justification (extend a within-probe prune that didn't pay for itself) is
+        now weaker than when this plan was scoped -- if pursued at all, needs its
+        own fresh justification, not inheritance from Phase D's infrastructure.
 
         Out of scope for the whole plan: AnalysisAtlas expansion; §8's
         memory-discard/cache-summaries design (DROPPED at Phase B, see above, not
@@ -771,7 +805,8 @@ record jpegxl-rs.work.arch-s8-full-redesign-scoped/2 : work {
         (established the 96-97% candidate-set cross-probe reuse this phase built
         on), jpegxl-rs.work.arch-s8-phase-a-regret-harness,
         jpegxl-rs.work.arch-s8-phase-b-measurements,
-        jpegxl-rs.work.arch-s8-phase-c-prune-bound.
+        jpegxl-rs.work.arch-s8-phase-c-prune-bound,
+        jpegxl-rs.work.arch-s8-phase-d-prune-wired.
         """
     implements [
         @jpegxl-rs.decision.encoder-architecture-phases,
@@ -1029,6 +1064,15 @@ record jpegxl-rs.work.arch-s8-phase-c-prune-bound/1 : work {
     state completed
     intent """
         Implement the (advisor-revised, simplified) transient per-candidate lower bound: HfQuantizer::cell_lower_bound gives an exact distortion floor for guaranteed-zero cells and a loose-but-provable >=2-bit rate floor for guaranteed-nonzero cells, staged Y-then-X-then-B (B using Y's real reconstruction, never raw cb, since kB=1.0 makes the coupling load-bearing for safety). Validated two ways: (1) an exhaustive property test in quantize.rs asserting the bound never exceeds the exact per-cell cost across 6 quantizer configs x 12 boundary targets; (2) a second independent quadtree walk in regret.rs (measure_prune_safety/validate_candidate_prune, mirroring measure_region's read-only discipline) that stages the bound exactly as block_cost_bounded's Y/X/B running-total order and units would, and asserts PruneSummary.safety_violations == 0 while recording prune_rate as the usefulness half of the exit gate. Purely additive: lib.rs (the production path) is untouched by this phase; wiring is Phase D's job.
+        """
+    part_of [ @jpegxl-rs.work.arch-s8-full-redesign-scoped ]
+}
+
+record jpegxl-rs.work.arch-s8-phase-d-prune-wired/1 : work {
+    title "S8 Phase D: wire the Phase C-proved cheap prune behind a flag — safe, decision-preserving, measured slower"
+    state completed
+    intent """
+        sources/outside-advice.md §8, jpegxl-rs.work.arch-s8-full-redesign-scoped Phase D. Wire Phase C's staged cheap lower bound (HfQuantizer::cell_lower_bound) into block_cost_bounded's real Y-then-X-then-B cutoff-bounded calls, behind a new Cargo feature `s8-cover-prune` NOT in default (flag off compiles byte-identical to before this phase). Added `cheap_stage_would_prune` (lib.rs), checked at the same three checkpoints tile_region's real merge-candidate cutoff already visits, before that channel's exact choose/choose_lane4 loop runs -- never instead of it, so a survivor is always scored exactly. Added diagnostics counters (stage_cover_prune_ns, cover_prune_checks, cover_prune_hits) to measure the prune's own cost against what it skips. Added a Phase D decision-quality test (regret.rs, s8-cover-prune-only): with the prune actually live inside tile_region's real calls, tile_region's total cost must still exactly match the harness's independent never-pruned ground truth, over two fixtures (ramp_frame, a new noisy_frame with gradient+hash-noise for more guaranteed-nonzero cells) -- 1e-6 tolerance, zero violations. Verified further by real-content byte-identity: `jpxl bench vardct-rate --diag` flag off vs on produced IDENTICAL fingerprint and output_bytes on both a synthetic 512x512 frame (fingerprint=cf22c12684ce773a, cover_prune_checks=3072 hits=277, ~9.0% prune rate) and a real 1024x768 photo (fingerprint=576ebe32464ae23a, cover_prune_checks=7943 hits=765, ~9.6% prune rate) -- the wired prune changes zero bits of encoder output on real content, not just the two unit-test fixtures. HONEST NEGATIVE RESULT on the speed exit gate: cover_ms increased with the flag on in both measurements (synthetic 13.1->15.7ms, +20%; real photo 36.9->46.3ms, +25%) -- cover_score_ms did drop slightly (the skipped exact loops are real) but cover_prune_ms's own cost (scalar per-cell cell_lower_bound calls, vs the SIMD-batched choose_lane4 loop it sometimes replaces, checked at all three Y/X/B stages on 100% of candidates to catch the ~9-10% that prune) exceeds the saving. Total wall time barely moves (cover scoring is a small slice of total encode time), but the mechanism itself is a net loss in isolation. Decision: infrastructure lands, proven safe and decision-preserving by both Phase C's exhaustive proof and this phase's real-content measurement, but `s8-cover-prune` is NOT promoted to default and should not be turned on without an architectural fix (batch cell_lower_bound like choose_lane4 batches choose, or check only at the cheapest-relative-to-remaining stage). Verified: 65/65 lib tests flag off (unchanged), 66/66 flag on; vardct_roundtrip 12/12 both configs; vardct_oracle 9/10 both configs identically (both_oracles_decode_a_stream_from_the_hf_mul_segment fails with the same peak=255 RMSE=119.627 regardless of the flag -- confirmed pre-existing/unrelated in Phase C). cargo build --workspace --release clean. Zero new clippy warnings in either config (diffed against baseline, byte-identical warning sets).
         """
     part_of [ @jpegxl-rs.work.arch-s8-full-redesign-scoped ]
 }

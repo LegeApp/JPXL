@@ -849,4 +849,141 @@ mod tests {
              the harness's notion of exact has drifted from production"
         );
     }
+
+    /// Gradient left half, hash-noise right half (same construction as
+    /// `vardct_oracle.rs`'s `both_oracles_decode_an_adaptive_quantization_stream`):
+    /// a field with both smooth and high-frequency content, complementing
+    /// `ramp_frame`'s milder texture with a fixture more likely to produce
+    /// guaranteed-nonzero cells (the cheap bound's loose, `2`-bit-only case).
+    #[cfg(feature = "s8-cover-prune")]
+    fn noisy_frame(width: u32, height: u32) -> PreparedFrame {
+        let n = usize::try_from(width).unwrap_or(0) * usize::try_from(height).unwrap_or(0);
+        let mut x_plane = vec![0.0f32; n];
+        let mut y_plane = vec![0.0f32; n];
+        let mut b_plane = vec![0.0f32; n];
+        for row in 0..height {
+            for col in 0..width {
+                let idx = usize::try_from(row * width + col).unwrap_or(0);
+                let v = if col < width / 2 {
+                    (0.3 + f32::from(u16::try_from((col + row) % 64).unwrap_or(0)) / 128.0)
+                        .clamp(0.0, 1.0)
+                } else {
+                    let hash = col
+                        .wrapping_mul(0x9E37)
+                        .wrapping_add(row.wrapping_mul(0x79B9))
+                        .wrapping_mul(0x85EB_CA6B);
+                    f32::from(u16::try_from((hash >> 24) & 0x3F).unwrap_or(0)) / 63.0
+                };
+                if let (Some(x), Some(y), Some(b)) = (
+                    x_plane.get_mut(idx),
+                    y_plane.get_mut(idx),
+                    b_plane.get_mut(idx),
+                ) {
+                    *x = 0.0;
+                    *y = v;
+                    *b = v * 0.6;
+                }
+            }
+        }
+        PreparedFrame::from_linear_srgb(width, height, x_plane, y_plane, b_plane)
+            .expect("legal frame")
+    }
+
+    /// `tile_region`'s total cost over every LF group of `frame`, exactly as
+    /// `measure_region_matches_tile_regions_own_total_cost` computes it.
+    #[cfg(feature = "s8-cover-prune")]
+    fn tile_region_total(frame: &PreparedFrame) -> f64 {
+        let request = EncodeRequest::defaults();
+        let atlas = AnalysisAtlas::analyze(frame);
+        let quantizer = QuantizerChoice::from_request(&request);
+        let aq = AqSetup::build(&atlas, &request, quantizer);
+        let hf_quants =
+            HfQuantizers::new(aq.global_scale.get(), aq.baseline, &aq.muls()).expect("quantizers");
+        let decision = jpxl_encode::vardct::FrameDecision {
+            width: frame.width(),
+            height: frame.height(),
+            group_size_shift: crate::VARDCT_GROUP_SIZE_SHIFT,
+            num_passes: 1,
+        };
+        let geometry = decision.geometry().expect("geometry");
+        let mut cache = CandidateForwardCache::new();
+        let mut scratch = ForwardScratch::new();
+        let mut total = 0.0f64;
+        for index in 0..geometry.num_lf_groups() {
+            let id = crate::LfGroupId::new(u32::try_from(index).unwrap_or(u32::MAX));
+            let blocks = geometry.lf_group_blocks(id).expect("blocks");
+            let rect = geometry.lf_group_rect(id).expect("rect");
+            let mut d_y_hf = vec![0.0f32; 32 * 32];
+            let mut sby = 0u32;
+            while sby < blocks.height {
+                let mut sbx = 0u32;
+                while sbx < blocks.width {
+                    let (cost, _blocks) = crate::tile_region(
+                        frame,
+                        &hf_quants,
+                        blocks,
+                        sbx,
+                        sby,
+                        4,
+                        &aq,
+                        rect.x0,
+                        rect.y0,
+                        &mut cache,
+                        &mut scratch,
+                        &mut d_y_hf,
+                    )
+                    .expect("tile_region");
+                    total += cost;
+                    sbx += 4;
+                }
+                sby += 4;
+            }
+        }
+        total
+    }
+
+    /// S8 Phase D's decision-quality exit gate (`s8-cover-prune` feature
+    /// only, so it only compiles/runs when the wiring under test is
+    /// actually active): with the cheap staged bound live inside
+    /// `block_cost_bounded`'s real cutoff-bounded calls (exactly the calls
+    /// `tile_region` makes), `tile_region`'s own total cost must still
+    /// exactly match this module's independent ground-truth total — which
+    /// never applies the prune, or any cutoff at all
+    /// ([`measure_frame`]/[`ExactPolicy`]). Phase C already proved the bound
+    /// safe exhaustively in isolation
+    /// (`cell_lower_bound_prune_never_discards_a_true_winner`); this proves
+    /// the *wiring* preserves that safety once the prune is actually
+    /// exercised by production code, over two fixtures with different
+    /// spectral character. A tail-regret budget would be the wrong bar here
+    /// — Phase C's bound is provable, not merely usually-right, so the
+    /// correct budget is exactly zero, and that is what this asserts.
+    #[cfg(feature = "s8-cover-prune")]
+    #[test]
+    fn wired_prune_does_not_change_tile_regions_decisions() {
+        for (name, frame) in [
+            ("ramp", ramp_frame(128, 128)),
+            ("noisy", noisy_frame(128, 128)),
+        ] {
+            crate::diagnostics::reset_encode_diag();
+            let tile_region_total = tile_region_total(&frame);
+            let diag = crate::diagnostics::take_encode_diag();
+            let (_samples, harness_total) = measure_frame(&frame, &ExactPolicy);
+            eprintln!(
+                "S8_PHASE_D_WIRED_PRUNE fixture={name} tile_region_total={tile_region_total:.6} \
+                 harness_total={harness_total:.6} cover_prune_checks={} cover_prune_hits={}",
+                diag.cover_prune_checks, diag.cover_prune_hits
+            );
+            assert!(
+                diag.cover_prune_checks > 0,
+                "fixture {name} exercised zero staged-bound checks: not a useful test of the \
+                 wiring"
+            );
+            assert!(
+                (tile_region_total - harness_total).abs() < 1e-6,
+                "fixture {name}: tile_region total {tile_region_total} vs harness total \
+                 {harness_total} with the prune wired live — the wiring changed a decision, \
+                 which Phase C's exhaustive safety proof says should be impossible"
+            );
+        }
+    }
 }

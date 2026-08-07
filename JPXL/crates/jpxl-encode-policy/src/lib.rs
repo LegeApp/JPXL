@@ -2012,6 +2012,58 @@ fn score_channel_lanes(
     Ok(false)
 }
 
+/// S8 Phase D (`sources/outside-advice.md` §8, feature `s8-cover-prune`):
+/// the staged cheap lower bound Phase C's `regret::validate_candidate_prune`
+/// proved safe (zero violations, exhaustively checked over every
+/// merge-candidate node a corpus fixture produced) — checked with the
+/// `bits`/`weighted_sse` already accumulated from prior channels, *before*
+/// this channel's exact `choose`/`choose_lane4` loop runs, never instead of
+/// it. A survivor still runs the exact loop unchanged; this can only ever
+/// return early where the exact loop would eventually have pruned too, so
+/// it cannot change which candidate wins — only skip paying for cells whose
+/// fate is already provably decided.
+///
+/// # Errors
+///
+/// As [`HfQuantizer::cell_lower_bound`].
+#[cfg(feature = "s8-cover-prune")]
+#[allow(clippy::too_many_arguments)]
+fn cheap_stage_would_prune(
+    hf_quant: &HfQuantizer,
+    channel: usize,
+    lambda: f64,
+    to_sample_domain: f64,
+    side: usize,
+    n: usize,
+    mut target_at: impl FnMut(usize) -> f32,
+    bits_so_far: u64,
+    weighted_sse_so_far: f64,
+    cutoff: f64,
+) -> Result<bool> {
+    let mut bits = bits_so_far;
+    let mut weighted_sse = weighted_sse_so_far;
+    for row in 0..side {
+        let col_start = if row < n { n } else { 0 };
+        for col in col_start..side {
+            let cell = row * side + col;
+            let (b, s) = hf_quant.cell_lower_bound(target_at(cell), channel, cell)?;
+            bits = bits.saturating_add(b);
+            weighted_sse += lambda * to_sample_domain * s;
+        }
+    }
+    diagnostics::note_cover_prune_check();
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "bit counts stay far inside f64's exact integer range"
+    )]
+    let partial = bits as f64 + weighted_sse;
+    let would_prune = partial >= cutoff;
+    if would_prune {
+        diagnostics::note_cover_prune_hit();
+    }
+    Ok(would_prune)
+}
+
 /// §4.3 objective for one square candidate. When `cutoff` is set, returns
 /// `None` as soon as the partial cost cannot beat the split (ties keep split).
 #[allow(clippy::too_many_arguments)]
@@ -2061,6 +2113,26 @@ fn block_cost_bounded(
             false
         }
     };
+    #[cfg(feature = "s8-cover-prune")]
+    if let Some(cut) = cutoff {
+        let would_prune = diagnostics::time_stage(diagnostics::StageTimer::CoverPrune, || {
+            cheap_stage_would_prune(
+                hf_quant,
+                1,
+                hf_quants.lambda[1],
+                to_sample_domain,
+                side,
+                n,
+                |cell| cy.get(cell).copied().unwrap_or(0.0),
+                bits,
+                weighted_sse,
+                cut,
+            )
+        })?;
+        if would_prune {
+            return Ok(None);
+        }
+    }
     let pruned = diagnostics::time_stage(diagnostics::StageTimer::CoverScore, || {
         score_channel_lanes(
             hf_quant,
@@ -2085,6 +2157,29 @@ fn block_cost_bounded(
     }
     for &(channel, plane) in &[(0usize, cx), (2usize, cb)] {
         let k = if channel == 0 { 0.0 } else { 1.0 };
+        #[cfg(feature = "s8-cover-prune")]
+        if let Some(cut) = cutoff {
+            let would_prune = diagnostics::time_stage(diagnostics::StageTimer::CoverPrune, || {
+                cheap_stage_would_prune(
+                    hf_quant,
+                    channel,
+                    hf_quants.lambda.get(channel).copied().unwrap_or(0.0),
+                    to_sample_domain,
+                    side,
+                    n,
+                    |cell| {
+                        plane.get(cell).copied().unwrap_or(0.0)
+                            - k * d_y_hf.get(cell).copied().unwrap_or(0.0)
+                    },
+                    bits,
+                    weighted_sse,
+                    cut,
+                )
+            })?;
+            if would_prune {
+                return Ok(None);
+            }
+        }
         let pruned = diagnostics::time_stage(diagnostics::StageTimer::CoverScore, || {
             score_channel_lanes(
                 hf_quant,
