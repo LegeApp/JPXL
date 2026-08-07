@@ -460,14 +460,20 @@ record jpegxl-rs.work.arch-s8-cover-lane-simd/1 : work {
                 """
             method command
             command "cd JPXL && cargo test -p jpxl-encode-policy --lib --release choose_lane4"
-            verified_by [ @jpegxl-rs.evidence.s8-cover-lane-simd-verified/1 ]
+            verified_by [
+                @jpegxl-rs.evidence.s8-cover-lane-simd-postcommit/1,
+                @jpegxl-rs.evidence.s8-cover-lane-simd-verified/1
+            ]
         }
         check measured-faster {
             statement """
                 cover_ms on the 12MP vardct-fixed --diag benchmark is not slower than the pre-change baseline (it improved ~14-15% after the whole-lane zero fast path).
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.s8-cover-lane-simd-verified/1 ]
+            verified_by [
+                @jpegxl-rs.evidence.s8-cover-lane-simd-postcommit/1,
+                @jpegxl-rs.evidence.s8-cover-lane-simd-verified/1
+            ]
         }
         check tests-green {
             statement """
@@ -475,7 +481,10 @@ record jpegxl-rs.work.arch-s8-cover-lane-simd/1 : work {
                 """
             method command
             command "cd JPXL && cargo test -p jpxl-encode-policy --lib --release && cargo test -p jpxl-encode-policy --lib --release --no-default-features && cargo test -p jpxl-encode-policy --test vardct_roundtrip --test vardct_oracle --test rate_loop --release"
-            verified_by [ @jpegxl-rs.evidence.s8-cover-lane-simd-verified/1 ]
+            verified_by [
+                @jpegxl-rs.evidence.s8-cover-lane-simd-postcommit/1,
+                @jpegxl-rs.evidence.s8-cover-lane-simd-verified/1
+            ]
         }
     }
     implements [
