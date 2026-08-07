@@ -473,6 +473,30 @@ fn cmd_bench(args: &[String]) -> u8 {
                     "vardct-fixed" | "vardct-rate" | "vardct-probe" => {
                         let d = jpxl_encode_policy::last_encode_diag();
                         println!("diag={}", d.summary_line());
+                        if let Some(s) = report.rate_stats {
+                            // Aggregate over every probe of the rate search
+                            // (the diag= line above is only the *last* probe's
+                            // plan_at breakdown). Phase-3: measures whether
+                            // CandidateForwardCache's cross-probe reuse is
+                            // real before any change to its size/eviction.
+                            let total = s.dct_cache_hits + s.dct_cache_misses;
+                            #[allow(
+                                clippy::cast_precision_loss,
+                                reason = "probe/cache counts stay far inside f64's exact-integer \
+                                          range; this is a printed ratio, not a stored value"
+                            )]
+                            let hit_rate = if total > 0 {
+                                s.dct_cache_hits as f64 / total as f64
+                            } else {
+                                0.0
+                            };
+                            println!(
+                                "rate_diag=fast_prices={} full_prices={} \
+                                 dct_cache_hits={} dct_cache_misses={} \
+                                 dct_cache_hit_rate={hit_rate:.4}",
+                                s.fast_prices, s.full_prices, s.dct_cache_hits, s.dct_cache_misses,
+                            );
+                        }
                     }
                     _ => {}
                 }
@@ -491,6 +515,9 @@ struct BenchReport {
     wall_ms_median: f64,
     output_bytes: usize,
     fingerprint: u64,
+    /// Rate-search multiplicity counters from the last timed iteration.
+    /// `vardct-rate` only; every other mode leaves this `None`.
+    rate_stats: Option<jpxl_encode_policy::RateProbeStats>,
 }
 
 fn bench_modular(
@@ -545,11 +572,19 @@ fn bench_vardct_rate(
         .map_err(|e| e.to_string())?;
     let warm_len = warm.codestream.len();
     let warm_fp = fnv1a64(&warm.codestream);
-    time_iters(iters, warm_len, warm_fp, || {
-        jpxl_encode_policy::encode_srgb8_to_target(width, height, rgb, &request, target)
-            .map(|o| o.codestream)
-            .map_err(|e| e.to_string())
-    })
+    // Multiplicity counters from the last timed iteration (Opt-V2 telemetry;
+    // rate-loop-specific, so `time_iters`'s shared `BenchReport` doesn't carry
+    // it — attached to the result below instead).
+    let last_stats = std::cell::Cell::new(warm.stats);
+    let mut report = time_iters(iters, warm_len, warm_fp, || {
+        let outcome =
+            jpxl_encode_policy::encode_srgb8_to_target(width, height, rgb, &request, target)
+                .map_err(|e| e.to_string())?;
+        last_stats.set(outcome.stats);
+        Ok(outcome.codestream)
+    })?;
+    report.rate_stats = Some(last_stats.get());
+    Ok(report)
 }
 
 fn bench_vardct_probe(
@@ -615,6 +650,7 @@ where
         wall_ms_median,
         output_bytes,
         fingerprint,
+        rate_stats: None,
     })
 }
 

@@ -192,7 +192,7 @@ record jpegxl-rs.work.arch-phase2-cfl-quant/2 : work {
 
 record jpegxl-rs.work.arch-phase3-forward-cache/1 : work {
     title "Phase 3: eliminate the selected-forward clone; borrow from CandidateForwardCache"
-    state completed
+    state superseded
     intent """
         outside-advice.md §7 flags two redundant retentions of full per-candidate
         HF coefficient vectors: CandidateForwardCache (every scored cover candidate,
@@ -285,6 +285,107 @@ record jpegxl-rs.work.arch-phase3-forward-cache/1 : work {
             Section 7: The current forward cache is counterproductive
             """
     }
+}
+
+record jpegxl-rs.work.arch-phase3-forward-cache/2 : work {
+    title "Phase 3: eliminate the selected-forward clone; borrow from CandidateForwardCache"
+    state completed
+    intent """
+        outside-advice.md §7 flags two redundant retentions of full per-candidate
+        HF coefficient vectors: CandidateForwardCache (every scored cover candidate,
+        frame-wide, ~428 MB at 12 MP) and forward_selected's second owned clone of
+        just the selected varblocks (~144 MB at 12 MP). This work eliminates the
+        second one: split cover selection's per-group loop into two passes so every
+        selected varblock's forward can be *borrowed* from CandidateForwardCache
+        (now exposing a read-only get()) instead of cloned into groups. The first
+        retention (CandidateForwardCache itself, which must keep every scored
+        candidate -- winners and losers -- because the rate loop shares one cache
+        across quantizer probes to avoid re-running the forward DCT per probe) is
+        explicitly NOT touched by this work; see the note for why a naive LRU/FIFO
+        cap on it is risky (could gut cross-probe reuse for RateSearchBudget's up to
+        40 probes) and deferred pending a design that understands the rate loop's
+        access pattern.
+        """
+    note """
+        2026-08-07: landed the safe half (selected-forward clone). Verified
+        output-preserving by construction (pure ownership/borrow restructuring, no
+        decision logic touched) and confirmed via --diag fingerprint identity: 12MP
+        vardct-fixed threads=1 output_bytes and fingerprint unchanged
+        (1,530,188 / 30e55ba3faef4d64) both before and after, sel_clones/sel_bytes
+        41,949/144,000,000 -> 0/0. All jpxl-encode + jpxl-encode-policy lib, oracle,
+        roundtrip and rate_loop tests pass (the one pre-existing
+        both_oracles_decode_a_stream_from_the_hf_mul_segment failure is unrelated,
+        see jpegxl-rs.work.arch-phase2-cfl-quant's note).
+
+        CandidateForwardCache itself (the ~428 MB frame-wide candidate retention,
+        the larger of outside-advice §7's two numbers) was left unaddressed pending
+        measurement -- see jpegxl-rs.evidence.phase3-rate-loop-cache-reuse-measured.
+
+        2026-08-07 (later same day): measured it. Extended `jpxl bench vardct-rate
+        --diag` with a new rate_diag= line surfacing RateOutcome.stats (fast_prices,
+        full_prices, dct_cache_hits/misses -- fields that already existed but were
+        never printed). Two images (4000x3000 and 1024x768, bpp=1.0, default
+        max_prices=40 budget) both landed a ~96-97% cross-probe hit rate
+        (6,349,453/6,595,028 and 497,050/513,177 respectively) over 23-25 total
+        probes. Misses in both runs closely match a single vardct-fixed probe's
+        unique candidate count, confirming every probe after the first scores the
+        *same* candidate set (position+transform is quantizer-independent; only
+        block_cost's score of each candidate depends on the probe's quantizer) and
+        gets an almost-total cache hit.
+
+        This answers the note's option (a): a size cap is **not viable**. The cache
+        would need to retain essentially 100% of one frame's unique candidates to
+        preserve this reuse, so capping it below that trades wall-time (up to ~23x
+        more forward-DCT recomputation for evicted-then-needed entries) for a memory
+        saving that shrinks to nothing as the cap approaches the size needed to avoid
+        that cost. Option (b) -- outside-advice §8's compact-per-candidate-summary
+        redesign (score cover candidates from summaries, materialize full
+        coefficients only for the winner) -- is the only remaining path to actually
+        shrinking this 428 MB, and it needs its own scoped work item: it changes
+        block_cost/tile_region's candidate representation, not just a cache policy,
+        so it carries real correctness/quality risk the way Phase 2's CfL rewrite
+        did, not the representational-only safety of this work item's landed half.
+        """
+    acceptance {
+        check clone-eliminated {
+            statement """
+                --diag on a 12 MP VarDCT encode reports sel_clones=0 and sel_bytes=0.
+                """
+            method observation
+            verified_by [
+                @jpegxl-rs.evidence.phase3-selected-forward-clone-eliminated/1,
+                @jpegxl-rs.evidence.phase3-selected-forward-clone-eliminated-postcommit/1
+            ]
+        }
+        check output-unchanged {
+            statement """
+                The --diag fingerprint and output_bytes for a fixed 12 MP vardct-fixed encode are identical before and after (pure representational change, no decision logic touched).
+                """
+            method observation
+            verified_by [
+                @jpegxl-rs.evidence.phase3-selected-forward-clone-eliminated/1,
+                @jpegxl-rs.evidence.phase3-selected-forward-clone-eliminated-postcommit/1
+            ]
+        }
+        check tests-green {
+            statement """
+                jpxl-encode-policy and jpxl-encode lib, oracle, roundtrip and rate_loop tests pass (modulo the pre-existing, unrelated both_oracles_decode_a_stream_from_the_hf_mul_segment failure).
+                """
+            method command
+            command "cd JPXL && cargo test -p jpxl-encode -p jpxl-encode-policy --lib --release && cargo test -p jpxl-encode-policy --test vardct_oracle --test vardct_roundtrip --test rate_loop"
+            verified_by [
+                @jpegxl-rs.evidence.phase3-selected-forward-clone-eliminated/1,
+                @jpegxl-rs.evidence.phase3-selected-forward-clone-eliminated-postcommit/1
+            ]
+        }
+    }
+    implements [
+        @jpegxl-rs.decision.encoder-architecture-phases,
+        @jpegxl-rs.policy.sources-advice-completion
+    ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+    supersedes [ @jpegxl-rs.work.arch-phase3-forward-cache/1 ]
+    supported_by [ @jpegxl-rs.assessment.encoder-architecture-outside-advice ]
 }
 
 record jpegxl-rs.work.dispose-performance-md/1 : work {

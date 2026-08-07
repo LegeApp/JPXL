@@ -17,6 +17,51 @@ Keep this file small. Entries whose content has landed in `PLAN.md`,
 
 ---
 
+## 2026-08-07 (3) — Rate-loop `CandidateForwardCache` measured: size cap rejected
+
+**What changed.** `jpxl bench vardct-rate --diag` now also prints
+`rate_diag=fast_prices=… full_prices=… dct_cache_hits=… dct_cache_misses=…
+dct_cache_hit_rate=…`, sourced from `RateOutcome.stats` (`RateProbeStats`,
+which already existed but was never surfaced — `--diag` previously only
+printed the *last individual probe's* `plan_at` breakdown, hiding cross-probe
+cache behavior entirely). `BenchReport` gained an `Option<RateProbeStats>`
+field; every other bench mode leaves it `None`.
+
+**Measured, answering the open question from the previous entry's note:**
+two images (4000×3000 and 1024×768, `--bpp 1.0`, default `max_prices=40`
+budget) both land a **~96–97% cross-probe cache hit rate** over 23–25 total
+probes (6,349,453/6,595,028 hits and 497,050/513,177 hits respectively).
+Miss counts in both runs closely match a *single* `vardct-fixed` probe's
+unique candidate count — confirming every probe after the first scores
+exactly the same candidate set (position + transform is quantizer-
+independent; only `block_cost`'s *score* of each depends on the probe's
+quantizer) and gets an almost-total cache hit.
+
+**Conclusion: a size cap on `CandidateForwardCache` is not viable.** It would
+need to retain essentially 100% of one frame's unique candidates to preserve
+this reuse; capping it below that trades wall-time (up to ~23× more
+forward-DCT recomputation for evicted-then-needed entries) for a memory
+saving that shrinks toward nothing as the cap approaches the size actually
+needed. This closes option (a) from the prior entry's note. The only
+remaining path to outside-advice.md §7's ~428 MB reduction is §8's
+compact-per-candidate-summary redesign — score cover candidates from
+summaries, materialize full coefficients only for the winner. That's a
+bigger, separately-scoped change (touches `block_cost`/`tile_region`'s
+candidate representation, carries real correctness/quality risk the way
+Phase 2's CfL rewrite did) and was *not* attempted this session. Evidence:
+`jpegxl-rs.evidence.phase3-rate-loop-cache-reuse-measured`. Note on
+`jpegxl-rs.work.arch-phase3-forward-cache` updated with the full writeup.
+
+**Also this session:** wrote a findings document (delivered to the user, not
+committed to this repo) on a separate AKR-workflow observation — papercuts
+about AKR's own behavior, logged while working in a consuming project, are
+invisible to AKR's own maintainers unless someone specifically reads that
+project's ledger. Confirmed via a real precedent (`bpg-rs` →
+`AKR/docs/DECISIONS.md` D-028). No changes made to AKR or its docs; purely
+investigative, for the user's own follow-up.
+
+---
+
 ## 2026-08-07 (2) — Phase 3 (partial): selected-forward clone eliminated
 
 **What changed.** `plan_at_with_cfl`'s per-LF-group cover-selection loop
