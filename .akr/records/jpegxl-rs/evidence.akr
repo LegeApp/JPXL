@@ -643,6 +643,17 @@ record jpegxl-rs.evidence.s8-phase-c-prune-bound-verified/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.s8-phase-c-prune-bound-verified-postcommit/1 : evidence {
+    title "Re-anchor of jpegxl-rs.evidence.s8-phase-c-prune-bound-verified at the commit that actually contains the Phase C code (0230097), per the known AKR-R022/V-020 gotcha (evidence authored before `git commit` runs anchors to the parent commit). Same findings: quantize.rs cell_lower_bound bound-safety property test and regret.rs prune-safety exhaustive walk both pass with zero violations; see the original evidence record for full detail."
+    state verified
+    result pass
+    method observation
+    observed_at git:0230097f2dbe5ed065d0b48c0308bb7f85fbb2d5
+    summary """
+        Re-anchor of jpegxl-rs.evidence.s8-phase-c-prune-bound-verified at the commit that actually contains the Phase C code (0230097), per the known AKR-R022/V-020 gotcha (evidence authored before `git commit` runs anchors to the parent commit). Same findings: quantize.rs cell_lower_bound bound-safety property test and regret.rs prune-safety exhaustive walk both pass with zero violations; see the original evidence record for full detail.
+        """
+}
+
 record jpegxl-rs.evidence.spine-builds/1 : evidence {
     title "akr build emits docs/generated (7 views) and akr check reports no diagnostics"
     state verified

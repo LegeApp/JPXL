@@ -5,8 +5,8 @@ build {
     tool "akr 0.1.0"
     grammar "0.1"
     vocabulary "0.1"
-    commit git:b5996c104ed4b25feb0ca8784a31598f5784a8aa
-    source_graph "sha256:c0f123aac41b4298ad839d0497d66e52a54278cc7a074836c72b687fed38328e"
+    commit git:0230097f2dbe5ed065d0b48c0308bb7f85fbb2d5
+    source_graph "sha256:cb8e35cbdebee9f5495bbe5baf3c7dd482a511ae0d75417f446c7b0effb7b60b"
 }
 
 source ".akr/project.akr" {
@@ -30,8 +30,8 @@ source ".akr/records/jpegxl-rs/decisions.akr" {
 }
 
 source ".akr/records/jpegxl-rs/evidence.akr" {
-    hash "sha256:678a17643cc0906a82584586328e840cb4d6cbff5e24764c63d0ade80539db19"
-    records 50
+    hash "sha256:0f86bc44514aad696e1853b9677458a33595952c3fe2d9188cdba055c5d33843"
+    records 51
 }
 
 source ".akr/records/jpegxl-rs/milestones.akr" {
@@ -1115,6 +1115,11 @@ seal @jpegxl-rs.evidence.s8-phase-b-measurements-verified/1 {
 seal @jpegxl-rs.evidence.s8-phase-c-prune-bound-verified/1 {
     state verified
     hash "sha256:8dc47b720005d680a472d4fec97ec3444283738fe74ce5db30799b4df33f1886"
+}
+
+seal @jpegxl-rs.evidence.s8-phase-c-prune-bound-verified-postcommit/1 {
+    state verified
+    hash "sha256:19fd27c1d7d178d5bf2b644dc5d1c0176a8b88fb0ae641fba51dedfa9463b2dd"
 }
 
 seal @jpegxl-rs.evidence.spine-builds/1 {
