@@ -353,6 +353,7 @@ record jpegxl-rs.work.arch-phase3-forward-cache/2 : work {
                 """
             method observation
             verified_by [
+                @jpegxl-rs.evidence.phase3-forward-cache-rev2-postcommit/1,
                 @jpegxl-rs.evidence.phase3-selected-forward-clone-eliminated/1,
                 @jpegxl-rs.evidence.phase3-selected-forward-clone-eliminated-postcommit/1
             ]
@@ -363,6 +364,7 @@ record jpegxl-rs.work.arch-phase3-forward-cache/2 : work {
                 """
             method observation
             verified_by [
+                @jpegxl-rs.evidence.phase3-forward-cache-rev2-postcommit/1,
                 @jpegxl-rs.evidence.phase3-selected-forward-clone-eliminated/1,
                 @jpegxl-rs.evidence.phase3-selected-forward-clone-eliminated-postcommit/1
             ]
@@ -374,6 +376,7 @@ record jpegxl-rs.work.arch-phase3-forward-cache/2 : work {
             method command
             command "cd JPXL && cargo test -p jpxl-encode -p jpxl-encode-policy --lib --release && cargo test -p jpxl-encode-policy --test vardct_oracle --test vardct_roundtrip --test rate_loop"
             verified_by [
+                @jpegxl-rs.evidence.phase3-forward-cache-rev2-postcommit/1,
                 @jpegxl-rs.evidence.phase3-selected-forward-clone-eliminated/1,
                 @jpegxl-rs.evidence.phase3-selected-forward-clone-eliminated-postcommit/1
             ]

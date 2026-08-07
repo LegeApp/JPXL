@@ -499,6 +499,18 @@ record jpegxl-rs.evidence.phase2-safe-window-narrowing-landed-postcommit/1 : evi
         """
 }
 
+record jpegxl-rs.evidence.phase3-forward-cache-rev2-postcommit/1 : evidence {
+    title "Phase-3 rev-2 (rate-loop cache note) re-verified against commit 8541961"
+    state verified
+    result pass
+    method command
+    observed_at git:854196103f471f6934d4a5a300e68a15745bfb8c
+    command "cd JPXL && cargo test -p jpxl-encode -p jpxl-encode-policy --lib --release"
+    summary """
+        Re-verification against commit 8541961 (the commit carrying jpegxl-rs.work.arch-phase3-forward-cache/2's note update -- the rate-loop cache measurement finding). Same recurring gotcha as jpegxl-rs.papercut.knowledge-complete-s-cited-evidence-gets-its: revising a record's note and re-completing it before committing pins cited evidence to the parent commit. No code changed since the prior verification; jpxl-encode + jpxl-encode-policy lib tests 59+103 still pass.
+        """
+}
+
 record jpegxl-rs.evidence.phase3-rate-loop-cache-reuse-measured/1 : evidence {
     title "Rate-loop CandidateForwardCache cross-probe hit rate measured at ~96-97%; size cap not viable"
     state verified
