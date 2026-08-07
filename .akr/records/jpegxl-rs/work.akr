@@ -687,7 +687,10 @@ record jpegxl-rs.work.arch-s8-phase-a-regret-harness/1 : work {
                 """
             method command
             command "cd JPXL && cargo test -p jpxl-encode-policy --lib --release regret"
-            verified_by [ @jpegxl-rs.evidence.s8-phase-a-regret-harness-verified/1 ]
+            verified_by [
+                @jpegxl-rs.evidence.s8-phase-a-regret-harness-postcommit/1,
+                @jpegxl-rs.evidence.s8-phase-a-regret-harness-verified/1
+            ]
         }
         check no-op-proven {
             statement """
@@ -695,14 +698,20 @@ record jpegxl-rs.work.arch-s8-phase-a-regret-harness/1 : work {
                 """
             method command
             command "cd JPXL && cargo test -p jpxl-encode-policy --lib --release regret"
-            verified_by [ @jpegxl-rs.evidence.s8-phase-a-regret-harness-verified/1 ]
+            verified_by [
+                @jpegxl-rs.evidence.s8-phase-a-regret-harness-postcommit/1,
+                @jpegxl-rs.evidence.s8-phase-a-regret-harness-verified/1
+            ]
         }
         check zero-production-impact {
             statement """
                 The harness is additive-only: --diag fingerprint and output_bytes for a fixed 12MP vardct-fixed encode are unchanged after adding it, and the full jpxl-encode-policy lib and vardct_roundtrip suites stay green.
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.s8-phase-a-regret-harness-verified/1 ]
+            verified_by [
+                @jpegxl-rs.evidence.s8-phase-a-regret-harness-postcommit/1,
+                @jpegxl-rs.evidence.s8-phase-a-regret-harness-verified/1
+            ]
         }
     }
     implements [
