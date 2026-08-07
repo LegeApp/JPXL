@@ -245,14 +245,20 @@ record jpegxl-rs.work.arch-phase3-forward-cache/1 : work {
                 --diag on a 12 MP VarDCT encode reports sel_clones=0 and sel_bytes=0.
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.phase3-selected-forward-clone-eliminated/1 ]
+            verified_by [
+                @jpegxl-rs.evidence.phase3-selected-forward-clone-eliminated/1,
+                @jpegxl-rs.evidence.phase3-selected-forward-clone-eliminated-postcommit/1
+            ]
         }
         check output-unchanged {
             statement """
                 The --diag fingerprint and output_bytes for a fixed 12 MP vardct-fixed encode are identical before and after (pure representational change, no decision logic touched).
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.phase3-selected-forward-clone-eliminated/1 ]
+            verified_by [
+                @jpegxl-rs.evidence.phase3-selected-forward-clone-eliminated/1,
+                @jpegxl-rs.evidence.phase3-selected-forward-clone-eliminated-postcommit/1
+            ]
         }
         check tests-green {
             statement """
@@ -260,7 +266,10 @@ record jpegxl-rs.work.arch-phase3-forward-cache/1 : work {
                 """
             method command
             command "cd JPXL && cargo test -p jpxl-encode -p jpxl-encode-policy --lib --release && cargo test -p jpxl-encode-policy --test vardct_oracle --test vardct_roundtrip --test rate_loop"
-            verified_by [ @jpegxl-rs.evidence.phase3-selected-forward-clone-eliminated/1 ]
+            verified_by [
+                @jpegxl-rs.evidence.phase3-selected-forward-clone-eliminated/1,
+                @jpegxl-rs.evidence.phase3-selected-forward-clone-eliminated-postcommit/1
+            ]
         }
     }
     implements [

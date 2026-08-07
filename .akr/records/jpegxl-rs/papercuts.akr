@@ -78,6 +78,17 @@ record jpegxl-rs.papercut.jpxl-bench-fingerprints-outputs-with-fnv-1a-64/1 : pap
     created_at 2026-08-06
 }
 
+record jpegxl-rs.papercut.knowledge-complete-s-cited-evidence-gets-its/1 : papercut {
+    title "knowledge.complete's cited evidence gets its observed_at commit hash…"
+    state verified
+    statement """
+        knowledge.complete's cited evidence gets its observed_at commit hash from the current git HEAD at write time, which is the *parent* commit if the record and its evidence are still uncommitted -- so `akr check`/`knowledge.validate` after the eventual `git commit` flags V-020 "evidence predates last content change" even though the evidence genuinely verifies the committed content. Workaround used twice this session: after committing, add a second evidence record (re-running the same cheap check) and re-run knowledge.complete citing it, then `akr build`. A cleaner fix might be an explicit `observed_at` override accepted post-hoc, or docs telling agents to commit code before the propose/evidence/complete sequence rather than after.
+        """
+    observed_at git:d11219f6cc0b81eaa13bbe59c291213dce429910
+    author "claude"
+    created_at 2026-08-07
+}
+
 record jpegxl-rs.papercut.opt-f-multiplicity-counters-are-still-only/1 : papercut {
     title "Opt-F multiplicity counters are still only listed in PERFORMANCE.md —…"
     state verified

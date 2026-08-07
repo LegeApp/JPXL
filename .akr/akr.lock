@@ -5,8 +5,8 @@ build {
     tool "akr 0.1.0"
     grammar "0.1"
     vocabulary "0.1"
-    commit git:78d8ffbc467cadc426c0381e25c613f11c847d62
-    source_graph "sha256:74177a0cf2ef74e94462e3c2888bf6e8f8329989e41080baf46aef13b54b4ace"
+    commit git:d11219f6cc0b81eaa13bbe59c291213dce429910
+    source_graph "sha256:d66f1d4c5e391ce7a6d45e41dd9a34a24bfb3e804ca9310350f902ce7258ba85"
 }
 
 source ".akr/project.akr" {
@@ -30,8 +30,8 @@ source ".akr/records/jpegxl-rs/decisions.akr" {
 }
 
 source ".akr/records/jpegxl-rs/evidence.akr" {
-    hash "sha256:666d4e48a07688fb33788822f661872f93e6bf3b54e53369875fc4b52b8fac34"
-    records 40
+    hash "sha256:1b681e25b4788428e0c27a1821858f7ad6b854ec2f9b48f198c2dab299ca80df"
+    records 41
 }
 
 source ".akr/records/jpegxl-rs/milestones.akr" {
@@ -45,8 +45,8 @@ source ".akr/records/jpegxl-rs/observations.akr" {
 }
 
 source ".akr/records/jpegxl-rs/papercuts.akr" {
-    hash "sha256:2afe0768b023a71f1a443cf4fb0546ab985e9b1e4727afa71537fffd82ea72d8"
-    records 8
+    hash "sha256:2d626fb0db2c4ae4745fde1edce679cab35606cfedcfcaaa21595381dfa75c59"
+    records 9
 }
 
 source ".akr/records/jpegxl-rs/policies.akr" {
@@ -60,7 +60,7 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:86e92da587994c28ac38939c9dde28cdd4e33e6cb307f38172bf8c23a86c44df"
+    hash "sha256:30c644cc2fefbb5b50eb6b52387a175bbcf9914f92738810f77d9cbb107c630b"
     records 16
 }
 
@@ -912,6 +912,11 @@ seal @jpegxl-rs.evidence.phase3-selected-forward-clone-eliminated/1 {
     hash "sha256:60d2d99912db4ee07c350ed2e5950f6c513f539e813f17fa3bd0f6b157aa1dee"
 }
 
+seal @jpegxl-rs.evidence.phase3-selected-forward-clone-eliminated-postcommit/1 {
+    state verified
+    hash "sha256:06f68d41c104a4fb5e90e59dd3ee1f1355d46e093dbaa14b0783bd1d34386c8d"
+}
+
 seal @jpegxl-rs.evidence.rulings-captured/1 {
     state verified
     hash "sha256:6fa0b4ff5fc5ab2005d848d8cd8d938b136f6299bc9c158bf7488c5353bf3d48"
@@ -1187,6 +1192,11 @@ seal @jpegxl-rs.papercut.jpxl-bench-fingerprints-outputs-with-fnv-1a-64/1 {
     hash "sha256:d38b6c49c994a5f6f1b1afabebdf55a7829bdaa08083499c2c0ab66502051fe7"
 }
 
+seal @jpegxl-rs.papercut.knowledge-complete-s-cited-evidence-gets-its/1 {
+    state verified
+    hash "sha256:a6ec1e870934aaba989ff74eb2303653d98e95bbcd0fd31ee51ce413de0e2a46"
+}
+
 seal @jpegxl-rs.papercut.opt-f-multiplicity-counters-are-still-only/1 {
     state verified
     hash "sha256:8840bd2b7838bb3affa6f3896128bc1495f56b5ebcd0dd9e016d20a5bd8d8fd7"
@@ -1219,7 +1229,7 @@ seal @jpegxl-rs.work.arch-phase2-cfl-quant/2 {
 
 seal @jpegxl-rs.work.arch-phase3-forward-cache/1 {
     state completed
-    hash "sha256:15c714c280334ddad8d54707d3e18061c53c9400fea7486c4edabf09f3c21a18"
+    hash "sha256:006d7eb3bc2464a20332d405c8ad2bfcfefe61950d2cbedc6fa894f607047e71"
 }
 
 seal @jpegxl-rs.work.dispose-performance-md/1 {
