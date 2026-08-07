@@ -666,6 +666,17 @@ record jpegxl-rs.evidence.s8-phase-d-prune-wired-verified/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.s8-phase-d-prune-wired-verified-postcommit/1 : evidence {
+    title "Re-anchor of jpegxl-rs.evidence.s8-phase-d-prune-wired-verified at the commit that actually contains the Phase D code (b6b12ab), per the known AKR-R022/V-020 gotcha (evidence authored before `git commit` runs defaults observed_at to the parent commit)."
+    state verified
+    result pass
+    method observation
+    observed_at git:b6b12abd8a2798bf3556609003e61ccac09f158c
+    summary """
+        Re-anchor of jpegxl-rs.evidence.s8-phase-d-prune-wired-verified at the commit that actually contains the Phase D code (b6b12ab), per the known AKR-R022/V-020 gotcha (evidence authored before `git commit` runs defaults observed_at to the parent commit).
+        """
+}
+
 record jpegxl-rs.evidence.spine-builds/1 : evidence {
     title "akr build emits docs/generated (7 views) and akr check reports no diagnostics"
     state verified
