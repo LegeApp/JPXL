@@ -17,6 +17,55 @@ Keep this file small. Entries whose content has landed in `PLAN.md`,
 
 ---
 
+## 2026-08-07 (8) — S8 Phase C: transient provable lower bound, zero safety violations
+
+**What changed, purely additive** (`lib.rs` — the production cover-scoring
+path — is untouched by this phase):
+- `quantize.rs`: `HfQuantizer::cell_lower_bound(target, channel, cell)` —
+  exact distortion floor for cells guaranteed to zero-quantize
+  (`lambda*side^2*target^2`, via the same `zero_threshold` shortcut
+  `choose` already uses), loose-but-*provable* `>=2`-bit rate floor for
+  cells guaranteed nonzero (the minimum any nonzero `residual_bits` value
+  can be). Same error semantics as `choose`.
+- `regret.rs`: `validate_candidate_prune`/`measure_prune_safety` — a
+  *second* independent quadtree walk (alongside Phase A's `measure_region`),
+  staging the bound exactly as `block_cost_bounded`'s real Y-then-X-then-B
+  running-total order and units would, so what's validated here is the
+  actual integration Phase D would wire in. B's cheap check uses Y's *real*
+  reconstruction (`d_y_hf`), never raw `cb` — `kB=1.0` makes that coupling
+  safety-load-bearing (an unsafe bound could otherwise exceed the true
+  cost); `kX=0.0` needs no such care.
+
+**Proved, exhaustively (not statistically — a provable bound means one
+counterexample is a bug):**
+1. `quantize::tests::cell_lower_bound_never_exceeds_the_exact_cost` — 6
+   quantizer configs × 12 boundary-stressing targets, `bits_lb <=
+   bits_exact` and `sse_lb <= sse_exact + 1e-9` in every case.
+2. `regret::tests::cell_lower_bound_prune_never_discards_a_true_winner` —
+   over a 128×128 ramp+texture fixture: `S8_PHASE_C_PRUNE_SAFETY
+   candidates=80 safety_violations=0 pruned=8 prune_rate=0.1000`.
+   `safety_violations == 0` is the exit gate; `prune_rate` is recorded as
+   the separate usefulness measurement, not asserted against a threshold —
+   that's Phase D's decision to make with real corpus data.
+
+All 65 `jpxl-encode-policy` lib tests and all 12 `vardct_roundtrip` tests
+pass. `vardct_oracle`'s `both_oracles_decode_a_stream_from_the_hf_mul_segment`
+fails identically on `main` before this change (confirmed via `git stash`)
+— pre-existing, unrelated. No `--diag` byte-identity check applies: nothing
+in the decision path changed.
+
+Evidence: `jpegxl-rs.evidence.s8-phase-c-prune-bound-verified`. Work item
+`jpegxl-rs.work.arch-s8-phase-c-prune-bound` completed; parent scoping
+record `jpegxl-rs.work.arch-s8-full-redesign-scoped` updated.
+
+**Next: Phase D** — wire the safe prune behind a feature flag; survivors
+still scored exactly (`block_cost_bounded` unchanged); new decision-quality
+fixtures with an explicit tail-regret budget (placement-conformance tests
+alone don't catch a legal-but-worse pick); confirm the realistic (low-teens
+percent, not the 31-35% upper bound) win actually materializes.
+
+---
+
 ## 2026-08-07 (7) — S8 Phase B: measured, advisor consulted, memory-discard
 ## design dropped — Phase C simplifies
 

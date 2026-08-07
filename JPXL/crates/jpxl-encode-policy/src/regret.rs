@@ -13,11 +13,24 @@
 //! cost of one extra exact scoring pass when the harness runs. The harness
 //! is not part of any hot path; it is a corpus-driven verification tool.
 //!
-//! No approximate scorer exists yet (that is Phase C). What lands here is
-//! the harness itself, [`ExactPolicy`] as the trivial surrogate that must
-//! reproduce zero regret and full agreement, and a cross-check that this
-//! module's notion of "exact" matches `tile_region`'s own decisions exactly
-//! (so the two implementations cannot silently drift apart).
+//! Phase A landed the harness itself, [`ExactPolicy`] as the trivial
+//! surrogate that must reproduce zero regret and full agreement, and a
+//! cross-check that this module's notion of "exact" matches `tile_region`'s
+//! own decisions exactly (so the two implementations cannot silently drift
+//! apart).
+//!
+//! Phase C adds the first real approximate primitive under study: a
+//! provable, staged lower bound
+//! ([`crate::quantize::HfQuantizer::cell_lower_bound`]) checked at Y, then
+//! X, then B — the same order and running-total units
+//! `block_cost_bounded` uses in production, so what is validated here is
+//! the integration Phase D would actually wire in, not an idealization of
+//! it. [`validate_candidate_prune`] and [`measure_prune_safety`] are this
+//! module's second independent quadtree walk (alongside [`measure_region`]),
+//! read-only in the same sense: it never touches `tile_region` or
+//! `block_cost_bounded`, only re-derives the same decisions to check the
+//! bound's safety property (`PruneSummary::safety_violations` must be `0`)
+//! and record its usefulness (`PruneSummary::prune_rate`).
 
 use crate::error::Result;
 use crate::{
@@ -265,6 +278,302 @@ pub(crate) fn measure_region<S: CoverSurrogate>(
     Ok(true_cost)
 }
 
+/// S8 Phase C (`jpegxl-rs.work.arch-s8-full-redesign-scoped`): whether the
+/// cheap, staged summary-based prune (`HfQuantizer::cell_lower_bound`,
+/// checked at Y, then X, then B — exactly where a real integration would
+/// check it, never before) would prune this one candidate, and its true
+/// exact cost, so a caller can assert the safety property: `would_prune`
+/// must never fire when `exact_cost < cutoff` (the candidate actually
+/// wins).
+#[derive(Debug, Clone, Copy)]
+pub struct PruneSample {
+    pub would_prune: bool,
+    pub exact_cost: f64,
+    pub cutoff: f64,
+}
+
+/// Aggregate over many [`PruneSample`]s.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct PruneSummary {
+    pub candidates: u64,
+    /// Must be `0` for the prune to be trustworthy — any nonzero value means
+    /// the bound pruned a candidate that would actually have won, a bug in
+    /// [`crate::quantize::HfQuantizer::cell_lower_bound`] or in how it is
+    /// staged here, not a tolerance to relax.
+    pub safety_violations: u64,
+    /// How often the bound actually prunes — the "usefulness" half of
+    /// Phase C's exit gate, independent of safety.
+    pub pruned: u64,
+}
+
+impl PruneSummary {
+    /// Fraction of candidates the bound would prune, in `[0.0, 1.0]`.
+    #[must_use]
+    pub fn prune_rate(self) -> f64 {
+        if self.candidates == 0 {
+            0.0
+        } else {
+            #[allow(
+                clippy::cast_precision_loss,
+                reason = "candidate counts stay far inside f64's exact-integer range"
+            )]
+            let rate = self.pruned as f64 / self.candidates as f64;
+            rate
+        }
+    }
+
+    #[must_use]
+    pub fn from_samples(samples: &[PruneSample]) -> Self {
+        let mut violations = 0u64;
+        let mut pruned = 0u64;
+        for s in samples {
+            if s.would_prune {
+                pruned += 1;
+                // Ties are fine (the real algorithm's `check` also treats
+                // `>=` as a correct prune); only a candidate that would have
+                // *strictly* won is a violation.
+                if s.exact_cost < s.cutoff - 1e-6 {
+                    violations += 1;
+                }
+            }
+        }
+        Self {
+            candidates: u64::try_from(samples.len()).unwrap_or(u64::MAX),
+            safety_violations: violations,
+            pruned,
+        }
+    }
+}
+
+/// Computes the staged cheap-bound prune check for **one** candidate's
+/// already-cached forward coefficients, mirroring `block_cost_bounded`'s
+/// exact Y-then-X-then-B running-total order and units (`bits: u64` summed
+/// across channels, `weighted_sse: f64` summed as `lambda[channel] *
+/// to_sample_domain * (recon - target)^2`) — so this validates the *same*
+/// integration Phase D would wire in, without touching `block_cost_bounded`
+/// itself. X's target needs no correction (`kX == 0.0`, I.6); B's does
+/// (`kB == 1.0`), and only after Y's *exact* reconstruction exists — this
+/// function computes Y's exact quantization first (as the real algorithm
+/// always does regardless of X/B's outcome) specifically to make B's bound
+/// check use the real coupling, not an approximation of it.
+///
+/// # Errors
+///
+/// As [`crate::quantize::HfQuantizer::choose`] /
+/// [`crate::quantize::HfQuantizer::cell_lower_bound`].
+#[allow(
+    dead_code,
+    reason = "Phase C infrastructure: only called from this module's own \
+              tests today (validating the bound's safety exhaustively). \
+              Phase D's wiring is separately-scoped work."
+)]
+fn validate_candidate_prune(
+    hf_quant: &crate::HfQuantizer,
+    lambda: &[f64; crate::NUM_CHANNELS],
+    to_sample_domain: f64,
+    side: usize,
+    n: usize,
+    fwd: &crate::VarblockForward,
+    cutoff: f64,
+) -> Result<PruneSample> {
+    let cells = side * side;
+    let cy = fwd.coeffs.get(1).map_or(&[][..], Vec::as_slice);
+    let cx = fwd.coeffs.get(0).map_or(&[][..], Vec::as_slice);
+    let cb = fwd.coeffs.get(2).map_or(&[][..], Vec::as_slice);
+
+    let mut bits = 0u64;
+    let mut weighted_sse = 0.0f64;
+    let mut would_prune = false;
+    let check = |bits: u64, weighted_sse: f64| -> bool {
+        #[allow(
+            clippy::cast_precision_loss,
+            reason = "bit counts stay far inside f64's exact integer range"
+        )]
+        let partial = bits as f64 + weighted_sse;
+        partial >= cutoff
+    };
+
+    // --- Y: cheap bound first, then the exact scoring the real algorithm
+    // always runs (regardless of X/B's fate) to get d_y_hf for B.
+    let mut lb_bits = 0u64;
+    let mut lb_sse = 0.0f64;
+    let mut d_y_hf = vec![0.0f32; cells];
+    for cell in 0..cells {
+        if crate::is_llf_cell(cell, side, n) {
+            continue;
+        }
+        let target = cy.get(cell).copied().unwrap_or(0.0);
+        let (b, s) = hf_quant.cell_lower_bound(target, 1, cell)?;
+        lb_bits = lb_bits.saturating_add(b);
+        lb_sse += lambda[1] * to_sample_domain * s;
+    }
+    if check(bits.saturating_add(lb_bits), weighted_sse + lb_sse) {
+        would_prune = true;
+    }
+    for cell in 0..cells {
+        if crate::is_llf_cell(cell, side, n) {
+            continue;
+        }
+        let target = cy.get(cell).copied().unwrap_or(0.0);
+        let q = hf_quant.choose(target, 1, cell)?;
+        let recon = hf_quant.reconstruct(q, 1, cell);
+        bits = bits.saturating_add(crate::residual_bits(q));
+        weighted_sse += lambda[1] * to_sample_domain * f64::from(recon - target).powi(2);
+        if let Some(slot) = d_y_hf.get_mut(cell) {
+            *slot = recon;
+        }
+    }
+
+    // --- X and B ---
+    for &(channel, plane) in &[(0usize, cx), (2usize, cb)] {
+        let k = if channel == 0 { 0.0 } else { 1.0 };
+        let mut lb_bits = 0u64;
+        let mut lb_sse = 0.0f64;
+        for cell in 0..cells {
+            if crate::is_llf_cell(cell, side, n) {
+                continue;
+            }
+            let target = plane.get(cell).copied().unwrap_or(0.0)
+                - k * d_y_hf.get(cell).copied().unwrap_or(0.0);
+            let (b, s) = hf_quant.cell_lower_bound(target, channel, cell)?;
+            lb_bits = lb_bits.saturating_add(b);
+            lb_sse += lambda.get(channel).copied().unwrap_or(0.0) * to_sample_domain * s;
+        }
+        if check(bits.saturating_add(lb_bits), weighted_sse + lb_sse) {
+            would_prune = true;
+        }
+        for cell in 0..cells {
+            if crate::is_llf_cell(cell, side, n) {
+                continue;
+            }
+            let target = plane.get(cell).copied().unwrap_or(0.0)
+                - k * d_y_hf.get(cell).copied().unwrap_or(0.0);
+            let q = hf_quant.choose(target, channel, cell)?;
+            let recon = hf_quant.reconstruct(q, channel, cell);
+            bits = bits.saturating_add(crate::residual_bits(q));
+            weighted_sse += lambda.get(channel).copied().unwrap_or(0.0)
+                * to_sample_domain
+                * f64::from(recon - target).powi(2);
+        }
+    }
+
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "bit counts stay far inside f64's exact integer range"
+    )]
+    let exact_cost = bits as f64 + weighted_sse;
+    Ok(PruneSample {
+        would_prune,
+        exact_cost,
+        cutoff,
+    })
+}
+
+/// Walks the same quadtree [`measure_region`] walks, calling
+/// [`validate_candidate_prune`] at every merge candidate with the *same*
+/// `cutoff` `tile_region` would actually use (`split_cost - fixed`) —
+/// read-only, never touches `tile_region`/`block_cost_bounded`.
+///
+/// # Errors
+///
+/// As [`crate::block_cost`] / [`validate_candidate_prune`].
+#[allow(clippy::too_many_arguments)]
+#[allow(
+    dead_code,
+    reason = "Phase C infrastructure: only called from this module's own \
+              tests today. Phase D's wiring is separately-scoped work."
+)]
+pub(crate) fn measure_prune_safety(
+    frame: &PreparedFrame,
+    hf_quants: &HfQuantizers,
+    grid: jpxl_encode::vardct::BlockGrid,
+    bx: u32,
+    by: u32,
+    size: u32,
+    aq: &AqSetup,
+    x0: u32,
+    y0: u32,
+    cache: &mut CandidateForwardCache,
+    scratch: &mut ForwardScratch,
+    d_y_hf: &mut [f32],
+    samples: &mut Vec<PruneSample>,
+) -> Result<f64> {
+    if bx >= grid.width || by >= grid.height {
+        return Ok(0.0);
+    }
+    if size == 1 {
+        let hf_mul = aq.mul_for_footprint(x0 / 8 + bx, y0 / 8 + by, 1, 1);
+        let cost = block_cost(
+            frame,
+            hf_quants,
+            TransformType::Dct8x8,
+            hf_mul,
+            x0 + bx * 8,
+            y0 + by * 8,
+            cache,
+            scratch,
+            d_y_hf,
+        )? + PER_VARBLOCK_BITS
+            + mul_signal_bits(hf_mul, aq.baseline);
+        return Ok(cost);
+    }
+
+    let half = size / 2;
+    let mut split_cost = 0.0f64;
+    for (qx, qy) in [
+        (bx, by),
+        (bx + half, by),
+        (bx, by + half),
+        (bx + half, by + half),
+    ] {
+        split_cost += measure_prune_safety(
+            frame, hf_quants, grid, qx, qy, half, aq, x0, y0, cache, scratch, d_y_hf, samples,
+        )?;
+    }
+
+    let fits = bx + size <= grid.width && by + size <= grid.height;
+    let single_cost = match square_transform(size) {
+        Some(transform) if fits => {
+            let hf_mul = aq.mul_for_footprint(x0 / 8 + bx, y0 / 8 + by, size, size);
+            let fixed =
+                PER_VARBLOCK_BITS + NON_DCT8X8_SIGNAL_BITS + mul_signal_bits(hf_mul, aq.baseline);
+            let px = x0 + bx * 8;
+            let py = y0 + by * 8;
+            // Same fetch `block_cost` would do internally — idempotent on a
+            // cache hit, and this function needs the coefficients directly
+            // (block_cost only returns their exact *score*).
+            let hf_quant = hf_quants.get(transform, hf_mul)?;
+            let fwd = cache.get_or_insert(frame, transform, px, py, scratch)?;
+            let cutoff = split_cost - fixed;
+            let side = transform.sample_cols();
+            // Same unit conversion `block_cost_bounded` uses (`lib.rs`): one
+            // squared coefficient unit is `side^2` squared sample units.
+            #[allow(
+                clippy::cast_precision_loss,
+                reason = "side is at most 32; exact in f64"
+            )]
+            let to_sample_domain = (side * side) as f64;
+            let sample = validate_candidate_prune(
+                hf_quant,
+                &hf_quants.lambda,
+                to_sample_domain,
+                side,
+                transform.block_dims().0,
+                fwd,
+                cutoff,
+            )?;
+            samples.push(sample);
+            Some(sample.exact_cost + fixed)
+        }
+        _ => None,
+    };
+
+    Ok(match single_cost {
+        Some(c) if c < split_cost => c,
+        _ => split_cost,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -385,6 +694,91 @@ mod tests {
         assert_eq!(summary.mean_regret, 0.0);
         assert_eq!(summary.max_regret, 0.0);
         assert_eq!(summary.p99_regret, 0.0);
+    }
+
+    /// Runs `measure_prune_safety` over every LF group of `frame`, returning
+    /// the accumulated samples (mirrors `measure_frame`'s shape).
+    fn measure_prune_frame(frame: &PreparedFrame) -> Vec<PruneSample> {
+        let request = EncodeRequest::defaults();
+        let atlas = AnalysisAtlas::analyze(frame);
+        let quantizer = QuantizerChoice::from_request(&request);
+        let aq = AqSetup::build(&atlas, &request, quantizer);
+        let hf_quants =
+            HfQuantizers::new(aq.global_scale.get(), aq.baseline, &aq.muls()).expect("quantizers");
+        let decision = jpxl_encode::vardct::FrameDecision {
+            width: frame.width(),
+            height: frame.height(),
+            group_size_shift: crate::VARDCT_GROUP_SIZE_SHIFT,
+            num_passes: 1,
+        };
+        let geometry = decision.geometry().expect("geometry");
+        let mut cache = CandidateForwardCache::new();
+        let mut scratch = ForwardScratch::new();
+        let mut samples = Vec::new();
+        for index in 0..geometry.num_lf_groups() {
+            let id = crate::LfGroupId::new(u32::try_from(index).unwrap_or(u32::MAX));
+            let blocks = geometry.lf_group_blocks(id).expect("blocks");
+            let rect = geometry.lf_group_rect(id).expect("rect");
+            let mut d_y_hf = vec![0.0f32; 32 * 32];
+            let mut sby = 0u32;
+            while sby < blocks.height {
+                let mut sbx = 0u32;
+                while sbx < blocks.width {
+                    measure_prune_safety(
+                        frame,
+                        &hf_quants,
+                        blocks,
+                        sbx,
+                        sby,
+                        4,
+                        &aq,
+                        rect.x0,
+                        rect.y0,
+                        &mut cache,
+                        &mut scratch,
+                        &mut d_y_hf,
+                        &mut samples,
+                    )
+                    .expect("measures");
+                    sbx += 4;
+                }
+                sby += 4;
+            }
+        }
+        samples
+    }
+
+    /// S8 Phase C's exit gate: the staged cheap bound must never prune a
+    /// candidate that would actually win. This is a provable-bound property,
+    /// so it is checked exhaustively over every merge-candidate node the
+    /// fixture produces, not sampled statistically — a single violation is a
+    /// bug in `HfQuantizer::cell_lower_bound` or its staging here, not a
+    /// tolerance to relax. Also reports the prune rate (the bound's
+    /// usefulness), which is not asserted against a threshold here since
+    /// Phase C's job is to prove safety and measure usefulness, not commit
+    /// to a wiring decision — that is Phase D's.
+    #[test]
+    fn cell_lower_bound_prune_never_discards_a_true_winner() {
+        let frame = ramp_frame(128, 128);
+        let samples = measure_prune_frame(&frame);
+        assert!(
+            !samples.is_empty(),
+            "the fixture must exercise real merge-candidate decisions"
+        );
+        let summary = PruneSummary::from_samples(&samples);
+        eprintln!(
+            "S8_PHASE_C_PRUNE_SAFETY candidates={} safety_violations={} pruned={} \
+             prune_rate={:.4}",
+            summary.candidates,
+            summary.safety_violations,
+            summary.pruned,
+            summary.prune_rate()
+        );
+        assert_eq!(
+            summary.safety_violations, 0,
+            "the staged cheap bound pruned at least one candidate that would \
+             actually have won: unsafe, not merely imprecise"
+        );
     }
 
     /// Cross-validates this module's independent quadtree walk against

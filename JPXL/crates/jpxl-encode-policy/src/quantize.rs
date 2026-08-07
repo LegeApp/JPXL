@@ -596,6 +596,78 @@ impl HfQuantizer {
             Ok(best)
         }
     }
+
+    /// S8 Phase C (`sources/outside-advice.md` §8's "lower bound to prune"
+    /// primitive; `jpegxl-rs.work.arch-s8-full-redesign-scoped`): a cheap,
+    /// *provable* lower bound on one coefficient's contribution to the
+    /// `residual_bits(choose(target))` (rate) and
+    /// `(reconstruct(choose(target)) - target)^2` (distortion) terms
+    /// `block_cost_bounded` sums — computed **without** [`Self::choose`]'s
+    /// 4-candidate search.
+    ///
+    /// Two cases, both provable from the same zero-threshold [`Self::choose`]
+    /// already uses as its own exact fast path:
+    /// - `|target| <= threshold`: the cell is *guaranteed* to quantize to
+    ///   zero (this is the exact condition `choose` tests), so both returned
+    ///   numbers are **exact**, not approximate — `0` bits and the true
+    ///   distortion `target^2` (`reconstruct(0, ..) == 0.0`).
+    /// - `|target| > threshold`: the cell is guaranteed *nonzero*. The
+    ///   cheapest any nonzero symbol can cost is `2` bits (see
+    ///   `residual_bits`, `q = ±1`); the true count could be higher, so `2`
+    ///   is a genuine lower bound, not an estimate of the real value.
+    ///   Distortion floor is `0.0` — true but uninformative; nothing cheaper
+    ///   than the exact 4-candidate search bounds a nonzero cell's error
+    ///   usefully (`sources/outside-advice.md` §8 finds the same limit: rate
+    ///   is a discrete, non-smooth function of the quantized integer, so a
+    ///   *tight* bound needs the per-cell magnitude data `choose` itself
+    ///   uses — this returns a *safe*, not a *tight*, bound).
+    ///
+    /// Error semantics mirror [`Self::choose`] exactly (same degenerate-step
+    /// and out-of-range checks, on the same inputs) so that whether or not a
+    /// caller uses this bound to skip calling `choose` at all, the two paths
+    /// agree on when a target is legal.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::choose`].
+    pub fn cell_lower_bound(&self, target: f32, channel: usize, cell: usize) -> Result<(u64, f64)> {
+        if !target.is_finite() {
+            return Err(PolicyError::Unsupported {
+                what: "a non-finite quantization target",
+            });
+        }
+        let step = self.step_at(channel, cell);
+        if !(step.is_finite() && step > 0.0) {
+            return Err(PolicyError::Unsupported {
+                what: "a degenerate HF quantization step",
+            });
+        }
+        let thr = self
+            .zero_threshold
+            .get(channel)
+            .and_then(|t| t.get(cell).copied())
+            .unwrap_or(0.0);
+        if target.abs() <= thr {
+            let t = f64::from(target);
+            return Ok((0, t * t));
+        }
+        // Guaranteed nonzero: mirror `clamp_round`'s MAX_QUANT check on the
+        // same linear estimate `choose` would compute, so a target `choose`
+        // would refuse is refused here too — never silently treated as a
+        // cheap, legal bound.
+        let estimate = (target / step).round();
+        #[allow(
+            clippy::cast_precision_loss,
+            reason = "MAX_QUANT == 2^20, exact in f32"
+        )]
+        let max_quant_f = MAX_QUANT as f32;
+        if estimate.abs() > max_quant_f {
+            return Err(PolicyError::Unsupported {
+                what: "a coefficient outside the quantizer's working range",
+            });
+        }
+        Ok((2, 0.0))
+    }
 }
 
 /// I.5.3's `pow(0.8, qm_scale - 2)`, exactly as the decoder computes it.
@@ -960,6 +1032,118 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    /// S8 Phase C safety net (`jpegxl-rs.work.arch-s8-full-redesign-scoped`):
+    /// `cell_lower_bound` must never exceed what `choose`/`reconstruct`
+    /// actually produce, exhaustively — a single counterexample means the
+    /// bound is unsound and cannot safely prune anything. Reuses the
+    /// `choose_lane4` test's quantizer configs and boundary-stressing target
+    /// patterns (same rigor template, same targets that stress the zero
+    /// threshold from both sides, `MAX_QUANT`, and extreme magnitudes) but
+    /// asserts `<=`, not `==` — this bound is deliberately not tight, only
+    /// safe (see the type's doc for why rate cannot be tightly bounded this
+    /// cheaply). Also asserts the two ERROR cases agree exactly (degenerate
+    /// step / non-finite / out-of-range), since a caller using this bound to
+    /// skip `choose` entirely must not silently swallow an error `choose`
+    /// would have raised.
+    #[test]
+    fn cell_lower_bound_never_exceeds_the_exact_cost() {
+        let quantizers = [
+            HfQuantizer::new(TransformType::Dct8x8, 4096, 1, 2, 2).expect("defaults"),
+            HfQuantizer::new(TransformType::Dct8x8, 4096, 4, 2, 2).expect("hf_mul 4"),
+            HfQuantizer::new(TransformType::Dct8x8, 4096, 1, 1, 3).expect("asymmetric qm"),
+            HfQuantizer::new(TransformType::Dct16x16, 4096, 1, 2, 2).expect("dct16"),
+            HfQuantizer::new(TransformType::Dct32x32, 8192, 1, 2, 2).expect("dct32, coarse scale"),
+            HfQuantizer::new(TransformType::Dct8x8, u32::from(u16::MAX), 1, 2, 2)
+                .expect("very fine global_scale (small steps)"),
+        ];
+
+        let mut cells_pruned = 0u64;
+        let mut cells_total = 0u64;
+
+        for q in &quantizers {
+            let cells = q.steps[0].len();
+            for channel in 0..NUM_CHANNELS {
+                for cell in 0..cells {
+                    let step = q.step(channel, cell);
+                    if !(step.is_finite() && step > 0.0) {
+                        continue;
+                    }
+                    let thr = q
+                        .zero_threshold
+                        .get(channel)
+                        .and_then(|t| t.get(cell).copied())
+                        .unwrap_or(0.0);
+                    let targets: [f32; 12] = [
+                        0.0,
+                        thr * 0.99,
+                        -thr * 0.99,
+                        thr,
+                        thr * 1.01,
+                        -thr * 1.01,
+                        step * 0.5,
+                        step * 1.5,
+                        -step * 2.5,
+                        step * 10.5,
+                        step * f32::from(i16::try_from(MAX_QUANT).unwrap_or(i16::MAX)),
+                        f32::MIN_POSITIVE,
+                    ];
+                    for &target in &targets {
+                        let exact = q.choose(target, channel, cell).map(|qi| {
+                            (residual_bits_for_test(qi), q.reconstruct(qi, channel, cell))
+                        });
+                        let bound = q.cell_lower_bound(target, channel, cell);
+                        match (exact, bound) {
+                            (Ok((bits_exact, recon)), Ok((bits_lb, sse_lb))) => {
+                                let sse_exact = f64::from(recon - target).powi(2);
+                                assert!(
+                                    bits_lb <= bits_exact,
+                                    "channel {channel} cell {cell} target {target}: \
+                                     bound bits {bits_lb} > exact bits {bits_exact}"
+                                );
+                                assert!(
+                                    sse_lb <= sse_exact + 1e-9,
+                                    "channel {channel} cell {cell} target {target}: \
+                                     bound sse {sse_lb} > exact sse {sse_exact}"
+                                );
+                                cells_total += 1;
+                                if bits_lb > 0 {
+                                    cells_pruned += 1;
+                                }
+                            }
+                            (Err(_), Err(_)) => {
+                                // Both refuse the same unreachable target —
+                                // exact wording need not match.
+                            }
+                            (exact, bound) => panic!(
+                                "channel {channel} cell {cell} target {target}: \
+                                 choose/reconstruct={exact:?} cell_lower_bound={bound:?} \
+                                 disagree on whether this target is legal"
+                            ),
+                        }
+                    }
+                }
+            }
+        }
+
+        assert!(cells_total > 0, "the sweep must exercise real cells");
+        eprintln!(
+            "S8_PHASE_C_BOUND_NONZERO_RATE cells_total={cells_total} \
+             cells_with_nonzero_rate_floor={cells_pruned}"
+        );
+    }
+
+    /// Mirrors `residual_bits` (defined in `lib.rs`, not importable here)
+    /// exactly, so the test above can compute the same "exact bits" ground
+    /// truth `block_cost_bounded` does, without creating a `quantize.rs` ->
+    /// `lib.rs` dependency for one four-line function.
+    fn residual_bits_for_test(q: i32) -> u64 {
+        if q == 0 {
+            0
+        } else {
+            u64::from(32 - q.unsigned_abs().leading_zeros()) + 1
         }
     }
 

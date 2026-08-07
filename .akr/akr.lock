@@ -5,8 +5,8 @@ build {
     tool "akr 0.1.0"
     grammar "0.1"
     vocabulary "0.1"
-    commit git:5cdb56f2c02ba802e4f3c233623f730f05395546
-    source_graph "sha256:9680d1859ab1e4d11894d69b29a899a1370a6a3891a6e47182f5e4b7af6bf241"
+    commit git:b5996c104ed4b25feb0ca8784a31598f5784a8aa
+    source_graph "sha256:c0f123aac41b4298ad839d0497d66e52a54278cc7a074836c72b687fed38328e"
 }
 
 source ".akr/project.akr" {
@@ -30,8 +30,8 @@ source ".akr/records/jpegxl-rs/decisions.akr" {
 }
 
 source ".akr/records/jpegxl-rs/evidence.akr" {
-    hash "sha256:0212338f35cb5246a699f2801fd4c59e43a709e8dacafad7118378c4f321d118"
-    records 49
+    hash "sha256:678a17643cc0906a82584586328e840cb4d6cbff5e24764c63d0ade80539db19"
+    records 50
 }
 
 source ".akr/records/jpegxl-rs/milestones.akr" {
@@ -60,8 +60,8 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:b97f0236e131c2851f82a4efff8f51b1bf34c05968af095354a0e9ada16bf77c"
-    records 22
+    hash "sha256:d401334e160a6379cbb3c0704172359bd208bcccc0806b74d458081f831d73e5"
+    records 23
 }
 
 resolution @jpegxl-rs.decision.encoder-architecture-phases/1 {
@@ -712,6 +712,12 @@ resolution @jpegxl-rs.work.arch-s8-phase-b-measurements/1 {
     hash "sha256:15a89aad920190cfee2272b199c902901087b05ffd3693a1fedfecfa08640834"
 }
 
+resolution @jpegxl-rs.work.arch-s8-phase-c-prune-bound/1 {
+    slot part_of
+    to @jpegxl-rs.work.arch-s8-full-redesign-scoped/2
+    hash "sha256:2e4a7fc98c3a9d02aa734f8efacc98186d50fc8e13fc4fe1651e6a97b8c52202"
+}
+
 resolution @jpegxl-rs.work.dispose-performance-md/1 {
     slot implements
     to @jpegxl-rs.decision.retire-performance-md/1
@@ -1106,6 +1112,11 @@ seal @jpegxl-rs.evidence.s8-phase-b-measurements-verified/1 {
     hash "sha256:5badd15c918d5ced6f71e2ea3bfe765aff130cead771cb56156f6077757e969d"
 }
 
+seal @jpegxl-rs.evidence.s8-phase-c-prune-bound-verified/1 {
+    state verified
+    hash "sha256:8dc47b720005d680a472d4fec97ec3444283738fe74ce5db30799b4df33f1886"
+}
+
 seal @jpegxl-rs.evidence.spine-builds/1 {
     state verified
     hash "sha256:be73d885df11d190e9b3fff292686849e930bf4f8069ccd91b66e634367f977f"
@@ -1439,6 +1450,11 @@ seal @jpegxl-rs.work.arch-s8-phase-a-regret-harness/1 {
 seal @jpegxl-rs.work.arch-s8-phase-b-measurements/1 {
     state completed
     hash "sha256:6ac1c1c4de4b64f209494df1df7a6346b7d8a2ad0e541a0039cae0ca80a8e34b"
+}
+
+seal @jpegxl-rs.work.arch-s8-phase-c-prune-bound/1 {
+    state completed
+    hash "sha256:c3e6107c7271a483ed40d4314fdbf11a6670fb9235338d7ab8a9011581b95a06"
 }
 
 seal @jpegxl-rs.work.dispose-performance-md/1 {
