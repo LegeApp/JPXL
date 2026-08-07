@@ -5,8 +5,8 @@ build {
     tool "akr 0.1.0"
     grammar "0.1"
     vocabulary "0.1"
-    commit git:d4f0451cd8d53a6d33bfbd3a3a7ec2b555d33e1a
-    source_graph "sha256:b30411aa5adf88398b7f5392624d3045756d15967febba5b0a1d2aa605b72157"
+    commit git:5cdb56f2c02ba802e4f3c233623f730f05395546
+    source_graph "sha256:9680d1859ab1e4d11894d69b29a899a1370a6a3891a6e47182f5e4b7af6bf241"
 }
 
 source ".akr/project.akr" {
@@ -30,8 +30,8 @@ source ".akr/records/jpegxl-rs/decisions.akr" {
 }
 
 source ".akr/records/jpegxl-rs/evidence.akr" {
-    hash "sha256:641fc395c46b18d442d7ca39ee2c21e3d060a04462f19396822b6cd5801661c3"
-    records 48
+    hash "sha256:0212338f35cb5246a699f2801fd4c59e43a709e8dacafad7118378c4f321d118"
+    records 49
 }
 
 source ".akr/records/jpegxl-rs/milestones.akr" {
@@ -60,7 +60,7 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:212c22b2742b25347397e5dbe9eb044e589eea84993dd6b6a106911fc0c78e21"
+    hash "sha256:b97f0236e131c2851f82a4efff8f51b1bf34c05968af095354a0e9ada16bf77c"
     records 22
 }
 
@@ -1096,6 +1096,11 @@ seal @jpegxl-rs.evidence.s8-phase-a-regret-harness-verified/1 {
     hash "sha256:2fa959f90237f6b3da8597341268e3f54a029a5501f7d127dfb6fc5b8ee4b33b"
 }
 
+seal @jpegxl-rs.evidence.s8-phase-b-measurements-postcommit/1 {
+    state verified
+    hash "sha256:079fbb667f2ca115e81d7b008411cc3683ed9eb604a5a3b85f3a3603833f2172"
+}
+
 seal @jpegxl-rs.evidence.s8-phase-b-measurements-verified/1 {
     state verified
     hash "sha256:5badd15c918d5ced6f71e2ea3bfe765aff130cead771cb56156f6077757e969d"
@@ -1433,7 +1438,7 @@ seal @jpegxl-rs.work.arch-s8-phase-a-regret-harness/1 {
 
 seal @jpegxl-rs.work.arch-s8-phase-b-measurements/1 {
     state completed
-    hash "sha256:c6395668b875d4c0c187a3b7ff345b6dadc37bff460c15c57bad204f8a065a50"
+    hash "sha256:6ac1c1c4de4b64f209494df1df7a6346b7d8a2ad0e541a0039cae0ca80a8e34b"
 }
 
 seal @jpegxl-rs.work.dispose-performance-md/1 {

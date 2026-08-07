@@ -607,6 +607,18 @@ record jpegxl-rs.evidence.s8-phase-a-regret-harness-verified/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.s8-phase-b-measurements-postcommit/1 : evidence {
+    title "S8 Phase B landed state re-verified against commit 5cdb56f"
+    state verified
+    result pass
+    method command
+    observed_at git:5cdb56f2c02ba802e4f3c233623f730f05395546
+    command "cd JPXL && cargo test -p jpxl-encode-policy --lib --release"
+    summary """
+        Re-verification against commit 5cdb56f (the commit carrying jpegxl-rs.work.arch-s8-phase-b-measurements/1's content). Same recurring gotcha (jpegxl-rs.papercut.knowledge-complete-s-cited-evidence-gets-its). No code changed since the prior verification; full lib suite (63 tests, including regret and stability) still passes.
+        """
+}
+
 record jpegxl-rs.evidence.s8-phase-b-measurements-verified/1 : evidence {
     title "S8 Phase B measurements verified; advisor consulted; memory-discard design dropped"
     state verified

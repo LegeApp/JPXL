@@ -976,21 +976,30 @@ record jpegxl-rs.work.arch-s8-phase-b-measurements/1 : work {
                 Opus advisor consulted with the measured data; decisive verdict recorded: drop the memory-discard ("cache summaries, not coefficients") design given CandidateForwardCache's forwards are probe-invariant and already dominate cover cost with 96-97% free reuse; proceed to Phase C with a transient (not cache-replacing) summary for the within-probe prune only.
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.s8-phase-b-measurements-verified/1 ]
+            verified_by [
+                @jpegxl-rs.evidence.s8-phase-b-measurements-postcommit/1,
+                @jpegxl-rs.evidence.s8-phase-b-measurements-verified/1
+            ]
         }
         check cost-share-measured {
             statement """
                 choose-loop scoring cost share of cover scoring measured via new StageTimer::CoverForward/CoverScore diagnostics, confirmed above the ~15% kill threshold (31-35%, stable across two image sizes), with --diag byte-identity confirming the instrumentation is decision-path-neutral.
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.s8-phase-b-measurements-verified/1 ]
+            verified_by [
+                @jpegxl-rs.evidence.s8-phase-b-measurements-postcommit/1,
+                @jpegxl-rs.evidence.s8-phase-b-measurements-verified/1
+            ]
         }
         check winner-stability-measured {
             statement """
                 Cross-probe winner churn measured at atom granularity over a real 33-probe rate search; pattern (near-zero during convergence, concentrated at bracket/refinement-handoff phases) recorded alongside the unresolved i=9 anomaly.
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.s8-phase-b-measurements-verified/1 ]
+            verified_by [
+                @jpegxl-rs.evidence.s8-phase-b-measurements-postcommit/1,
+                @jpegxl-rs.evidence.s8-phase-b-measurements-verified/1
+            ]
         }
     }
     implements [
