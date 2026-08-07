@@ -504,7 +504,7 @@ record jpegxl-rs.work.arch-s8-cover-lane-simd/1 : work {
 
 record jpegxl-rs.work.arch-s8-full-redesign-scoped/1 : work {
     title "S8 full redesign, scoped: infrastructure + measurement + one conservative prune (not \"full §8 landed\")"
-    state proposed
+    state active
     intent """
         Scope (not implement) the full outside-advice.md §8 surrogate-first
         cover-selection redesign, per explicit user request, via two parallel
@@ -546,8 +546,19 @@ record jpegxl-rs.work.arch-s8-full-redesign-scoped/1 : work {
         record per AGENTS.md, not the local plan file.
         """
     note """
-        Phase A -- regret harness (agreement rate + exact-cost regret with
-        TAIL reporting, not just mean, since both CfL regressions were rare/
+        Phase A -- COMPLETE, see jpegxl-rs.work.arch-s8-phase-a-regret-harness.
+        crates/jpxl-encode-policy/src/regret.rs: CoverSurrogate trait, ExactPolicy,
+        RegretSample/RegretSummary (agreement_rate, mean/max/p99 regret), and an
+        independent measure_region walk (never touches tile_region/the production
+        path; always computes unbounded exact costs). Exit gate met: 0 regret /
+        100% agreement wiring the exact scorer in as its own surrogate, PLUS a
+        stronger cross-validation against tile_region's actual production decisions
+        (not just self-consistency) so the twin implementations can't silently
+        drift. Zero production-path impact confirmed via --diag fingerprint
+        identity. Original phase text preserved below for the rest of the plan.
+
+        Phase A (as planned) -- regret harness (agreement rate + exact-cost regret
+        with TAIL reporting, not just mean, since both CfL regressions were rare/
         systematic wrong picks not average drift), using the exact scorer
         (block_cost/block_cost_bounded) as its own ground truth -- zero new
         dependencies, no Butteraugli needed for the cover-DECISION question
@@ -557,16 +568,16 @@ record jpegxl-rs.work.arch-s8-full-redesign-scoped/1 : work {
         choose_lane4's bit-identity test was proven against itself before being
         trusted (quantize.rs:870).
 
-        Phase B -- two measurements that can kill or reshape the plan, run BEFORE
-        any summary machinery is built: (1) choose-loop cost share vs forward-DCT
-        cost share in cover scoring (kill criterion if too small, e.g. <~15%);
-        (2) cross-probe WINNER stability (currently unverified -- the measured
-        96-97% cross-probe cache hit rate from jpegxl-rs.work.arch-phase3-forward-cache
-        only covers the candidate SET being probe-invariant, not the winning
-        transform per region). If winners churn across probes, the
-        memory-saving "cache summaries not coefficients" design must be dropped
-        in favor of scoring-loop-only pruning with the full-coefficient cache kept
-        as-is.
+        Phase B (NEXT) -- two measurements that can kill or reshape the plan, run
+        BEFORE any summary machinery is built: (1) choose-loop cost share vs
+        forward-DCT cost share in cover scoring (kill criterion if too small, e.g.
+        <~15%); (2) cross-probe WINNER stability (currently unverified -- the
+        measured 96-97% cross-probe cache hit rate from
+        jpegxl-rs.work.arch-phase3-forward-cache only covers the candidate SET
+        being probe-invariant, not the winning transform per region). If winners
+        churn across probes, the memory-saving "cache summaries not coefficients"
+        design must be dropped in favor of scoring-loop-only pruning with the
+        full-coefficient cache kept as-is.
 
         Phase C -- compact per-candidate summary (per-band magnitude
         histogram/counts; respects Y-scored-first -> B-target coupling,
@@ -606,10 +617,94 @@ record jpegxl-rs.work.arch-s8-full-redesign-scoped/1 : work {
         prior narrow slice and its advisor reasoning) and
         jpegxl-rs.work.arch-phase2-cfl-quant (the CfL failure this plan avoids
         repeating).
-
-        No implementation has started. This record is the scoping deliverable
-        itself; a future session executes Phase A first.
         """
+    implements [
+        @jpegxl-rs.decision.encoder-architecture-phases,
+        @jpegxl-rs.policy.sources-advice-completion
+    ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+    supported_by [ @jpegxl-rs.assessment.encoder-architecture-outside-advice ]
+}
+
+record jpegxl-rs.work.arch-s8-phase-a-regret-harness/1 : work {
+    title "S8 Phase A: regret/agreement harness, proven as a no-op against the exact scorer"
+    state completed
+    intent """
+        Phase A of jpegxl-rs.work.arch-s8-full-redesign-scoped: build a
+        regret/agreement harness comparing a pluggable cover-selection "surrogate"
+        policy against the exact scorer (block_cost/block_cost_bounded) as ground
+        truth, reporting agreement rate and exact-cost regret (with tail
+        reporting -- max/p99, not just mean, since both jpegxl-rs.work.arch-
+        phase2-cfl-quant regressions were rare/systematic wrong picks, not average
+        drift). Zero new dependencies; no Butteraugli needed for the cover-DECISION
+        question (the exact scorer is its own ground truth for "does a surrogate
+        reproduce the current objective", a separate question from whether that
+        objective tracks perception, which is Phase-5 territory).
+
+        Exit gate: prove the harness as a no-op first -- wire the exact scorer in
+        as both surrogate and oracle, assert 0 regret / 100% agreement -- before it
+        is trusted for anything else, mirroring how choose_lane4's bit-identity
+        test was proven against itself (quantize.rs:870) before the S8 SIMD slice
+        was trusted.
+        """
+    note """
+        2026-08-07: landed. New module crates/jpxl-encode-policy/src/regret.rs:
+        CoverSurrogate trait (decide(split_cost, single_cost: Option<f64>) ->
+        Split|Merge), ExactPolicy (wraps tile_region's own tie rule), RegretSample/
+        RegretSummary (agreement_rate, mean/max/p99 regret), and measure_region --
+        an INDEPENDENT recursive quadtree walk (deliberately not touching
+        tile_region or the production encode path at all) that always computes the
+        UNBOUNDED exact merge cost at every node (never applying tile_region's own
+        Phase-1 partial-sum cutoff), because ground truth for regret needs a true
+        cost, not a bound.
+
+        Two tests: (1) exact_policy_is_a_true_no_op -- the Phase-A exit gate,
+        asserts 0 regret / 100% agreement wiring the exact scorer in as its own
+        surrogate; (2) measure_region_matches_tile_regions_own_total_cost -- a
+        stronger check than the plan asked for: cross-validates this module's
+        independent walk against tile_region's ACTUAL production decisions (not
+        just self-consistency), so the twin implementations cannot silently drift
+        apart. Both pass.
+
+        Verified additive/zero-risk by construction and by measurement:
+        --diag fingerprint/byte identity on the 12MP image unchanged
+        (1,530,188 / 30e55ba3faef4d64) after adding this module, confirming it has
+        no effect on the production encode path (expected, since it's a read-only
+        parallel walk never invoked by tile_region/select_blocks/plan_at). Full
+        jpxl-encode-policy lib suite 62/62 (was 60, +2 new tests), vardct_roundtrip
+        12/12.
+
+        Next: Phase B (jpegxl-rs.work.arch-s8-full-redesign-scoped's plan) -- two
+        measurements before building any summary machinery: choose-loop cost share
+        vs forward-DCT cost share in cover scoring, and cross-probe WINNER
+        stability (currently unverified, load-bearing for whether the
+        memory-saving cache-summaries-not-coefficients design survives).
+        """
+    acceptance {
+        check no-drift {
+            statement """
+                measure_region_matches_tile_regions_own_total_cost passes: the harness's independent quadtree walk reaches the same total exact cost as tile_region's own production decisions on the same inputs.
+                """
+            method command
+            command "cd JPXL && cargo test -p jpxl-encode-policy --lib --release regret"
+            verified_by [ @jpegxl-rs.evidence.s8-phase-a-regret-harness-verified/1 ]
+        }
+        check no-op-proven {
+            statement """
+                exact_policy_is_a_true_no_op passes: wiring the exact scorer in as both surrogate and oracle yields 0 regret and 100% agreement at every measured node.
+                """
+            method command
+            command "cd JPXL && cargo test -p jpxl-encode-policy --lib --release regret"
+            verified_by [ @jpegxl-rs.evidence.s8-phase-a-regret-harness-verified/1 ]
+        }
+        check zero-production-impact {
+            statement """
+                The harness is additive-only: --diag fingerprint and output_bytes for a fixed 12MP vardct-fixed encode are unchanged after adding it, and the full jpxl-encode-policy lib and vardct_roundtrip suites stay green.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.s8-phase-a-regret-harness-verified/1 ]
+        }
+    }
     implements [
         @jpegxl-rs.decision.encoder-architecture-phases,
         @jpegxl-rs.policy.sources-advice-completion

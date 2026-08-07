@@ -70,6 +70,7 @@ pub mod error;
 pub mod field;
 pub mod quantize;
 pub mod rate;
+pub mod regret;
 pub mod request;
 pub mod source;
 

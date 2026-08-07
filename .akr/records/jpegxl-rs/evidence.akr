@@ -583,6 +583,18 @@ record jpegxl-rs.evidence.s8-cover-lane-simd-verified/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.s8-phase-a-regret-harness-verified/1 : evidence {
+    title "S8 Phase A regret harness: no-op proven, no drift, zero production impact"
+    state verified
+    result pass
+    method command
+    observed_at git:a0e835463424a316485aab01fdde0b45e7aca63d
+    command "cd JPXL && cargo test -p jpxl-encode-policy --lib --release && cargo test -p jpxl-encode-policy --test vardct_roundtrip --release && cargo build --release -p jpxl-cli && ./target/release/jpxl bench vardct-fixed --input &lt;12MP-P6&gt; --threads 1 --iters 1 --diag"
+    summary """
+        New crates/jpxl-encode-policy/src/regret.rs: CoverSurrogate trait, ExactPolicy, RegretSample/RegretSummary, measure_region (an independent recursive quadtree walk, deliberately never touching tile_region or the production path, always computing unbounded exact costs since ground truth needs a true cost not a bound). exact_policy_is_a_true_no_op (Phase-A exit gate: 0 regret / 100% agreement wiring the exact scorer as its own surrogate) and measure_region_matches_tile_regions_own_total_cost (cross-validates the harness's independent walk reaches the same total cost as tile_region's actual production decisions, stronger than the plan required, guards against the twin implementations drifting apart) both pass. jpxl-encode-policy lib suite 62/62 (60 -> 62, the two new tests), vardct_roundtrip 12/12. --diag on 12MP vardct-fixed: output_bytes=1,530,188 fingerprint=30e55ba3faef4d64, unchanged from before this module existed -- confirms zero production-path impact, as expected for purely additive read-only infrastructure.
+        """
+}
+
 record jpegxl-rs.evidence.spine-builds/1 : evidence {
     title "akr build emits docs/generated (7 views) and akr check reports no diagnostics"
     state verified

@@ -17,6 +17,47 @@ Keep this file small. Entries whose content has landed in `PLAN.md`,
 
 ---
 
+## 2026-08-07 (6) — S8 Phase A landed: regret harness, proven as a no-op
+
+**What changed.** New `crates/jpxl-encode-policy/src/regret.rs`: a
+`CoverSurrogate` trait (given the same two numbers `tile_region` compares —
+`split_cost`, `single_cost: Option<f64>` — decides split vs merge),
+`ExactPolicy` (wraps `tile_region`'s own tie rule so the harness can be
+proven against itself), `RegretSample`/`RegretSummary` (agreement rate,
+mean/max/p99 regret — tail reported explicitly, not just mean, since both
+CfL regressions were rare/systematic wrong picks), and `measure_region` — an
+**independent** recursive quadtree walk that never touches `tile_region` or
+the production encode path at all, always computing the *unbounded* exact
+merge cost at every node (deliberately ignoring `tile_region`'s own Phase-1
+cutoff, since regret needs a true cost, not a bound).
+
+**Proved, exceeding what the plan asked for.** Two tests:
+- `exact_policy_is_a_true_no_op` — the Phase-A exit gate: wiring the exact
+  scorer in as both surrogate and oracle yields exactly 0 regret and 100%
+  agreement at every node.
+- `measure_region_matches_tile_regions_own_total_cost` — not required by the
+  plan, added anyway: cross-validates this module's independent walk
+  against `tile_region`'s **actual production decisions** (not just
+  self-consistency), so the two implementations can't silently drift apart
+  over time. Both pass.
+
+`--diag` fingerprint/byte identity on the 12 MP image confirms zero
+production-path impact (`1,530,188` / `30e55ba3faef4d64`, unchanged) — this
+module is purely additive by construction, not just by testing. Full
+`jpxl-encode-policy` lib suite 62/62 (was 60), `vardct_roundtrip` 12/12.
+Evidence: `jpegxl-rs.evidence.s8-phase-a-regret-harness-verified`. Work item
+`jpegxl-rs.work.arch-s8-phase-a-regret-harness` completed; parent scoping
+record `jpegxl-rs.work.arch-s8-full-redesign-scoped` updated to `active`.
+
+**Next: Phase B.** Two measurements that can kill or reshape the rest of
+the plan, before any summary machinery is built: the `choose`-loop's actual
+cost share of cover scoring (vs. the forward DCT), and whether the
+*winning* transform per region is stable across rate-loop probes (currently
+unverified, load-bearing for whether a memory-saving "cache summaries, not
+coefficients" design can preserve the measured cross-probe cache reuse).
+
+---
+
 ## 2026-08-07 (5) — Full S8 redesign scoped (not implemented): six gated
 ## phases, honest deliverable is infrastructure + one conservative prune
 
