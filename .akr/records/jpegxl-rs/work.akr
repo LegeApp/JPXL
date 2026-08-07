@@ -502,6 +502,129 @@ record jpegxl-rs.work.arch-s8-cover-lane-simd/1 : work {
     }
 }
 
+record jpegxl-rs.work.arch-s8-full-redesign-scoped/1 : work {
+    title "S8 full redesign, scoped: infrastructure + measurement + one conservative prune (not \"full §8 landed\")"
+    state proposed
+    intent """
+        Scope (not implement) the full outside-advice.md §8 surrogate-first
+        cover-selection redesign, per explicit user request, via two parallel
+        Explore scoping agents (architecture/machinery; safety/verification/
+        prerequisites) followed by an Opus advisor synthesis, each independently
+        checked against the actual code rather than accepted at face value.
+
+        Headline finding governing the whole plan: §8's core premise -- "avoid
+        forward-transforming losing candidates via cheap summaries" -- is mostly
+        foreclosed. Ranking a DCT16/DCT32 candidate needs coefficient-domain data
+        (a DCT32 spans 16 atoms; per-atom source mean/variance cannot recover its
+        spectrum), so a useful summary requires the forward DCT to already exist --
+        the forward is unavoidable. The achievable win shrinks to "skip the exact
+        per-cell choose/choose_lane4 scoring loop for losers after the transform
+        already ran," and that win is currently unmeasured.
+
+        Second finding: rate (residual_bits(q), discrete/non-smooth) cannot be
+        tightly bounded from a summary without approaching per-cell data, but a
+        loose PROVABLE bound exists (every guaranteed-nonzero cell costs >=2 bits)
+        and distortion CAN be tightly/exactly bounded for cells guaranteed to zero
+        (weighted_sse is a smooth quadratic, computable from coefficient magnitude
+        alone). So a provable -- not merely empirically-usually-right -- lower
+        bound is achievable, just looser than the existing exact partial-sum cutoff
+        in block_cost_bounded's `check`.
+
+        Given both findings, the honest deliverable is infrastructure + measurement
+        + one conservative provably-safe pruning application, not "the full §8
+        redesign landed." The aggressive closed-form rate-estimate half of §8 is
+        explicitly staged out (Phase F) pending a regret ceiling from real
+        measurement -- attempting it now repeats jpegxl-rs.work.arch-phase2-cfl-quant's
+        failure (two reverted closed-form-estimate regressions from 3
+        sufficient-statistics) at cover selection's larger, more consequential
+        decision surface (which transform exists, not a correction factor).
+
+        Full phase breakdown (six phases, each independently gated) is recorded in
+        the local plan file used to produce this record
+        (~/.claude/plans/continue-in-this-folder-breezy-chipmunk.md at scoping
+        time) and summarized in the note below since AKR is the durable source of
+        record per AGENTS.md, not the local plan file.
+        """
+    note """
+        Phase A -- regret harness (agreement rate + exact-cost regret with
+        TAIL reporting, not just mean, since both CfL regressions were rare/
+        systematic wrong picks not average drift), using the exact scorer
+        (block_cost/block_cost_bounded) as its own ground truth -- zero new
+        dependencies, no Butteraugli needed for the cover-DECISION question
+        (perceptual validation of the objective itself is separate Phase-5
+        territory). Exit gate: proven as a no-op first (exact scorer as both
+        surrogate and oracle -> 0 regret, 100% agreement), mirroring how
+        choose_lane4's bit-identity test was proven against itself before being
+        trusted (quantize.rs:870).
+
+        Phase B -- two measurements that can kill or reshape the plan, run BEFORE
+        any summary machinery is built: (1) choose-loop cost share vs forward-DCT
+        cost share in cover scoring (kill criterion if too small, e.g. <~15%);
+        (2) cross-probe WINNER stability (currently unverified -- the measured
+        96-97% cross-probe cache hit rate from jpegxl-rs.work.arch-phase3-forward-cache
+        only covers the candidate SET being probe-invariant, not the winning
+        transform per region). If winners churn across probes, the
+        memory-saving "cache summaries not coefficients" design must be dropped
+        in favor of scoring-loop-only pruning with the full-coefficient cache kept
+        as-is.
+
+        Phase C -- compact per-candidate summary (per-band magnitude
+        histogram/counts; respects Y-scored-first -> B-target coupling,
+        lib.rs:2078,2088), implementing the combined provable lower bound
+        (distortion floor + rate floor). Validated EXHAUSTIVELY (not statistically
+        -- it's a provable bound, so any pruned-but-actually-winning candidate is a
+        bug) against the exact scorer over the corpus.
+
+        Phase D -- wire the safe prune behind a feature flag, survivors still
+        scored exactly (block_cost_bounded unchanged) so winners' bits/sse stay
+        exact. vardct_oracle.rs's external-decoder tests prove PLACEMENT
+        conformance only, not decision quality -- a legal-but-worse pick sails
+        through untouched, the same gap that let both CfL regressions through
+        until a bespoke fixture caught them. New decision-quality fixtures
+        (same class as the CfL-catching ones) required, driven by the Phase-A
+        harness with an explicit tail-regret budget. Honest negative result
+        (flag stays off) is an acceptable outcome if Phase B's predicted win
+        doesn't materialize.
+
+        Phase E -- test-set/ has no provenance sidecars (AGENTS.md §9 violation,
+        "fixtures without provenance do not merge") and isn't stratified per
+        outside-advice §19; required before Phase D's fixtures can merge.
+
+        Phase F -- explicitly NOT attempted: the tight, continuous, closed-form
+        rate estimate (§8's ambitious half). Gated on Phase A live + Phase D's
+        measured tail-regret ceiling; named explicitly so it isn't silently
+        smuggled into an earlier phase under time pressure.
+
+        Out of scope for the whole plan: AnalysisAtlas expansion (source-pixel
+        per-atom stats can't rank DCT16/32; its raw-frame.xyb() vs
+        Gaborish-preconditioned-planes mismatch is a separate real bug, logged
+        separately, not fixed here); Butteraugli/SSIMULACRA2 build-out (Phase 5
+        territory); "full §8 redesign landed" as one deliverable.
+
+        See also (precedent/context, referenced in prose since `supported_by`
+        cannot target `work` records): jpegxl-rs.work.arch-s8-cover-lane-simd (the
+        prior narrow slice and its advisor reasoning) and
+        jpegxl-rs.work.arch-phase2-cfl-quant (the CfL failure this plan avoids
+        repeating).
+
+        No implementation has started. This record is the scoping deliverable
+        itself; a future session executes Phase A first.
+        """
+    implements [
+        @jpegxl-rs.decision.encoder-architecture-phases,
+        @jpegxl-rs.policy.sources-advice-completion
+    ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+    supported_by [ @jpegxl-rs.assessment.encoder-architecture-outside-advice ]
+    source {
+        kind external
+        path "sources/outside-advice.md"
+        excerpt """
+            Section 8: Cover selection needs a surrogate-first design
+            """
+    }
+}
+
 record jpegxl-rs.work.dispose-performance-md/1 : work {
     title "Dispose PERFORMANCE.md into AKR and scratch"
     state superseded

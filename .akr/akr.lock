@@ -5,8 +5,8 @@ build {
     tool "akr 0.1.0"
     grammar "0.1"
     vocabulary "0.1"
-    commit git:170677c43458dedfd924ef4bb4016a673687d0ea
-    source_graph "sha256:ef0cafa9ad4182f58478a4f5c67e601227f1a6d4112d03f0a67d2fe801498efc"
+    commit git:ef752fecbd43923d6a24a5c63de113e5e65351be
+    source_graph "sha256:8f3a677ef06820542161d374925601588de4e2af16a268e304c240584baa947e"
 }
 
 source ".akr/project.akr" {
@@ -60,8 +60,8 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:4e1d291b29d98f2c32a112cfdf89ac3c8889ea82e906e117bf3a10f22b98e217"
-    records 18
+    hash "sha256:8686a20b7141e98abfe9cb6235abcd0e71b2d0e0f2ddcfdda3a34e79d494f6e5"
+    records 19
 }
 
 resolution @jpegxl-rs.decision.encoder-architecture-phases/1 {
@@ -611,6 +611,30 @@ resolution @jpegxl-rs.work.arch-s8-cover-lane-simd/1 {
 }
 
 resolution @jpegxl-rs.work.arch-s8-cover-lane-simd/1 {
+    slot supported_by
+    to @jpegxl-rs.assessment.encoder-architecture-outside-advice/1
+    hash "sha256:15a89aad920190cfee2272b199c902901087b05ffd3693a1fedfecfa08640834"
+}
+
+resolution @jpegxl-rs.work.arch-s8-full-redesign-scoped/1 {
+    slot implements
+    to @jpegxl-rs.decision.encoder-architecture-phases/1
+    hash "sha256:bebc6ba8560b5b033c8661d3025f45375dcd7f485639aba3dcc1338c845dcfa4"
+}
+
+resolution @jpegxl-rs.work.arch-s8-full-redesign-scoped/1 {
+    slot implements
+    to @jpegxl-rs.policy.sources-advice-completion/1
+    hash "sha256:97f87d49cd309168aee499b2c8ec7532071af7a263f4f360d6a47507c8ce3d9c"
+}
+
+resolution @jpegxl-rs.work.arch-s8-full-redesign-scoped/1 {
+    slot part_of
+    to @jpegxl-rs.track.encoder-optimization/1
+    hash "sha256:49975e17bd10998d72b08fccfe98fdea9bdf68ef56e4404dd68e94e1e2d75f23"
+}
+
+resolution @jpegxl-rs.work.arch-s8-full-redesign-scoped/1 {
     slot supported_by
     to @jpegxl-rs.assessment.encoder-architecture-outside-advice/1
     hash "sha256:15a89aad920190cfee2272b199c902901087b05ffd3693a1fedfecfa08640834"

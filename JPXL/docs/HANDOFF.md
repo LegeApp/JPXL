@@ -17,6 +17,73 @@ Keep this file small. Entries whose content has landed in `PLAN.md`,
 
 ---
 
+## 2026-08-07 (5) — Full S8 redesign scoped (not implemented): six gated
+## phases, honest deliverable is infrastructure + one conservative prune
+
+**What happened.** Per explicit user request, scoped (did not implement)
+the full outside-advice.md §8 surrogate-first cover-selection redesign as
+an executable plan. Process: two parallel Explore agents (architecture/
+machinery; safety/verification/prerequisites), each producing a
+file:line-cited research report, then an Opus advisor synthesis of both,
+independently checked against the code rather than accepted at face value.
+Recorded durably as `jpegxl-rs.work.arch-s8-full-redesign-scoped` (state
+`proposed` — this is a plan awaiting execution, not completed work).
+
+**Two findings govern the whole plan:**
+1. §8's core premise — "avoid forward-transforming losing candidates via
+   cheap summaries" — is **mostly foreclosed**. Ranking a DCT16/DCT32
+   candidate needs coefficient-domain data (a DCT32 spans 16 atoms; per-atom
+   source mean/variance in `AnalysisAtlas` cannot recover its spectrum), so
+   a useful summary requires the forward DCT to already exist — the forward
+   is unavoidable. The achievable win shrinks to "skip the exact per-cell
+   `choose`/`choose_lane4` scoring loop for losers after the transform
+   already ran" — smaller than §8 as written implies, and **currently
+   unmeasured**.
+2. Rate (`residual_bits(q)`, discrete/non-smooth) can't be *tightly*
+   bounded from a summary without approaching per-cell data, but a *loose,
+   provable* bound exists (every guaranteed-nonzero cell costs ≥2 bits) and
+   distortion *can* be tightly, exactly bounded for cells guaranteed to
+   zero (a smooth quadratic, no quantizer call needed). So a provable lower
+   bound is achievable — just looser than the existing exact partial-sum
+   cutoff in `block_cost_bounded`'s `check`.
+
+**The honest deliverable is infrastructure + measurement + one
+conservative, provably-safe pruning application — not "the full §8
+redesign, landed."** Six phases, each independently gated (full detail in
+the AKR record's `note`, condensed here):
+- **A** — a regret harness (agreement rate + exact-cost regret, with tail
+  reporting) using the exact scorer as its own ground truth, proven as a
+  no-op first (0 regret / 100% agreement wired to itself) before being
+  trusted — no Butteraugli needed for this question, zero new deps.
+- **B** — two measurements that can *kill or reshape* the plan before any
+  machinery is built: the `choose`-loop's actual cost share of cover
+  scoring (vs. the forward DCT), and whether the *winning* transform per
+  region is stable across rate-loop probes (the measured 96-97% cross-probe
+  cache hit rate only covers the *candidate set* being probe-invariant —
+  winner-stability is unverified and load-bearing for whether a
+  memory-saving "cache summaries, not coefficients" design survives).
+- **C** — the compact per-candidate summary + provable bound, validated
+  *exhaustively* (not statistically) against the exact scorer.
+- **D** — the safe prune, flagged, survivors still scored exactly; new
+  decision-quality fixtures required (the existing oracle suite proves
+  *placement* conformance only, not decision *quality* — exactly the gap
+  that let both CfL regressions through until a bespoke fixture caught
+  them).
+- **E** — `test-set/` provenance sidecars (currently missing, violates
+  `AGENTS.md` §9) — required before Phase D's fixtures can merge.
+- **F** — explicitly *not* attempted: the tight, continuous, closed-form
+  rate estimate (§8's ambitious half), named so it isn't silently smuggled
+  into an earlier phase under time pressure later.
+
+**Out of scope for the whole plan:** `AnalysisAtlas` expansion (can't rank
+DCT16/32 from source-pixel stats regardless; its raw-`frame.xyb()` vs.
+Gaborish-preconditioned-planes mismatch is a separate real bug, noted but
+not fixed here); Butteraugli/SSIMULACRA2 build-out (Phase 5 territory).
+
+**Next.** A future session executes Phase A first.
+
+---
+
 ## 2026-08-07 (4) — S8 (outside-advice.md §8): Opus advisor review, then a
 ## bit-identical coefficient-lane SIMD slice, not the full redesign
 
