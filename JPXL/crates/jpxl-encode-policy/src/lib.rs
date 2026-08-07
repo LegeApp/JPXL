@@ -1929,6 +1929,87 @@ fn mul_signal_bits(hf_mul: HfMul, baseline: HfMul) -> f64 {
 /// transform's dequant matrix has finer steps at the same `global_scale`, so
 /// it spends more bits to buy quality nobody asked for and a bits-only
 /// comparison mistakes that for compaction.
+/// Scores one channel's non-LLF cells of a `side x side` grid (top-left
+/// `n x n` corner is LLF) via 4-cell SIMD batches
+/// ([`HfQuantizer::choose_lane4`]), with a scalar
+/// [`HfQuantizer::choose`]/[`HfQuantizer::reconstruct`] fallback for each
+/// row segment's remainder (row lengths — `side - n` on LLF rows, `side`
+/// elsewhere — are not always multiples of 4).
+///
+/// Phase-3 (outside-advice.md §3's "vectorize adjacent coefficients, not one
+/// cell's four candidates"): accumulates `bits`/`weighted_sse` and checks
+/// `cutoff` after *every* cell, in the same raster order the original
+/// scalar loop always used, so this is bit-identical to that loop — see
+/// `choose_lane4_is_bit_identical_to_four_scalar_choose_calls` in
+/// `quantize.rs`. Checking `cutoff` at cell granularity (not batch
+/// granularity) keeps pruning exactly as tight as before a `choose_lane4`
+/// batch was ever computed.
+///
+/// `target_at`/`on_recon` are the two things that differ between Y (identity
+/// target, writes `d_y_hf`) and X/B (CfL-neutral target, no sink) — see the
+/// two call sites in [`block_cost_bounded`].
+///
+/// # Errors
+///
+/// As [`HfQuantizer::choose`].
+#[allow(clippy::too_many_arguments)]
+fn score_channel_lanes(
+    hf_quant: &HfQuantizer,
+    channel: usize,
+    lambda: f64,
+    to_sample_domain: f64,
+    side: usize,
+    n: usize,
+    mut target_at: impl FnMut(usize) -> f32,
+    mut on_recon: impl FnMut(usize, f32),
+    bits: &mut u64,
+    weighted_sse: &mut f64,
+    check: &impl Fn(u64, f64) -> bool,
+) -> Result<bool> {
+    for row in 0..side {
+        let col_start = if row < n { n } else { 0 };
+        let row_base = row * side;
+        let mut col = col_start;
+        while col + 4 <= side {
+            let cell_base = row_base + col;
+            let targets = [
+                target_at(cell_base),
+                target_at(cell_base + 1),
+                target_at(cell_base + 2),
+                target_at(cell_base + 3),
+            ];
+            let (qs, recons) = hf_quant.choose_lane4(channel, targets, cell_base)?;
+            for i in 0..4 {
+                let cell = cell_base + i;
+                let q = qs.get(i).copied().unwrap_or(0);
+                let recon = recons.get(i).copied().unwrap_or(0.0);
+                let target = targets.get(i).copied().unwrap_or(0.0);
+                *bits = bits.saturating_add(residual_bits(q));
+                *weighted_sse += lambda * to_sample_domain * f64::from(recon - target).powi(2);
+                on_recon(cell, recon);
+                if check(*bits, *weighted_sse) {
+                    return Ok(true);
+                }
+            }
+            col += 4;
+        }
+        while col < side {
+            let cell = row_base + col;
+            let target = target_at(cell);
+            let q = hf_quant.choose(target, channel, cell)?;
+            let recon = hf_quant.reconstruct(q, channel, cell);
+            *bits = bits.saturating_add(residual_bits(q));
+            *weighted_sse += lambda * to_sample_domain * f64::from(recon - target).powi(2);
+            on_recon(cell, recon);
+            if check(*bits, *weighted_sse) {
+                return Ok(true);
+            }
+            col += 1;
+        }
+    }
+    Ok(false)
+}
+
 /// §4.3 objective for one square candidate. When `cutoff` is set, returns
 /// `None` as soon as the partial cost cannot beat the split (ties keep split).
 #[allow(clippy::too_many_arguments)]
@@ -1947,7 +2028,6 @@ fn block_cost_bounded(
     let fwd = cache.get_or_insert(frame, transform, px, py, scratch)?;
     let side = transform.sample_cols();
     let n = transform.block_dims().0;
-    let cells = side * side;
     let hf_quant = hf_quants.get(transform, hf_mul)?;
     // One squared coefficient unit is `side^2` squared sample units (the
     // forward transforms are not Parseval; see [`HfQuantizers::lambda`]).
@@ -1974,39 +2054,46 @@ fn block_cost_bounded(
             false
         }
     };
-    for cell in 0..cells {
-        if is_llf_cell(cell, side, n) {
-            continue;
-        }
-        let coeff = cy.get(cell).copied().unwrap_or(0.0);
-        let q = hf_quant.choose(coeff, 1, cell)?;
-        bits = bits.saturating_add(residual_bits(q));
-        let recon = hf_quant.reconstruct(q, 1, cell);
-        weighted_sse += hf_quants.lambda[1] * to_sample_domain * f64::from(recon - coeff).powi(2);
-        if let Some(slot) = d_y_hf.get_mut(cell) {
-            *slot = recon;
-        }
-        if check(bits, weighted_sse) {
-            return Ok(None);
-        }
+    let pruned = score_channel_lanes(
+        hf_quant,
+        1,
+        hf_quants.lambda[1],
+        to_sample_domain,
+        side,
+        n,
+        |cell| cy.get(cell).copied().unwrap_or(0.0),
+        |cell, recon| {
+            if let Some(slot) = d_y_hf.get_mut(cell) {
+                *slot = recon;
+            }
+        },
+        &mut bits,
+        &mut weighted_sse,
+        &check,
+    )?;
+    if pruned {
+        return Ok(None);
     }
     for &(channel, plane) in &[(0usize, cx), (2usize, cb)] {
         let k = if channel == 0 { 0.0 } else { 1.0 };
-        for cell in 0..cells {
-            if is_llf_cell(cell, side, n) {
-                continue;
-            }
-            let target =
-                plane.get(cell).copied().unwrap_or(0.0) - k * d_y_hf.get(cell).copied().unwrap_or(0.0);
-            let q = hf_quant.choose(target, channel, cell)?;
-            bits = bits.saturating_add(residual_bits(q));
-            let recon = hf_quant.reconstruct(q, channel, cell);
-            weighted_sse += hf_quants.lambda.get(channel).copied().unwrap_or(0.0)
-                * to_sample_domain
-                * f64::from(recon - target).powi(2);
-            if check(bits, weighted_sse) {
-                return Ok(None);
-            }
+        let pruned = score_channel_lanes(
+            hf_quant,
+            channel,
+            hf_quants.lambda.get(channel).copied().unwrap_or(0.0),
+            to_sample_domain,
+            side,
+            n,
+            |cell| {
+                plane.get(cell).copied().unwrap_or(0.0)
+                    - k * d_y_hf.get(cell).copied().unwrap_or(0.0)
+            },
+            |_cell, _recon| {},
+            &mut bits,
+            &mut weighted_sse,
+            &check,
+        )?;
+        if pruned {
+            return Ok(None);
         }
     }
     #[allow(

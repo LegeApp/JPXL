@@ -324,6 +324,192 @@ impl HfQuantizer {
         Ok(())
     }
 
+    /// [`Self::choose`], batched over four *contiguous, already non-LLF*
+    /// cells (`cell_base..cell_base + 4`), plus each winner's reconstruction
+    /// — for candidate *scoring* callers (`block_cost_bounded`) that need
+    /// both without a second `reconstruct` pass.
+    ///
+    /// Phase-3 / outside-advice.md §3: vectorizes the *coefficient* axis
+    /// (four adjacent cells at once) instead of `choose`'s existing
+    /// `#[cfg(feature = "simd")]` path, which vectorizes the *four candidates
+    /// of one cell* — outside-advice's own critique of that axis choice.
+    /// Every result is bit-identical to four independent `choose` calls on
+    /// the same `(channel, cell)` tuples: same zero-threshold shortcut, same
+    /// `[0, estimate-1, estimate, estimate+1]` candidate order (so the same
+    /// nearest-then-smaller-magnitude tie rule), same error semantics (a
+    /// degenerate step or an out-of-range non-zero-threshold estimate is
+    /// `Err`, matching `clamp_round`). This is deliberately *not* a
+    /// distortion/rate estimate of any kind — see the module's `choose` doc
+    /// and `sources/outside-advice.md` §8's contrast between this
+    /// (safe, output-preserving) and a closed-form summary score
+    /// (unbounded-tail risk without a calibration harness, not attempted).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::choose`], evaluated per lane.
+    #[cfg(feature = "simd")]
+    pub(crate) fn choose_lane4(
+        &self,
+        channel: usize,
+        targets: [f32; 4],
+        cell_base: usize,
+    ) -> Result<([i32; 4], [f32; 4])> {
+        use wide::{CmpLe, f32x4};
+
+        let mut step_arr = [0.0f32; 4];
+        let mut thr_arr = [0.0f32; 4];
+        for (i, slot) in step_arr.iter_mut().enumerate() {
+            let cell = cell_base + i;
+            let step = self.step_at(channel, cell);
+            if !(step.is_finite() && step > 0.0) {
+                return Err(PolicyError::Unsupported {
+                    what: "a degenerate HF quantization step",
+                });
+            }
+            *slot = step;
+            if let Some(t) = thr_arr.get_mut(i) {
+                *t = self
+                    .zero_threshold
+                    .get(channel)
+                    .and_then(|t| t.get(cell).copied())
+                    .unwrap_or(0.0);
+            }
+        }
+
+        let target = f32x4::new(targets);
+        let step = f32x4::new(step_arr);
+        let thr = f32x4::new(thr_arr);
+        // All-ones-bits per lane where zero wins outright (the scalar
+        // shortcut), else all-zero-bits — `wide`'s comparison-mask idiom.
+        let zero_mask = target.abs().cmp_le(thr);
+        let zero_mask_arr = zero_mask.to_array();
+
+        // The scalar zero-threshold shortcut is a ~2-instruction early
+        // return for what is, on typical photo content, most HF
+        // coefficients — a SIMD lane can't skip work per-element the way a
+        // scalar early return can, so without this whole-lane fast path the
+        // vectorized candidate search below (unconditionally run on every
+        // lane) is *more* total arithmetic than four scalar `choose` calls
+        // that mostly take the shortcut, not less. Measured: omitting this
+        // cost ~35% more wall time on `cover_ms` despite fewer `choose_cover`
+        // calls in the diagnostics counter (the counter tracks scalar
+        // `choose` invocations, which this fast path also bypasses; see
+        // its updated doc comment in `diagnostics.rs`).
+        if zero_mask.all() {
+            return Ok(([0i32; 4], [0.0f32; 4]));
+        }
+
+        let estimate = (target / step).round();
+        let est_arr = estimate.to_array();
+        #[allow(
+            clippy::cast_precision_loss,
+            reason = "MAX_QUANT == 2^20, exact in f32"
+        )]
+        let max_quant_f = MAX_QUANT as f32;
+        for i in 0..4 {
+            // A zero-threshold lane never reaches `clamp_round` in the
+            // scalar path (it returns before computing `estimate` at all),
+            // so an out-of-range speculative estimate there is not an error.
+            if zero_mask_arr.get(i).copied().unwrap_or(0.0) == 0.0
+                && est_arr.get(i).copied().unwrap_or(0.0).abs() > max_quant_f
+            {
+                return Err(PolicyError::Unsupported {
+                    what: "a coefficient outside the quantizer's working range",
+                });
+            }
+        }
+
+        let bias = self.quant_bias.get(channel).copied().unwrap_or(1.0);
+        let numerator = self.quant_bias_numerator;
+        let bias_adjust_vec = |q: f32x4| -> f32x4 {
+            let small = q.abs().cmp_le(f32x4::splat(1.0));
+            let via_bias = q * f32x4::splat(bias);
+            // Unused (discarded by `blend`) on lanes where `small` holds,
+            // including any lane with q == 0; the resulting Inf/NaN there is
+            // inert (never read) and not a panic in Rust's float semantics.
+            let via_numerator = q - f32x4::splat(numerator) / q;
+            small.blend(via_bias, via_numerator)
+        };
+
+        let mut best_q = [0i32; 4];
+        let mut best_err = [f32::INFINITY; 4];
+        let mut best_recon = [0.0f32; 4];
+        // Same order as `choose`'s `[0, estimate-1, estimate, estimate+1]`,
+        // so the same "first legal candidate with strictly smaller error, or
+        // equal error and strictly smaller magnitude" tie rule applies.
+        let candidate_slots: [f32x4; 4] = [
+            f32x4::splat(0.0),
+            estimate - f32x4::splat(1.0),
+            estimate,
+            estimate + f32x4::splat(1.0),
+        ];
+        for q_vec in candidate_slots {
+            let q_arr = q_vec.to_array();
+            let recon_vec = bias_adjust_vec(q_vec) * step;
+            let err_arr = (recon_vec - target).abs().to_array();
+            let recon_arr = recon_vec.to_array();
+            for i in 0..4 {
+                let q = q_arr.get(i).copied().unwrap_or(0.0);
+                #[allow(
+                    clippy::cast_possible_truncation,
+                    reason = "candidates are exact integers as f32 (well inside \
+                              the 24-bit mantissa range); .round() guards fp noise"
+                )]
+                let qi = q.round() as i32;
+                if qi.unsigned_abs() > MAX_QUANT.unsigned_abs() {
+                    continue;
+                }
+                let (Some(be), Some(bq), Some(br), Some(&err)) = (
+                    best_err.get_mut(i),
+                    best_q.get_mut(i),
+                    best_recon.get_mut(i),
+                    err_arr.get(i),
+                ) else {
+                    continue;
+                };
+                if err < *be || (err == *be && qi.abs() < bq.abs()) {
+                    *be = err;
+                    *bq = qi;
+                    *br = recon_arr.get(i).copied().unwrap_or(0.0);
+                }
+            }
+        }
+
+        for i in 0..4 {
+            if zero_mask_arr.get(i).copied().unwrap_or(0.0) != 0.0 {
+                if let (Some(q), Some(r)) = (best_q.get_mut(i), best_recon.get_mut(i)) {
+                    *q = 0;
+                    *r = 0.0;
+                }
+            }
+        }
+
+        Ok((best_q, best_recon))
+    }
+
+    /// [`Self::choose_lane4`] without the `simd` feature: four independent
+    /// scalar [`Self::choose`] calls. Callers do not need to feature-gate.
+    #[cfg(not(feature = "simd"))]
+    pub(crate) fn choose_lane4(
+        &self,
+        channel: usize,
+        targets: [f32; 4],
+        cell_base: usize,
+    ) -> Result<([i32; 4], [f32; 4])> {
+        let mut q = [0i32; 4];
+        let mut recon = [0.0f32; 4];
+        for i in 0..4 {
+            let cell = cell_base + i;
+            let target = targets.get(i).copied().unwrap_or(0.0);
+            let qi = self.choose(target, channel, cell)?;
+            if let (Some(qs), Some(rs)) = (q.get_mut(i), recon.get_mut(i)) {
+                *qs = qi;
+                *rs = self.reconstruct(qi, channel, cell);
+            }
+        }
+        Ok((q, recon))
+    }
+
     /// The integer whose reconstruction is nearest `target`.
     ///
     /// Candidates come from the linear estimate — the bias adjustment is a
@@ -670,6 +856,111 @@ mod tests {
         assert!(q.choose(1e30, 1, 1).is_err());
         let lf = LfQuantizer::new(4096, 16, 0);
         assert!(lf.quantize(f32::NAN, 1).is_err());
+    }
+
+    /// Phase-3 safety net (outside-advice.md §8's contrast with a closed-form
+    /// summary score): `choose_lane4` must be bit-identical to four
+    /// independent `choose` calls, exhaustively, before `block_cost_bounded`
+    /// is allowed to use it. Every target pattern below is deliberately
+    /// chosen to stress a specific boundary: exactly at / just inside / just
+    /// outside the zero threshold, exact half-integer ties, the `|q|<=1`
+    /// bias-adjust branch edge, and both sides of `MAX_QUANT`.
+    #[cfg(feature = "simd")]
+    #[test]
+    fn choose_lane4_is_bit_identical_to_four_scalar_choose_calls() {
+        let quantizers = [
+            HfQuantizer::new(TransformType::Dct8x8, 4096, 1, 2, 2).expect("defaults"),
+            HfQuantizer::new(TransformType::Dct8x8, 4096, 4, 2, 2).expect("hf_mul 4"),
+            HfQuantizer::new(TransformType::Dct8x8, 4096, 1, 1, 3).expect("asymmetric qm"),
+            HfQuantizer::new(TransformType::Dct16x16, 4096, 1, 2, 2).expect("dct16"),
+            HfQuantizer::new(TransformType::Dct32x32, 8192, 1, 2, 2).expect("dct32, coarse scale"),
+            HfQuantizer::new(TransformType::Dct8x8, u32::from(u16::MAX), 1, 2, 2)
+                .expect("very fine global_scale (small steps)"),
+        ];
+
+        for q in &quantizers {
+            let cells = q.steps[0].len();
+            for channel in 0..NUM_CHANNELS {
+                for cell_base in 0..cells.saturating_sub(3) {
+                    // One representative step, to build target patterns that
+                    // land relative to *this* lane's own scale.
+                    let step = q.step(channel, cell_base);
+                    if !(step.is_finite() && step > 0.0) {
+                        continue;
+                    }
+                    let thr = q
+                        .zero_threshold
+                        .get(channel)
+                        .and_then(|t| t.get(cell_base).copied())
+                        .unwrap_or(0.0);
+                    let patterns: [[f32; 4]; 10] = [
+                        [0.0, 0.0, 0.0, 0.0],
+                        [thr * 0.99, -thr * 0.99, thr, -thr],
+                        [thr * 1.01, -thr * 1.01, step * 0.5, -step * 0.5],
+                        [step * 1.5, -step * 1.5, step * 2.5, -step * 2.5],
+                        [step * 0.5, step * 1.5, step * 2.5, step * 3.5],
+                        [step * 10.5, -step * 10.5, step * 100.25, -step * 100.75],
+                        [
+                            step * f32::from(i16::try_from(MAX_QUANT).unwrap_or(i16::MAX)),
+                            -step * f32::from(i16::try_from(MAX_QUANT).unwrap_or(i16::MAX)),
+                            step * 1_048_575.0,
+                            -step * 1_048_575.0,
+                        ],
+                        [step, -step, step * 2.0, -step * 2.0],
+                        [f32::MIN_POSITIVE, -f32::MIN_POSITIVE, 0.0, thr],
+                        [step * 3.333_333, -step * 7.777_777, step * 0.1, -step * 0.1],
+                    ];
+                    for targets in patterns {
+                        let scalar: Vec<Result<(i32, f32)>> = (0..4)
+                            .map(|i| {
+                                let cell = cell_base + i;
+                                let t = targets.get(i).copied().unwrap_or(0.0);
+                                q.choose(t, channel, cell)
+                                    .map(|qi| (qi, q.reconstruct(qi, channel, cell)))
+                            })
+                            .collect();
+                        let lane = q.choose_lane4(channel, targets, cell_base);
+                        match (scalar.iter().all(Result::is_ok), &lane) {
+                            (true, Ok((qs, recons))) => {
+                                for i in 0..4 {
+                                    let (sq, sr) = scalar
+                                        .get(i)
+                                        .and_then(|r| r.as_ref().ok())
+                                        .copied()
+                                        .unwrap();
+                                    let lq = qs.get(i).copied().unwrap_or(i32::MIN);
+                                    let lr = recons.get(i).copied().unwrap_or(f32::NAN);
+                                    assert_eq!(
+                                        sq,
+                                        lq,
+                                        "channel {channel} cell {} target {}: scalar q={sq} \
+                                         lane q={lq}",
+                                        cell_base + i,
+                                        targets[i]
+                                    );
+                                    assert_eq!(
+                                        sr.to_bits(),
+                                        lr.to_bits(),
+                                        "channel {channel} cell {} target {}: scalar recon={sr} \
+                                         lane recon={lr}",
+                                        cell_base + i,
+                                        targets[i]
+                                    );
+                                }
+                            }
+                            (false, Err(_)) => {
+                                // Both sides agree the lane is unreachable —
+                                // exact wording need not match.
+                            }
+                            (scalar_ok, lane_result) => panic!(
+                                "channel {channel} cell_base {cell_base} targets {targets:?}: \
+                                 scalar all-ok={scalar_ok} lane={lane_result:?}"
+                            ),
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[test]

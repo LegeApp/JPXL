@@ -33,6 +33,14 @@ pub enum ChooseStage {
 /// Snapshot of one plan/encode attempt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct EncodeDiag {
+    /// S8 (outside-advice.md §8, narrowed): most of cover scoring now runs
+    /// through `HfQuantizer::choose_lane4` (4 adjacent cells via SIMD, only
+    /// falling back to scalar `choose` for a row segment's non-multiple-of-4
+    /// remainder), and `choose_lane4` does not call `note_choose` — so this
+    /// undercounts total quantization decisions in cover scoring since S8
+    /// landed. It still tracks the scalar-remainder fraction accurately; it
+    /// is no longer "total decisions," only "decisions that went through
+    /// `choose` specifically." `choose_total()` is affected the same way.
     pub choose_cover: u64,
     pub choose_cfl_y: u64,
     pub choose_cfl_factor: u64,

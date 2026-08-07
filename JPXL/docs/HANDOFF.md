@@ -17,6 +17,84 @@ Keep this file small. Entries whose content has landed in `PLAN.md`,
 
 ---
 
+## 2026-08-07 (4) — S8 (outside-advice.md §8): Opus advisor review, then a
+## bit-identical coefficient-lane SIMD slice, not the full redesign
+
+**Advisor review first.** Given Phase 2's two near-miss regressions from an
+uncalibrated closed-form estimate at a much *smaller* decision surface
+(chroma-from-luma factor), an Opus-model architecture review was run against
+the actual §8 machinery (`AnalysisAtlas`, `CandidateForwardCache`,
+`block_cost_bounded`, `tile_region`, `HfQuantizer::choose`) before writing
+any code. Verdict: do not attempt the full §8 redesign (analysis pass +
+compact per-candidate summaries + lower-bound pruning) this session — cover
+selection changes *which transform exists*, an unbounded-tail failure mode
+at a much larger blast radius than CfL's near-miss. Recommended instead: a
+**bit-identical** coefficient-lane SIMD restructuring (outside-advice.md
+§3's "vectorize adjacent coefficients, not one cell's four candidates" — the
+existing `choose` SIMD path vectorizes the wrong axis), paired with an
+agreement/regret test harness, as safe infrastructure that doesn't gamble on
+cover-decision correctness. Leave `AnalysisAtlas` alone — expanding it now
+tunes features against a consumer (the future summary scorer) that's
+deliberately not being built yet, repeating the atlas's own documented
+Milestone-1 mistake.
+
+**What changed (landed).** `HfQuantizer::choose_lane4` (`quantize.rs`): four
+adjacent coefficients at once via `wide::f32x4`, replicating `choose`'s exact
+zero-threshold shortcut, `[0, estimate-1, estimate, estimate+1]` candidate
+order/tie rule, and error semantics exactly — plus a whole-lane zero fast
+path (added after measurement — see below). Non-SIMD fallback with the same
+signature (four scalar `choose` calls), so callers don't feature-gate.
+`score_channel_lanes` (`lib.rs`) drives it from `block_cost_bounded`:
+row-segment iteration (skip each row's LLF prefix, batch 4 at a time, scalar
+remainder), same raster accumulation order, same Phase-1 cutoff pruning at
+cell granularity.
+
+**A real regression caught before landing, not after.** The first version
+(no whole-lane zero fast path) was bit-identical but made `cover_ms` ~35%
+*slower*: `choose_lane4` unconditionally ran the full candidate search for
+every lane, but the scalar `choose`'s zero-threshold shortcut is a
+~2-instruction early return that most HF coefficients on real photos take —
+a SIMD lane can't skip per-element work the way a scalar early return can,
+so vectorizing without also fast-pathing the common all-zero case is *more*
+total arithmetic, not less. Added `if zero_mask.all() { return zero }` before
+the candidate search; re-measured. This is exactly the kind of thing the
+exhaustive bit-identity test doesn't catch (it proves correctness, not
+speed) — caught by actually benchmarking before declaring done, not by
+trusting the "SIMD" label.
+
+**Proved.** `choose_lane4_is_bit_identical_to_four_scalar_choose_calls`
+(new, `quantize.rs`): 6 quantizer configs (transform, `HfMul`, `global_scale`,
+`qm_scale` varied) × 10 target patterns per lane chosen to stress every
+boundary (zero threshold from both sides, half-integer ties, the `|q|<=1`
+bias-adjust branch edge, both sides of `MAX_QUANT`) — all bit-identical.
+`--diag` fingerprint/byte identity on 12 MP, 3 repeated runs:
+`output_bytes=1,530,188 fingerprint=30e55ba3faef4d64`, unchanged.
+`cover_ms`: ~1784ms → stable ~1524–1532ms (14–15%). Full suite green modulo
+the pre-existing, unrelated `both_oracles_decode_a_stream_from_the_hf_mul_segment`
+failure: lib 60/60 (default) + 59/59 (`--no-default-features`, confirming the
+non-SIMD fallback), `vardct_roundtrip` 12/12, `vardct_oracle` 9/10,
+`rate_loop` 11/11 (+1 pre-existing ignore) — `rate_loop`'s own wall time
+dropped from ~280s to ~28s, consistent with the change directly speeding up
+the repeated-cover-search workload that test exercises. Evidence:
+`jpegxl-rs.evidence.s8-cover-lane-simd-verified`. Work item
+`jpegxl-rs.work.arch-s8-cover-lane-simd` completed.
+
+**Diagnostics note.** `choose_cover`/`choose_total()` now undercount: most
+cover-scoring decisions go through `choose_lane4`, which does not call
+`note_choose`. Doc comment updated on `EncodeDiag::choose_cover`
+(`diagnostics.rs`) so this isn't mistaken for the earlier phases' "fewer
+calls" story — this is "fewer calls *to `choose` specifically*," not fewer
+quantization decisions.
+
+**Deliberately not attempted**, per the advisor's plan: FastDeadZone-in-
+scoring (a cheaper approximate quantizer for candidate scoring only, safe
+*if* gated by a bounded-regret generalization of this session's exact-
+agreement harness) and the full §8 closed-form summary redesign (needs
+either richer per-tile statistics than 2nd moments, or the matched-quality
+harness outside-advice.md §19 describes — neither exists yet).
+
+---
+
 ## 2026-08-07 (3) — Rate-loop `CandidateForwardCache` measured: size cap rejected
 
 **What changed.** `jpxl bench vardct-rate --diag` now also prints

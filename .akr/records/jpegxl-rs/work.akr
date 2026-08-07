@@ -391,6 +391,108 @@ record jpegxl-rs.work.arch-phase3-forward-cache/2 : work {
     supported_by [ @jpegxl-rs.assessment.encoder-architecture-outside-advice ]
 }
 
+record jpegxl-rs.work.arch-s8-cover-lane-simd/1 : work {
+    title "outside-advice.md §8 (S8), narrowed per Opus advisor review: bit-identical coefficient-lane SIMD for cover scoring"
+    state completed
+    intent """
+        sources/outside-advice.md §8 ("Cover selection needs a surrogate-first
+        design") asks for an analysis pass + compact per-candidate summaries +
+        lower-bound pruning to replace block_cost's exact per-coefficient
+        HfQuantizer::choose scoring. Before attempting that, an Opus advisor review
+        (requested given the Phase 2 CfL near-misses at a much smaller decision
+        surface) was run against the actual machinery (AnalysisAtlas,
+        CandidateForwardCache, block_cost_bounded, tile_region, HfQuantizer::choose).
+        Verdict: do not attempt the full §8 redesign this session -- a closed-form
+        summary score has an unbounded-tail failure mode at cover selection's larger,
+        more consequential decision surface (which transform exists, not just a
+        correction factor). Recommended instead: a bit-identical coefficient-lane
+        SIMD restructuring of block_cost_bounded's inner loop (outside-advice §3's
+        "vectorize adjacent coefficients, not one cell's four candidates" -- the
+        existing HfQuantizer::choose already has a SIMD path, but on the wrong axis),
+        paired with an exact-agreement test harness proving zero divergence, as
+        infrastructure that de-risks a later closed-form-scoring attempt without
+        gambling on cover-decision correctness now. AnalysisAtlas is explicitly left
+        untouched (expanding it now tunes features against a consumer -- the
+        summary scorer -- that was deliberately deferred, repeating the atlas's own
+        Milestone-1 mistake once already avoided).
+        """
+    note """
+        2026-08-07: landed the recommended narrow slice. Added
+        HfQuantizer::choose_lane4 (quantize.rs) -- four adjacent coefficients at
+        once via `wide::f32x4`, same zero-threshold shortcut, same
+        [0, estimate-1, estimate, estimate+1] candidate order and tie rule, same
+        error semantics as four independent choose() calls, plus a whole-lane
+        zero fast path (added after measurement showed the naive version -- always
+        running the full candidate search even when the scalar zero-threshold
+        shortcut would fire -- made cover_ms ~35% *slower* despite fewer choose()
+        call-count in diagnostics, since a SIMD lane can't skip per-element work
+        the way a scalar early return can). Added a non-simd fallback with the
+        same signature (four scalar choose() calls) so callers don't feature-gate.
+        Added score_channel_lanes (lib.rs) to drive it from block_cost_bounded:
+        row-segment iteration (LLF-prefix skip per row, batches of 4 + scalar
+        remainder), accumulating bits/weighted_sse and checking the Phase-1 cutoff
+        at cell granularity, in the same raster order as before.
+
+        Verified bit-identical by an exhaustive unit test
+        (choose_lane4_is_bit_identical_to_four_scalar_choose_calls, quantize.rs)
+        across 6 quantizer configurations (varying transform, HfMul, global_scale,
+        qm_scale) and 10 target patterns per lane chosen to stress every boundary
+        (zero threshold from both sides, half-integer ties, the |q|<=1 bias-adjust
+        branch edge, both sides of MAX_QUANT), and by --diag fingerprint identity
+        on real images (12MP: output_bytes/fingerprint 1,530,188 /
+        30e55ba3faef4d64, unchanged). cover_ms improved from ~1784ms to a stable
+        ~1524-1532ms (~14-15%) on the 12MP image after adding the whole-lane zero
+        fast path. Full test suite green modulo the pre-existing, unrelated
+        both_oracles_decode_a_stream_from_the_hf_mul_segment failure (documented
+        against jpegxl-rs.work.arch-phase2-cfl-quant).
+
+        Deferred, per the advisor's plan: FastDeadZone-in-scoring (a cheaper
+        approximate quantizer used only for candidate scoring, gated by this same
+        kind of agreement/regret harness generalized to a bounded-regret assertion
+        rather than exact equality) and the full §8 closed-form summary redesign
+        (needs either richer per-tile statistics than 2nd moments or the
+        matched-quality harness outside-advice §19 describes).
+        """
+    acceptance {
+        check bit-identical {
+            statement """
+                choose_lane4_is_bit_identical_to_four_scalar_choose_calls passes exhaustively across multiple quantizer configs and boundary-stressing target patterns; --diag fingerprint and output_bytes for a fixed 12MP vardct-fixed encode are unchanged.
+                """
+            method command
+            command "cd JPXL && cargo test -p jpxl-encode-policy --lib --release choose_lane4"
+            verified_by [ @jpegxl-rs.evidence.s8-cover-lane-simd-verified/1 ]
+        }
+        check measured-faster {
+            statement """
+                cover_ms on the 12MP vardct-fixed --diag benchmark is not slower than the pre-change baseline (it improved ~14-15% after the whole-lane zero fast path).
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.s8-cover-lane-simd-verified/1 ]
+        }
+        check tests-green {
+            statement """
+                jpxl-encode-policy lib tests (default and --no-default-features), vardct_roundtrip, vardct_oracle (modulo the pre-existing hf_mul_segment failure) and rate_loop all pass.
+                """
+            method command
+            command "cd JPXL && cargo test -p jpxl-encode-policy --lib --release && cargo test -p jpxl-encode-policy --lib --release --no-default-features && cargo test -p jpxl-encode-policy --test vardct_roundtrip --test vardct_oracle --test rate_loop --release"
+            verified_by [ @jpegxl-rs.evidence.s8-cover-lane-simd-verified/1 ]
+        }
+    }
+    implements [
+        @jpegxl-rs.decision.encoder-architecture-phases,
+        @jpegxl-rs.policy.sources-advice-completion
+    ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+    supported_by [ @jpegxl-rs.assessment.encoder-architecture-outside-advice ]
+    source {
+        kind external
+        path "sources/outside-advice.md"
+        excerpt """
+            Section 8: Cover selection needs a surrogate-first design
+            """
+    }
+}
+
 record jpegxl-rs.work.dispose-performance-md/1 : work {
     title "Dispose PERFORMANCE.md into AKR and scratch"
     state superseded
