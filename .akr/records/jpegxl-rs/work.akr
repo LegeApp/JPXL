@@ -164,7 +164,10 @@ record jpegxl-rs.work.arch-phase2-cfl-quant/2 : work {
                 factor_candidates' search window is narrowed to seed±1 (from ±4) and refine_hf_factor short-circuits to the neutral factor when the closed-form least-squares seed is already 0, cutting choose_cfl_factor calls without changing the exact per-sample scoring semantics. Full elimination of choose_cfl_y/choose_cfl_factor is deferred -- see the note.
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.phase2-safe-window-narrowing-landed/1 ]
+            verified_by [
+                @jpegxl-rs.evidence.phase2-safe-window-narrowing-landed/1,
+                @jpegxl-rs.evidence.phase2-safe-window-narrowing-landed-postcommit/1
+            ]
         }
         check tests-green {
             statement """
@@ -172,7 +175,10 @@ record jpegxl-rs.work.arch-phase2-cfl-quant/2 : work {
                 """
             method command
             command "cd JPXL && cargo test -p jpxl-encode -p jpxl-encode-policy --lib --release"
-            verified_by [ @jpegxl-rs.evidence.phase2-safe-window-narrowing-landed/1 ]
+            verified_by [
+                @jpegxl-rs.evidence.phase2-safe-window-narrowing-landed/1,
+                @jpegxl-rs.evidence.phase2-safe-window-narrowing-landed-postcommit/1
+            ]
         }
     }
     implements [
@@ -182,6 +188,94 @@ record jpegxl-rs.work.arch-phase2-cfl-quant/2 : work {
     part_of [ @jpegxl-rs.track.encoder-optimization ]
     supersedes [ @jpegxl-rs.work.arch-phase2-cfl-quant/1 ]
     supported_by [ @jpegxl-rs.assessment.encoder-architecture-outside-advice ]
+}
+
+record jpegxl-rs.work.arch-phase3-forward-cache/1 : work {
+    title "Phase 3: eliminate the selected-forward clone; borrow from CandidateForwardCache"
+    state completed
+    intent """
+        outside-advice.md §7 flags two redundant retentions of full per-candidate
+        HF coefficient vectors: CandidateForwardCache (every scored cover candidate,
+        frame-wide, ~428 MB at 12 MP) and forward_selected's second owned clone of
+        just the selected varblocks (~144 MB at 12 MP). This work eliminates the
+        second one: split cover selection's per-group loop into two passes so every
+        selected varblock's forward can be *borrowed* from CandidateForwardCache
+        (now exposing a read-only get()) instead of cloned into groups. The first
+        retention (CandidateForwardCache itself, which must keep every scored
+        candidate -- winners and losers -- because the rate loop shares one cache
+        across quantizer probes to avoid re-running the forward DCT per probe) is
+        explicitly NOT touched by this work; see the note for why a naive LRU/FIFO
+        cap on it is risky (could gut cross-probe reuse for RateSearchBudget's up to
+        40 probes) and deferred pending a design that understands the rate loop's
+        access pattern.
+        """
+    note """
+        2026-08-07: landed the safe half (selected-forward clone). Verified
+        output-preserving by construction (pure ownership/borrow restructuring, no
+        decision logic touched) and confirmed via --diag fingerprint identity: 12MP
+        vardct-fixed threads=1 output_bytes and fingerprint unchanged
+        (1,530,188 / 30e55ba3faef4d64) both before and after, sel_clones/sel_bytes
+        41,949/144,000,000 -> 0/0. All jpxl-encode + jpxl-encode-policy lib, oracle,
+        roundtrip and rate_loop tests pass (the one pre-existing
+        both_oracles_decode_a_stream_from_the_hf_mul_segment failure is unrelated,
+        see jpegxl-rs.work.arch-phase2-cfl-quant's note).
+
+        CandidateForwardCache itself (the ~428 MB frame-wide candidate retention,
+        the larger of outside-advice §7's two numbers) is unaddressed. It backs
+        cross-probe reuse in the rate loop (crates/jpxl-encode-policy/src/rate.rs:589
+        keeps one CandidateForwardCache across all quantizer probes of one encode,
+        so a probe's cover search can skip re-running the forward DCT for positions
+        a prior probe already scored). A bounded cap (LRU/FIFO) risks evicting
+        exactly the entries a later probe needs, which for RateSearchBudget's up to
+        ~40 probes could turn a cache hit into 40x the forward-DCT work -- a real
+        wall-clock regression, not just a missed win. A safe reduction here needs
+        either: (a) a cap sized/validated against actual rate-loop access patterns
+        (measure hit-rate degradation, not just implement and hope), or (b) the
+        fuller outside-advice §8 redesign -- compact per-candidate summaries
+        (estimated_rate/distortion/band_energy, not raw coefficient vectors) scored
+        during cover search, with only the winning transform's exact coefficients
+        ever materialized. (b) is the architecturally 'right' answer per outside-
+        advice but is a much bigger change (touches block_cost/tile_region's
+        candidate representation, not just an ownership pattern) and should get its
+        own scoped work item rather than being bolted onto this one.
+        """
+    acceptance {
+        check clone-eliminated {
+            statement """
+                --diag on a 12 MP VarDCT encode reports sel_clones=0 and sel_bytes=0.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.phase3-selected-forward-clone-eliminated/1 ]
+        }
+        check output-unchanged {
+            statement """
+                The --diag fingerprint and output_bytes for a fixed 12 MP vardct-fixed encode are identical before and after (pure representational change, no decision logic touched).
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.phase3-selected-forward-clone-eliminated/1 ]
+        }
+        check tests-green {
+            statement """
+                jpxl-encode-policy and jpxl-encode lib, oracle, roundtrip and rate_loop tests pass (modulo the pre-existing, unrelated both_oracles_decode_a_stream_from_the_hf_mul_segment failure).
+                """
+            method command
+            command "cd JPXL && cargo test -p jpxl-encode -p jpxl-encode-policy --lib --release && cargo test -p jpxl-encode-policy --test vardct_oracle --test vardct_roundtrip --test rate_loop"
+            verified_by [ @jpegxl-rs.evidence.phase3-selected-forward-clone-eliminated/1 ]
+        }
+    }
+    implements [
+        @jpegxl-rs.decision.encoder-architecture-phases,
+        @jpegxl-rs.policy.sources-advice-completion
+    ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+    supported_by [ @jpegxl-rs.assessment.encoder-architecture-outside-advice ]
+    source {
+        kind external
+        path "sources/outside-advice.md"
+        excerpt """
+            Section 7: The current forward cache is counterproductive
+            """
+    }
 }
 
 record jpegxl-rs.work.dispose-performance-md/1 : work {

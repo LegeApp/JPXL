@@ -50,9 +50,14 @@ pub struct EncodeDiag {
     pub candidate_forwards: u64,
     /// Approximate bytes of f32 coeffs retained in the candidate cache (sum of vector lens × 4).
     pub candidate_forward_bytes: u64,
-    /// Selected-forward clones (one per selected varblock × 3 channels payload).
+    /// Selected-forward clones (one per selected varblock × 3 channels
+    /// payload). Phase-3: always `0` now — `gather_forward_refs` borrows each
+    /// selected varblock's forward from [`crate::CandidateForwardCache`]
+    /// instead of cloning it into a second owned copy. Kept as a regression
+    /// guard: if a future change reintroduces cloning, this stops being zero.
     pub selected_forward_clones: u64,
-    /// Approximate bytes cloned by `forward_selected`.
+    /// Approximate bytes this would have cloned pre-Phase-3. Always `0` now;
+    /// see [`Self::selected_forward_clones`].
     pub selected_forward_bytes: u64,
     /// CfL samples pushed (X and B together).
     pub cfl_samples: u64,

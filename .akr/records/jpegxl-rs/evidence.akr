@@ -487,6 +487,30 @@ record jpegxl-rs.evidence.phase2-safe-window-narrowing-landed/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase2-safe-window-narrowing-landed-postcommit/1 : evidence {
+    title "Phase-2 landed-state re-verified against commit 78d8ffb"
+    state verified
+    result pass
+    method command
+    observed_at git:78d8ffbc467cadc426c0381e25c613f11c847d62
+    command "cd JPXL && cargo test -p jpxl-encode -p jpxl-encode-policy --lib --release"
+    summary """
+        Re-verification against commit 78d8ffb (the commit that actually carries jpegxl-rs.work.arch-phase2-cfl-quant/2's content) after knowledge_validate flagged the original phase2-safe-window-narrowing-landed evidence as predating that commit (it was recorded, correctly, against the pre-commit working tree, but its default observed_at pinned to the parent commit since it was written before `git commit` ran). Same result as before: jpxl-encode + jpxl-encode-policy lib tests 59+103 passed, no change to the landed code since the original observation.
+        """
+}
+
+record jpegxl-rs.evidence.phase3-selected-forward-clone-eliminated/1 : evidence {
+    title "Phase-3 selected-forward clone eliminated, output byte-identical"
+    state verified
+    result pass
+    method command
+    observed_at git:78d8ffbc467cadc426c0381e25c613f11c847d62
+    command "cd JPXL && cargo test -p jpxl-encode -p jpxl-encode-policy --lib --release && cargo test -p jpxl-encode-policy --test vardct_oracle --test vardct_roundtrip --test rate_loop && cargo build --release -p jpxl-cli && ./target/release/jpxl bench vardct-fixed --input &lt;12MP-P6&gt; --threads 1 --iters 1 --diag"
+    summary """
+        Split plan_at_with_cfl's per-group cover-selection loop into two passes: pass A does all cache-mutating work (cover selection + ensure_forwards_cached, a new helper that guarantees every selected varblock's forward is present, a no-op under CoverMode::Hierarchical which already inserted it during scoring, real work under CoverMode::FixedDct8x8 which never touches the cache) across every LF group; pass B (after all mutation is done) borrows &VarblockForward references via a new CandidateForwardCache::get() / gather_forward_refs(), replacing forward_selected's old fwd.clone(). estimate_cfl and quantize_group signatures updated from &[VarblockForward]/&[&[VarblockForward]] to &[&VarblockForward]/&[&[&VarblockForward]] (bodies unchanged, Rust auto-derefs through the extra reference). 12MP vardct-fixed threads=1 --diag: output_bytes and fingerprint IDENTICAL before/after (1,530,188 / 30e55ba3faef4d64), confirming this is purely representational -- sel_clones 41,949 -> 0, sel_bytes 144,000,000 -> 0. jpxl-encode + jpxl-encode-policy lib tests (59+103), vardct_roundtrip (12), rate_loop (11+1 ignored) all pass; vardct_oracle 9/10 passes, the one failure (both_oracles_decode_a_stream_from_the_hf_mul_segment) is the same pre-existing, unrelated failure documented against jpegxl-rs.work.arch-phase2-cfl-quant.
+        """
+}
+
 record jpegxl-rs.evidence.rulings-captured/1 : evidence {
     title "HANDOFF Already-fixed and Traps plus LESSONS captured as 5 decisions, 12 policies, 6 constraints"
     state verified

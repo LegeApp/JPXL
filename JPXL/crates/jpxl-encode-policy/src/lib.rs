@@ -328,9 +328,17 @@ fn plan_at_with_cfl(
     // CfL estimation and HF quantization both consume those coefficients so
     // a selected DCT is not recomputed (Opt-V within-probe cache).
     let mut fwd_scratch = ForwardScratch::new();
-    let groups = diagnostics::time_stage(diagnostics::StageTimer::Cover, || {
+    // Phase-3 (outside-advice.md §7): two passes so every group's forwards can
+    // be *borrowed* from `cache` instead of cloned into a second owned copy.
+    // Pass A does all cache-mutating work (cover selection, then ensuring
+    // every selected varblock's forward is present) across every group; only
+    // once no group needs `&mut cache` again does pass B hand out `&cache`
+    // borrows. Interleaving the two per group, as before, would need each
+    // group's borrowed forwards to outlive the *next* group's mutable cache
+    // access, which the borrow checker (rightly) refuses.
+    let group_meta = diagnostics::time_stage(diagnostics::StageTimer::Cover, || {
         diagnostics::with_choose_stage(diagnostics::ChooseStage::Cover, || {
-            let mut groups = Vec::new();
+            let mut group_meta = Vec::new();
             for index in 0..geometry.num_lf_groups() {
                 let id = LfGroupId::new(u32::try_from(index).unwrap_or(u32::MAX));
                 let blocks = geometry
@@ -366,24 +374,32 @@ fn plan_at_with_cfl(
                         )?
                     }
                 };
-                let forwards = forward_selected(
+                ensure_forwards_cached(
                     transform_frame,
                     &varblocks,
                     (rect.x0, rect.y0),
                     cache,
                     &mut fwd_scratch,
                 )?;
-                groups.push((id, blocks, rect, varblocks, forwards));
+                group_meta.push((id, blocks, rect, varblocks));
             }
-            Ok::<_, PolicyError>(groups)
+            Ok::<_, PolicyError>(group_meta)
         })
     })?;
+
+    let groups = group_meta
+        .into_iter()
+        .map(|(id, blocks, rect, varblocks)| {
+            let forwards = gather_forward_refs(&varblocks, (rect.x0, rect.y0), cache)?;
+            Ok::<_, PolicyError>((id, blocks, rect, varblocks, forwards))
+        })
+        .collect::<Result<Vec<_>>>()?;
 
     let maps: Vec<&[VarblockDecision]> = groups
         .iter()
         .map(|(_, _, _, varblocks, _)| varblocks.as_slice())
         .collect();
-    let forwards_ref: Vec<&[VarblockForward]> = groups
+    let forwards_ref: Vec<&[&VarblockForward]> = groups
         .iter()
         .map(|(_, _, _, _, forwards)| forwards.as_slice())
         .collect();
@@ -1011,25 +1027,65 @@ impl CandidateForwardCache {
                 what: "a missing forward-cache entry after insert",
             })
     }
+
+    /// Read-only lookup: `None` if `(transform, px, py)` was never inserted.
+    ///
+    /// Phase-3: callers that already know a candidate is cached (every
+    /// selected varblock's forward was inserted by cover scoring, or by
+    /// [`ensure_forwards_cached`]) use this instead of
+    /// [`Self::get_or_insert`] so they can borrow instead of cloning.
+    fn get(&self, transform: TransformType, px: u32, py: u32) -> Option<&VarblockForward> {
+        self.entries.get(&Self::key(transform, px, py))
+    }
 }
 
-/// Resolves forward coefficients for every selected varblock via `cache`.
-fn forward_selected(
+/// Ensures every selected varblock's forward coefficients are cached,
+/// computing any that cover selection did not already touch (this is a
+/// no-op per varblock under [`CoverMode::Hierarchical`], where scoring
+/// candidates already inserted the winner; it does the real work under
+/// [`CoverMode::FixedDct8x8`], which never consults the cache).
+///
+/// Phase-3: this replaces the old `forward_selected`, which cloned a fresh
+/// `Vec<VarblockForward>` per group out of the cache (outside-advice.md §7's
+/// "selected-forward clone" — 144 MB at 12 MP). Splitting "ensure computed"
+/// (mutable) from "gather borrows" ([`gather_forward_refs`], immutable) lets
+/// every group's forwards be *borrowed* from `cache` instead, at the cost of
+/// running cover selection for every group before any group's forwards are
+/// gathered — see the two-pass loop in [`plan_at_with_cfl`].
+fn ensure_forwards_cached(
     frame: &PreparedFrame,
     varblocks: &[VarblockDecision],
     origin: (u32, u32),
     cache: &mut CandidateForwardCache,
     scratch: &mut ForwardScratch,
-) -> Result<Vec<VarblockForward>> {
+) -> Result<()> {
+    let (x0, y0) = origin;
+    for vb in varblocks {
+        let px = x0 + vb.origin.bx() * 8;
+        let py = y0 + vb.origin.by() * 8;
+        cache.get_or_insert(frame, vb.transform, px, py, scratch)?;
+    }
+    Ok(())
+}
+
+/// Borrows the (already-cached) forward coefficients for every selected
+/// varblock, in `varblocks` order. See [`ensure_forwards_cached`].
+fn gather_forward_refs<'cache>(
+    varblocks: &[VarblockDecision],
+    origin: (u32, u32),
+    cache: &'cache CandidateForwardCache,
+) -> Result<Vec<&'cache VarblockForward>> {
     let (x0, y0) = origin;
     let mut out = Vec::with_capacity(varblocks.len());
     for vb in varblocks {
         let px = x0 + vb.origin.bx() * 8;
         let py = y0 + vb.origin.by() * 8;
-        let fwd = cache.get_or_insert(frame, vb.transform, px, py, scratch)?;
-        let n_f32 = fwd.coeffs.iter().map(Vec::len).sum::<usize>();
-        diagnostics::note_selected_forward_clone(n_f32);
-        out.push(fwd.clone());
+        let fwd = cache
+            .get(vb.transform, px, py)
+            .ok_or(PolicyError::Unsupported {
+                what: "a selected varblock's forward missing from the cache",
+            })?;
+        out.push(fwd);
     }
     Ok(out)
 }
@@ -1353,7 +1409,7 @@ fn varblock_cfl(
 fn estimate_cfl(
     geometry: &VardctGeometry,
     maps: &[&[VarblockDecision]],
-    forwards: &[&[VarblockForward]],
+    forwards: &[&[&VarblockForward]],
     lf_quant: &LfQuantizer,
     hf_quants: &HfQuantizers,
     enabled: bool,
@@ -1760,10 +1816,11 @@ struct QuantizedGroup {
 
 /// Quantizes one LF group's **selected** varblocks, in their `BlockInfo` order.
 ///
-/// `forwards` are the precomputed coefficient arrays from [`forward_selected`]
-/// (same length and order as `varblocks`). HF coefficients for every varblock
-/// share one group arena ([`VarblockCoefficients::from_arena`]) so entropy
-/// alternatives do not re-allocate per-varblock coefficient boxes.
+/// `forwards` are the precomputed coefficient arrays from
+/// [`gather_forward_refs`] (same length and order as `varblocks`). HF
+/// coefficients for every varblock share one group arena
+/// ([`VarblockCoefficients::from_arena`]) so entropy alternatives do not
+/// re-allocate per-varblock coefficient boxes.
 #[allow(clippy::too_many_arguments)]
 fn quantize_group(
     lf_quant: &LfQuantizer,
@@ -1771,7 +1828,7 @@ fn quantize_group(
     correlation: &LfCorrelationDecision,
     cfl: &CflGrid,
     varblocks: &[VarblockDecision],
-    forwards: &[VarblockForward],
+    forwards: &[&VarblockForward],
     blocks: jpxl_encode::vardct::BlockGrid,
 ) -> Result<QuantizedGroup> {
     if varblocks.len() != forwards.len() {

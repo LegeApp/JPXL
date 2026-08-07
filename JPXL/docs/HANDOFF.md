@@ -17,6 +17,50 @@ Keep this file small. Entries whose content has landed in `PLAN.md`,
 
 ---
 
+## 2026-08-07 (2) — Phase 3 (partial): selected-forward clone eliminated
+
+**What changed.** `plan_at_with_cfl`'s per-LF-group cover-selection loop
+(`lib.rs`) splits into two passes. Pass A does everything that mutates
+`CandidateForwardCache` — cover selection, then the new
+`ensure_forwards_cached` (a no-op per varblock under `CoverMode::Hierarchical`,
+which already inserted the winner while scoring; real work under
+`CoverMode::FixedDct8x8`, which never touches the cache) — across *every*
+group. Only once no group needs `&mut cache` again does pass B run: the new
+`CandidateForwardCache::get` (read-only) and `gather_forward_refs` borrow each
+selected varblock's forward straight out of the cache, replacing the old
+`forward_selected`'s `fwd.clone()`. `estimate_cfl`/`quantize_group` signatures
+changed from `&[VarblockForward]`/`&[&[VarblockForward]]` to
+`&[&VarblockForward]`/`&[&[&VarblockForward]]` — bodies untouched, Rust
+auto-derefs through the extra reference.
+
+This is a pure ownership/borrow restructuring — no decision logic touched, so
+it's output-preserving by construction, not just by testing.
+
+**Proved:** `--diag` on 12 MP `vardct-fixed`, `threads=1`: `output_bytes` and
+`fingerprint` identical before/after (`1,530,188` /
+`30e55ba3faef4d64`); `sel_clones`/`sel_bytes` `41,949`/`144,000,000` → `0`/`0`.
+`jpxl-encode` + `jpxl-encode-policy` lib tests (59+103), `vardct_roundtrip`
+(12), `rate_loop` (11+1 ignored) all pass; `vardct_oracle` 9/10 (the one
+failure is the same pre-existing, unrelated
+`both_oracles_decode_a_stream_from_the_hf_mul_segment` from the Phase 2
+entry). Evidence: `jpegxl-rs.evidence.phase3-selected-forward-clone-eliminated`.
+Work item `jpegxl-rs.work.arch-phase3-forward-cache` completed.
+
+**Deliberately not touched: `CandidateForwardCache` itself** (the larger of
+outside-advice.md §7's two numbers, ~428 MB at 12 MP — every *scored*
+candidate, winners and losers, not just selected ones). `rate.rs:589` keeps
+one `CandidateForwardCache` across all quantizer probes of one encode
+specifically so a probe's cover search can skip re-running the forward DCT
+for positions a prior probe already scored — up to ~40 probes per
+`RateSearchBudget`. A naive LRU/FIFO cap risks evicting exactly the entries a
+later probe needs, turning a cache hit into 40x the forward-DCT work: a real
+wall-clock regression, not just a missed win. See the `note` on
+`jpegxl-rs.work.arch-phase3-forward-cache` for the two ways to do this safely
+(measure-then-cap, or the fuller outside-advice §8 compact-summary redesign)
+— next session's actual next step, not this partial win.
+
+---
+
 ## 2026-08-07 — Phase 2 closed: safe HF CfL window narrowing; full analytic
 ## elimination tried and reverted (regressed correctness twice)
 
