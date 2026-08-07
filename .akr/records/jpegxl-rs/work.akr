@@ -504,7 +504,7 @@ record jpegxl-rs.work.arch-s8-cover-lane-simd/1 : work {
 
 record jpegxl-rs.work.arch-s8-full-redesign-scoped/1 : work {
     title "S8 full redesign, scoped: infrastructure + measurement + one conservative prune (not \"full §8 landed\")"
-    state active
+    state superseded
     intent """
         Scope (not implement) the full outside-advice.md §8 surrogate-first
         cover-selection redesign, per explicit user request, via two parallel
@@ -626,6 +626,155 @@ record jpegxl-rs.work.arch-s8-full-redesign-scoped/1 : work {
     supported_by [ @jpegxl-rs.assessment.encoder-architecture-outside-advice ]
 }
 
+record jpegxl-rs.work.arch-s8-full-redesign-scoped/2 : work {
+    title "S8 full redesign, scoped: infrastructure + measurement + one conservative prune (not \"full §8 landed\")"
+    state proposed
+    intent """
+        Scope (not implement) the full outside-advice.md §8 surrogate-first
+        cover-selection redesign, per explicit user request, via two parallel
+        Explore scoping agents (architecture/machinery; safety/verification/
+        prerequisites) followed by an Opus advisor synthesis, each independently
+        checked against the actual code rather than accepted at face value.
+
+        Headline finding governing the whole plan: §8's core premise -- "avoid
+        forward-transforming losing candidates via cheap summaries" -- is mostly
+        foreclosed. Ranking a DCT16/DCT32 candidate needs coefficient-domain data
+        (a DCT32 spans 16 atoms; per-atom source mean/variance cannot recover its
+        spectrum), so a useful summary requires the forward DCT to already exist --
+        the forward is unavoidable. The achievable win shrinks to "skip the exact
+        per-cell choose/choose_lane4 scoring loop for losers after the transform
+        already ran."
+
+        Second finding: rate (residual_bits(q), discrete/non-smooth) cannot be
+        tightly bounded from a summary without approaching per-cell data, but a
+        loose PROVABLE bound exists (every guaranteed-nonzero cell costs >=2 bits)
+        and distortion CAN be tightly/exactly bounded for cells guaranteed to zero
+        (weighted_sse is a smooth quadratic, computable from coefficient magnitude
+        alone). So a provable -- not merely empirically-usually-right -- lower
+        bound is achievable, just looser than the existing exact partial-sum cutoff
+        in block_cost_bounded's `check`.
+
+        Third finding (Phase B, see note): CandidateForwardCache is keyed on
+        (transform, px, py) only -- forwards are probe-invariant by construction,
+        already getting 96-97% cross-probe reuse for free, and are the dominant
+        65-69% of cover-scoring cost. This forecloses §8's memory-saving half
+        entirely (discarding them to save memory would forfeit free reuse and
+        re-pay the dominant cost) independent of the cross-probe winner-churn
+        question Phase B also measured.
+
+        Given all three findings, the honest deliverable is infrastructure +
+        measurement + one conservative, provably-safe, WITHIN-PROBE-ONLY pruning
+        application that never touches the forward cache -- not "the full §8
+        redesign landed" and not the memory-saving design §8 originally proposed.
+        The aggressive closed-form rate-estimate half of §8 is explicitly staged
+        out (Phase F) pending a regret ceiling from real measurement -- attempting
+        it now repeats jpegxl-rs.work.arch-phase2-cfl-quant's failure (two reverted
+        closed-form-estimate regressions from 3 sufficient-statistics) at cover
+        selection's larger, more consequential decision surface.
+
+        Full phase breakdown (originally six phases) is recorded in the local plan
+        file used to produce this record
+        (~/.claude/plans/continue-in-this-folder-breezy-chipmunk.md at scoping
+        time) and kept current in the note below since AKR is the durable source of
+        record per AGENTS.md, not the local plan file.
+        """
+    note """
+        Phase A -- COMPLETE, see jpegxl-rs.work.arch-s8-phase-a-regret-harness.
+        Regret/agreement harness (crates/jpxl-encode-policy/src/regret.rs), proven
+        as a no-op and cross-validated against tile_region's real decisions.
+
+        Phase B -- COMPLETE, see jpegxl-rs.work.arch-s8-phase-b-measurements. Both
+        measurements landed (diagnostics.rs StageTimer::CoverForward/CoverScore;
+        new stability.rs measure_winner_stability at ATOM granularity, the correct
+        comparison unit confirmed by the advisor since varblock origins aren't
+        comparable when the quadtree decomposition itself differs across probes).
+        Results: choose-loop score share 31-35% of cover time (passes the ~15%
+        gate, but is an UPPER BOUND on the prune's win -- only losers get skipped,
+        winners still score exactly, and the dominant forward cost is paid
+        regardless; realistic win is low-teens percent of cover time, a modest
+        single-digit encode-time improvement, not transformative). Winner churn:
+        mean 9.4%, near-zero (14/33 pairs exactly 0.0000) during monotonic
+        bisection convergence, concentrated in 4 pairs at the initial geometric
+        bracket phase and the Fast->Full refinement handoff; one unexplained
+        97.27% spike at a tiny 32-rung step inside the converged region (i=9,
+        hypothesized but unverified synthetic-fixture artifact -- see Phase E).
+
+        ADVISOR VERDICT (decisive on its own, independent of the churn pattern):
+        CandidateForwardCache keys on (transform, px, py) only -- forwards are
+        PROBE-INVARIANT, already get 96-97% cross-probe reuse for free, and are
+        the dominant cost. Two things this plan had conflated: "the prune" (skip
+        choose-loop for losers, within-probe, touches the cache not at all) versus
+        "the memory-discard design" (§8's original cache-summaries-not-
+        coefficients idea, the ONLY thing churn bears on). Given probe-invariant,
+        dominant, already-free-to-reuse forwards, discarding them is a strictly
+        bad trade regardless of churn -- DROP the memory-discard design outright.
+        Do NOT phase-gate the prune to the stable-convergence region either (a
+        suggestion from this session the advisor called a category error) -- the
+        prune can't hurt cross-probe reuse in any phase since it never touches the
+        cache, so run it always.
+
+        Phase C (NEXT, revised) -- SIMPLIFIED per the advisor: the compact
+        per-candidate summary (per-band magnitude histogram/counts; respects
+        Y-scored-first -> B-target coupling, lib.rs ~2078/2088) is now a
+        TRANSIENT structure built from the already-cached forward, used only to
+        compute the provable lower bound for the within-probe prune decision, then
+        dropped -- it does NOT replace what CandidateForwardCache stores. This
+        deletes the whole "summarize-then-discard-coefficients" hazard surface and
+        the cross-probe-winner-stability question from the critical path entirely.
+        Implement the combined provable lower bound (distortion floor + rate
+        floor). Validated EXHAUSTIVELY (not statistically -- it's a provable
+        bound, so any pruned-but-actually-winning candidate is a bug) against the
+        exact scorer (via jpegxl-rs.work.arch-s8-phase-a-regret-harness's
+        ExactPolicy/measure_region as the ground-truth oracle) over the corpus.
+
+        Phase D -- wire the safe prune behind a feature flag, survivors still
+        scored exactly (block_cost_bounded unchanged) so winners' bits/sse stay
+        exact. Unchanged in substance from the original plan, and EASIER to reason
+        about now that it has no cross-probe interaction to worry about.
+        vardct_oracle.rs's external-decoder tests prove PLACEMENT conformance
+        only, not decision quality -- new decision-quality fixtures required,
+        driven by the Phase-A harness with an explicit tail-regret budget. Honest
+        negative result (flag stays off) is acceptable if the realistic (low-teens
+        percent, not 31-35%) win doesn't materialize. Keep the same flag-off
+        byte-identity discipline the instrumentation already established --
+        unlike Phase A/B's pure measurement, the prune IS a decision-path change
+        when enabled.
+
+        Phase E -- test-set/ has no provenance sidecars (AGENTS.md §9 violation)
+        and isn't stratified per outside-advice §19; required before Phase D's
+        fixtures can merge. ADDED per the advisor: fold in a natural-photo
+        (non-synthetic, non-repetitive) re-run of the Phase-B winner-stability
+        measurement to check whether the i=9 churn anomaly is a real, general
+        phenomenon or an artifact of the synthetic ramp+checkerboard fixture's
+        locally-identical atoms sharing a merge/split tie-threshold -- not blocking
+        Phase C, but should land before Phase D's fixtures do.
+
+        Phase F -- explicitly NOT attempted: the tight, continuous, closed-form
+        rate estimate (§8's ambitious half). Gated on Phase A live + Phase D's
+        measured tail-regret ceiling; named explicitly so it isn't silently
+        smuggled into an earlier phase under time pressure.
+
+        Out of scope for the whole plan: AnalysisAtlas expansion; §8's
+        memory-discard/cache-summaries design (DROPPED at Phase B, see above, not
+        just deferred); Butteraugli/SSIMULACRA2 build-out (Phase 5 territory);
+        "full §8 redesign landed" as one deliverable.
+
+        See also (precedent/context, referenced in prose since `supported_by`
+        cannot target `work` records): jpegxl-rs.work.arch-s8-cover-lane-simd,
+        jpegxl-rs.work.arch-phase2-cfl-quant, jpegxl-rs.work.arch-phase3-forward-cache
+        (established the 96-97% candidate-set cross-probe reuse this phase built
+        on), jpegxl-rs.work.arch-s8-phase-a-regret-harness,
+        jpegxl-rs.work.arch-s8-phase-b-measurements.
+        """
+    implements [
+        @jpegxl-rs.decision.encoder-architecture-phases,
+        @jpegxl-rs.policy.sources-advice-completion
+    ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+    supersedes [ @jpegxl-rs.work.arch-s8-full-redesign-scoped/1 ]
+    supported_by [ @jpegxl-rs.assessment.encoder-architecture-outside-advice ]
+}
+
 record jpegxl-rs.work.arch-s8-phase-a-regret-harness/1 : work {
     title "S8 Phase A: regret/agreement harness, proven as a no-op against the exact scorer"
     state completed
@@ -712,6 +861,136 @@ record jpegxl-rs.work.arch-s8-phase-a-regret-harness/1 : work {
                 @jpegxl-rs.evidence.s8-phase-a-regret-harness-postcommit/1,
                 @jpegxl-rs.evidence.s8-phase-a-regret-harness-verified/1
             ]
+        }
+    }
+    implements [
+        @jpegxl-rs.decision.encoder-architecture-phases,
+        @jpegxl-rs.policy.sources-advice-completion
+    ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+    supported_by [ @jpegxl-rs.assessment.encoder-architecture-outside-advice ]
+    source {
+        kind external
+        path "sources/outside-advice.md"
+        excerpt """
+            Section 8: Cover selection needs a surrogate-first design
+            """
+    }
+}
+
+record jpegxl-rs.work.arch-s8-phase-b-measurements/1 : work {
+    title "S8 Phase B: choose-loop cost share + cross-probe winner stability measured; memory-discard design dropped"
+    state completed
+    intent """
+        Phase B of jpegxl-rs.work.arch-s8-full-redesign-scoped: two
+        measurements that can kill or reshape the rest of the plan, run before any
+        summary machinery is built. (1) choose-loop cost share vs forward-DCT cost
+        share in cover scoring, kill criterion ~15%. (2) cross-probe WINNER
+        stability (not just candidate-set stability, already measured at 96-97% by
+        jpegxl-rs.work.arch-phase3-forward-cache) -- unverified and load-bearing for
+        whether a "cache summaries, not coefficients" memory-saving redesign can
+        preserve cross-probe cache reuse.
+        """
+    note """
+        2026-08-07: both measurements landed and an Opus advisor consulted with
+        the real data (same advisor session as the full-plan synthesis).
+
+        Measurement 1 (crates/jpxl-encode-policy/src/diagnostics.rs,
+        StageTimer::CoverForward/CoverScore wrapping block_cost_bounded's
+        cache.get_or_insert call and score_channel_lanes calls respectively; pure
+        instrumentation, --diag byte-identity confirmed unchanged): choose-loop
+        scoring is 31-35% of (forward+score) cover time, stable across a 12MP and a
+        1024x768 image, 3 repeated runs. Well above the ~15% kill threshold.
+
+        Measurement 2 (new crates/jpxl-encode-policy/src/stability.rs,
+        measure_winner_stability: drives a real rate::search_frame, replays every
+        distinct probed quantizer through plan_at_on sharing one
+        CandidateForwardCache exactly as the real rate loop does, compares
+        consecutive probes' covers at ATOM granularity -- not varblock origins,
+        which aren't comparable across probes when the quadtree decomposition
+        itself differs; an atom always belongs to exactly one varblock in every
+        probe regardless of decomposition, so atom-to-transform is the correct
+        invariant comparison unit, confirmed correct by the advisor): 33 distinct
+        probes on a 256x256 synthetic image, mean_adjacent_churn=9.4%,
+        max_adjacent_churn=97.3%, first_vs_last_churn=99.2%. The aggregate hides a
+        clean pattern in the per-pair sequence: churn is exactly 0.0000 for 14 of
+        33 adjacent pairs (two long unbroken runs during monotonic bisection
+        convergence) and concentrates almost entirely in 4 pairs -- the initial
+        geometric bracket phase (2 pairs, 64.45% each) and the Fast->Full
+        refinement handoff (2 pairs, 35.16%/28.12%). One unexplained anomaly: pair
+        i=9, a tiny 32-rung step inside the converged bisection region, produced
+        the single highest churn in the trace (97.27%) -- hypothesized but NOT
+        verified to be a synchronized-flip artifact of the synthetic
+        ramp+checkerboard fixture's locally-identical atoms sharing a merge/split
+        tie-threshold; flagged as an open note, not asserted as explained.
+
+        ADVISOR VERDICT (decisive, does not hinge on the churn data alone):
+        CandidateForwardCache is keyed on ForwardKey(transform, px, py) -- NO
+        quantizer/probe component (lib.rs ~967, 989-998). Cached forwards are
+        PROBE-INVARIANT by construction, which is exactly why the 96-97% cross-
+        probe hit rate already exists for free. Two separate things were conflated
+        in the original Phase-C/D sketch: "the prune" (skip the choose-loop for
+        losers, a within-probe compute optimization that discards nothing and
+        touches cross-probe reuse not at all) versus "the memory-discard design"
+        (cache summaries not coefficients, recompute winners' forwards only --
+        only THIS is affected by winner churn). Given forwards are probe-invariant
+        AND are the dominant 65-69% of cover cost AND already get 96-97% reuse for
+        free, discarding them to save memory would forfeit that reuse and re-pay
+        the dominant cost -- a strictly bad trade independent of churn. The churn
+        data (max 97%, first-vs-last 99%) independently confirms the trade would
+        ALSO be risky, but the decision doesn't need it: DROP the memory-discard
+        design outright. Keep the full-coefficient cross-probe cache exactly as-is.
+        Do NOT phase-gate the prune to the stable-convergence region either (a
+        suggestion from this session that the advisor called a category error) --
+        the prune can't hurt cross-probe reuse in ANY phase since it never touches
+        the cache, so it should just run always.
+
+        Realistic sizing correction: 31-35% score share is an UPPER bound on the
+        prune's achievable win, not the win itself -- only LOSERS' score loops get
+        skipped (winners are still scored exactly), and the dominant 65-69%
+        forward cost is paid by everyone regardless of the prune. Advisor's
+        estimate: plausibly low-teens percent of cover time, a modest single-digit
+        encode-time win overall. Worth having, not transformative -- record
+        honestly, do not oversell.
+
+        DECISION: proceed to Phase C, WITHOUT the memory-discard design. Phase C
+        simplifies: the compact per-candidate summary becomes a TRANSIENT structure
+        built from the already-cached forward, used only to compute the provable
+        lower bound for the prune decision, then dropped -- it does not replace
+        what CandidateForwardCache stores. This deletes the "summarize-then-
+        discard-coefficients" hazard surface and the cross-probe-winner-stability
+        assumption from Phase C/D's critical path entirely. Phase D is unchanged in
+        substance (flagged prune, exact scoring for survivors, oracle + Phase-A
+        regret-harness verification) but is easier to reason about with no cross-
+        probe interaction to worry about.
+
+        Open item for Phase E (corpus work), NOT blocking Phase C: re-run the
+        winner-stability measurement on a natural-photo (non-synthetic,
+        non-repetitive) image to check whether the i=9 anomaly is a real,
+        general phenomenon or an artifact of the synthetic ramp+checkerboard
+        fixture's repetitiveness.
+        """
+    acceptance {
+        check advisor-decision-recorded {
+            statement """
+                Opus advisor consulted with the measured data; decisive verdict recorded: drop the memory-discard ("cache summaries, not coefficients") design given CandidateForwardCache's forwards are probe-invariant and already dominate cover cost with 96-97% free reuse; proceed to Phase C with a transient (not cache-replacing) summary for the within-probe prune only.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.s8-phase-b-measurements-verified/1 ]
+        }
+        check cost-share-measured {
+            statement """
+                choose-loop scoring cost share of cover scoring measured via new StageTimer::CoverForward/CoverScore diagnostics, confirmed above the ~15% kill threshold (31-35%, stable across two image sizes), with --diag byte-identity confirming the instrumentation is decision-path-neutral.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.s8-phase-b-measurements-verified/1 ]
+        }
+        check winner-stability-measured {
+            statement """
+                Cross-probe winner churn measured at atom granularity over a real 33-probe rate search; pattern (near-zero during convergence, concentrated at bracket/refinement-handoff phases) recorded alongside the unresolved i=9 anomaly.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.s8-phase-b-measurements-verified/1 ]
         }
     }
     implements [

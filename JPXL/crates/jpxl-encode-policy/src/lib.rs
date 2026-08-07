@@ -73,6 +73,7 @@ pub mod rate;
 pub mod regret;
 pub mod request;
 pub mod source;
+pub mod stability;
 
 use jpxl_core::forward::{
     CoeffView, CoeffViewMut, SampleView, SampleViewMut, TransformScratch, forward_varblock_into,
@@ -2026,7 +2027,12 @@ fn block_cost_bounded(
     d_y_hf: &mut [f32],
     cutoff: Option<f64>,
 ) -> Result<Option<f64>> {
-    let fwd = cache.get_or_insert(frame, transform, px, py, scratch)?;
+    // S8 Phase B: measures the choose-loop's actual cost share of cover
+    // scoring against the forward-DCT/cache share, before building any
+    // summary-scoring machinery on the assumption that share is large.
+    let fwd = diagnostics::time_stage(diagnostics::StageTimer::CoverForward, || {
+        cache.get_or_insert(frame, transform, px, py, scratch)
+    })?;
     let side = transform.sample_cols();
     let n = transform.block_dims().0;
     let hf_quant = hf_quants.get(transform, hf_mul)?;
@@ -2055,44 +2061,48 @@ fn block_cost_bounded(
             false
         }
     };
-    let pruned = score_channel_lanes(
-        hf_quant,
-        1,
-        hf_quants.lambda[1],
-        to_sample_domain,
-        side,
-        n,
-        |cell| cy.get(cell).copied().unwrap_or(0.0),
-        |cell, recon| {
-            if let Some(slot) = d_y_hf.get_mut(cell) {
-                *slot = recon;
-            }
-        },
-        &mut bits,
-        &mut weighted_sse,
-        &check,
-    )?;
+    let pruned = diagnostics::time_stage(diagnostics::StageTimer::CoverScore, || {
+        score_channel_lanes(
+            hf_quant,
+            1,
+            hf_quants.lambda[1],
+            to_sample_domain,
+            side,
+            n,
+            |cell| cy.get(cell).copied().unwrap_or(0.0),
+            |cell, recon| {
+                if let Some(slot) = d_y_hf.get_mut(cell) {
+                    *slot = recon;
+                }
+            },
+            &mut bits,
+            &mut weighted_sse,
+            &check,
+        )
+    })?;
     if pruned {
         return Ok(None);
     }
     for &(channel, plane) in &[(0usize, cx), (2usize, cb)] {
         let k = if channel == 0 { 0.0 } else { 1.0 };
-        let pruned = score_channel_lanes(
-            hf_quant,
-            channel,
-            hf_quants.lambda.get(channel).copied().unwrap_or(0.0),
-            to_sample_domain,
-            side,
-            n,
-            |cell| {
-                plane.get(cell).copied().unwrap_or(0.0)
-                    - k * d_y_hf.get(cell).copied().unwrap_or(0.0)
-            },
-            |_cell, _recon| {},
-            &mut bits,
-            &mut weighted_sse,
-            &check,
-        )?;
+        let pruned = diagnostics::time_stage(diagnostics::StageTimer::CoverScore, || {
+            score_channel_lanes(
+                hf_quant,
+                channel,
+                hf_quants.lambda.get(channel).copied().unwrap_or(0.0),
+                to_sample_domain,
+                side,
+                n,
+                |cell| {
+                    plane.get(cell).copied().unwrap_or(0.0)
+                        - k * d_y_hf.get(cell).copied().unwrap_or(0.0)
+                },
+                |_cell, _recon| {},
+                &mut bits,
+                &mut weighted_sse,
+                &check,
+            )
+        })?;
         if pruned {
             return Ok(None);
         }

@@ -48,6 +48,17 @@ pub struct EncodeDiag {
     pub choose_other: u64,
     /// Wall nanoseconds spent in hierarchical (or fixed) cover selection + forwards.
     pub stage_cover_ns: u64,
+    /// S8 Phase B: wall nanoseconds spent inside `block_cost_bounded` calling
+    /// `CandidateForwardCache::get_or_insert` — the forward-DCT/cache-lookup
+    /// share of cover scoring. Overlaps `stage_cover_ns` (a subset of it, not
+    /// additional time); the two together answer outside-advice.md §8's
+    /// "how much of cover scoring is the choose-loop vs. the forward" question.
+    pub stage_cover_forward_ns: u64,
+    /// S8 Phase B: wall nanoseconds spent inside `block_cost_bounded`'s
+    /// `score_channel_lanes` calls (the `choose`/`choose_lane4` scoring loop)
+    /// — the complementary share of `stage_cover_ns` to
+    /// [`Self::stage_cover_forward_ns`].
+    pub stage_cover_score_ns: u64,
     /// Wall nanoseconds spent in CfL sample construction and factor search.
     pub stage_cfl_ns: u64,
     /// Wall nanoseconds spent in final `quantize_group` over selected blocks.
@@ -90,6 +101,7 @@ impl EncodeDiag {
         format!(
             "choose_total={} cover={} cfl_y={} cfl_factor={} final={} other={} \
              cover_ms={:.1} cfl_ms={:.1} quant_ms={:.1} entropy_ms={:.1} \
+             cover_forward_ms={:.1} cover_score_ms={:.1} \
              cand_fwd={} cand_bytes={} sel_clones={} sel_bytes={} \
              cfl_samples={} cfl_sample_bytes={}",
             self.choose_total(),
@@ -102,6 +114,8 @@ impl EncodeDiag {
             self.stage_cfl_ns as f64 / 1e6,
             self.stage_quantize_ns as f64 / 1e6,
             self.stage_entropy_ns as f64 / 1e6,
+            self.stage_cover_forward_ns as f64 / 1e6,
+            self.stage_cover_score_ns as f64 / 1e6,
             self.candidate_forwards,
             self.candidate_forward_bytes,
             self.selected_forward_clones,
@@ -120,6 +134,8 @@ std::thread_local! {
         choose_final: 0,
         choose_other: 0,
         stage_cover_ns: 0,
+        stage_cover_forward_ns: 0,
+        stage_cover_score_ns: 0,
         stage_cfl_ns: 0,
         stage_quantize_ns: 0,
         stage_entropy_ns: 0,
@@ -192,6 +208,12 @@ pub fn note_stage_ns(which: StageTimer, ns: u64) {
         let mut d = c.get();
         match which {
             StageTimer::Cover => d.stage_cover_ns = d.stage_cover_ns.saturating_add(ns),
+            StageTimer::CoverForward => {
+                d.stage_cover_forward_ns = d.stage_cover_forward_ns.saturating_add(ns);
+            }
+            StageTimer::CoverScore => {
+                d.stage_cover_score_ns = d.stage_cover_score_ns.saturating_add(ns);
+            }
             StageTimer::Cfl => d.stage_cfl_ns = d.stage_cfl_ns.saturating_add(ns),
             StageTimer::Quantize => d.stage_quantize_ns = d.stage_quantize_ns.saturating_add(ns),
             StageTimer::Entropy => d.stage_entropy_ns = d.stage_entropy_ns.saturating_add(ns),
@@ -204,6 +226,10 @@ pub fn note_stage_ns(which: StageTimer, ns: u64) {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StageTimer {
     Cover,
+    /// S8 Phase B sub-stage of [`Self::Cover`]: forward-DCT/cache access.
+    CoverForward,
+    /// S8 Phase B sub-stage of [`Self::Cover`]: the choose-loop scoring pass.
+    CoverScore,
     Cfl,
     Quantize,
     Entropy,

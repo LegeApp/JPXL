@@ -17,6 +17,75 @@ Keep this file small. Entries whose content has landed in `PLAN.md`,
 
 ---
 
+## 2026-08-07 (7) — S8 Phase B: measured, advisor consulted, memory-discard
+## design dropped — Phase C simplifies
+
+**What changed.** Two measurements, both landed as new diagnostics/modules,
+zero decision-path impact:
+- `diagnostics.rs`: `StageTimer::CoverForward`/`CoverScore` wrap
+  `block_cost_bounded`'s `cache.get_or_insert` call and its
+  `score_channel_lanes` calls respectively.
+- New `stability.rs`: `measure_winner_stability` drives a real
+  `rate::search_frame`, replays every distinct probed quantizer through
+  `plan_at_on` sharing one cache (mirroring the real rate loop exactly), and
+  diffs consecutive probes' covers at **atom granularity** — not varblock
+  origins, which aren't comparable across probes once the quadtree
+  decomposition itself differs; an atom always belongs to exactly one
+  varblock in every probe, so atom→transform is the invariant comparison
+  unit. (Confirmed correct by the advisor, no redo needed.)
+
+**Measured.** Choose-loop score share: 31–35% of cover time, stable across
+a 12MP and a 1024×768 image (well above the ~15% kill threshold). Winner
+churn over a real 33-probe search: mean 9.4%, but the aggregate hides a
+clean pattern — churn is *exactly* 0.0000 for 14 of 33 adjacent pairs
+(monotonic bisection convergence) and concentrates in 4 pairs at the
+initial geometric bracket phase and the Fast→Full refinement handoff. One
+unexplained spike (a tiny 32-rung step producing 97.27% churn inside the
+converged region) is flagged, not asserted-explained — folded into Phase E
+as a natural-photo re-run, not blocking.
+
+**Advisor consulted with the real data (same advisor session reused, via
+`SendMessage`, as the full-plan synthesis).** The verdict is decisive
+independent of the churn pattern: `CandidateForwardCache` keys on
+`(transform, px, py)` only — forwards are **probe-invariant by
+construction**, already get the measured 96–97% cross-probe reuse for
+free, and are the *dominant* 65–69% share of cover cost. This session had
+conflated two separate things: "the prune" (skip the choose-loop for
+losers — a within-probe compute optimization that never touches the cache)
+versus "the memory-discard design" (§8's original cache-summaries-not-
+coefficients idea — the *only* thing winner churn actually bears on).
+Given probe-invariant, dominant, already-free-to-reuse forwards, discarding
+them to save memory is a strictly bad trade **regardless of churn** — the
+advisor's explicit correction to this session's own Q1 (which proposed
+phase-gating the prune to the stable-convergence region) called that a
+*category error*: the prune can't hurt cross-probe reuse in any phase since
+it never touches the cache, so it should just run always.
+
+**Decision: drop the memory-discard design outright.** Keep the existing
+full-coefficient cross-probe cache exactly as-is. Phase C **simplifies**:
+the compact per-candidate summary becomes a *transient* structure built
+from the already-cached forward, used only to compute the provable lower
+bound for the within-probe prune, then dropped — it does not replace what
+the cache stores. This deletes the entire "summarize-then-discard-
+coefficients" hazard surface and the cross-probe-winner-stability question
+from Phase C/D's critical path. Phase D is unchanged in substance but
+easier to reason about with no cross-probe interaction left. Realistic
+sizing correction: 31–35% is an *upper bound* on the prune's win (only
+losers get skipped; the dominant forward cost is paid by everyone
+regardless) — expect a modest, low-teens-percent-of-cover-time win, not a
+transformative one.
+
+Evidence: `jpegxl-rs.evidence.s8-phase-b-measurements-verified`. Work item
+`jpegxl-rs.work.arch-s8-phase-b-measurements` completed; parent scoping
+record `jpegxl-rs.work.arch-s8-full-redesign-scoped` (rev 2) updated with
+the revised Phase C/D/E scope.
+
+**Next: Phase C** — the transient provable-lower-bound summary, validated
+exhaustively against the Phase-A regret harness's exact-scorer ground truth
+over the corpus.
+
+---
+
 ## 2026-08-07 (6) — S8 Phase A landed: regret harness, proven as a no-op
 
 **What changed.** New `crates/jpxl-encode-policy/src/regret.rs`: a

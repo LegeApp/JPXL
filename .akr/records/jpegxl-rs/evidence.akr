@@ -607,6 +607,18 @@ record jpegxl-rs.evidence.s8-phase-a-regret-harness-verified/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.s8-phase-b-measurements-verified/1 : evidence {
+    title "S8 Phase B measurements verified; advisor consulted; memory-discard design dropped"
+    state verified
+    result pass
+    method command
+    observed_at git:d4f0451cd8d53a6d33bfbd3a3a7ec2b555d33e1a
+    command "cd JPXL && cargo test -p jpxl-encode-policy --lib --release && cargo test -p jpxl-encode-policy --test vardct_roundtrip --release && cargo build --release -p jpxl-cli && ./target/release/jpxl bench vardct-fixed --input &lt;12MP-P6&gt; --threads 1 --iters 1 --diag"
+    summary """
+        Measurement 1 (diagnostics.rs StageTimer::CoverForward/CoverScore around block_cost_bounded's cache.get_or_insert vs score_channel_lanes calls): 12MP image, 3 runs, cover_forward_ms 1045-1105, cover_score_ms 485-520 -> score share 31-32%; 1024x768 image cover_forward_ms=80.7 cover_score_ms=43.2 -> 35%. --diag output_bytes=1,530,188 fingerprint=30e55ba3faef4d64 unchanged across all runs, confirming pure instrumentation. Measurement 2 (new stability.rs, measure_winner_stability): 33-probe real rate::search_frame on 256x256 synthetic image, atom-granularity churn comparison, mean_adjacent_churn=0.0938 max_adjacent_churn=0.9727 first_vs_last_churn=0.9922, per-pair sequence shows 14/33 pairs at exactly 0.0000 (monotonic bisection convergence) and churn concentrated at 4 pairs (initial bracket phase 2x ~64%, Fast->Full handoff 2x ~28-35%), plus one unexplained 97.27% spike at a 32-rung step (i=9) inside the converged region. jpxl-encode-policy lib suite 63/63 (60 base + regret 2 + stability 1), vardct_roundtrip 12/12. Opus advisor (same session as full-plan synthesis) consulted with this data: confirmed CandidateForwardCache is keyed on (transform,px,py) with no quantizer component, so cached forwards are provably probe-invariant regardless of churn; decisive verdict to drop the memory-discard design and keep the existing full-coefficient cross-probe cache, proceeding to Phase C with a transient (not cache-replacing) per-candidate summary for a within-probe-only prune.
+        """
+}
+
 record jpegxl-rs.evidence.spine-builds/1 : evidence {
     title "akr build emits docs/generated (7 views) and akr check reports no diagnostics"
     state verified
