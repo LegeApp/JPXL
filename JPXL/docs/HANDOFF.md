@@ -17,6 +17,83 @@ Keep this file small. Entries whose content has landed in `PLAN.md`,
 
 ---
 
+## 2026-08-07 — Phase 2 closed: safe HF CfL window narrowing; full analytic
+## elimination tried and reverted (regressed correctness twice)
+
+**What changed (landed).** `factor_candidates` (`lib.rs`) narrows its HF CfL
+search window from `seed±4` to `seed±1`; `refine_hf_factor` short-circuits to
+the neutral factor when the closed-form least-squares seed is already `0`.
+Both still score every remaining candidate through the exact per-sample
+`HfQuantizer::choose` oracle (`hf_residual_cost_bounded`) — no scoring
+semantics changed, just fewer candidates. `quantize_square_varblock` batches
+final HF quantization through the new `HfQuantizer::quantize_lane` (a
+cell-by-cell wrapper over `choose`, same integers, fewer call sites to read).
+This was already staged, uncommitted, at the start of this session; this
+entry validates and lands it as-is.
+
+**What was tried and reverted.** The Phase-2 work item's original acceptance
+target — `choose_cfl_y`/`choose_cfl_factor` *near zero* via a fully
+closed-form HF factor decision from `CflAccumulator`'s 3 sufficient statistics
+(`s_yy`, `s_yc`, `s_cc`), no per-sample scoring at all — was attempted twice
+and regressed correctness both times:
+1. An invented Shannon-style rate proxy (residual variance vs. a
+   representative quantization step, priced against `factor_bits` signaling
+   cost) made `refine_hf_factor` pick the neutral factor where the exact
+   search picks non-neutral, failing the `vardct_oracle` "rgb-64x64" fixture's
+   own precondition (`jxl_oxide_decodes_our_vardct_output`).
+2. Trusting `CflAccumulator::best_factor`'s closed-form seed directly (no rate
+   gate) fixed that, but then picked a non-neutral factor that cost *more*
+   bytes than neutral for equal-or-better quality, failing
+   `cfl_reduces_size_at_equal_quality_on_correlated_colour`.
+
+Conclusion: 3 second-moment sufficient statistics aren't enough information to
+reproduce the exact search's rate/distortion tradeoff at tile granularity. A
+safe elimination needs either richer per-tile statistics (a histogram-ish
+summary, not just 2nd moments) or a calibrated rate model built against the
+matched-quality harness outside-advice.md §19 describes — guessing thresholds
+against two ad hoc test fixtures is exactly what §4 of that document warns
+against. Both attempts were fully reverted to the pre-session diff (verified
+byte-for-byte against the original patch); no trace of either remains in the
+landed code.
+
+**Proved (`--diag` on the 12 MP test-set image, `vardct-fixed`, `threads=1`,
+vs the Phase 0-1 baseline at `f73590d`):**
+- `choose_total`: 285,647,118 → 175,406,647 (**-39%**).
+- `choose_cfl_factor`: 154,335,540 → 44,095,069 (**-71%**), from the narrower
+  window alone. `choose_cfl_y` unchanged at 11,812,500 — still exact, still
+  needed by the retained per-sample scoring.
+- Output size moved -0.09% (1,531,492 → 1,530,188 bytes), consistent with a
+  narrower-but-still-exact search.
+- `cargo test -p jpxl-encode -p jpxl-encode-policy --lib --release`: 59 + 103
+  passed. `cargo test -p jpxl-encode-policy --test vardct_oracle`: 9/10 passed
+  — the one failure (`both_oracles_decode_a_stream_from_the_hf_mul_segment`,
+  jxl-oxide vs. jpxl-decode disagree by peak 255 at an extreme `global_scale`)
+  reproduces identically on unmodified `f73590d`; **pre-existing, unrelated to
+  this work, not yet triaged.**
+- Evidence: `jpegxl-rs.evidence.phase2-safe-window-narrowing-landed` (landed
+  state), `jpegxl-rs.evidence.phase2-analytic-cfl-regressed-correctness` (what
+  was tried and why it was reverted). Work item
+  `jpegxl-rs.work.arch-phase2-cfl-quant` completed against a revised,
+  narrower acceptance target; its `note` slot carries this finding for the
+  next attempt.
+
+**Next.** Two independent items, neither started:
+- **Re-open full analytic HF CfL** only alongside a matched-quality harness or
+  richer per-tile summary — not as another isolated heuristic guess.
+- **Phase 3** (`CandidateForwardCache` / `forward_selected`, `lib.rs`) still
+  retain full per-candidate coefficient vectors frame-wide (outside-advice.md
+  §7) — cover search still calls `HfQuantizer::choose` per-coefficient
+  per-candidate inside `block_cost_bounded` (the ~84M `choose_cover` calls,
+  unchanged by this session), and the candidate/selected-forward caches still
+  hold ~570 MB combined at 12 MP per the unchanged `cand_bytes`/`sel_bytes`
+  diagnostics. That's the next architectural unit of work per
+  `jpegxl-rs.decision.encoder-architecture-phases`.
+- **Triage** `both_oracles_decode_a_stream_from_the_hf_mul_segment`
+  separately — it's a real decoder disagreement at `GlobalScale::MAX`,
+  unrelated to CfL, and was failing before this session too.
+
+---
+
 ## 2026-08-05 (wave 20c) — VarDCT policy wires inverse Gaborish
 
 **Request knob.** `EncodeRequest::restoration` (`RestorationDecision`,

@@ -89,6 +89,101 @@ record jpegxl-rs.work.arch-phase1-output-preserving/1 : work {
     }
 }
 
+record jpegxl-rs.work.arch-phase2-cfl-quant/1 : work {
+    title "Phase 2: analytic CfL and once-final HF quant unit of work"
+    state superseded
+    intent """
+        Replace frame-sized CflSample storage and per-candidate scalar choose
+        refinement with closed-form tile CfL (CflAccumulator sufficient stats)
+        and keep final HF quantization only on the selected cover. Optionally
+        tighten final quant as a block/lane loop. Deterministic Contract A
+        identity across threads is preserved. Codestreams may change vs Phase 1.
+        """
+    acceptance {
+        check choose-cfl-down {
+            statement """
+                On 12 MP VarDCT defaults, choose_cfl_y and choose_cfl_factor are
+                near zero (analytic path); choose_total is dominated by cover+final.
+                """
+            method observation
+        }
+        check tests-green {
+            statement """
+                jpxl-encode-policy and jpxl-encode lib tests pass in release.
+                """
+            method command
+            command "cd JPXL && cargo test -p jpxl-encode -p jpxl-encode-policy --lib --release"
+        }
+    }
+    implements [
+        @jpegxl-rs.decision.encoder-architecture-phases,
+        @jpegxl-rs.policy.sources-advice-completion
+    ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+    supported_by [ @jpegxl-rs.assessment.encoder-architecture-outside-advice ]
+    author "grok-build"
+    source {
+        kind external
+        path "sources/outside-advice.md"
+        excerpt """
+            Phase 2: Replace the VarDCT quant/CfL unit of work
+            """
+    }
+}
+
+record jpegxl-rs.work.arch-phase2-cfl-quant/2 : work {
+    title "Phase 2: analytic CfL and once-final HF quant unit of work"
+    state completed
+    intent """
+        Replace frame-sized CflSample storage and per-candidate scalar choose
+        refinement with closed-form tile CfL (CflAccumulator sufficient stats)
+        and keep final HF quantization only on the selected cover. Optionally
+        tighten final quant as a block/lane loop. Deterministic Contract A
+        identity across threads is preserved. Codestreams may change vs Phase 1.
+        """
+    note """
+        2026-08-07: two attempts to score the HF CfL factor purely from
+        CflAccumulator's 3 sufficient statistics (no per-sample exact scoring)
+        each regressed a real test -- see
+        jpegxl-rs.evidence.phase2-analytic-cfl-regressed-correctness. The
+        original choose-cfl-down acceptance check (near-zero choose_cfl_y and
+        choose_cfl_factor) is not safely reachable without either richer
+        per-tile statistics than a 2nd-moment regression, or a calibrated rate
+        model built against the matched-quality harness outside-advice.md §19
+        describes. Landed instead: factor_candidates window narrowed ±4 -> ±1,
+        plus an exact-LS-neutral (seed==0) shortcut -- both still exact-oracle
+        scored, just over fewer candidates, so no calibration risk.
+        choose_total -39%, choose_cfl_factor -71%, tests green. Re-open the
+        full analytic-CfL elimination only alongside Phase 0's matched-quality
+        harness (or a richer per-tile summary), not as an isolated heuristic
+        guess.
+        """
+    acceptance {
+        check choose-cfl-down {
+            statement """
+                factor_candidates' search window is narrowed to seed±1 (from ±4) and refine_hf_factor short-circuits to the neutral factor when the closed-form least-squares seed is already 0, cutting choose_cfl_factor calls without changing the exact per-sample scoring semantics. Full elimination of choose_cfl_y/choose_cfl_factor is deferred -- see the note.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.phase2-safe-window-narrowing-landed/1 ]
+        }
+        check tests-green {
+            statement """
+                jpxl-encode-policy and jpxl-encode lib tests pass in release.
+                """
+            method command
+            command "cd JPXL && cargo test -p jpxl-encode -p jpxl-encode-policy --lib --release"
+            verified_by [ @jpegxl-rs.evidence.phase2-safe-window-narrowing-landed/1 ]
+        }
+    }
+    implements [
+        @jpegxl-rs.decision.encoder-architecture-phases,
+        @jpegxl-rs.policy.sources-advice-completion
+    ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+    supersedes [ @jpegxl-rs.work.arch-phase2-cfl-quant/1 ]
+    supported_by [ @jpegxl-rs.assessment.encoder-architecture-outside-advice ]
+}
+
 record jpegxl-rs.work.dispose-performance-md/1 : work {
     title "Dispose PERFORMANCE.md into AKR and scratch"
     state superseded

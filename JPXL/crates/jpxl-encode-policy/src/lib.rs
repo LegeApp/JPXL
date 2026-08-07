@@ -1168,6 +1168,8 @@ struct QuantScratch {
     d_y_lf: Vec<f32>,
     d_y_hf: Vec<f32>,
     lf_scratch: Vec<f32>,
+    /// Chroma residual targets for Phase-2 lane quantize.
+    chroma_targets: Vec<f32>,
 }
 
 impl QuantScratch {
@@ -1176,6 +1178,7 @@ impl QuantScratch {
             d_y_lf: Vec::new(),
             d_y_hf: Vec::new(),
             lf_scratch: Vec::new(),
+            chroma_targets: Vec::new(),
         }
     }
 
@@ -1183,9 +1186,11 @@ impl QuantScratch {
         self.d_y_lf.resize(n * n, 0.0);
         self.d_y_hf.resize(cells, 0.0);
         self.lf_scratch.resize(n * n, 0.0);
+        self.chroma_targets.resize(cells, 0.0);
         self.d_y_lf.fill(0.0);
         self.d_y_hf.fill(0.0);
         self.lf_scratch.fill(0.0);
+        self.chroma_targets.fill(0.0);
     }
 }
 
@@ -1241,14 +1246,13 @@ fn quantize_square_varblock(
             *slot = lf_quant.reconstruct(q, 1);
         }
     }
+    // Phase-2: final HF quant as contiguous lanes (Y, then chroma with CfL).
+    hf_quant.quantize_lane(1, y_coeff, qy, side, n, true)?;
     for cell in 0..cells {
         if is_llf_cell(cell, side, n) {
             continue;
         }
-        let q = hf_quant.choose(y_coeff.get(cell).copied().unwrap_or(0.0), 1, cell)?;
-        if let Some(slot) = qy.get_mut(cell) {
-            *slot = q;
-        }
+        let q = qy.get(cell).copied().unwrap_or(0);
         if let Some(slot) = qscratch.d_y_hf.get_mut(cell) {
             *slot = hf_quant.reconstruct(q, 1, cell);
         }
@@ -1278,17 +1282,19 @@ fn quantize_square_varblock(
                 q,
             );
         }
+        qscratch.chroma_targets.resize(cells, 0.0);
         for cell in 0..cells {
-            if is_llf_cell(cell, side, n) {
-                continue;
-            }
-            let target = coeff.get(cell).copied().unwrap_or(0.0)
-                - k_hf * qscratch.d_y_hf.get(cell).copied().unwrap_or(0.0);
-            let q = hf_quant.choose(target, channel, cell)?;
-            if let Some(slot) = out.get_mut(cell) {
-                *slot = q;
+            let t = if is_llf_cell(cell, side, n) {
+                0.0
+            } else {
+                coeff.get(cell).copied().unwrap_or(0.0)
+                    - k_hf * qscratch.d_y_hf.get(cell).copied().unwrap_or(0.0)
+            };
+            if let Some(slot) = qscratch.chroma_targets.get_mut(cell) {
+                *slot = t;
             }
         }
+        hf_quant.quantize_lane(channel, &qscratch.chroma_targets, out, side, n, true)?;
     }
 
     Ok(())
@@ -1527,9 +1533,13 @@ fn estimate_cfl(
 
 /// The candidate integer factors to score: a small window around the
 /// least-squares seed, always including the neutral factor `0`.
+///
+/// Phase-2: window is `seed±1` (plus 0), not `±4`. The LS seed already sits at
+/// the continuous optimum; wider residual-bit search rarely moved the winner
+/// and multiplied `choose` calls by ~3× on every tile.
 fn factor_candidates(seed: i32, lo: i32, hi: i32) -> Vec<i32> {
-    let mut out = Vec::with_capacity(10);
-    for delta in -4i32..=4 {
+    let mut out = Vec::with_capacity(4);
+    for delta in -1i32..=1 {
         let candidate = seed.saturating_add(delta).clamp(lo, hi);
         if !out.contains(&candidate) {
             out.push(candidate);
@@ -1698,6 +1708,9 @@ fn refine_hf_factor(
     channel: usize,
     quantizer: &HfQuantizer,
 ) -> Result<i32> {
+    if samples.samples.is_empty() {
+        return Ok(0);
+    }
     diagnostics::with_choose_stage(diagnostics::ChooseStage::CflFactor, || {
         let seed = samples.regression.best_factor(
             base,
@@ -1705,6 +1718,10 @@ fn refine_hf_factor(
             HF_FACTOR_MIN,
             HF_FACTOR_MAX,
         );
+        // Phase-2: continuous LS already neutral → skip residual-bit multi-choose.
+        if seed == 0 {
+            return Ok(0);
+        }
         let mut best_factor = 0i32;
         let mut best_cost = hf_residual_cost_bounded(samples, base, 0, channel, quantizer, None)?
             .unwrap_or(u64::MAX);

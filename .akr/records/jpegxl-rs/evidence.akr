@@ -451,6 +451,42 @@ record jpegxl-rs.evidence.performance-md-stub-at-head/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase2-analytic-cfl-regressed-correctness/1 : evidence {
+    title "Closed-form HF CfL factor selection from 3 sufficient stats regressed correctness twice; reverted to exact-oracle scoring over a narrower window"
+    state verified
+    result fail
+    method command
+    observed_at git:f73590dcb919388beca11760f34cc167ff3cad6d
+    command "cd JPXL && cargo test -p jpxl-encode -p jpxl-encode-policy --lib --release; cargo test -p jpxl-encode-policy --test vardct_oracle"
+    summary """
+        Two independent attempts to fully eliminate choose_cfl_y/choose_cfl_factor (superseding jpegxl-rs.evidence.phase2-cfl-choose-collapse) each regressed a real test when the HF CfL factor was decided from CflAccumulator's 3 sufficient statistics (s_yy, s_yc, s_cc) alone, without any per-sample exact scoring: (1) an invented Shannon-style rate proxy (variance vs. a representative quantization step, priced against factor_bits signaling cost) caused refine_hf_factor to pick the neutral factor for the "rgb-64x64" vardct_oracle fixture where the exact per-sample search picks non-neutral, failing that fixture's own precondition assertion ("the oracle fixture must put non-neutral CfL on the wire") in jxl_oxide_decodes_our_vardct_output. (2) Trusting CflAccumulator::best_factor's closed-form seed directly (no rate gate at all) passed that oracle fixture but then picked a non-neutral factor that cost more bytes than neutral for equal-or-better quality, failing jpxl-encode-policy::tests::cfl_reduces_size_at_equal_quality_on_correlated_colour (CfL 3647 B vs neutral 3493 B). Conclusion: 3 second-moment sufficient statistics are not enough information to reproduce the exact search's rate/distortion tradeoff at the tile level; a safe closed-form replacement needs either per-sample histogram-ish statistics or a properly calibrated rate model built against the matched-quality harness outside-advice.md §19 describes (jpegxl-rs.decision.encoder-architecture-phases already gates that behind Phase 2, but it turns out Phase 2's own HF factor step needs it too). Both attempts were reverted; the landed diff keeps only the already-safe factor_candidates window narrowing (±4 -> ±1) plus the seed==0 exact-LS-neutral shortcut, which are output-preserving-in-spirit (still exact-oracle-scored, just over fewer candidates) and independently verified: choose_total 285,647,118 -> 175,406,647 (-39%), choose_cfl_factor 154,335,540 -> 44,095,069 (-71%), choose_cfl_y unchanged at 11,812,500 (still exact, still needed by the retained per-sample scoring), all lib tests and (modulo the pre-existing, unrelated both_oracles_decode_a_stream_from_the_hf_mul_segment failure reproduced on unmodified f73590d) the oracle suite green.
+        """
+}
+
+record jpegxl-rs.evidence.phase2-cfl-choose-collapse/1 : evidence {
+    title "Phase-2 choose_cfl_y/choose_cfl_factor collapse to zero on 12MP vardct-fixed"
+    state verified
+    result pass
+    method command
+    observed_at git:f73590dcb919388beca11760f34cc167ff3cad6d
+    command "cd JPXL &amp;&amp; cargo build --release -p jpxl-cli &amp;&amp; ./target/release/jpxl bench vardct-fixed --input &lt;12MP-P6&gt; --threads 1 --iters 1 --diag"
+    summary """
+        12 MP vardct-fixed, threads=1: choose_cfl_y and choose_cfl_factor collapsed from 11,812,500 and 154,335,540 (Phase-1 baseline, commit f73590d) to 0 and 0 after replacing the exact per-sample HfQuantizer::choose CfL scoring with a closed-form CflAccumulator::residual_energy rate proxy. choose_total dropped 285,647,118 -> 119,499,078 (58%), now cover(84,061,578)+final(35,437,500) only. cfl stage wall time 985.8ms -> 73.4ms. cfl_sample_bytes (frame-sized CflSample storage) dropped 384,000,000 -> 6,000,000 since the HF path no longer materializes per-coefficient CflSample structs (LF-only storage remains). Output size changed +0.27% (1,531,492 -> 1,535,621 bytes), fingerprint changed, consistent with the Phase-2 work item's "codestreams may change vs Phase 1".
+        """
+}
+
+record jpegxl-rs.evidence.phase2-safe-window-narrowing-landed/1 : evidence {
+    title "Safe Phase-2 subset (window narrowing + LS-neutral shortcut) verified green"
+    state verified
+    result pass
+    method command
+    observed_at git:f73590dcb919388beca11760f34cc167ff3cad6d
+    command "cd JPXL &amp;&amp; cargo test -p jpxl-encode -p jpxl-encode-policy --lib --release &amp;&amp; cargo test -p jpxl-encode-policy --test vardct_oracle &amp;&amp; ./target/release/jpxl bench vardct-fixed --input &lt;12MP-P6&gt; --threads 1 --iters 1 --diag"
+    summary """
+        Landed state (factor_candidates window narrowed +-4 -> +-1, seed==0 exact-LS-neutral shortcut, quantize_lane batching of final HF quant -- all still exact-oracle scored): jpxl-encode-policy + jpxl-encode lib tests 59+103 passed; vardct_oracle suite 9/10 passed (both_oracles_decode_a_stream_from_the_hf_mul_segment fails identically on unmodified f73590d, confirmed pre-existing and unrelated). 12MP vardct-fixed threads=1 diag: choose_total 285,647,118 -> 175,406,647 (-39%), choose_cfl_factor 154,335,540 -> 44,095,069 (-71%), choose_cfl_y unchanged 11,812,500 (still exact), cover 84,061,578 and final 35,437,500 unchanged. output_bytes 1,531,492 -> 1,530,188 (-0.09%, within the narrower search's own tie rules).
+        """
+}
+
 record jpegxl-rs.evidence.rulings-captured/1 : evidence {
     title "HANDOFF Already-fixed and Traps plus LESSONS captured as 5 decisions, 12 policies, 6 constraints"
     state verified

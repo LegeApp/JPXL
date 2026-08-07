@@ -49,6 +49,14 @@ use jpxl_core::varblock::TransformType;
 
 use crate::error::{PolicyError, Result};
 
+/// Top-left `n×n` LLF cells are not HF-coded (same rule as the planner).
+#[inline]
+const fn is_llf_cell_local(cell: usize, side: usize, n: usize) -> bool {
+    let x = cell % side;
+    let y = cell / side;
+    x < n && y < n
+}
+
 /// Number of coefficient channels.
 pub const NUM_CHANNELS: usize = 3;
 
@@ -281,6 +289,39 @@ impl HfQuantizer {
     #[must_use]
     pub fn step(&self, channel: usize, cell: usize) -> f32 {
         self.step_at(channel, cell)
+    }
+
+    /// Phase-2: quantize a contiguous coefficient lane (one channel of one
+    /// varblock) into `out`, skipping LLF cells when `skip_llf` is set.
+    ///
+    /// Same integer rules as [`Self::choose`], applied cell-by-cell.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::choose`].
+    pub fn quantize_lane(
+        &self,
+        channel: usize,
+        coeffs: &[f32],
+        out: &mut [i32],
+        side: usize,
+        n_blocks: usize,
+        skip_llf: bool,
+    ) -> Result<()> {
+        let cells = coeffs.len().min(out.len());
+        for cell in 0..cells {
+            if skip_llf && is_llf_cell_local(cell, side, n_blocks) {
+                if let Some(slot) = out.get_mut(cell) {
+                    *slot = 0;
+                }
+                continue;
+            }
+            let q = self.choose(coeffs.get(cell).copied().unwrap_or(0.0), channel, cell)?;
+            if let Some(slot) = out.get_mut(cell) {
+                *slot = q;
+            }
+        }
+        Ok(())
     }
 
     /// The integer whose reconstruction is nearest `target`.
