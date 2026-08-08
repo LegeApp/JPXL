@@ -654,6 +654,19 @@ record jpegxl-rs.evidence.s8-phase-c-prune-bound-verified-postcommit/1 : evidenc
         """
 }
 
+record jpegxl-rs.evidence.s8-phase-d-diagnostics-gated-verified/1 : evidence {
+    title "Code-review cleanup: gated the S8 Phase D diagnostics surface (EncodeDiag::stage_cover_prune_ns/cover_prune_checks/cover_prune_hits, StageTimer::CoverPrune, note_cover_prune_check/hit, summary_line's prune segment) behind #[cfg(feature = \"s8-cover-prune\")] in diagnostics.rs, matching its callers in lib.rs. Both configs build clean; lib tests 65/65 (default) and 66/66 (feature on), unchanged from before. cargo fmt --check clean on diagnostics.rs (the only file touched). Pre-existing clippy (dct.rs excessive_precision, toolchain drift) and fmt (lib.rs/rate.rs/rate_loop.rs) failures confirmed via git stash to predate and be unrelated to this change."
+    state verified
+    result pass
+    method command
+    observed_at git:9dfe234d1edaf0fe3c356dcb75bf6e2d997e9228
+    command "cargo build/test -p jpxl-encode-policy (feature default, and again with --features s8-cover-prune); cargo fmt -p jpxl-encode-policy -- --check; git stash sanity-check of pre-existing clippy/fmt failures"
+    artifact "JPXL/crates/jpxl-encode-policy/src/diagnostics.rs"
+    summary """
+        Code-review cleanup: gated the S8 Phase D diagnostics surface (EncodeDiag::stage_cover_prune_ns/cover_prune_checks/cover_prune_hits, StageTimer::CoverPrune, note_cover_prune_check/hit, summary_line's prune segment) behind #[cfg(feature = "s8-cover-prune")] in diagnostics.rs, matching its callers in lib.rs. Both configs build clean; lib tests 65/65 (default) and 66/66 (feature on), unchanged from before. cargo fmt --check clean on diagnostics.rs (the only file touched). Pre-existing clippy (dct.rs excessive_precision, toolchain drift) and fmt (lib.rs/rate.rs/rate_loop.rs) failures confirmed via git stash to predate and be unrelated to this change.
+        """
+}
+
 record jpegxl-rs.evidence.s8-phase-d-prune-wired-verified/1 : evidence {
     title "s8-cover-prune wired, decision-preserving (byte-identical fingerprints, both configs), tests green both configs; measured speed regression (honest negative) documented, flag stays off default."
     state verified
