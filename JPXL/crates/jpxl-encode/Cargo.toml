@@ -17,19 +17,23 @@ rayon = { workspace = true, optional = true }
 wide = { workspace = true, optional = true }
 
 [features]
-default = ["parallel", "simd"]
+default = ["parallel", "simd", "phase4b-sampled-gather"]
 # Coarse section parallelism via rayon (falls back to std::thread::scope).
 parallel = ["dep:rayon"]
 # Leaf SIMD: Gaborish interior + core DCT when jpxl-core/simd is on.
 simd = ["dep:wide", "jpxl-core/simd"]
 # Phase 4B: wire the sampled property-gather scorer into the modular
 # planner's cheap-tier MA-tree topology search (predictor pick + greedy
-# splits + per-leaf refinement) in place of a full-plane scan. Off by
-# default pending broader-corpus promotion; see
+# splits + per-leaf refinement) in place of a full-plane scan. PROMOTED to
+# default 2026-08-08 on an interleaved A/B (jpegxl-rs.evidence.phase4b-
+# sampled-gather-interleaved-2026-08-08): ~2.6-2.8x modular wall-time
+# reduction at 4/12MP, byte-identical output and fingerprint at every
+# size, decode-validated through jpxl-decode and djxl. See
 # jpegxl-rs.work.arch-phase4b-sampled-gather-scoped. The scorer function
 # itself (jpxl_encode::modular::estimate_residual_bits_sampled) is always
-# compiled -- this feature gates only the search-path wiring, so a default
-# build's search behaviour is untouched.
+# compiled; this feature gates only the search-path wiring, so disabling
+# it (`--no-default-features` or explicit `default-features = false`)
+# reverts to the pre-4B full-plane scan byte-for-byte.
 phase4b-sampled-gather = []
 
 [dev-dependencies]

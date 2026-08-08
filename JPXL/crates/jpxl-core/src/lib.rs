@@ -29,6 +29,7 @@ pub mod error;
 pub mod forward;
 pub mod geometry;
 pub mod limits;
+pub mod modular_weighted;
 pub mod varblock;
 
 pub use error::{JpxlError, Result};

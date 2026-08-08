@@ -308,7 +308,7 @@ pub fn apply_inverse(
                 let nb = Neighbours::gather(target, x, y);
                 let weighted = wp
                     .as_ref()
-                    .map(|state| state.predict(&ctx.wp_header, &nb, x));
+                    .map(|state| state.predict(&ctx.wp_header, &nb.into(), x));
                 if is_delta {
                     value += nb.predict(d_pred, weighted.map_or(0, |w| w.prediction));
                 }

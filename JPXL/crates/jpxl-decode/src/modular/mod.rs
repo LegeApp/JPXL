@@ -288,7 +288,7 @@ impl ModularHeader {
         guard: &mut AllocGuard,
     ) -> Result<Self> {
         let use_global_tree = trace_field!(reader, "modular.use_global_tree", read_bool(reader))?;
-        let wp_header = WpHeader::read(reader)?;
+        let wp_header = weighted::read_wp_header(reader)?;
         let nb_transforms = trace_field!(
             reader,
             "modular.nb_transforms",
@@ -692,7 +692,7 @@ pub fn decode_channels(
             for x in 0..spec.width {
                 let nb = Neighbours::gather(current, x, y);
                 // H.5.1: invoked for every sample, whatever the leaf predictor.
-                let weighted = wp.predict(&header.wp_header, &nb, x);
+                let weighted = wp.predict(&header.wp_header, &nb.into(), x);
                 let props = properties.compute(earlier, current, x, y, &nb, weighted.max_error);
                 let leaf = tree.traverse(props)?;
 
