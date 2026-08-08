@@ -63,6 +63,24 @@ record jpegxl-rs.assessment.encoder-static-optimization/1 : assessment {
     }
 }
 
+record jpegxl-rs.assessment.phase4-order-correction/1 : assessment {
+    title "Advisor correction: Phase 4 order is 4.0b density-gate -> 4A -> 4C -> 4B -> 4D(optional), not 4A+4D-first"
+    state verified
+    statement """
+        An independent Opus advisor review of jpegxl-rs.work.arch-phase4-modular-scoped, run against live code (not the prior scoping summary), verified all four cited code facts (PREDICTOR_CANDIDATES omits Weighted at lossless.rs:70-78; use_global_tree hardcoded false at modular/mod.rs:1094; full-plane cheap scans at lossless.rs:154-241; 256-entry linear LZ77 lookback at modular/mod.rs:651,1499-1519) but surfaced two findings that overturn the proposed sub-phase order.
+
+        Finding A -- 4D (LZ77 hash-chain) is not on the wall-time hot path. greedy_lz77_events is reached only via encode_ans_stream_lz77, called from the Exact price tier and final emit (modular/mod.rs:1291-1295), not the cheap-tier scan loop. The session's own --diag run confirms the call-count split: exact_prices=3 vs cheap_scores=67 per plan_for call, flat across 256/1024/2048px sizes (topology-driven, not size-driven). The 33.5s modular wall is dominated by the 67 full-plane cheap residual scans (6 predictors x greedy split grid over SPLIT_PROPERTIES x SPLIT_THRESHOLDS + per-leaf refinement, lossless.rs:154-248), not LZ77 search cost. 4D is a modest density lever at best (helps only where a copy is already adopted, C.3.3 gate at modular/mod.rs:1361) and moves neither the wall-time nor the 118x density number materially -- demoted to an optional tail item.
+
+        Finding B -- 4A (Weighted/H.5 predictor) is far cheaper than scoped. The decoder already has a complete, tested clean-room implementation: crates/jpxl-decode/src/modular/weighted.rs (WeightedState::predict/update, max_error as property 15), invoked per-sample at jpxl-decode/src/modular/mod.rs:684-710. 4A is not "invent H.5," it is "mirror the decoder's working state machine on the encode residual path": add Predictor::Weighted=6 (must match decoder's enum index) and add property 15 to SPLIT_PROPERTIES (currently [4,5,6,7,9,10,11] at lossless.rs:81, missing 15). The only correctness hazard is byte-exact wrap/narrow arithmetic parity with the decoder (jpxl-decode/mod.rs:706-710) -- caught by the existing round-trip gate.
+
+        Corrected order: 4.0 (done, this session -- diag re-confirms 2026-08-06 numbers, no regression from S8-era VarDCT-only changes) -> 4.0b (NEW, zero-risk: pinned real-corpus density + decode-validity gate, see jpegxl-rs.work.arch-phase4-0b-density-gate) -> 4A -> 4C -> 4B -> 4D (optional tail).
+
+        Rationale for reordering ahead of 4B: the project's optimization-determinism-contract requires Contract-B changes (deliberately altering encoder decisions -- 4A and 4C both do) to name metric bounds in an explicit revise; bounds cannot be named without a working density-measurement harness, which does not yet exist (jpxl-conformance/src/metrics.rs has pixel-error helpers only, no bpp/size-ratio helper). 4B (sampled property-gather) is a pure search-speed optimization -- the existing exact final-price gate (lossless.rs:259-306, PriceTier::Exact) already guarantees the emitted bytes are exactly priced regardless of how the search reached that candidate, so 4B does not block on density measurement and can follow once 4A/4C establish whether the model-strength gap is the real remaining cost.
+
+        See also (prior scoping context, cited in prose since assessment cannot target work records via supported_by): jpegxl-rs.work.arch-phase4-modular-scoped, jpegxl-rs.assessment.s8-close-phase4-reorient, jpegxl-rs.assessment.encoder-architecture-outside-advice (source of the original, not-yet-refreshed-on-real-corpus 118x density claim that 4.0b exists to make live and reproducible).
+        """
+}
+
 record jpegxl-rs.assessment.s8-close-phase4-reorient/1 : assessment {
     title "Advisor reorientation: S8 closes as honest negative; Phase F no-go; next round is Phase 4 (modular, density-first)"
     state verified

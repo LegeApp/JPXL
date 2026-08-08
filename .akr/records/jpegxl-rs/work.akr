@@ -391,6 +391,39 @@ record jpegxl-rs.work.arch-phase3-forward-cache/2 : work {
     supported_by [ @jpegxl-rs.assessment.encoder-architecture-outside-advice ]
 }
 
+record jpegxl-rs.work.arch-phase4-0b-density-gate/1 : work {
+    title "Phase 4.0b: pinned real-corpus density + decode-validity gate (prerequisite for 4A/4C)"
+    state proposed
+    intent """
+        Build the missing zero-risk instrumentation step the advisor identified as a hard prerequisite for 4A (Weighted predictor) and 4C (global MA tree): a pinned, real (non-synthetic) corpus harness that measures modular density against the cjxl oracle and decode-validity, so Contract-B sub-phases can name metric bounds (required by jpegxl-rs.decision.optimization-determinism-contract) instead of relying on the earlier, possibly-synthetic 118x density claim in jpegxl-rs.assessment.encoder-architecture-outside-advice.
+
+        Scope: extend crates/jpxl-encode/tests/roundtrip.rs (or a new bench harness) plus jpxl-conformance/src/metrics.rs (currently pixel-error helpers only, no bpp/size-ratio helper -- that is the concrete gap) to, for a fixed set of ~4-6 real PNGs spanning a small (~1MP) and at least one large (>=12MP) size class:
+        1. Encode each with jpxl (modular path) and with libjxl/build/tools/cjxl -e1 (oracle-only, per clean-room policy: run the binary, never read its source).
+        2. Assert every jpxl-encoded stream round-trips byte-valid through both jpxl-decode (in-tree) and djxl (oracle) -- decode-validity gate, reusing existing roundtrip/oracle test infra.
+        3. Emit a pinned per-image jpxl_bytes / cjxl_e1_bytes ratio table.
+        4. Emit the exact-price byte decomposition the encoder already computes internally (residual-entropy bits vs MA-tree-cost bits, from total_cost_source in lossless.rs) per image, so the next choice between 4A (predictor strength) and 4C (tree/model strength) is made by measured contribution, not assumption.
+
+        Not in scope: any change to encoder decisions (Contract A, zero risk); this is measurement-only.
+        """
+    note """
+        PROPOSED, not started. Opened per jpegxl-rs.assessment.phase4-order-correction (advisor review, corrected sub-phase order). This is now the required next buildable unit before 4A or 4C can be gated -- it converts the stale, possibly-synthetic 118x density claim into a live, reproducible, real-corpus number and supplies the residual-vs-tree decomposition needed to choose between 4A and 4C with evidence.
+        """
+    acceptance {
+        check harness-green {
+            statement """
+                The density+decode-validity harness runs deterministically and every corpus image round-trips byte-valid through both jpxl-decode and the djxl oracle
+                """
+            method command
+        }
+        check ratio-table-pinned {
+            statement """
+                The harness prints a pinned per-image jpxl/cjxl-e1 size-ratio table plus the residual-vs-tree-cost byte decomposition, reproducing the order-of-magnitude of the prior 118x density claim on real (non-synthetic) corpus images
+                """
+            method observation
+        }
+    }
+}
+
 record jpegxl-rs.work.arch-phase4-modular-scoped/1 : work {
     title "Phase 4: rebuild modular planning, scoped density-first (sub-phases 4.0, 4A-4D)"
     state proposed
@@ -411,7 +444,13 @@ record jpegxl-rs.work.arch-phase4-modular-scoped/1 : work {
         Suggested order: 4.0 -> (4A + 4D, both cheap/safe) -> 4B -> 4C. Front-load the exact-safe density win (4A) and output-preserving speed win (4D); reserve the sampled-gather restructure (4B) and global-model change (4C) for after 4.0's measurement confirms they target the actual remaining cost.
         """
     note """
-        PROPOSED, not started. This record is the scoping handoff from jpegxl-rs.assessment.s8-close-phase4-reorient; 4.0 (baseline re-measurement) is the required first sub-phase before any design work begins, matching this project's measure-before-design convention.
+        PROPOSED, not started as engineering -- 4.0 (baseline re-measurement) done this session: jpxl bench modular --diag at 256/1024/2048px reproduces the 2026-08-06 pre-opt numbers (1024px: 9689ms vs 9872ms prior, within noise, no regression from S8-era VarDCT-only changes) and confirms cheap_scores=67 is flat across sizes (topology-driven cost, not size-driven).
+
+        Order corrected by independent advisor review (jpegxl-rs.assessment.phase4-order-correction): the original suggested order '4.0 -> (4A+4D) -> 4B -> 4C' is superseded. 4D (LZ77 hash-chain) is not on the wall-time hot path (confirmed via diag: exact_prices=3 vs cheap_scores=67 -- LZ77 only runs at the Exact tier/final emit) and moves neither the wall-time nor density number materially; demoted to optional tail. 4A (Weighted predictor) is far cheaper than originally scoped -- the decoder already has a complete, tested clean-room H.5 implementation (crates/jpxl-decode/src/modular/weighted.rs) to mirror on the encode side, not novel infrastructure to invent.
+
+        Corrected order: 4.0 (done) -> 4.0b (NEW prerequisite: pinned real-corpus density + decode-validity gate, see jpegxl-rs.work.arch-phase4-0b-density-gate -- required because Contract-B sub-phases below need a measurement harness to name metric bounds per jpegxl-rs.decision.optimization-determinism-contract, which does not yet exist) -> 4A -> 4C -> 4B -> 4D (optional tail).
+
+        Next actionable unit: jpegxl-rs.work.arch-phase4-0b-density-gate. Do not start 4A/4C engineering before it lands -- there is no way to gate a Contract-B change (deliberately alters encoder decisions) without a working density-vs-cjxl measurement in hand.
         """
     implements [
         @jpegxl-rs.decision.encoder-architecture-phases,
@@ -420,6 +459,7 @@ record jpegxl-rs.work.arch-phase4-modular-scoped/1 : work {
     part_of [ @jpegxl-rs.track.encoder-optimization ]
     supported_by [
         @jpegxl-rs.assessment.encoder-architecture-outside-advice,
+        @jpegxl-rs.assessment.phase4-order-correction,
         @jpegxl-rs.assessment.s8-close-phase4-reorient
     ]
 }

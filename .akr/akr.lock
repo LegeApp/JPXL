@@ -5,8 +5,8 @@ build {
     tool "akr 0.1.0"
     grammar "0.1"
     vocabulary "0.2"
-    commit git:9dfe234d1edaf0fe3c356dcb75bf6e2d997e9228
-    source_graph "sha256:fb6295c504d56928cc8f3b66d5ba71a39dc35a9152f7bfd481b67df0163b60cb"
+    commit git:248ce3a0ccc6b0eb02fc0c2af55fdfbf18b1bd78
+    source_graph "sha256:4af15e73687cacfa2b4e567ac6164be076d79b364e33b81883d7f8581dfc4606"
 }
 
 source ".akr/project.akr" {
@@ -15,8 +15,8 @@ source ".akr/project.akr" {
 }
 
 source ".akr/records/jpegxl-rs/assessments.akr" {
-    hash "sha256:f7a936282381bc013c31f9d7e0f322361e80055de448fe18aa98ab0ab8ea7920"
-    records 3
+    hash "sha256:fcdd42e6c8808afd9069f7348ca8594bd11e507c84e1b5d17e7f295357b69118"
+    records 4
 }
 
 source ".akr/records/jpegxl-rs/constraints.akr" {
@@ -60,8 +60,8 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:be8b81d2561acb608ceea2cdeaa08ff8d587a1f761596c7a3be4418240c1ea15"
-    records 26
+    hash "sha256:b97da453ede10212ac449786f8419e25bb66a0b9cfcc2ec3b46abf729c513a30"
+    records 27
 }
 
 resolution @jpegxl-rs.decision.encoder-architecture-phases/1 {
@@ -618,6 +618,12 @@ resolution @jpegxl-rs.work.arch-phase4-modular-scoped/1 {
 
 resolution @jpegxl-rs.work.arch-phase4-modular-scoped/1 {
     slot supported_by
+    to @jpegxl-rs.assessment.phase4-order-correction/1
+    hash "sha256:05211fdd4ec59e54f35c9daac4d309c90c05ad4701303f7b6385a2f4e49a1dc6"
+}
+
+resolution @jpegxl-rs.work.arch-phase4-modular-scoped/1 {
+    slot supported_by
     to @jpegxl-rs.assessment.s8-close-phase4-reorient/1
     hash "sha256:4afa8cac25b3c27e6ff420927a65278983846e3c4bc09e4caaa0f0ede38893e0"
 }
@@ -930,6 +936,11 @@ seal @jpegxl-rs.assessment.encoder-architecture-outside-advice/1 {
 seal @jpegxl-rs.assessment.encoder-static-optimization/1 {
     state verified
     hash "sha256:8548505b7e04728e0c442fc78e178335cd58ed6cb481f7df9a9a751db20f0d04"
+}
+
+seal @jpegxl-rs.assessment.phase4-order-correction/1 {
+    state verified
+    hash "sha256:05211fdd4ec59e54f35c9daac4d309c90c05ad4701303f7b6385a2f4e49a1dc6"
 }
 
 seal @jpegxl-rs.assessment.s8-close-phase4-reorient/1 {
