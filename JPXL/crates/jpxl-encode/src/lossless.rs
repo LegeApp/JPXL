@@ -446,7 +446,14 @@ fn residual_stream_cost_source(
     match tier {
         PriceTier::Cheap => {
             bump_cheap();
-            cheap_residual_bits(source, group_size_shift)
+            #[cfg(feature = "phase4b-sampled-gather")]
+            {
+                sampled_cheap_residual_bits(source)
+            }
+            #[cfg(not(feature = "phase4b-sampled-gather"))]
+            {
+                cheap_residual_bits(source, group_size_shift)
+            }
         }
         PriceTier::Exact => {
             bump_exact();
@@ -455,7 +462,31 @@ fn residual_stream_cost_source(
     }
 }
 
+/// Row stride for [`sampled_cheap_residual_bits`] (Phase 4B). Every 4th row
+/// (plus the last), so the topology search's cost scales roughly a quarter
+/// as fast with pixel count as the full-plane scan it stands in for.
+#[cfg(any(feature = "phase4b-sampled-gather", test))]
+const SAMPLED_GATHER_ROW_STRIDE: u32 = 4;
+
+/// Phase 4B additive scorer: rows a strided subset instead of a full plane
+/// scan. Always compiled (regardless of the feature) so decision-preservation
+/// tests can compare it against [`cheap_residual_bits`] directly; only
+/// [`residual_stream_cost_source`]'s dispatch is feature-gated, so a default
+/// build's search path never calls this function.
+///
+/// See jpegxl-rs.work.arch-phase4b-sampled-gather-scoped.
+#[cfg(any(feature = "phase4b-sampled-gather", test))]
+fn sampled_cheap_residual_bits(source: &modular::ModularSource) -> Result<u64> {
+    modular::estimate_residual_bits_sampled(source, SAMPLED_GATHER_ROW_STRIDE)
+}
+
 /// Stage-B estimate: one residual collect + hybrid Shannon cost (no ANS emit).
+///
+/// Always compiled when the Phase 4B feature is off (the default search
+/// path); also compiled under `test` (feature on or off) so decision-
+/// preservation tests can compare it against
+/// [`sampled_cheap_residual_bits`] directly.
+#[cfg(any(not(feature = "phase4b-sampled-gather"), test))]
 fn cheap_residual_bits(source: &modular::ModularSource, group_size_shift: u32) -> Result<u64> {
     let geometry = crate::frame::Geometry::new(source.width, source.height, group_size_shift)?;
     if geometry.is_single_section() {
@@ -534,6 +565,122 @@ fn exact_residual_bits(source: &modular::ModularSource, group_size_shift: u32) -
 mod tests {
     use super::*;
     use crate::EncodeOptions;
+
+    /// Phase 4B decision-preservation regret harness (echoes S8 Phase C's
+    /// independent-second-walk pattern from `regret.rs`): for a handful of
+    /// representative planes, compares the predictor the sampled scorer
+    /// ([`sampled_cheap_residual_bits`]) would pick against the one the
+    /// full-scan baseline ([`cheap_residual_bits`]) picks, at Phase 4B's
+    /// production row stride. When they disagree, the sampled winner's
+    /// EXACT price (the real safety net -- see [`PriceTier::Exact`]) must
+    /// not exceed the baseline winner's exact price by more than a small,
+    /// explicit tolerance. Runs regardless of the `phase4b-sampled-gather`
+    /// feature (both scorers are always compiled under `test`, see their
+    /// `#[cfg]`s) so this regresses even when the search path isn't wired.
+    #[test]
+    fn sampled_gather_regret_stays_within_tolerance_of_full_scan() {
+        const REGRET_TOLERANCE: f64 = 0.02; // 2% of the baseline's exact price.
+
+        let width = 96u32;
+        let height = 96u32;
+        let planes: Vec<Plane> = vec![
+            // Smooth ramp: predictors should agree trivially.
+            (0..height)
+                .flat_map(|y| (0..width).map(move |x| (x + y) as i32))
+                .collect(),
+            // Higher-frequency texture: closer to where sampling could miss
+            // structure a full scan would catch.
+            (0..height)
+                .flat_map(|y| (0..width).map(move |x| ((x * 7 + y * 13) % 251) as i32))
+                .collect(),
+            // Sparse edges on a flat field: a case where most sampled rows
+            // are uninformative and the edge rows matter disproportionately.
+            (0..height)
+                .flat_map(|y| (0..width).map(move |x| if (x + y) % 17 == 0 { 200 } else { 20 }))
+                .collect(),
+        ];
+
+        for plane in planes {
+            let shared: modular::SharedPlane = std::sync::Arc::from(plane.as_slice());
+
+            let mut baseline_best: Option<(u64, Predictor)> = None;
+            let mut sampled_best: Option<(u64, Predictor)> = None;
+            for &predictor in PREDICTOR_CANDIDATES {
+                let tree = MaTree::single_leaf(predictor);
+                let source = modular::ModularSource::direct_shared(
+                    width,
+                    height,
+                    std::slice::from_ref(&shared),
+                    false,
+                    tree,
+                    false,
+                );
+                let full_cost =
+                    cheap_residual_bits(&source, DEFAULT_GROUP_SIZE_SHIFT).expect("full cost");
+                let sampled_cost = sampled_cheap_residual_bits(&source).expect("sampled cost");
+                if baseline_best.as_ref().is_none_or(|(c, _)| full_cost < *c) {
+                    baseline_best = Some((full_cost, predictor));
+                }
+                if sampled_best.as_ref().is_none_or(|(c, _)| sampled_cost < *c) {
+                    sampled_best = Some((sampled_cost, predictor));
+                }
+            }
+            let (_, baseline_predictor) = baseline_best.expect("candidates non-empty");
+            let (_, sampled_predictor) = sampled_best.expect("candidates non-empty");
+
+            let exact_price_of = |predictor: Predictor| -> u64 {
+                let tree = MaTree::single_leaf(predictor);
+                let source = modular::ModularSource::direct_shared(
+                    width,
+                    height,
+                    std::slice::from_ref(&shared),
+                    false,
+                    tree,
+                    false,
+                );
+                total_cost_source(&source, DEFAULT_GROUP_SIZE_SHIFT, PriceTier::Exact)
+                    .expect("exact price")
+            };
+
+            let baseline_exact = exact_price_of(baseline_predictor);
+            let sampled_exact = exact_price_of(sampled_predictor);
+            if sampled_predictor != baseline_predictor {
+                let regret = sampled_exact.saturating_sub(baseline_exact) as f64;
+                let bound = baseline_exact as f64 * REGRET_TOLERANCE;
+                assert!(
+                    regret <= bound,
+                    "sampled scorer picked {sampled_predictor:?} (exact {sampled_exact}) over \
+                     baseline's {baseline_predictor:?} (exact {baseline_exact}); regret {regret} \
+                     exceeds {REGRET_TOLERANCE:.0}% tolerance ({bound})"
+                );
+            }
+        }
+    }
+
+    /// Edge case the "always include the last row" rule in
+    /// [`modular::estimate_residual_bits_sampled`]'s row selection exists
+    /// for: a frame shorter than the sample stride must not panic or starve
+    /// the estimate down to zero rows.
+    #[test]
+    fn sampled_gather_handles_frames_shorter_than_the_row_stride() {
+        let width = 5u32;
+        let height = 3u32; // < SAMPLED_GATHER_ROW_STRIDE (4).
+        let plane: Plane = (0..height)
+            .flat_map(|y| (0..width).map(move |x| (x + y * 2) as i32))
+            .collect();
+        let shared: modular::SharedPlane = std::sync::Arc::from(plane.as_slice());
+        let tree = MaTree::single_leaf(Predictor::Gradient);
+        let source = modular::ModularSource::direct_shared(
+            width,
+            height,
+            std::slice::from_ref(&shared),
+            false,
+            tree,
+            false,
+        );
+        let cost = sampled_cheap_residual_bits(&source).expect("sampled cost on a tiny frame");
+        assert!(cost > 0, "a non-empty frame must not cost zero bits");
+    }
 
     #[test]
     fn plan_for_returns_a_validated_tree() {

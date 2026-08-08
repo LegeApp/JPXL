@@ -1177,9 +1177,46 @@ pub fn estimate_residual_bits_indices(
     rect: Option<Rect>,
 ) -> Result<u64> {
     let events = collect_residuals_indices(source, indices, rect)?;
-    let num_contexts = source.tree.num_contexts().max(1);
+    hybrid_estimate_from_events(&events, source.tree.num_contexts())
+}
+
+/// Full-frame residual bit estimate (see [`estimate_residual_bits_indices`]).
+///
+/// # Errors
+///
+/// As [`estimate_residual_bits_indices`].
+pub fn estimate_residual_bits_full(source: &ModularSource) -> Result<u64> {
+    let indices: Vec<usize> = (0..source.channels.len()).collect();
+    estimate_residual_bits_indices(source, &indices, None)
+}
+
+/// Phase 4B: sampled variant of [`estimate_residual_bits_full`].
+///
+/// Visits every `row_stride`-th row of each channel (always including the
+/// last row) instead of every row, so cost scales with sample count, not
+/// pixel count. Predictions and MA-tree context properties still read exact
+/// sample values -- lossless encode has ground-truth pixels, not a decode
+/// reconstruction, so a sampled subset gives residuals that are exact for
+/// the rows it visits; only the population shrinks, not the accuracy.
+///
+/// Ranking-only, like [`estimate_residual_bits_full`]: the Exact tier
+/// re-prices the settled finalist exactly regardless of which tier's search
+/// chose it. `row_stride < 1` is treated as 1 (every row, i.e. no sampling).
+///
+/// # Errors
+///
+/// Residual out of range or census/hybrid-config rejection.
+pub fn estimate_residual_bits_sampled(source: &ModularSource, row_stride: u32) -> Result<u64> {
+    let indices: Vec<usize> = (0..source.channels.len()).collect();
+    let events = collect_residuals_indices_sampled(source, &indices, row_stride)?;
+    hybrid_estimate_from_events(&events, source.tree.num_contexts())
+}
+
+/// Shared Shannon-hybrid cost tail for both the full and sampled scorers.
+fn hybrid_estimate_from_events(events: &[(usize, u32)], num_contexts: usize) -> Result<u64> {
+    let num_contexts = num_contexts.max(1);
     let mut census = TokenCensus::new(num_contexts)?;
-    for &(ctx, value) in &events {
+    for &(ctx, value) in events {
         census.record(ctx, value)?;
     }
     seed_empty_contexts(&mut census, num_contexts, events.is_empty());
@@ -1199,16 +1236,6 @@ pub fn estimate_residual_bits_indices(
         u64::MAX / 4
     };
     Ok(bits)
-}
-
-/// Full-frame residual bit estimate (see [`estimate_residual_bits_indices`]).
-///
-/// # Errors
-///
-/// As [`estimate_residual_bits_indices`].
-pub fn estimate_residual_bits_full(source: &ModularSource) -> Result<u64> {
-    let indices: Vec<usize> = (0..source.channels.len()).collect();
-    estimate_residual_bits_indices(source, &indices, None)
 }
 
 fn write_leaf_node(w: &mut BitWriter, predictor: Predictor) -> Result<()> {
@@ -1709,6 +1736,83 @@ fn collect_residuals_indices(
     Ok(out)
 }
 
+/// Sampled variant of [`collect_residuals_indices`] for Phase 4B's scorer:
+/// visits a row-strided subset of each channel's samples instead of a full
+/// scan (no `rect` clipping -- always relative to the channel's own
+/// dimensions, matching how `estimate_residual_bits_sampled` is used during
+/// MA-tree topology search on the whole score plane).
+fn collect_residuals_indices_sampled(
+    source: &ModularSource,
+    indices: &[usize],
+    row_stride: u32,
+) -> Result<Vec<(usize, u32)>> {
+    let mut out = Vec::new();
+    for &i in indices {
+        let Some(ch) = source.channels.get(i) else {
+            continue;
+        };
+        collect_plane_residuals_sampled(
+            &ch.data,
+            ch.width,
+            ch.height,
+            row_stride,
+            &source.tree,
+            &mut out,
+        )?;
+    }
+    Ok(out)
+}
+
+/// Rows visited by the sampled scorer: every `row_stride`-th row, always
+/// including the final row so the tree's bottom edge is represented.
+fn sampled_rows(height: u32, row_stride: u32) -> Vec<u32> {
+    if height == 0 {
+        return Vec::new();
+    }
+    let row_stride = row_stride.max(1) as usize;
+    let mut rows: Vec<u32> = (0..height).step_by(row_stride).collect();
+    if rows.last().copied() != Some(height - 1) {
+        rows.push(height - 1);
+    }
+    rows
+}
+
+fn collect_plane_residuals_sampled(
+    plane: &[i32],
+    width: u32,
+    height: u32,
+    row_stride: u32,
+    tree: &MaTree,
+    out: &mut Vec<(usize, u32)>,
+) -> Result<()> {
+    let stride = usize::try_from(width).unwrap_or(usize::MAX);
+    // Absolute (not rect-relative) indexing: predictions and context
+    // properties always read ground-truth samples, so a sampled row can look
+    // at its true W/N/NW neighbours even when those rows aren't visited.
+    let at = |x: u32, y: u32| -> i64 {
+        let index = usize::try_from(y)
+            .ok()
+            .and_then(|row| row.checked_mul(stride))
+            .and_then(|row| usize::try_from(x).ok().and_then(|x| row.checked_add(x)));
+        index
+            .and_then(|i| plane.get(i))
+            .map_or(0, |&v| i64::from(v))
+    };
+    for y in sampled_rows(height, row_stride) {
+        for x in 0..width {
+            let (ctx, predictor) = tree.leaf_at(&at, x, y);
+            let prediction = predict(&at, x, y, predictor);
+            let residual = at(x, y) - prediction;
+            let residual = i32::try_from(residual).map_err(|_| EncodeError::ValueOutOfRange {
+                what: "modular residual",
+                value: residual,
+            })?;
+            out.push((ctx, pack_signed(residual)));
+        }
+    }
+    Ok(())
+}
+
 fn collect_plane_residuals(
     plane: &[i32],
     stride: u32,
@@ -1738,12 +1842,11 @@ fn collect_plane_residuals(
             Predictor::Zero => {
                 for y in 0..rect.height {
                     for x in 0..rect.width {
-                        let residual = i32::try_from(at(x, y)).map_err(|_| {
-                            EncodeError::ValueOutOfRange {
+                        let residual =
+                            i32::try_from(at(x, y)).map_err(|_| EncodeError::ValueOutOfRange {
                                 what: "modular residual",
                                 value: at(x, y),
-                            }
-                        })?;
+                            })?;
                         out.push((0, pack_signed(residual)));
                     }
                 }

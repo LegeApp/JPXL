@@ -22,6 +22,15 @@ default = ["parallel", "simd"]
 parallel = ["dep:rayon"]
 # Leaf SIMD: Gaborish interior + core DCT when jpxl-core/simd is on.
 simd = ["dep:wide", "jpxl-core/simd"]
+# Phase 4B: wire the sampled property-gather scorer into the modular
+# planner's cheap-tier MA-tree topology search (predictor pick + greedy
+# splits + per-leaf refinement) in place of a full-plane scan. Off by
+# default pending broader-corpus promotion; see
+# jpegxl-rs.work.arch-phase4b-sampled-gather-scoped. The scorer function
+# itself (jpxl_encode::modular::estimate_residual_bits_sampled) is always
+# compiled -- this feature gates only the search-path wiring, so a default
+# build's search behaviour is untouched.
+phase4b-sampled-gather = []
 
 [dev-dependencies]
 jpxl-conformance.workspace = true

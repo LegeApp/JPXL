@@ -559,6 +559,18 @@ record jpegxl-rs.evidence.phase4-0b-density-gate-2026-08-08/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase4b-sampled-gather-ab-2026-08-08/1 : evidence {
+    title "Phase 4B A/B: sampled property-gather cuts modular wall time ~2.7-3x, byte-identical output at every size"
+    state verified
+    result pass
+    method command
+    observed_at git:4a2928fa7db9b45af02076e307b6abeb8c05f618
+    artifact ".agent/scratch/phase4b-ab-2026-08-08"
+    summary """
+        Built the sampled cheap-tier scorer (modular::estimate_residual_bits_sampled, row-strided sampling, always compiled), wired it behind the phase4b-sampled-gather Cargo feature (off by default) in jpxl-encode's cheap-tier dispatch (lossless.rs residual_stream_cost_source). Decision-preservation proof: sampled_gather_regret_stays_within_tolerance_of_full_scan (lossless.rs), a regret harness comparing the sampled scorer's predictor pick against the full-scan baseline's on 3 representative planes, asserting any disagreement costs <2% exact-price regret -- passes in both feature configs (105/105 lib tests both ways). A/B measurement, taskset -c 0-5, release build, baseline vs phase4b-sampled-gather binaries (immutable, hash-pinned per run):\n\nSynthetic RGB (jpxl bench modular --diag): 256px 149.6ms->76.8ms (1.95x), 1024px 3251.6ms->1130.9ms (2.88x), 2048px 12375.5ms->5291.5ms (2.34x). output_bytes and fingerprint IDENTICAL at every size (5143/43754/108941 bytes, same fingerprints both binaries).\n\nReal corpus (test-set/, same 3 images as 4.0b's density gate, --input): small(0.8MP) 2662ms->872ms (3.05x), mid(4MP) 13115ms->4881ms (2.69x), large(12MP) 35734ms->12326ms (2.90x). output_bytes and fingerprint IDENTICAL at every size. Decode-validity re-confirmed on the sampled binary's output through both jpxl-decode and djxl oracle (jd_ok/dj_ok = ok at all 3 sizes).\n\nNot yet a promoted baseline under jpegxl-rs.policy.performance-baseline-rules: this was sequential A/B (baseline run, then sampled run), not interleaved; host load/dispersion not formally disclosed beyond taskset pinning. The effect size (~2.7-3x) is far larger than plausible sequential-run noise, and the byte-identity/decode-validity gates are unconditional regardless of measurement rigor, but promotion to default would still want an interleaved re-run per the policy's full checklist before flipping the feature on by default.
+        """
+}
+
 record jpegxl-rs.evidence.rulings-captured/1 : evidence {
     title "HANDOFF Already-fixed and Traps plus LESSONS captured as 5 decisions, 12 policies, 6 constraints"
     state verified

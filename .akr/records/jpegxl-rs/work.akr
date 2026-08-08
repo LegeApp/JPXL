@@ -446,15 +446,17 @@ record jpegxl-rs.work.arch-phase4-modular-scoped/1 : work {
         Suggested order: 4.0 -> (4A + 4D, both cheap/safe) -> 4B -> 4C. Front-load the exact-safe density win (4A) and output-preserving speed win (4D); reserve the sampled-gather restructure (4B) and global-model change (4C) for after 4.0's measurement confirms they target the actual remaining cost.
         """
     note """
-        PROPOSED, not started as engineering. 4.0 (baseline re-measurement) and 4.0b (density+decode-validity gate) are both DONE this session.
+        PROPOSED, not started as engineering overall -- but 4.0, 4.0b, and 4B are all DONE this session.
 
-        4.0: jpxl bench modular --diag at 256/1024/2048px reproduces the 2026-08-06 pre-opt numbers, no regression from S8-era VarDCT-only work.
+        4.0 (baseline re-measurement) and 4.0b (density+decode-validity gate) done; 4.0b found the '118x' figure is a wall-time ratio, not a density gap (jpxl-modular already beats cjxl -e1 on bytes by 5-8%; the real, smaller density gap is only versus cjxl -e7, 16-42%). See jpegxl-rs.assessment.phase4-density-gap-is-vs-e7-only.
 
-        4.0b (jpegxl-rs.work.arch-phase4-0b-density-gate, completed): real-corpus density+decode-validity gate found the original '118x' framing was misread as a density gap -- it is a wall-time ratio. jpxl-modular is actually 5-8% SMALLER than cjxl -e1 at every size class; the only real density gap is versus cjxl -e7 (max effort), 16-42% and growing with size. See jpegxl-rs.assessment.phase4-density-gap-is-vs-e7-only for the full correction, which itself supersedes the density-first rationale in jpegxl-rs.assessment.phase4-order-correction.
+        4B (sampled property-gather) DONE and landed: jpegxl-rs.work.arch-phase4b-sampled-gather-scoped built the additive sampled scorer (modular::estimate_residual_bits_sampled), proved decision-preservation with a regret-harness unit test (sampled_gather_regret_stays_within_tolerance_of_full_scan, lossless.rs), and wired it behind the phase4b-sampled-gather Cargo feature (off by default, Contract-A: default build's search path untouched). A/B measurement (jpegxl-rs.evidence.phase4b-sampled-gather-ab-2026-08-08) shows ~2.7-3x wall-time reduction on both synthetic and the 4.0b real-photo corpus (0.8/4/12MP), with BYTE-IDENTICAL output and fingerprint at every size, decode-validated through both jpxl-decode and djxl. This is a clean, large, unambiguous win -- not an honest negative like S8/Phase D.
 
-        FINAL corrected order: 4.0 (done) -> 4.0b (done) -> 4B (sampled property-gather -- addresses the dominant 100-120x wall-time cost, now the priority) -> 4A (Weighted predictor, cheap to build via jpxl-decode/src/modular/weighted.rs, addresses the smaller vs-e7-only density gap) -> 4C (global tree, same density gap) -> 4D (optional tail, confirmed not on the hot path).
+        Open decision: promote phase4b-sampled-gather to default. Not yet a promoted baseline under jpegxl-rs.policy.performance-baseline-rules (sequential, not interleaved A/B; host load not formally disclosed) -- recommend one interleaved re-run per the policy's full checklist, then flip the feature into `default` in jpxl-encode/Cargo.toml. Given the byte-identity/decode-validity gates are unconditional regardless of measurement rigor and the effect size (~2.7-3x) dwarfs plausible sequential-run noise, this should be a fast follow, not a new multi-week sub-phase.
 
-        Next actionable unit: scope and open 4B as its own AKR work item (sampled property-gather, decision-preservation proof echoing S8's regret.rs independent-second-walk pattern, gated behind a flag, exact final-price re-gate already guarantees output bytes per lossless.rs:259-306).
+        Remaining corrected order: 4B (done) -> 4A (Weighted predictor, cheap via jpxl-decode/src/modular/weighted.rs, addresses the smaller vs-e7-only density gap) -> 4C (global tree, same density gap) -> 4D (optional tail, confirmed not on the hot path).
+
+        Next actionable units, in order: (1) promote phase4b-sampled-gather to default per the interleaved-baseline checklist above; (2) scope 4A as its own AKR work item.
         """
     implements [
         @jpegxl-rs.decision.encoder-architecture-phases,
@@ -471,7 +473,7 @@ record jpegxl-rs.work.arch-phase4-modular-scoped/1 : work {
 
 record jpegxl-rs.work.arch-phase4b-sampled-gather-scoped/1 : work {
     title "Phase 4B: sampled property-gather to cut modular's dominant search-time cost"
-    state proposed
+    state completed
     intent """
         Now the priority sub-phase per jpegxl-rs.assessment.phase4-density-gap-is-vs-e7-only: the 4.0b real-corpus gate showed modular's dominant, unambiguous problem is wall-clock cost (100-120x versus cjxl -e1, at essentially identical output size), driven by the 67 full-plane cheap-tier residual scans per plan_for call (6 predictors x greedy split grid over SPLIT_PROPERTIES x SPLIT_THRESHOLDS + per-leaf refinement, crates/jpxl-encode/src/lossless.rs:154-248). Each scan re-walks the entire score plane (estimate_residual_bits_full) even though only a ranking decision, not an exact price, is needed at this stage.
 
