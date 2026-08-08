@@ -95,6 +95,26 @@ record jpegxl-rs.assessment.phase4-order-correction/1 : assessment {
         """
 }
 
+record jpegxl-rs.assessment.phase4a-weighted-integration-design/1 : assessment {
+    title "Advisor design: wire Weighted via sweep+refinement only, sequential collector, no property-15 split, four-part correctness gate"
+    state verified
+    statement """
+        An independent Opus advisor review of jpegxl-rs.work.arch-phase4a-weighted-predictor-scoped (run against live code) gave an actionable design, subsequently implemented and verified (jpegxl-rs.evidence.phase4a-weighted-predictor-wired-2026-08-08).
+
+        1. Placement: Weighted enters only via the single-leaf predictor sweep and per-leaf refinement (both already loop over PREDICTOR_CANDIDATES), NOT the greedy split search's inner loop. split_leaf always carries the parent leaf's chosen predictor forward unchanged ('same predictor both sides first'), so a Weighted-winning sweep result propagates into splits for free without the split loop needing its own Weighted branch.
+
+        2. Cost bound (advisor corrected the original framing): pricing any Weighted-containing tree requires a full sequential O(pixels) scan (sampling would desync the H.5 error state; the specialised single-leaf fast paths don't apply either). If Weighted wins the sweep, EVERY split-round candidate becomes Weighted-on-both-sides, meaning up to rounds x leaves x |SPLIT_PROPERTIES| x |SPLIT_THRESHOLDS| sequential scans, not the '1 + num_leaves' bound the original scoping assumed -- bounded in practice by DEEP_SEARCH_SAMPLE_CAP (large frames cap to one split round). Recommended measuring wall-time impact before committing further; not yet done as a formal A/B in this pass (deferred -- see note below).
+
+        3. Property 15 (max_error): deliberately excluded from SPLIT_PROPERTIES for this sub-phase. Confirmed a pure encoder-side search-cost decision with zero effect on decode behaviour or bitstream legality -- the decoder always runs WeightedState unconditionally regardless of what the encoder's search considers, and WPHeader is unconditionally present in every sub-bitstream per H.2 regardless of whether predictor 6 is used anywhere.
+
+        4. Correctness gate: sharing jpxl_core::modular_weighted makes the H.5.2 arithmetic question vacuous (same code both sides), but call-site parity (how each crate builds SelfCorrectingNeighbours, and whether the state advances correctly on every sample including non-Weighted-leaf samples in a mixed tree) is NOT vacuous and is the live risk. Gate implemented: forced single-leaf and mixed-tree round trips through jpxl-decode, an independent djxl oracle round trip (catches shared-module-vs-spec bugs a same-crate round trip cannot), and a multi-section round trip verifying WeightedState resets at group boundaries (all passing).
+
+        Deferred from this pass, per advisor's own conditional recommendation ('implement the simple version... run the gate, add mitigation only if the time gate trips'): the formal 2x/3x wall-time A/B gate and the surrogate-seeded topology mitigation. Implementation landed with correctness fully gated; the performance-regression risk flagged in point 2 above is a known open item, not yet measured on a large-frame Weighted-seeded corpus case.
+
+        See also (prose citation, assessment cannot target work via supported_by): jpegxl-rs.work.arch-phase4a-weighted-predictor-scoped, jpegxl-rs.evidence.phase4a-weighted-predictor-wired-2026-08-08.
+        """
+}
+
 record jpegxl-rs.assessment.s8-close-phase4-reorient/1 : assessment {
     title "Advisor reorientation: S8 closes as honest negative; Phase F no-go; next round is Phase 4 (modular, density-first)"
     state verified

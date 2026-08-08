@@ -78,6 +78,12 @@ pub enum Predictor {
     Select = 4,
     /// Gradient (clamped W+N−NW).
     Gradient = 5,
+    /// Self-correcting (H.5), via the shared `jpxl_core::modular_weighted`
+    /// state machine. Unlike every other variant, this is stateful and
+    /// order-dependent (H.5.1: invoked every sample, in raster order,
+    /// unconditionally) -- see [`collect_plane_residuals_weighted`] and
+    /// [`MaTree::contains_predictor`].
+    Weighted = 6,
 }
 
 impl Predictor {
@@ -256,6 +262,28 @@ impl MaTree {
         }
         collect(&self.root, &mut out);
         out
+    }
+
+    /// Whether any leaf uses `predictor`.
+    ///
+    /// The one case this matters for today is [`Predictor::Weighted`]: unlike
+    /// every other predictor, H.5.1 requires its state to be advanced for
+    /// **every** sample of the scan, unconditionally, regardless of which
+    /// leaf a given sample lands in (see [`collect_plane_residuals_weighted`]).
+    /// Residual collection checks this once per tree to decide whether that
+    /// full sequential walk is needed, instead of the cheaper order-
+    /// independent paths every other predictor allows.
+    #[must_use]
+    pub fn contains_predictor(&self, predictor: Predictor) -> bool {
+        fn any(node: &MaNode, predictor: Predictor) -> bool {
+            match node {
+                MaNode::Leaf { predictor: p, .. } => *p == predictor,
+                MaNode::Decision { left, right, .. } => {
+                    any(left, predictor) || any(right, predictor)
+                }
+            }
+        }
+        any(&self.root, predictor)
     }
 
     /// Replaces the leaf with `ctx_id` by a decision whose children are leaves.
@@ -1203,10 +1231,19 @@ pub fn estimate_residual_bits_full(source: &ModularSource) -> Result<u64> {
 /// re-prices the settled finalist exactly regardless of which tier's search
 /// chose it. `row_stride < 1` is treated as 1 (every row, i.e. no sampling).
 ///
+/// Falls back to [`estimate_residual_bits_full`] when `source.tree` contains
+/// [`Predictor::Weighted`] anywhere: H.5.1's state cannot tolerate skipped or
+/// reordered rows (see [`collect_plane_residuals_weighted`]), so sampling it
+/// would silently desync the error state instead of merely losing ranking
+/// precision the way sampling a stateless predictor does.
+///
 /// # Errors
 ///
 /// Residual out of range or census/hybrid-config rejection.
 pub fn estimate_residual_bits_sampled(source: &ModularSource, row_stride: u32) -> Result<u64> {
+    if source.tree.contains_predictor(Predictor::Weighted) {
+        return estimate_residual_bits_full(source);
+    }
     let indices: Vec<usize> = (0..source.channels.len()).collect();
     let events = collect_residuals_indices_sampled(source, &indices, row_stride)?;
     hybrid_estimate_from_events(&events, source.tree.num_contexts())
@@ -1820,6 +1857,14 @@ fn collect_plane_residuals(
     tree: &MaTree,
     out: &mut Vec<(usize, u32)>,
 ) -> Result<()> {
+    // Phase 4A: any tree with a Weighted leaf needs the full sequential,
+    // state-carrying walk -- H.5.1 requires the self-correcting state to
+    // advance on every sample regardless of which leaf it lands in, so this
+    // cannot share the order-independent paths below.
+    if tree.contains_predictor(Predictor::Weighted) {
+        return collect_plane_residuals_weighted(plane, stride, rect, tree, out);
+    }
+
     let stride = usize::try_from(stride).unwrap_or(usize::MAX);
     let at = |x: u32, y: u32| -> i64 {
         let index = usize::try_from(rect.y0 + y)
@@ -1868,6 +1913,9 @@ fn collect_plane_residuals(
                 return Ok(());
             }
             Predictor::AverageWestNorth | Predictor::Select => {}
+            Predictor::Weighted => {
+                unreachable!("Weighted-containing trees are dispatched above")
+            }
         }
     }
 
@@ -1886,7 +1934,93 @@ fn collect_plane_residuals(
     Ok(())
 }
 
+/// Full sequential collection for a tree containing [`Predictor::Weighted`]
+/// anywhere in it.
+///
+/// H.5.1 requires the self-correcting state to advance for every sample of
+/// the scan, in raster order, unconditionally -- including samples whose
+/// leaf selects a different predictor -- so unlike
+/// [`collect_plane_residuals`] and [`collect_plane_residuals_sampled`], this
+/// cannot skip rows, reorder them, or use a specialised fast path.
+///
+/// `rect` is a self-contained scan region, matching how this encoder already
+/// treats group rects for every other predictor: H.3 edge substitution (and
+/// here, the H.5 error state) resets at the rect's own boundaries, not the
+/// full channel's -- see [`neighbours`]'s `x > 0` / `y > 0` tests, which are
+/// rect-relative, not absolute-plane. This is what lets groups decode
+/// independently on the decoder side (`jpxl_decode::modular::decode_channels`
+/// is handed one group-local channel per call); [`WeightedState`] follows the
+/// same scoping so the two sides agree on where state resets.
+fn collect_plane_residuals_weighted(
+    plane: &[i32],
+    stride: u32,
+    rect: Rect,
+    tree: &MaTree,
+    out: &mut Vec<(usize, u32)>,
+) -> Result<()> {
+    use jpxl_core::limits::{AllocGuard, Limits};
+    use jpxl_core::modular_weighted::{WeightedState, WpHeader};
+
+    let stride_usize = usize::try_from(stride).unwrap_or(usize::MAX);
+    let at = |x: u32, y: u32| -> i64 {
+        let index = usize::try_from(rect.y0 + y)
+            .ok()
+            .and_then(|row| row.checked_mul(stride_usize))
+            .and_then(|row| {
+                usize::try_from(rect.x0 + x)
+                    .ok()
+                    .and_then(|x| row.checked_add(x))
+            });
+        index
+            .and_then(|i| plane.get(i))
+            .map_or(0, |&v| i64::from(v))
+    };
+
+    // The encoder always emits WPHeader's default_wp = true (see
+    // encode_lf_global); the search-time cost estimate must match what will
+    // actually be emitted.
+    let header = WpHeader::default_wp();
+    let mut guard = AllocGuard::new(&Limits::relaxed());
+    let mut wp_state = WeightedState::new(rect.width, &mut guard)?;
+
+    for y in 0..rect.height {
+        for x in 0..rect.width {
+            let nb = weighted_neighbours(&at, x, y, rect.width);
+            let wp = wp_state.predict(&header, &nb, x);
+            let (ctx, predictor) = tree.leaf_at(&at, x, y);
+            // Table H.3 row 6: (prediction + 3) >> 3 converts out of the <<3
+            // domain H.5.2 works in.
+            let prediction = if predictor == Predictor::Weighted {
+                (wp.prediction + 3) >> 3
+            } else {
+                predict(&at, x, y, predictor)
+            };
+            let sample = at(x, y);
+            let residual = sample - prediction;
+            let residual = i32::try_from(residual).map_err(|_| EncodeError::ValueOutOfRange {
+                what: "modular residual",
+                value: residual,
+            })?;
+            let sample_i32 = i32::try_from(sample).map_err(|_| EncodeError::ValueOutOfRange {
+                what: "modular sample",
+                value: sample,
+            })?;
+            // H.5.1: the state advances on every sample, unconditionally --
+            // not only ones that selected predictor 6.
+            wp_state.update(x, &wp, sample_i32);
+            out.push((ctx, pack_signed(residual)));
+        }
+        wp_state.advance_row();
+    }
+    Ok(())
+}
+
 /// Table H.3 prediction at rectangle-relative `(x, y)`.
+///
+/// Never called with [`Predictor::Weighted`]: that predictor has no
+/// stateless form (H.5 is a running state machine, not a neighbour
+/// function) and is handled entirely by
+/// [`collect_plane_residuals_weighted`]'s own dispatch.
 fn predict(at: &impl Fn(u32, u32) -> i64, x: u32, y: u32, predictor: Predictor) -> i64 {
     let (w, n, nw) = neighbours(at, x, y);
     match predictor {
@@ -1903,6 +2037,9 @@ fn predict(at: &impl Fn(u32, u32) -> i64, x: u32, y: u32, predictor: Predictor) 
             }
         }
         Predictor::Gradient => (w + n - nw).clamp(w.min(n), w.max(n)),
+        Predictor::Weighted => {
+            unreachable!("Weighted is priced by collect_plane_residuals_weighted, not predict()")
+        }
     }
 }
 
@@ -1918,6 +2055,48 @@ fn neighbours(at: &impl Fn(u32, u32) -> i64, x: u32, y: u32) -> (i64, i64, i64) 
     let n = if y > 0 { at(x, y - 1) } else { w };
     let nw = if x > 0 && y > 0 { at(x - 1, y - 1) } else { w };
     (w, n, nw)
+}
+
+/// Table H.2's full seven-neighbour set, with H.3's edge-substitution
+/// cascade, for [`Predictor::Weighted`]'s [`jpxl_core::modular_weighted`]
+/// state machine. `width` bounds the `NE`/`NEE` lookahead; `x`, `y` are
+/// rect-relative, matching [`neighbours`].
+fn weighted_neighbours(
+    at: &impl Fn(u32, u32) -> i64,
+    x: u32,
+    y: u32,
+    width: u32,
+) -> jpxl_core::modular_weighted::SelfCorrectingNeighbours {
+    let w = if x > 0 {
+        at(x - 1, y)
+    } else if y > 0 {
+        at(x, y - 1)
+    } else {
+        0
+    };
+    let n = if y > 0 { at(x, y - 1) } else { w };
+    let nw = if x > 0 && y > 0 { at(x - 1, y - 1) } else { w };
+    let ne = if x + 1 < width && y > 0 {
+        at(x + 1, y - 1)
+    } else {
+        n
+    };
+    let nn = if y > 1 { at(x, y - 2) } else { n };
+    let nee = if x + 2 < width && y > 0 {
+        at(x + 2, y - 1)
+    } else {
+        ne
+    };
+    let ww = if x > 1 { at(x - 2, y) } else { w };
+    jpxl_core::modular_weighted::SelfCorrectingNeighbours {
+        w,
+        n,
+        nw,
+        ne,
+        nn,
+        nee,
+        ww,
+    }
 }
 
 #[cfg(test)]

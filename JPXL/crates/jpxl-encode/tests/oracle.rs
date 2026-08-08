@@ -250,6 +250,103 @@ fn djxl_decodes_our_output_to_the_source_samples() {
     }
 }
 
+/// Phase 4A's correctness gate (jpegxl-rs.work.arch-phase4a-weighted-
+/// predictor-scoped): a stream with a forced Weighted leaf, and a forced
+/// MIXED tree (Weighted + Gradient), decoded by djxl -- an independent
+/// decoder that catches a bug shared between the encoder and jpxl-decode's
+/// H.5 arithmetic (they now share `jpxl_core::modular_weighted`, so a
+/// `jpxl-decode` round trip alone couldn't distinguish "correct" from
+/// "consistently wrong the same way"). Forced rather than search-selected so
+/// the gate has teeth regardless of whether these particular patterns would
+/// win the real predictor sweep.
+#[test]
+fn djxl_decodes_a_forced_weighted_stream_to_the_source_samples() {
+    let Some(oracle) = oracle::find(OracleKind::Djxl) else {
+        println!("skipping: djxl is not installed");
+        return;
+    };
+    let dir = scratch("djxl-weighted");
+
+    let width = 64u32;
+    let height = 64u32;
+    // A pattern with local structure (not flat, not pure noise) -- the kind
+    // Weighted's error-correction is meant for -- but built the image with
+    // one channel per case so this is a real (bits-per-sample = 8, RGB)
+    // plane, matching how the encoder actually carries samples.
+    let plane = |seed: u32| -> Vec<i32> {
+        (0..height)
+            .flat_map(|y| {
+                (0..width).map(move |x| {
+                    let base = (x.wrapping_add(y.wrapping_mul(3)).wrapping_add(seed)) % 200;
+                    base as i32
+                })
+            })
+            .collect()
+    };
+    let planes = vec![plane(0), plane(50), plane(100)];
+    let image = Image::new(width, height, 8, planes.clone()).expect("image");
+
+    let cases: Vec<(&str, jpxl_encode::modular::MaTree)> = vec![
+        (
+            "single_leaf_weighted",
+            jpxl_encode::modular::MaTree::single_leaf(jpxl_encode::modular::Predictor::Weighted),
+        ),
+        (
+            "mixed_weighted_gradient",
+            jpxl_encode::modular::MaTree::binary_split_preds(
+                6, // property 6 (Table H.4): a static row available at every depth.
+                50,
+                jpxl_encode::modular::Predictor::Weighted,
+                jpxl_encode::modular::Predictor::Gradient,
+            ),
+        ),
+    ];
+
+    for (name, tree) in cases {
+        let plan = jpxl_encode::lossless::validate(jpxl_encode::lossless::LosslessPlan {
+            group_size_shift: 2,
+            rct: false,
+            palette: None,
+            squeeze: false,
+            tree,
+        })
+        .expect("validate");
+        let bytes = jpxl_encode::encode_codestream_with_plan(&image, image.planes(), &plan)
+            .expect("encode");
+
+        let jxl = dir.join(format!("{name}.jxl"));
+        let ppm = dir.join(format!("{name}.ppm"));
+        std::fs::write(&jxl, &bytes).expect("write");
+
+        match oracle.decode(&jxl, &ppm, OutputFormat::Ppm) {
+            Ok(()) => {}
+            Err(err) if err.is_unavailable() => {
+                println!("skipping: {err}");
+                return;
+            }
+            Err(err) => panic!("{name}: djxl refused our Weighted codestream: {err}"),
+        }
+
+        let ppm_bytes = std::fs::read(&ppm).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let decoded = PnmImage::from_ppm(&ppm_bytes).unwrap_or_else(|e| panic!("{name}: {e}"));
+        assert_eq!(
+            (decoded.w, decoded.h),
+            (width, height),
+            "{name}: dimensions"
+        );
+
+        let want = interleaved(&image);
+        assert_eq!(decoded.len(), want.len(), "{name}: sample count");
+        for (i, &value) in want.iter().enumerate() {
+            assert_eq!(
+                decoded.samples.get(i).copied(),
+                Some(value),
+                "{name}: sample {i}"
+            );
+        }
+    }
+}
+
 #[test]
 fn jxl_oxide_decodes_our_output_to_the_source_samples() {
     let Some(oracle) = oracle::find(OracleKind::JxlOxide) else {

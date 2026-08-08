@@ -65,9 +65,19 @@ pub fn validate(plan: LosslessPlan) -> Result<ValidatedLosslessPlan> {
     Ok(ValidatedLosslessPlan(plan))
 }
 
-/// Table H.3 predictors this track will consider (slice 19).
+/// Table H.3 predictors this track will consider (slice 19; Phase 4A added
+/// Weighted).
 ///
-/// Weighted (6) needs the H.5 self-correcting state machine and is deferred.
+/// Weighted (6) is tried in the single-leaf sweep and per-leaf refinement
+/// (both loop over this list already) but deliberately NOT reachable from
+/// inside the greedy split search: `split_leaf` always carries the parent
+/// leaf's already-chosen predictor forward unchanged ("same predictor both
+/// sides first" below), so a Weighted-winning leaf from the sweep propagates
+/// into splits for free without the split loop needing its own Weighted
+/// branch. Every Weighted-containing candidate is priced by a full
+/// sequential scan (`modular::collect_plane_residuals_weighted`), not
+/// Phase 4B's sampled scorer -- see `estimate_residual_bits_sampled`'s
+/// Weighted fallback.
 const PREDICTOR_CANDIDATES: &[Predictor] = &[
     Predictor::Zero,
     Predictor::West,
@@ -75,9 +85,21 @@ const PREDICTOR_CANDIDATES: &[Predictor] = &[
     Predictor::AverageWestNorth,
     Predictor::Select,
     Predictor::Gradient,
+    Predictor::Weighted,
 ];
 
 /// Property indices tried for splits (Table H.4 static rows).
+///
+/// Deliberately excludes 15 (`max_error`, H.5's output): the encoder does
+/// not run the Weighted state machine for trees that never select predictor
+/// 6, so property 15 would read as a constant 0 for them, and computing it
+/// unconditionally would mean paying Weighted's full-sequential-scan cost on
+/// every split trial regardless of whether any leaf uses Weighted. Splitting
+/// on `max_error` is a possible later increment, not required for Weighted
+/// itself: predictor selection and property splitting are independent axes
+/// (H.4.1), and the decoder's behaviour is unaffected by which trees the
+/// encoder's search considers -- see jpegxl-rs.work.arch-phase4a-weighted-
+/// predictor-scoped.
 const SPLIT_PROPERTIES: &[u32] = &[4, 5, 6, 7, 9, 10, 11];
 
 /// Thresholds tried for `property > value` decisions.
@@ -729,15 +751,34 @@ mod tests {
 
     #[test]
     fn plan_for_adopts_palette_on_scattered_few_colours() {
-        // Few unique levels but high spatial frequency → predictors lose;
-        // exact-price palette should win.
+        // Few unique levels with NO exploitable structure between
+        // neighbours -> every predictor loses, including Phase 4A's
+        // Weighted, AND the index sequence has no runs an LZ77 pass could
+        // exploit either (the search's cost model deliberately excludes
+        // LZ77 -- see `ModularSource::from_palette`'s `allow_lz77: false`
+        // in `plan_for` vs `true` in the real final emission, a known,
+        // pre-existing, Phase-4D-scoped gap; a weaker scatter than a full
+        // avalanche hash left enough residual periodicity for LZ77 to make
+        // the real emission cheaper than the search predicted, which made
+        // an earlier version of this fixture flaky once Weighted became a
+        // candidate strong enough to expose the gap). A murmur3-style
+        // finalizer avalanches (x, y) well enough that neither prediction
+        // nor LZ77 can find structure, so exact-price palette should still
+        // win cleanly.
         let width = 48u32;
         let height = 48u32;
         let levels = [10i32, 80, 160, 240];
         let plane: Plane = (0..height)
             .flat_map(|y| {
-                (0..width)
-                    .map(move |x| levels[((x.wrapping_mul(3) + y.wrapping_mul(7)) % 4) as usize])
+                (0..width).map(move |x| {
+                    let mut h = u64::from(x) ^ (u64::from(y) << 32);
+                    h ^= h >> 33;
+                    h = h.wrapping_mul(0xff51_afd7_ed55_8ccd);
+                    h ^= h >> 33;
+                    h = h.wrapping_mul(0xc4ce_b9fe_1a85_ec53);
+                    h ^= h >> 33;
+                    levels[(h % 4) as usize]
+                })
             })
             .collect();
         let plan =
@@ -878,5 +919,193 @@ mod tests {
         for (i, (&a, &b)) in got.iter().zip(plane.iter()).enumerate() {
             assert_eq!(a, b, "sample {i}");
         }
+    }
+
+    /// Phase 4A correctness gate, part 1 (jpegxl-rs.work.arch-phase4a-
+    /// weighted-predictor-scoped): a forced single-leaf Weighted tree
+    /// round-trips through jpxl-decode. See
+    /// `tests/oracle.rs::djxl_decodes_a_forced_weighted_stream_to_the_
+    /// source_samples` for the independent-decoder half of this gate (this
+    /// crate and jpxl-decode share `jpxl_core::modular_weighted`, so a
+    /// round trip against jpxl-decode alone cannot distinguish "correct"
+    /// from "the same shared bug on both sides" -- djxl can).
+    #[test]
+    fn forced_weighted_predictor_roundtrips_through_jpxl_decode() {
+        use jpxl_core::limits::Limits;
+
+        let width = 40u32;
+        let height = 37u32; // odd height: exercises advance_row on a ragged end.
+        let plane: Plane = (0..height)
+            .flat_map(|y| (0..width).map(move |x| ((x * 5 + y * 11) % 200) as i32))
+            .collect();
+        let image = crate::Image::new(width, height, 8, vec![plane.clone()]).expect("image");
+        let forced = validate(LosslessPlan {
+            group_size_shift: DEFAULT_GROUP_SIZE_SHIFT,
+            rct: false,
+            palette: None,
+            squeeze: false,
+            tree: MaTree::single_leaf(Predictor::Weighted),
+        })
+        .expect("validate");
+        let bytes =
+            crate::encode_codestream_with_plan(&image, image.planes(), &forced).expect("encode");
+        let decoded = jpxl_decode::decode(&bytes, &Limits::default()).expect("decode");
+        let got = &decoded.planes.first().expect("plane").samples;
+        assert_eq!(got.len(), plane.len());
+        for (i, (&a, &b)) in got.iter().zip(plane.iter()).enumerate() {
+            assert_eq!(a, b, "sample {i}");
+        }
+    }
+
+    /// Phase 4A correctness gate, part 2: a forced MIXED tree (Weighted on
+    /// one leaf, Gradient on the other) round-trips. This is the case
+    /// H.5.1's "invoked for every sample regardless of which leaf it
+    /// selects" rule is actually about -- a single-leaf-only test can't
+    /// exercise the error state advancing on samples a non-Weighted leaf
+    /// produced.
+    #[test]
+    fn forced_mixed_weighted_tree_roundtrips_through_jpxl_decode() {
+        use jpxl_core::limits::Limits;
+
+        let width = 40u32;
+        let height = 37u32;
+        let plane: Plane = (0..height)
+            .flat_map(|y| (0..width).map(move |x| ((x * 5 + y * 11) % 200) as i32))
+            .collect();
+        let image = crate::Image::new(width, height, 8, vec![plane.clone()]).expect("image");
+        let tree = MaTree::binary_split_preds(6, 100, Predictor::Weighted, Predictor::Gradient);
+        let forced = validate(LosslessPlan {
+            group_size_shift: DEFAULT_GROUP_SIZE_SHIFT,
+            rct: false,
+            palette: None,
+            squeeze: false,
+            tree,
+        })
+        .expect("validate");
+        let bytes =
+            crate::encode_codestream_with_plan(&image, image.planes(), &forced).expect("encode");
+        let decoded = jpxl_decode::decode(&bytes, &Limits::default()).expect("decode");
+        let got = &decoded.planes.first().expect("plane").samples;
+        assert_eq!(got.len(), plane.len());
+        for (i, (&a, &b)) in got.iter().zip(plane.iter()).enumerate() {
+            assert_eq!(a, b, "sample {i}");
+        }
+    }
+
+    /// Phase 4A correctness gate, part 3 -- the one novel architectural
+    /// claim this sub-phase rests on: `WeightedState` resets at group
+    /// boundaries, not the full channel, matching how every other
+    /// predictor's H.3 edge substitution already treats a group rect as a
+    /// self-contained scan region (`neighbours`'s `x > 0` / `y > 0` tests
+    /// are rect-relative). A 300x200 image at `group_size_shift = 0`
+    /// (group_dim 128) is multi-section -- more than one group per channel
+    /// -- so this actually exercises `collect_plane_residuals_weighted`
+    /// being invoked once per group with a fresh `WeightedState`, not just
+    /// once for a whole single-section channel.
+    #[test]
+    fn multi_section_weighted_roundtrips_through_jpxl_decode() {
+        use jpxl_core::limits::Limits;
+
+        let width = 300u32;
+        let height = 200u32;
+        let plane: Plane = (0..height)
+            .flat_map(|y| (0..width).map(move |x| ((x * 5 + y * 11) % 200) as i32))
+            .collect();
+        let image = crate::Image::new(width, height, 8, vec![plane.clone()]).expect("image");
+        let forced = validate(LosslessPlan {
+            group_size_shift: 0, // group_dim 128 -> multi-section at 300x200
+            rct: false,
+            palette: None,
+            squeeze: false,
+            tree: MaTree::single_leaf(Predictor::Weighted),
+        })
+        .expect("validate");
+        let bytes =
+            crate::encode_codestream_with_plan(&image, image.planes(), &forced).expect("encode");
+        let decoded = jpxl_decode::decode(&bytes, &Limits::default()).expect("decode");
+        let got = &decoded.planes.first().expect("plane").samples;
+        assert_eq!(got.len(), plane.len());
+        for (i, (&a, &b)) in got.iter().zip(plane.iter()).enumerate() {
+            assert_eq!(a, b, "sample {i}");
+        }
+    }
+
+    /// Phase 4A's decision-preservation guarantee is structural, not a
+    /// tolerance check like Phase 4B's: Weighted is a strictly ADDED
+    /// candidate scored by the same exact final-price gate every other
+    /// predictor goes through (`total_cost_source(..., PriceTier::Exact)`,
+    /// unconditional regardless of which tier's search proposed the
+    /// finalist), so adding it can only ever match or beat what the
+    /// pre-4A six-predictor search would have chosen -- never lose. This
+    /// pins that down directly: plan_for's real total size for a
+    /// Weighted-friendly pattern must be <= a forced six-predictor-only
+    /// baseline's, not merely "close".
+    #[test]
+    fn plan_for_with_weighted_never_loses_to_the_pre_4a_six_predictor_search() {
+        let width = 40u32;
+        let height = 37u32;
+        let plane: Plane = (0..height)
+            .flat_map(|y| (0..width).map(move |x| ((x * 5 + y * 11) % 200) as i32))
+            .collect();
+        let image = crate::Image::new(width, height, 8, vec![plane.clone()]).expect("image");
+
+        let plan = plan_for(
+            width,
+            height,
+            &[plane.clone()],
+            false,
+            &EncodeOptions::default(),
+        )
+        .expect("plan");
+        let with_weighted =
+            crate::encode_codestream_with_plan(&image, image.planes(), &plan).expect("encode");
+
+        // The pre-4A baseline: best of the original six predictors only,
+        // exact-priced the same way plan_for's own Stage C does.
+        let shared: modular::SharedPlane = std::sync::Arc::from(plane.as_slice());
+        let six_predictors = [
+            Predictor::Zero,
+            Predictor::West,
+            Predictor::North,
+            Predictor::AverageWestNorth,
+            Predictor::Select,
+            Predictor::Gradient,
+        ];
+        let mut best: Option<(u64, Predictor)> = None;
+        for &predictor in &six_predictors {
+            let tree = MaTree::single_leaf(predictor);
+            let cost = total_cost_shared(
+                width,
+                height,
+                std::slice::from_ref(&shared),
+                &tree,
+                DEFAULT_GROUP_SIZE_SHIFT,
+                PriceTier::Exact,
+            )
+            .expect("exact cost");
+            if best.as_ref().is_none_or(|(c, _)| cost < *c) {
+                best = Some((cost, predictor));
+            }
+        }
+        let (_, baseline_predictor) = best.expect("six candidates");
+        let baseline_plan = validate(LosslessPlan {
+            group_size_shift: DEFAULT_GROUP_SIZE_SHIFT,
+            rct: false,
+            palette: None,
+            squeeze: false,
+            tree: MaTree::single_leaf(baseline_predictor),
+        })
+        .expect("validate");
+        let baseline_bytes =
+            crate::encode_codestream_with_plan(&image, image.planes(), &baseline_plan)
+                .expect("encode");
+
+        assert!(
+            with_weighted.len() <= baseline_bytes.len(),
+            "Weighted-enabled plan ({} bytes) must never exceed the six-predictor \
+             baseline ({} bytes)",
+            with_weighted.len(),
+            baseline_bytes.len()
+        );
     }
 }

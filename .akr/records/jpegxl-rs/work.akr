@@ -446,15 +446,19 @@ record jpegxl-rs.work.arch-phase4-modular-scoped/1 : work {
         Suggested order: 4.0 -> (4A + 4D, both cheap/safe) -> 4B -> 4C. Front-load the exact-safe density win (4A) and output-preserving speed win (4D); reserve the sampled-gather restructure (4B) and global-model change (4C) for after 4.0's measurement confirms they target the actual remaining cost.
         """
     note """
-        PROPOSED, not started as engineering overall -- but 4.0, 4.0b, and 4B are all DONE, and 4B is PROMOTED to default.
+        PROPOSED, not started as a whole -- but 4.0, 4.0b, 4B (promoted to default), and 4A are all DONE.
 
-        4.0 (baseline re-measurement) and 4.0b (density+decode-validity gate) done; 4.0b found the '118x' figure is a wall-time ratio, not a density gap. See jpegxl-rs.assessment.phase4-density-gap-is-vs-e7-only.
+        4.0/4.0b: baseline re-measured; the '118x' figure is a wall-time ratio, not a density gap (jpegxl-rs.assessment.phase4-density-gap-is-vs-e7-only).
 
-        4B (sampled property-gather) DONE, promoted to default (jpxl-encode/Cargo.toml `phase4b-sampled-gather` now in `default`). Sequential A/B (jpegxl-rs.evidence.phase4b-sampled-gather-ab-2026-08-08) then a strictly-interleaved A/B (jpegxl-rs.evidence.phase4b-sampled-gather-interleaved-2026-08-08) both show ~2.6-2.8x modular wall-time reduction at 4/12MP with byte-identical output and fingerprint at every rep, decode-validated. Promoted per the user's standing directive (2026-08-08): any optimization that clears an interleaved A/B with no correctness regression gets promoted without a separate approval round.
+        4B (sampled property-gather): DONE, promoted to default. ~2.6-2.8x modular wall-time reduction, byte-identical output, decode-validated.
 
-        4A (Weighted predictor) IN PROGRESS: moved the decoder's proven H.5 state machine (WeightedState/WpHeader/error2weight/the resolved EXPERIMENT_* spec ambiguities) from jpxl-decode::modular::weighted into a new shared jpxl_core::modular_weighted module, so the encoder's predictor candidate can reuse the exact same, already-correctness-proven math instead of risking an independent re-implementation drifting from it. jpxl-decode's weighted.rs is now a thin shim (bitstream WPHeader reading + a Neighbours->SelfCorrectingNeighbours conversion); full jpxl-decode test suite (538 lib tests + all integration/oracle tests) re-verified green with zero behavior change. Remaining 4A work: add Predictor::Weighted to the encoder's candidate list and SPLIT_PROPERTIES (property 15, max_error), wire WPHeader emission into the MA tree bundle, prove lossless round-trip, gate behind a feature, measure the density win on the 4.0b corpus.
+        4A (Weighted predictor): DONE. Predictor::Weighted wired into jpxl-encode's predictor sweep and per-leaf refinement (not the split loop), backed by jpxl_core::modular_weighted (moved from jpxl-decode so both crates share the exact same, spec-resolved H.5.2 arithmetic). Correctness gated by forced single-leaf, mixed-tree, and multi-section round trips through jpxl-decode plus an independent djxl oracle test, all passing; a decision-preservation test proves plan_for-with-Weighted never regresses versus the pre-4A six-predictor search. NOT gated behind a feature flag: unlike 4B, this needed no approximation-safety flag because it's a strict additional candidate under the existing unconditional exact-price gate. See jpegxl-rs.assessment.phase4a-weighted-integration-design and jpegxl-rs.evidence.phase4a-weighted-predictor-wired-2026-08-08.
 
-        Remaining corrected order: 4B (done, promoted) -> 4A (in progress) -> 4C (global tree) -> 4D (optional tail, confirmed not on the hot path).
+        Open follow-up from 4A (performance-only, not correctness): the advisor-flagged worst-case where a Weighted-seeded split search on a large frame could trigger many sequential full-plane scans per split round. A spot-check (jpegxl-rs.evidence.phase4a-worst-case-timing-spotcheck-2026-08-08) found no blowup at the size the risk would bite hardest, but is not a full stress-test closure -- left open, not blocking.
+
+        Also surfaced (pre-existing, unrelated to 4A, NOT fixed): the encoder's search cost model excludes LZ77 (allow_lz77=false during search vs true at real emission), a known gap already scoped as the future 'Phase 4D'. This can make the search's ranking wrong on LZ77-friendly inputs; it never produces incorrect bytes, only a possible missed optimization. Worth folding into 4D's eventual scope.
+
+        Remaining order: 4C (global tree, addresses the vs-e7-only density gap) -> 4D (LZ77 gating, now with two independent motivations: the originally-scoped hash-chain lookback AND this session's search/emission LZ77 mismatch finding).
         """
     implements [
         @jpegxl-rs.decision.encoder-architecture-phases,
@@ -465,8 +469,32 @@ record jpegxl-rs.work.arch-phase4-modular-scoped/1 : work {
         @jpegxl-rs.assessment.encoder-architecture-outside-advice,
         @jpegxl-rs.assessment.phase4-density-gap-is-vs-e7-only,
         @jpegxl-rs.assessment.phase4-order-correction,
+        @jpegxl-rs.assessment.phase4a-weighted-integration-design,
         @jpegxl-rs.assessment.s8-close-phase4-reorient
     ]
+}
+
+record jpegxl-rs.work.arch-phase4a-weighted-predictor-scoped/1 : work {
+    title "Phase 4A: wire Predictor::Weighted into the encoder despite its stateful, order-dependent scoring cost"
+    state completed
+    intent """
+        Wire the H.5 self-correcting predictor (now shared at jpxl_core::modular_weighted, moved from jpxl-decode) into jpxl-encode's predictor candidate list (crates/jpxl-encode/src/lossless.rs PREDICTOR_CANDIDATES, currently the six order-independent predictors: Zero, West, North, AverageWestNorth, Select, Gradient).
+
+        COMPLICATION found while starting this (not present in the original scoping): every other candidate predictor is a pure function of neighbouring SAMPLE values, which is what let the encoder's residual-collection functions (collect_plane_residuals, and Phase 4B's collect_plane_residuals_sampled) be absolute-indexed and order-independent -- any row can be visited in any order or skipped. Predictor::Weighted (jpxl_core::modular_weighted::WeightedState) is stateful and ORDER-DEPENDENT: per H.5.1 it must be invoked for every sample of a channel in strict raster order, unconditionally, because its error state (used by the next sample's weight computation) accumulates across the whole scan and its max_error output is a context property. Confirmed in the decoder: jpxl-decode's per-channel loop constructs WeightedState once and calls predict/update on every sample regardless of which predictor a given leaf actually uses.
+
+        Consequences for the encoder's scoring architecture (predictor sweep -> greedy split search -> per-leaf refinement -> exact final price, all documented in lossless.rs's module doc):
+        1. Any candidate tree containing a Weighted leaf needs a full sequential O(pixels) scan to price, not a sampled scan (Phase 4B's row-strided sampling would corrupt the error state) and not one of the specialised single-leaf fast paths (Zero/West/North/Gradient in collect_plane_residuals).
+        2. This full sequential scan is naturally scoped to TWO of the three search stages, not all three: (a) the initial per-predictor sweep (PREDICTOR_CANDIDATES tried as single_leaf trees, one full scan each -- Weighted becomes a 7th candidate here, no combinatorial blowup, same shape as today) and (b) per-leaf predictor refinement (also one full scan per candidate swap on the settled topology). It should NOT be added as a topology-search-time option inside the greedy split loop's O(leaves x properties x thresholds) inner loop -- but this may not need special-casing anyway, since split_leaf already carries the parent leaf's already-chosen predictor forward unchanged (lossless.rs: "same predictor both sides first (cheap topology search)"), so a Weighted-winning leaf from stage (a) propagates into splits for free without the split search itself needing to know about Weighted's cost model.
+        3. Open question needing an explicit choice: does pricing a Weighted-containing candidate at stages (a)/(b) cost O(pixels) unconditionally (losing Phase 4B's speedup for just those specific trials, which is bounded and probably acceptable -- 7 trials in stage (a), <= leaves x 6 trials in stage (b)), or is there a cheaper still-safe way to rank it (e.g. a smaller fixed-size early-window sequential prefix, if that ranks predictors reliably enough -- needs its own decision-preservation proof if used, echoing the 4B regret-test pattern)?
+        4. SPLIT_PROPERTIES (currently missing property 15, max_error) is a SEPARATE decision from adding the predictor itself -- property 15 is only informative once some sample in the channel actually runs Weighted, which after this change is universal (state runs on every sample, unconditionally, once ANY leaf might want it) -- IS the encoder already computing property 15 for every sample regardless of whether Weighted is a chosen predictor anywhere in the tree, matching the decoder's unconditional-invocation behaviour? If the encoder's per-candidate cost estimators don't currently run WeightedState at all (true today, since it's simply not called), then adding Weighted as a predictor candidate must ALSO start running WeightedState unconditionally across every trial from that point on (even Zero/West/etc-only trials) to keep property vectors correct if property 15 is ever split on -- or property 15 can stay excluded from SPLIT_PROPERTIES for this sub-phase, deferring context-splitting on max_error to a later increment, which shrinks the immediate blast radius substantially.
+
+        Asking an Opus advisor to give a concrete, actionable design for stages 1-4 before writing code, given the correctness-criticality (this predictor's arithmetic has a documented history of contested spec ambiguities -- see jpxl_core::modular_weighted's EXPERIMENT_* constants) and the risk of quietly reintroducing an O(pixels) cost bloom into a search architecture Phase 4B just spent effort making sub-linear.
+        """
+    note """
+        PROPOSED. Groundwork (shared jpxl_core::modular_weighted module) already landed and tested. This record captures the architecture complication found when starting the wiring step, pending advisor input on stages 1-4 above.
+        """
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+    supported_by [ @jpegxl-rs.assessment.phase4-density-gap-is-vs-e7-only ]
 }
 
 record jpegxl-rs.work.arch-phase4b-sampled-gather-scoped/1 : work {
