@@ -226,51 +226,134 @@ Work is dispatched as briefs that list whole files. Rules:
 - The software license and the patent position are separate questions. Nothing
   here is legal advice.
 
-## Project knowledge (AKR)
+## 10. Tooling — what's actually worked, from doing the work
 
-Durable project knowledge lives in `.akr/` as typed records, not in Markdown.
-`docs/generated/` is build output. Follow this protocol.
+This section is deliberately concrete and revisable: it reflects what actually
+happened using these tools on this codebase, not their marketing description.
+Update it when experience contradicts it. If you're porting this section to
+another project's AGENTS.md, keep the "what's actually worked" framing and
+replace the specifics with that project's own experience — don't just copy
+these bullets verbatim into a codebase where they weren't earned.
+
+### AKR (`.akr/`, `akr` CLI, and the `knowledge.*` MCP tools)
+
+Durable project knowledge — plans, decisions, evidence, assessments — lives in
+`.akr/` as typed records, not in Markdown. `docs/generated/` is build output.
+This has worked well for exactly the case it's built for: a long chain of
+scope → measure → build → verify → close-out cycles where you need each step
+to cite the evidence for the one before it, and where "is this actually done"
+should be a checkable fact, not a vibe.
 
 **Before starting any task**
-1. `knowledge.context --goal <milestone|work|track>` for the thing you are working on.
-   Add `--paths` for the files you expect to touch.
-2. Read the bundle in full. Contradictions and staleness warnings are always included
-   and are never noise.
+1. `knowledge.context --goal <milestone|work|track>`, with `--paths` for the
+   files you expect to touch.
+2. Read the bundle in full. Contradictions and staleness warnings are never
+   noise — they're the whole point of asking first.
 
 **While working**
 - Look things up with `knowledge.get`; find them with `knowledge.search`.
-  Search ranks results; it never grants authority. A record's standing comes from its
-  state, its scope, and its relations.
-- Scratch notes go in `.agent/scratch/`. Nobody reviews them and nothing depends on them.
+  Search ranks results; it never grants authority. A record's standing comes
+  from its state, its scope, and its relations.
+- Scratch notes go in `.agent/scratch/` (gitignored — raw run logs, A/B
+  harness output, one-off scripts live there, not in the ledger or in git).
 
 **When something becomes durable**
-- New knowledge: `knowledge.propose`. Observations need `observed_at` and, if they can
-  go out of date, `watches`.
-- Changed knowledge: `knowledge.revise`. Never edit a `.akr` file directly, and never
-  edit a record that is not `proposed`.
-- Replacing a plan: `knowledge.supersede`, with a disposition for every unfinished
-  child. The tool will list them; answer each one.
-- Finishing work: `knowledge.complete`, with evidence for every acceptance check.
-  Evidence records state what was observed; they never state what they verify.
+- New knowledge: `knowledge.propose`. Observations need `observed_at` and, if
+  they can go stale, `watches`.
+- Changed knowledge: `knowledge.revise`. Never edit a `.akr` file directly,
+  and never edit a record that is not `proposed`.
+- Replacing a plan: `knowledge.supersede`, with a disposition for every
+  unfinished child. The tool lists them; answer each one.
+- Finishing work: `knowledge.complete`, with evidence for every acceptance
+  check. Evidence records state what was observed; they never state what
+  they verify.
 
-**Never**
-- Never edit `docs/generated/` — it is regenerated and CI checks it.
-- Never read `.akr/cache/` — it is a private cache.
-- Never delete a record. Move it to a terminal state instead.
+**Gotchas actually hit, not hypothetical:**
+- `knowledge.get`'s MCP result truncates large records around ~1500 tokens.
+  When that happens, `grep`/`Read` the raw `.akr/records/**/*.akr` source
+  directly for the full text — reading the source files is explicitly
+  allowed (only hand-*editing* them, and reading `.akr/cache/`, are
+  forbidden).
+- `knowledge.revise` silently resets state to the record class's initial
+  state (e.g. a `completed` work record drops back to `proposed`) unless you
+  explicitly re-pass `state` in the same call. Always pass `state` when
+  revising a record that's already in a terminal or non-default state.
+- `assessment` records cannot target `work` records via `supported_by`
+  (validation rule V-005). Cite the work record in prose inside the
+  `statement`/`note` slot instead — this is an established pattern in this
+  ledger, not a workaround to reinvent.
+- After a batch of MCP writes, run `akr build` (regenerates `akr.lock` and
+  `docs/generated/`) before `knowledge.validate` / `akr check`, or validation
+  sees stale hashes. `akr build` and `akr change prepare --staged` can take
+  60–120s+ on a workspace this size — that's normal, not a hang.
+- **The git integration is forward-only — do not retrofit it onto history.**
+  `akr change begin/prepare` + `akr git commit` works well going forward: it
+  stamps commits with `AKR-Change`/`AKR-Work`/`AKR-Evidence`/`AKR-Graph`/
+  `AKR-Tree` trailers so `akr git log <record>` can find what commit did it.
+  But `evidence` records durably embed `observed_at: git:<sha>`. If you
+  rewrite history after evidence has been recorded against those commits
+  (rebase, cherry-pick to add trailers after the fact, etc.), the old SHAs
+  stop being ancestors of the branch and `akr check` fails
+  (`AKR-G012`/`AKR-R022`: evidence "predates" the very completion it
+  verifies). This was tried and reverted in this project (2026-08-08) —
+  the fix is to always use `akr change`/`akr git commit` for the *original*
+  commit, never to reconstruct it after the fact once evidence exists.
 
-**Before handing back**
-- `knowledge.validate`. If it reports diagnostics, fix them or say so explicitly.
+**Never:** edit `docs/generated/` by hand (regenerated, CI-checked); read
+`.akr/cache/` (private cache); delete a record (move it to a terminal state
+instead).
 
-## Planning is in AKR (cutover)
+**Before handing back:** `knowledge.validate` (or `akr check`). If it reports
+diagnostics, fix them or say so explicitly — don't hand back silently.
 
-The authoritative plan and durable knowledge live in the AKR ledger (`.akr/`) and its
-generated views under `docs/generated/` (ROADMAP, CURRENT-STATE, DECISION-HISTORY,
-OPEN-QUESTIONS, REVIEW-REQUIRED, PAPERCUTS), not in Markdown. Record milestones,
-decisions, policies, constraints and findings with the `knowledge.*` tools / `akr`
-(`propose` / `revise` / `complete` / `evidence add` / `papercut`) — never by hand-editing
-`docs/generated/`. `JPXL/docs/HANDOFF.md`, `PLAN.md` and `CONFORMANCE.md` are retained as
-working logs / legacy reference pending full migration; prefer the views.
+**Planning is in AKR, not Markdown.** The authoritative plan and its generated
+views (`ROADMAP`, `CURRENT-STATE`, `DECISION-HISTORY`, `OPEN-QUESTIONS`,
+`REVIEW-REQUIRED`, `PAPERCUTS` under `docs/generated/`) come from the ledger.
+`JPXL/docs/HANDOFF.md`, `PLAN.md` and `CONFORMANCE.md` are retained as working
+logs / legacy reference pending full migration; prefer the generated views
+when they conflict.
 
-Gate before finalizing (run on a clean tree): `scripts/ci-akr.ps1` (or `scripts/ci-akr.sh`)
-runs `akr check`, `akr check --views-current`, and `cargo fmt --check`. Install the tool
-with `cargo install --git https://github.com/LegeApp/AKR.git akr-cli`.
+Gate before finalizing (clean tree): `scripts/ci-akr.ps1` / `scripts/ci-akr.sh`
+runs `akr check`, `akr check --views-current`, and `cargo fmt --check`.
+Install with `cargo install --git https://github.com/LegeApp/AKR.git akr-cli`.
+
+### git
+
+- Hooks are installed (`akr git install-hooks` → `commit-msg`/`pre-commit`
+  wrapping `akr git-hook`). Respect them; don't `--no-verify` around them
+  without a stated reason.
+- **`cargo fmt`/`rustfmt` can silently reformat pre-existing drift in sibling
+  files you never intended to touch** — observed repeatedly this session,
+  both from a crate-wide `cargo fmt -p <crate>` and, at least once, from
+  `rustfmt` invoked on an explicit file list. Always run `git status` /
+  `git diff --stat` immediately after any formatting step and revert anything
+  outside the file set you actually meant to change, before staging. Don't
+  assume `cargo fmt -p <crate> -- --check`'s diff list is scoped to your
+  edits — cross-check it against what you actually touched.
+- This checkout currently has no remotes configured, so local history can be
+  rewritten without affecting anyone else — but see the AKR git-integration
+  gotcha above before doing that on a branch with recorded evidence.
+
+### codegraph (`mcp__codegraph__codegraph_explore`)
+
+Available in this workspace but not exercised in the session that wrote this
+section — Bash `grep`/`Read` covered every code-exploration need that came up
+(enum definitions, trait impls, call sites across crates), so there's no
+first-hand verdict here yet, positive or negative. Per the user's global
+default, prefer it for genuinely structural questions (call graph, cross-file
+dataflow, blast radius of a change) over grep once it's actually been tried on
+this codebase — and per that same default, treat what it returns as a
+hypothesis to verify by reading the real code, not as ground truth. One
+project-specific rule regardless of which search tool surfaces it: a hit
+inside `libjxl/` is oracle territory (section 2), not architecture guidance —
+seeing it in a search result is not permission to read it that way.
+
+### fff (`mcp__fff__find_files` / `grep` / `multi_grep`)
+
+Was disconnected for most or all of the session that wrote this section, so —
+same as codegraph — no fresh first-hand verdict. Bash `grep -n <identifier>`
+was a fully adequate fallback throughout, helped by this codebase's habit of
+dense, greppable doc comments (`fn foo`, `struct Bar`, clause citations like
+`H.5.1` all grep cleanly). If fff is connected and working, prefer it per the
+global default — but don't block on it being unavailable; a plain grep with a
+precise identifier gets the same answer here.
