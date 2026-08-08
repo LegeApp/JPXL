@@ -5,8 +5,8 @@ build {
     tool "akr 0.1.0"
     grammar "0.1"
     vocabulary "0.2"
-    commit git:248ce3a0ccc6b0eb02fc0c2af55fdfbf18b1bd78
-    source_graph "sha256:4af15e73687cacfa2b4e567ac6164be076d79b364e33b81883d7f8581dfc4606"
+    commit git:d1a0669f6e92f11bd05bea04e27a42200aeb9673
+    source_graph "sha256:53eda2d1fae8d5d49207402b79ef5b7ed36d0e9d495d71a3453d6f4bb4cc94da"
 }
 
 source ".akr/project.akr" {
@@ -15,8 +15,8 @@ source ".akr/project.akr" {
 }
 
 source ".akr/records/jpegxl-rs/assessments.akr" {
-    hash "sha256:fcdd42e6c8808afd9069f7348ca8594bd11e507c84e1b5d17e7f295357b69118"
-    records 4
+    hash "sha256:51c25ee9beff695c476340e01ad067b4ab29c0f41944f11ec652135a82a1e296"
+    records 5
 }
 
 source ".akr/records/jpegxl-rs/constraints.akr" {
@@ -30,8 +30,8 @@ source ".akr/records/jpegxl-rs/decisions.akr" {
 }
 
 source ".akr/records/jpegxl-rs/evidence.akr" {
-    hash "sha256:08202ec530ad6155346a8ecc9076368409e97f27c8e7d571b0b473933d1609c7"
-    records 54
+    hash "sha256:242b36af646cf00cf744077508eb96076e311b76ebca5f24498e2834d26fd75d"
+    records 55
 }
 
 source ".akr/records/jpegxl-rs/milestones.akr" {
@@ -60,8 +60,8 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:b97da453ede10212ac449786f8419e25bb66a0b9cfcc2ec3b46abf729c513a30"
-    records 27
+    hash "sha256:6ab2f6fdb6d6157a5621509686e12eb95ee0f9ab9819fe6e2082d1a45883fda0"
+    records 28
 }
 
 resolution @jpegxl-rs.decision.encoder-architecture-phases/1 {
@@ -618,6 +618,12 @@ resolution @jpegxl-rs.work.arch-phase4-modular-scoped/1 {
 
 resolution @jpegxl-rs.work.arch-phase4-modular-scoped/1 {
     slot supported_by
+    to @jpegxl-rs.assessment.phase4-density-gap-is-vs-e7-only/1
+    hash "sha256:0ff6d78a216e547c7893cca409b2d744ec99c8943cc9b69c7efc4eea3c92c694"
+}
+
+resolution @jpegxl-rs.work.arch-phase4-modular-scoped/1 {
+    slot supported_by
     to @jpegxl-rs.assessment.phase4-order-correction/1
     hash "sha256:05211fdd4ec59e54f35c9daac4d309c90c05ad4701303f7b6385a2f4e49a1dc6"
 }
@@ -626,6 +632,24 @@ resolution @jpegxl-rs.work.arch-phase4-modular-scoped/1 {
     slot supported_by
     to @jpegxl-rs.assessment.s8-close-phase4-reorient/1
     hash "sha256:4afa8cac25b3c27e6ff420927a65278983846e3c4bc09e4caaa0f0ede38893e0"
+}
+
+resolution @jpegxl-rs.work.arch-phase4b-sampled-gather-scoped/1 {
+    slot part_of
+    to @jpegxl-rs.track.encoder-optimization/1
+    hash "sha256:49975e17bd10998d72b08fccfe98fdea9bdf68ef56e4404dd68e94e1e2d75f23"
+}
+
+resolution @jpegxl-rs.work.arch-phase4b-sampled-gather-scoped/1 {
+    slot supported_by
+    to @jpegxl-rs.assessment.phase4-density-gap-is-vs-e7-only/1
+    hash "sha256:0ff6d78a216e547c7893cca409b2d744ec99c8943cc9b69c7efc4eea3c92c694"
+}
+
+resolution @jpegxl-rs.work.arch-phase4b-sampled-gather-scoped/1 {
+    slot supported_by
+    to @jpegxl-rs.evidence.phase4-0b-density-gate-2026-08-08/1
+    hash "sha256:690ca4245be5810a75e0d679364bc0cb06750973dc3596ef93926333be5a82b4"
 }
 
 resolution @jpegxl-rs.work.arch-s8-cover-lane-simd/1 {
@@ -938,6 +962,11 @@ seal @jpegxl-rs.assessment.encoder-static-optimization/1 {
     hash "sha256:8548505b7e04728e0c442fc78e178335cd58ed6cb481f7df9a9a751db20f0d04"
 }
 
+seal @jpegxl-rs.assessment.phase4-density-gap-is-vs-e7-only/1 {
+    state verified
+    hash "sha256:0ff6d78a216e547c7893cca409b2d744ec99c8943cc9b69c7efc4eea3c92c694"
+}
+
 seal @jpegxl-rs.assessment.phase4-order-correction/1 {
     state verified
     hash "sha256:05211fdd4ec59e54f35c9daac4d309c90c05ad4701303f7b6385a2f4e49a1dc6"
@@ -1151,6 +1180,11 @@ seal @jpegxl-rs.evidence.phase3-selected-forward-clone-eliminated/1 {
 seal @jpegxl-rs.evidence.phase3-selected-forward-clone-eliminated-postcommit/1 {
     state verified
     hash "sha256:06f68d41c104a4fb5e90e59dd3ee1f1355d46e093dbaa14b0783bd1d34386c8d"
+}
+
+seal @jpegxl-rs.evidence.phase4-0b-density-gate-2026-08-08/1 {
+    state verified
+    hash "sha256:690ca4245be5810a75e0d679364bc0cb06750973dc3596ef93926333be5a82b4"
 }
 
 seal @jpegxl-rs.evidence.rulings-captured/1 {
@@ -1526,6 +1560,11 @@ seal @jpegxl-rs.work.arch-phase3-forward-cache/1 {
 seal @jpegxl-rs.work.arch-phase3-forward-cache/2 {
     state completed
     hash "sha256:d2c263ff747e2f07356b3a06eddb46cfea8fdcdc16224745ef650ec1854c916b"
+}
+
+seal @jpegxl-rs.work.arch-phase4-0b-density-gate/1 {
+    state completed
+    hash "sha256:28a1c0190a9545687432c806056b78e6a7d5513a3144e8eb7f92d3eb4b4b75a7"
 }
 
 seal @jpegxl-rs.work.arch-s8-cover-lane-simd/1 {

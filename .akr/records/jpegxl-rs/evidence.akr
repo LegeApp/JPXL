@@ -547,6 +547,18 @@ record jpegxl-rs.evidence.phase3-selected-forward-clone-eliminated-postcommit/1 
         """
 }
 
+record jpegxl-rs.evidence.phase4-0b-density-gate-2026-08-08/1 : evidence {
+    title "4.0b density + decode-validity gate: jpxl-modular beats cjxl -e1, trails cjxl -e7 by 16-42%"
+    state verified
+    result pass
+    method command
+    observed_at git:d1a0669f6e92f11bd05bea04e27a42200aeb9673
+    artifact ".agent/scratch/phase4-0b-density-gate-2026-08-08/RESULT.txt"
+    summary """
+        Real-corpus (test-set/, 3 size classes 0.8/4/12MP) run of .agent/scratch/phase4-0b-density-gate-2026-08-08/run.sh against current release jpxl (sha256 238f97de...) and libjxl cjxl v0.13.0/djxl. Results: jpxl_bytes/cjxl_e1_bytes = 0.9444 (small), 0.9526 (mid), 0.9923 (large) -- jpxl-modular lossless output is 5-8% SMALLER than cjxl -e1 at every size class, not larger. jpxl_bytes/cjxl_e7_bytes = 1.1569, 1.2586, 1.4150 -- jpxl trails cjxl's max-effort mode by 16-42%, growing with image size. Decode-validity: every jpxl-encoded stream round-trips byte-identical through both jpxl-decode (in-tree, jd_ok=ok all 3) and djxl (oracle, dj_ok=ok all 3). This reproduces (same ratios, same host) the 2026-08-06 scratch run at .agent/scratch/realworld-bench-20260806T072202Z/summary.txt on the current binary, confirming no drift.
+        """
+}
+
 record jpegxl-rs.evidence.rulings-captured/1 : evidence {
     title "HANDOFF Already-fixed and Traps plus LESSONS captured as 5 decisions, 12 policies, 6 constraints"
     state verified
