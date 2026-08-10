@@ -36,6 +36,8 @@ Usage:
                                   modular by default, lossy VarDCT with --bpp
     jpxl compare <ref.ppm> <b.ppm>
                                   Print RMSE and PSNR between two decoded PPMs
+                                  (plus SSIMULACRA2 and butteraugli, if built
+                                  with --features perceptual)
     jpxl bench <mode> [opts]      Time one encode path (see `jpxl bench --help`)
     jpxl --help                   Show this message
     jpxl --version                Show the version
@@ -381,9 +383,14 @@ fn cmd_encode(args: &[String]) -> u8 {
 
     // A rate target selects the lossy VarDCT path; without one this stays the
     // lossless modular encoder it has always been.
+    let mut lossy: Option<LossyReport> = None;
     let encoded = match rate_target {
         Some(target) => match encode_lossy_to_target(&image, target) {
-            Ok(encoded) => encoded,
+            Ok(report) => {
+                let bytes = report.codestream.clone();
+                lossy = Some(report);
+                bytes
+            }
             Err(err) => {
                 fail(&format!("{input}: {err}"));
                 return EXIT_ERROR;
@@ -417,6 +424,39 @@ fn cmd_encode(args: &[String]) -> u8 {
                 image.bits_per_sample(),
                 encoded.len()
             );
+            // A missed rate target is not a failure — the loop's contract is
+            // "never over" — but it is silent unless said out loud, and the two
+            // reasons for it want opposite responses. Saturated means the
+            // ladder ran out of rungs and more budget cannot help; unsaturated
+            // means the search ran out of prices short of the target.
+            if let Some(report) = lossy {
+                let miss = report.target_bytes.saturating_sub(report.achieved);
+                let slack = report.target_bytes / 100; // the loop's own 1% tolerance
+                if miss > slack {
+                    let pct = if report.target_bytes == 0 {
+                        0.0
+                    } else {
+                        #[allow(
+                            clippy::cast_precision_loss,
+                            reason = "byte counts stay inside f64's exact-integer range"
+                        )]
+                        let f = (miss as f64) * 100.0 / (report.target_bytes as f64);
+                        f
+                    };
+                    let why = if report.saturated {
+                        "ladder saturated: the finest quantizer is still under target, \
+                         so no extra search budget can close this"
+                    } else {
+                        "search ended short of target with budget spent, not at the \
+                         ladder's limit"
+                    };
+                    println!(
+                        "  note: undershot target by {miss} bytes ({pct:.1}%) — {why} \
+                         [prices: {} fast, {} full]",
+                        report.fast_prices, report.full_prices
+                    );
+                }
+            }
             EXIT_OK
         }
         Err(err) => {
@@ -431,6 +471,13 @@ fn cmd_encode(args: &[String]) -> u8 {
 /// Exists so a rate/distortion sweep can be driven from a shell script without
 /// a Python or numpy dependency: encode at a rate, decode, compare. Prints
 /// `rmse=<f> psnr_db=<f>`, or `psnr_db=inf` when the images are identical.
+///
+/// Built with `--features perceptual`, also prints `ssimulacra2=<f>`
+/// (higher is better, 100 = identical) and `butteraugli=<f>` with its
+/// `butteraugli_pnorm3` (lower is better, 0 = identical; `butteraugli` is the
+/// distance `cjxl -d` targets). Those are the numbers to rank lossy encoders
+/// on — PSNR is printed because it is always available, not because it is
+/// right.
 fn cmd_compare(args: &[String]) -> u8 {
     let [a_path, b_path] = args else {
         fail("`compare` takes two PPM paths (reference, then decoded)");
@@ -470,11 +517,44 @@ fn cmd_compare(args: &[String]) -> u8 {
         return EXIT_ERROR;
     };
 
-    if db.is_infinite() {
-        println!("rmse=0 psnr_db=inf");
+    // Only the perceptual blocks below append to this, so with both features
+    // off it is never mutated.
+    #[cfg_attr(
+        not(any(feature = "ssimulacra2", feature = "butteraugli")),
+        allow(unused_mut, reason = "appended to only under the perceptual features")
+    )]
+    let mut line = if db.is_infinite() {
+        "rmse=0 psnr_db=inf".to_owned()
     } else {
-        println!("rmse={err:.6} psnr_db={db:.4}");
+        format!("rmse={err:.6} psnr_db={db:.4}")
+    };
+
+    // The perceptual metrics are the ones to rank lossy encoders on; PSNR is
+    // here because it is always available. When they disagree with PSNR,
+    // believe them. Note the scales run opposite ways: ssimulacra2 is
+    // higher-is-better (100 = identical), butteraugli lower-is-better (0 =
+    // identical, and `distance` is what `cjxl -d` targets).
+    #[cfg(feature = "ssimulacra2")]
+    {
+        match jpxl_conformance::metrics::ssimulacra2_score(a, b) {
+            Some(score) => line.push_str(&format!(" ssimulacra2={score:.4}")),
+            // Not fatal: the exactness metrics above are still valid. Says why
+            // rather than silently omitting the column.
+            None => line.push_str(" ssimulacra2=n/a"),
+        }
     }
+    #[cfg(feature = "butteraugli")]
+    {
+        match jpxl_conformance::metrics::butteraugli_distance(a, b) {
+            Some(s) => line.push_str(&format!(
+                " butteraugli={:.4} butteraugli_pnorm3={:.4}",
+                s.distance, s.pnorm3
+            )),
+            None => line.push_str(" butteraugli=n/a"),
+        }
+    }
+
+    println!("{line}");
     EXIT_OK
 }
 
@@ -873,10 +953,23 @@ fn synthetic_rgb8(width: u32, height: u32) -> Vec<u8> {
 /// the validated planes rather than re-reading the file. 8-bit RGB only: the
 /// VarDCT path converts sRGB8 to XYB and has no route for greyscale or deeper
 /// samples yet, so anything else is refused rather than silently mangled.
+/// What a lossy encode did, beyond the bytes: enough to tell a *hit* target
+/// from a *missed* one and to say why it was missed.
+struct LossyReport {
+    codestream: Vec<u8>,
+    target_bytes: u64,
+    achieved: u64,
+    /// The ladder ran out of rungs — the target is finer than the quantizer can
+    /// express. More search budget cannot help.
+    saturated: bool,
+    fast_prices: u32,
+    full_prices: u32,
+}
+
 fn encode_lossy_to_target(
     image: &jpxl_encode::Image,
     target: jpxl_encode_policy::RateTarget,
-) -> Result<Vec<u8>, String> {
+) -> Result<LossyReport, String> {
     if image.num_channels() != 3 || image.bits_per_sample() != 8 {
         return Err(format!(
             "lossy encoding needs 8-bit RGB (P6 with maxval 255); this is {} channel(s) at {} bits",
@@ -905,7 +998,14 @@ fn encode_lossy_to_target(
         &request,
         target,
     )
-    .map(|outcome| outcome.codestream)
+    .map(|outcome| LossyReport {
+        target_bytes: outcome.target,
+        achieved: outcome.achieved(),
+        saturated: outcome.saturated,
+        fast_prices: outcome.stats.fast_prices,
+        full_prices: outcome.stats.full_prices,
+        codestream: outcome.codestream,
+    })
     .map_err(|e| e.to_string())
 }
 

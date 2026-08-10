@@ -21,6 +21,13 @@ jpxl-conformance.workspace = true
 default = ["parallel", "simd"]
 parallel = ["jpxl-encode/parallel", "jpxl-encode-policy/parallel"]
 simd = ["jpxl-encode/simd", "jpxl-encode-policy/simd", "jpxl-core/simd"]
+# `jpxl compare` also reports SSIMULACRA2. Off by default so the shipped CLI
+# keeps this workspace's near-zero dependency footprint; build with
+# `--features ssimulacra2` when grading lossy encodes.
+ssimulacra2 = ["jpxl-conformance/ssimulacra2"]
+butteraugli = ["jpxl-conformance/butteraugli"]
+# Both perceptual metrics — what the lossy RD harness builds with.
+perceptual = ["ssimulacra2", "butteraugli"]
 
 [lints]
 workspace = true

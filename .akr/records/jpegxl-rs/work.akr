@@ -675,6 +675,44 @@ record jpegxl-rs.work.arch-phase4h-lossy-reachable-and-measurable/1 : work {
     author "GitHub Uploader"
 }
 
+record jpegxl-rs.work.arch-phase4i-perceptual-metrics/1 : work {
+    title "Phase 4I: SSIMULACRA2 and butteraugli as opt-in metrics, plus undershoot diagnostics"
+    state proposed
+    scope [ path "JPXL/crates/jpxl-cli/**", path "JPXL/crates/jpxl-conformance/**" ]
+    intent """
+        Grade lossy output on metrics that mean something. PSNR was the only distortion metric in this repository, and it measures signal error rather than what anyone looks at -- which made every comparison against cjxl an argument about the wrong axis.
+
+        Add two, both behind off-by-default features in jpxl-conformance, both reachable from `jpxl compare --features perceptual`:
+        - ssimulacra2 0.5 (BSD-2-Clause): higher is better, 100 = identical, calibrated against human ratings.
+        - butteraugli 0.9 (BSD-3-Clause, pure Rust): lower is better, 0 = identical. `distance` is the max-norm libjxl calls the butteraugli distance -- the quantity `cjxl -d` targets -- reported alongside libjxl's 3-norm aggregation.
+
+        Also: `jpxl encode --bpp` now reports when it undershoots its rate target, and distinguishes a saturated ladder (no extra budget can help) from a search that spent its price budget short of the target. That distinction is the measurement needed before anything is built to fix the undershoot.
+
+        Dependency posture: no normative crate depends on either metric, and a default `cargo build --workspace` fetches neither. They stay opt-in because AGENTS.md section 6 bans thiserror from this project's own error types, and that ban should not be dodged by pulling it in transitively on the default path.
+
+        Clean-room posture (AGENTS.md section 2): the butteraugli crate is a permissively-licensed port of libjxl's butteraugli. Using it to GRADE output is the same category as running cjxl/djxl as oracles. Wiring it into this encoder's own rate control would be a different decision -- it would make our perceptual model a derivative of libjxl's rather than one derived from the standard -- and must be recorded as such before anyone does it.
+        """
+    acceptance {
+        check metrics-are-correct-and-directional {
+            statement """
+                Both metrics hit their defined identity value, move the right way as distortion rises, agree with each other on which of two images is worse despite opposite scales, and decline the inputs they cannot score.
+                """
+            method command
+            command "cargo test -p jpxl-conformance --lib --features perceptual"
+        }
+        check off-by-default-and-lint-clean {
+            statement """
+                The default build neither fetches nor references the metric crates, and both feature configurations are fmt- and clippy-clean.
+                """
+            method command
+            command "cargo clippy -p jpxl-cli -p jpxl-conformance --all-targets"
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase4h-lossy-reachable-and-measurable/1 ]
+    part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+    author "GitHub Uploader"
+}
+
 record jpegxl-rs.work.arch-s8-cover-lane-simd/1 : work {
     title "outside-advice.md §8 (S8), narrowed per Opus advisor review: bit-identical coefficient-lane SIMD for cover scoring"
     state completed

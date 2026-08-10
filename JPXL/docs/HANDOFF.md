@@ -7,6 +7,41 @@
 Dated working ledger. **Prepend** new entries — newest first. Each entry: what
 changed, what is now proved, what is next, what is blocked.
 
+## 2026-08-10 (5) — Phase 4I: perceptual metrics (SSIMULACRA2 + butteraugli); the RD gap depends on which metric you ask; and a corrected undershoot diagnosis
+
+**What changed (files: `Cargo.toml`, `crates/jpxl-conformance/{Cargo.toml,src/metrics.rs}`, `crates/jpxl-cli/{Cargo.toml,src/main.rs}`):**
+- `metrics::ssimulacra2_score` (higher better, 100 = identical) and `metrics::butteraugli_distance` → `Butteraugli { distance, pnorm3 }` (**lower** better, 0 = identical; `distance` is the max-norm libjxl calls the butteraugli distance, i.e. what `cjxl -d` targets).
+- Both behind **off-by-default** features (`ssimulacra2`, `butteraugli`, or `perceptual` for both), in `jpxl-conformance` only. `jpxl compare` reports them when built `--features perceptual`. No normative crate depends on either; a default `cargo build --workspace` fetches neither.
+- `jpxl encode --bpp` now says when it undershoots its target, and distinguishes *ladder saturated* (no extra budget can help) from *budget spent short of target* (more search could).
+
+**Dependency decision.** `ssimulacra2` 0.5 (BSD-2-Clause, → `yuvxyb`/`thiserror`/`num-traits`) and `butteraugli` 0.9 (BSD-3-Clause, pure Rust, → `imgref`/`rgb`/`archmage`). Both permissive. They stay opt-in because AGENTS.md §6 bans `thiserror` from this project's own error types, and that ban should not be dodged by pulling it in transitively on the default path.
+
+**Clean-room note.** The `butteraugli` crate is a *port of libjxl's* butteraugli. Using it to **grade** output is the same category as running `cjxl`/`djxl` as oracles (§2), and its licence is permissive. **Wiring it into this encoder's own rate control would be a different decision** — it would make our perceptual model a derivative of libjxl's rather than one derived from the standard — and must be recorded as such before anyone does it.
+
+**The finding: which metric you ask changes the answer.** Equal-quality bitrate against `cjxl`, 4 MP:
+
+| metric | jpxl bpp | cjxl bpp | cjxl saving |
+| --- | --- | --- | --- |
+| SSIMULACRA2 85.3 | 1.996 | ~1.76 | **−12%** |
+| PSNR 37.4 dB | 1.996 | ~1.49 | −25% |
+| butteraugli 2.01 | 1.996 | ~1.21 | **−39%** |
+
+So the "~25–40% behind" from entry 4 was a PSNR artefact at both ends. On SSIMULACRA2 we are **much closer than PSNR suggested** (−12%); on butteraugli — the axis `cjxl` actually optimises — we are **further behind than PSNR suggested** (−39%). Both readings are useful: the first says the codec's core is sound, the second says the gap is concentrated in perceptual bit-allocation (butteraugli-driven adaptive quantization), not in the transform or entropy layers.
+
+**Corrected diagnosis of the high-rate undershoot** (entry 4, finding 3, now amended there). I attributed it to the quantizer ladder running out of rungs. **That was inferred from the existence of `RateOutcome::saturated`, never measured, and the data contradicts it:** at 12 MP `--bpp 4` succeeds (3.942) while `--bpp 2` misses (1.673). A ladder ceiling cannot do that. The trap I wrote against raising `max_prices` rested on the same unmeasured inference and is withdrawn.
+
+**A change I wrote and then reverted, deliberately.** I implemented false-position interpolation for the bisection phase (aiming at the target instead of stepping blindly) on the theory that the undershoot is budget exhaustion. It broke `the_loop_survives_a_non_monotone_pocket`: a different probe sequence loses the sawtooth's optimum. Gating it on bracket width cannot separate the cases — the pocket fixture's bracket is ~2048 rungs wide and a small target's is ~256, so any threshold that helps one disables it for the other. **Reverted rather than shipped**, because (a) it changes search outcomes in non-monotone cases, which is a real contract, and (b) I still had not measured that budget exhaustion is the cause. Building a fix for an unverified cause is the same mistake as the ladder-ceiling claim above.
+
+**Next — measure before building, this time:**
+1. Run `jpxl encode --bpp` on the undershooting cases with the new note, and read `saturated` + the fast/full price split. That single number decides between "ran out of ladder" and "ran out of prices", and nothing should be built until it does.
+2. If it is prices: the interpolation idea is still right, but needs a stepping rule proved safe under non-monotonicity — probably interpolate to *choose the bracket*, then keep the existing dense endgame intact.
+3. **Cover-search bounding is NOT the lossy speed lever** — see the 2026-08-07 (9) entry: cover scoring is a small slice next to CfL/entropy/quantize, and the prior prune attempt measured a net *loss*. The lever is the probe count (15–40 full encodes), not per-probe cover cost.
+
+**Traps — do not "fix" these:**
+- Do **not** re-land bisection interpolation without a test proving it preserves `the_loop_survives_a_non_monotone_pocket`'s global-optimum property. It is easy to make the loop faster and quietly worse.
+- Do **not** rank two encoders on a single (bytes, metric) point. Use curves, and say which metric — the 4 MP table above shows the same pair of encoders looking 12% or 39% apart depending on the choice.
+- Do **not** enable the perceptual features by default to make a harness simpler. They exist opt-in on purpose.
+
 ## 2026-08-10 (4) — Phase 4H: the lossy path is finally reachable and measurable
 
 **What changed (files: `crates/jpxl-cli/src/main.rs`, `crates/jpxl-conformance/src/metrics.rs` — only these two; no encoder change):**
@@ -30,13 +65,15 @@ changed, what is now proved, what is next, what is blocked.
 Three findings:
 1. **Density: cjxl reaches equal PSNR at ~25–40% fewer bits, and the gap widens with image size.** This comparison is if anything *unfavourable* to cjxl — it optimises butteraugli, not the PSNR being measured — and it still wins on every rung.
 2. **Speed: 58–530× slower**, at every size and rate (8.7–55.6 s vs 0.09–0.15 s at 0.8 MP; 63–472 s vs 0.75–1.53 s at 12 MP). Cause is structural and familiar: `rate::search_frame` runs 15–40 full frame encodes, and `tile_region`/`block_cost_bounded` re-runs the exact `HfQuantizer::choose` loop over every coefficient cell *per candidate transform* inside each one. Same defect as the modular ranker — per-candidate work proportional to frame size with no sample bound — one layer up.
-3. **The rate loop undershoots at high rates, and nobody was looking for this.** Asked for 4.0 bpp at 4 MP it delivered 3.645; asked for 2.0 bpp at 12 MP it delivered 1.673 (−16%). Both are the "finest ladder rung still under target" case: the quantizer ladder cannot express a fine enough step. **The encoder currently cannot reach mid-to-high quality on a 12 MP frame at all.** This bounds the top of the quality range independently of finding 1, and is invisible to any benchmark that only sweeps low rates.
+3. **The rate loop undershoots at high rates, and nobody was looking for this.** Asked for 4.0 bpp at 4 MP it delivered 3.645; asked for 2.0 bpp at 12 MP it delivered 1.673 (−16%).
+
+   **Correction (2026-08-10, entry 5):** this entry originally attributed the undershoot to "the finest ladder rung still under target". That was inferred from the existence of `RateOutcome::saturated`, not measured, and the data contradicts it: at 12 MP `--bpp 4` *succeeds* (3.942) while `--bpp 2` misses. A ladder ceiling cannot behave that way — if the ladder could not reach 2 bpp it could not reach 4 bpp either. See entry 5 for the measured cause.
 
 **Traps — do not "fix" these:**
 - Do **not** add `--distance` as an alias for `--bpp`. It would read as a butteraugli target that does not exist.
 - Do **not** quote a single (bytes, PSNR) pair as beating or losing to cjxl. Only the curve is meaningful; PSNR is used because it is exactly reproducible in-repo, not because it is the right quality model.
 - `--effort` is lossless-only and is ignored on the lossy path; the lossy path has no effort ramp at all yet (`RateSearchBudget{max_prices: 40}` is its only dial).
-- Do **not** "fix" the high-rate undershoot by raising `max_prices`. The loop is not running out of *probes*, it is running out of *ladder*: the finest quantizer rung is still under target. More probes would burn wall time re-pricing the same rung.
+- ~~Do **not** "fix" the high-rate undershoot by raising `max_prices`. The loop is not running out of *probes*, it is running out of *ladder*.~~ **Withdrawn — this trap was wrong**, and rested on the same unmeasured inference corrected in finding 3 above. See entry 5.
 
 **Next for the lossy path, in priority order:**
 1. **The high-rate ceiling** (finding 3) — a correctness-shaped limit, not a tuning one. Nothing else matters if 12 MP tops out at 1.67 bpp.

@@ -30,6 +30,27 @@ jpxl-conformance = { path = "crates/jpxl-conformance", version = "0.1.0" }
 rayon = "1.10"
 # Portable SIMD for leaf kernels (DCT butterflies, Gaborish, quantize).
 wide = "0.7"
+# SSIMULACRA2 perceptual metric (BSD-2-Clause), for grading lossy encodes
+# against the oracle. MEASUREMENT ONLY, and off by default: it is an optional
+# dependency of the jpxl-conformance harness behind its `ssimulacra2` feature,
+# reachable from `jpxl compare --ssimulacra2`. No normative crate depends on
+# it, and a default `cargo build --workspace` does not fetch it. It pulls
+# yuvxyb/thiserror/num-traits, which is why it stays opt-in: AGENTS.md §6 bans
+# `thiserror` from this project's own error types, and that ban is not a
+# licence to smuggle it in transitively on the default path.
+ssimulacra2 = "0.5.1"
+# Butteraugli perceptual metric (BSD-3-Clause, pure Rust, no C deps), the
+# metric `cjxl -d` targets — so it is the only way to grade a lossy encode on
+# the axis the oracle is actually optimising. Same terms as ssimulacra2 above:
+# MEASUREMENT ONLY, off by default, optional dependency of jpxl-conformance.
+#
+# Clean-room note (AGENTS.md §2): this crate is a *port of libjxl's*
+# butteraugli. Permissive licence, and grading output is the same category as
+# running cjxl/djxl as oracles, so using it as a metric is fine. Wiring it into
+# the encoder's own rate control would be a different decision — it would make
+# our perceptual model a derivative of libjxl's rather than our own — and needs
+# recording as such before anyone does it.
+butteraugli = "0.9"
 
 [workspace.lints.rust]
 unsafe_code = "deny"

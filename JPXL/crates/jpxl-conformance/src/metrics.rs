@@ -228,6 +228,149 @@ pub fn psnr(a: &Image, b: &Image) -> Option<f64> {
     Some(20.0 * (peak / err).log10())
 }
 
+/// SSIMULACRA2 score, higher is better, via the `rust-av/ssimulacra2` crate.
+///
+/// Behind the off-by-default `ssimulacra2` feature: it is the only third-party
+/// dependency anywhere near this harness, and the exactness metrics
+/// conformance actually grades on must never depend on it.
+///
+/// **This is the metric to compare lossy encoders on**, and it is the reason
+/// the feature exists. [`psnr`] measures signal error, which is reproducible
+/// but not what anyone looks at; SSIMULACRA2 is a perceptual model calibrated
+/// against human ratings, and it is what `cjxl -d` is (indirectly) tuned for —
+/// so it can rank two encoders differently from PSNR, and when they disagree
+/// SSIMULACRA2 is the one to believe. Rough calibration from its authors:
+/// 90 ≈ visually lossless, 70 ≈ good, 50 ≈ acceptable, 30 ≈ poor. Scores are
+/// not a percentage and can go negative on badly damaged images.
+///
+/// Both images are read as gamma-encoded sRGB with BT.709 primaries, which is
+/// what a PPM from this pipeline is. Returns `None` on a shape mismatch (as
+/// [`psnr`] does), on a non-3-channel image, on an image smaller than 8x8
+/// (the metric's own floor), or if the colour conversion fails.
+#[cfg(feature = "ssimulacra2")]
+#[must_use]
+pub fn ssimulacra2_score(a: &Image, b: &Image) -> Option<f64> {
+    use ssimulacra2::{ColorPrimaries, LinearRgb, Rgb, TransferCharacteristic};
+
+    if !a.same_shape(b) || a.channels != 3 {
+        return None;
+    }
+    let (Ok(width), Ok(height)) = (usize::try_from(a.w), usize::try_from(a.h)) else {
+        return None;
+    };
+    if width < 8 || height < 8 {
+        return None;
+    }
+
+    // Normalise to the [0, 1] the crate expects. `max_value` is the PPM's own
+    // declared maxval, so this handles 8- and 16-bit files alike.
+    let to_linear_rgb = |image: &Image| -> Option<LinearRgb> {
+        let scale = f32::from(image.max_value);
+        if scale <= 0.0 {
+            return None;
+        }
+        let pixels: Vec<[f32; 3]> = image
+            .samples
+            .chunks_exact(3)
+            .map(|px| {
+                [
+                    f32::from(px.first().copied().unwrap_or(0)) / scale,
+                    f32::from(px.get(1).copied().unwrap_or(0)) / scale,
+                    f32::from(px.get(2).copied().unwrap_or(0)) / scale,
+                ]
+            })
+            .collect();
+        if pixels.len() != width.checked_mul(height)? {
+            return None;
+        }
+        let rgb = Rgb::new(
+            pixels,
+            width,
+            height,
+            TransferCharacteristic::SRGB,
+            ColorPrimaries::BT709,
+        )
+        .ok()?;
+        LinearRgb::try_from(rgb).ok()
+    };
+
+    let source = to_linear_rgb(a)?;
+    let distorted = to_linear_rgb(b)?;
+    ssimulacra2::compute_frame_ssimulacra2(source, distorted).ok()
+}
+
+/// Butteraugli scores. **Lower is better**, the opposite of
+/// [`ssimulacra2_score`] and [`psnr`].
+#[cfg(feature = "butteraugli")]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Butteraugli {
+    /// Max-norm score — the aggregation libjxl calls the butteraugli
+    /// *distance*, and the one `cjxl -d <n>` targets. Below 1.0 is good,
+    /// above 2.0 is bad. This is the number to compare against a `-d` setting.
+    pub distance: f64,
+    /// libjxl's 3-norm aggregation (average of p-norms at 3, 6, 12). Less
+    /// dominated by a single worst region than [`Self::distance`], so it
+    /// tracks overall quality better while `distance` catches local damage.
+    pub pnorm3: f64,
+}
+
+/// Butteraugli distance between two images, via the pure-Rust `butteraugli`
+/// crate (BSD-3-Clause).
+///
+/// Behind the off-by-default `butteraugli` feature. **This is the metric
+/// `cjxl -d` optimises**, so it is the only axis on which a comparison against
+/// that encoder is measuring what the oracle was actually trying to do —
+/// [`psnr`] and even [`ssimulacra2_score`] both grade cjxl on something it was
+/// not aiming at.
+///
+/// Clean-room note (AGENTS.md §2): the crate is a permissively-licensed port
+/// of libjxl's butteraugli. Using it to *grade* output is the same category as
+/// running `cjxl`/`djxl` as oracles. Wiring it into this encoder's own rate
+/// control would be a different decision, and should be recorded as one.
+///
+/// 8-bit only: the crate's entry point takes `RGB8`. Returns `None` on a shape
+/// mismatch, a non-3-channel or non-8-bit image, an image below the metric's
+/// 8x8 floor, or if scoring fails.
+#[cfg(feature = "butteraugli")]
+#[must_use]
+pub fn butteraugli_distance(a: &Image, b: &Image) -> Option<Butteraugli> {
+    use butteraugli::{ButteraugliParams, Img, RGB8};
+
+    if !a.same_shape(b) || a.channels != 3 || a.max_value != 255 {
+        return None;
+    }
+    let (Ok(width), Ok(height)) = (usize::try_from(a.w), usize::try_from(a.h)) else {
+        return None;
+    };
+    if width < 8 || height < 8 {
+        return None;
+    }
+
+    let to_rgb8 = |image: &Image| -> Option<Vec<RGB8>> {
+        let pixels: Vec<RGB8> = image
+            .samples
+            .chunks_exact(3)
+            .map(|px| {
+                let at = |i: usize| u8::try_from(px.get(i).copied().unwrap_or(0)).unwrap_or(255);
+                RGB8::new(at(0), at(1), at(2))
+            })
+            .collect();
+        (pixels.len() == width.checked_mul(height)?).then_some(pixels)
+    };
+
+    let source = to_rgb8(a)?;
+    let distorted = to_rgb8(b)?;
+    let img1 = Img::new(source, width, height);
+    let img2 = Img::new(distorted, width, height);
+    let result =
+        butteraugli::butteraugli(img1.as_ref(), img2.as_ref(), &ButteraugliParams::default())
+            .ok()?;
+    Some(Butteraugli {
+        distance: result.score,
+        pnorm3: result.pnorm_3,
+    })
+}
+
 /// Why a PPM could not be parsed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PpmError {
@@ -995,6 +1138,145 @@ mod tests {
         let two = Image::from_ppm(b"P6\n2 1\n255\n\x00\x00\x00\x00\x00\x00").expect("valid");
         assert_eq!(rmse(&one, &two), None);
         assert_eq!(psnr(&one, &two), None);
+    }
+
+    /// Builds an `n`x`n` RGB PPM whose pixels are a deterministic gradient,
+    /// optionally perturbed by `delta` so the two images differ.
+    #[cfg(any(feature = "ssimulacra2", feature = "butteraugli"))]
+    fn gradient_ppm(n: u32, delta: i32) -> Image {
+        let mut bytes = format!("P6\n{n} {n}\n255\n").into_bytes();
+        for y in 0..n {
+            for x in 0..n {
+                for c in 0..3 {
+                    let base = i32::try_from((x * 7 + y * 11 + c * 29) % 256).unwrap_or(0);
+                    let v = (base + delta).clamp(0, 255);
+                    bytes.push(u8::try_from(v).unwrap_or(0));
+                }
+            }
+        }
+        Image::from_ppm(&bytes).expect("valid PPM")
+    }
+
+    /// An image against itself scores exactly 100 — the metric's defined
+    /// ceiling. This pins that the sRGB/BT.709 conversion feeding the crate is
+    /// right: a wrong transfer function still round-trips to 100 for identical
+    /// inputs, but the monotonicity check below would not hold.
+    #[cfg(feature = "ssimulacra2")]
+    #[test]
+    fn ssimulacra2_scores_an_identical_image_at_one_hundred() {
+        let image = gradient_ppm(32, 0);
+        let score = ssimulacra2_score(&image, &image).expect("8x8 or larger, 3 channels");
+        assert!(
+            (score - 100.0).abs() < 1e-6,
+            "identical images scored {score}, expected 100"
+        );
+    }
+
+    /// More distortion must score lower. Guards the direction of the metric,
+    /// which is the one thing a caller can get catastrophically backwards
+    /// (unlike PSNR and RMSE, SSIMULACRA2 is higher-is-better).
+    #[cfg(feature = "ssimulacra2")]
+    #[test]
+    fn ssimulacra2_falls_as_distortion_rises() {
+        let reference = gradient_ppm(32, 0);
+        let slight = ssimulacra2_score(&reference, &gradient_ppm(32, 4)).expect("scored");
+        let heavy = ssimulacra2_score(&reference, &gradient_ppm(32, 40)).expect("scored");
+        assert!(
+            slight > heavy,
+            "a slightly distorted image ({slight}) must score above a heavily \
+             distorted one ({heavy}) — SSIMULACRA2 is higher-is-better"
+        );
+    }
+
+    /// The `None` cases are the metric's own preconditions, not errors to
+    /// paper over: mismatched shapes, and images below its 8x8 floor.
+    #[cfg(feature = "ssimulacra2")]
+    #[test]
+    fn ssimulacra2_declines_shapes_it_cannot_score() {
+        let big = gradient_ppm(32, 0);
+        let other = gradient_ppm(16, 0);
+        assert_eq!(ssimulacra2_score(&big, &other), None, "shape mismatch");
+
+        let tiny = gradient_ppm(4, 0);
+        assert_eq!(
+            ssimulacra2_score(&tiny, &tiny),
+            None,
+            "below the metric's own 8x8 floor"
+        );
+    }
+
+    /// An image against itself has zero butteraugli distance — the metric's
+    /// floor, and the opposite end of the scale from SSIMULACRA2's 100.
+    #[cfg(feature = "butteraugli")]
+    #[test]
+    fn butteraugli_scores_an_identical_image_at_zero() {
+        let image = gradient_ppm(32, 0);
+        let scores = butteraugli_distance(&image, &image).expect("8-bit RGB, 8x8 or larger");
+        assert!(
+            scores.distance < 1e-6 && scores.pnorm3 < 1e-6,
+            "identical images scored distance {} / pnorm3 {}, expected ~0",
+            scores.distance,
+            scores.pnorm3
+        );
+    }
+
+    /// More distortion must score HIGHER — butteraugli is lower-is-better, the
+    /// reverse of SSIMULACRA2. Getting this backwards would silently invert
+    /// every quality conclusion, so it is pinned explicitly.
+    #[cfg(feature = "butteraugli")]
+    #[test]
+    fn butteraugli_rises_as_distortion_rises() {
+        let reference = gradient_ppm(32, 0);
+        let slight = butteraugli_distance(&reference, &gradient_ppm(32, 4)).expect("scored");
+        let heavy = butteraugli_distance(&reference, &gradient_ppm(32, 40)).expect("scored");
+        assert!(
+            slight.distance < heavy.distance,
+            "a slightly distorted image ({}) must score BELOW a heavily \
+             distorted one ({}) — butteraugli is lower-is-better",
+            slight.distance,
+            heavy.distance
+        );
+    }
+
+    /// The two perceptual metrics must agree on direction even though their
+    /// scales run opposite ways. If this ever fails, one of the two wrappers
+    /// has its sign convention wrong.
+    #[cfg(all(feature = "butteraugli", feature = "ssimulacra2"))]
+    #[test]
+    fn the_two_perceptual_metrics_agree_on_which_image_is_worse() {
+        let reference = gradient_ppm(32, 0);
+        let (slight, heavy) = (gradient_ppm(32, 4), gradient_ppm(32, 40));
+
+        let s_slight = ssimulacra2_score(&reference, &slight).expect("scored");
+        let s_heavy = ssimulacra2_score(&reference, &heavy).expect("scored");
+        let b_slight = butteraugli_distance(&reference, &slight).expect("scored");
+        let b_heavy = butteraugli_distance(&reference, &heavy).expect("scored");
+
+        assert!(
+            s_slight > s_heavy && b_slight.distance < b_heavy.distance,
+            "metrics disagree: ssimulacra2 {s_slight} vs {s_heavy} (higher is better), \
+             butteraugli {} vs {} (lower is better)",
+            b_slight.distance,
+            b_heavy.distance
+        );
+    }
+
+    /// Preconditions, not errors to paper over.
+    #[cfg(feature = "butteraugli")]
+    #[test]
+    fn butteraugli_declines_shapes_it_cannot_score() {
+        let big = gradient_ppm(32, 0);
+        assert_eq!(
+            butteraugli_distance(&big, &gradient_ppm(16, 0)),
+            None,
+            "shape mismatch"
+        );
+        let tiny = gradient_ppm(4, 0);
+        assert_eq!(
+            butteraugli_distance(&tiny, &tiny),
+            None,
+            "below the metric's own 8x8 floor"
+        );
     }
 
     /// Hand-computed: reference is all zero, decoded is `[0, 0, 0, 1]` in a

@@ -8,6 +8,19 @@ license.workspace = true
 
 [dependencies]
 jpxl-core.workspace = true
+ssimulacra2 = { workspace = true, optional = true }
+butteraugli = { workspace = true, optional = true }
+
+[features]
+default = []
+# Perceptual scoring in `metrics`. Both off by default: these are the only
+# third-party dependencies anywhere near this harness, and the exactness
+# metrics (max_abs_error, peak_error_per_channel, rmse, psnr) that conformance
+# actually grades on must never depend on them.
+ssimulacra2 = ["dep:ssimulacra2"]
+butteraugli = ["dep:butteraugli"]
+# Both perceptual metrics at once — what the lossy RD harness wants.
+perceptual = ["ssimulacra2", "butteraugli"]
 
 [lints]
 workspace = true

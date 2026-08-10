@@ -5,8 +5,7 @@ build {
     tool "akr 0.3.0"
     grammar "0.1"
     vocabulary "0.2"
-    commit git:9330674fd0b7c7e7b0c912c97777ca80b7c0ced7
-    source_graph "sha256:ffb7d497cc56eb3fd41a54aaa7f35d32522a1bffad4e5736ac774ca57044fcfa"
+    source_graph "sha256:34f924894369f666a30d67001ffa578a3daf7f485e51b5a89ca71121f79d748d"
 }
 
 source ".akr/project.akr" {
@@ -60,8 +59,8 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:e10306d72d9fee6fecf7a4abdcfcea46f1ebe4d59281bdcefbc1e2240b29f5e9"
-    records 33
+    hash "sha256:e0137990f6ac19b4336db0cc2ccd9f027c963e53a961333272607937cdf6ac06"
+    records 34
 }
 
 resolution @jpegxl-rs.decision.encoder-architecture-phases/1 {
