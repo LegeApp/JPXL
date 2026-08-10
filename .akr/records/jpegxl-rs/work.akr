@@ -677,7 +677,7 @@ record jpegxl-rs.work.arch-phase4h-lossy-reachable-and-measurable/1 : work {
 
 record jpegxl-rs.work.arch-phase4i-perceptual-metrics/1 : work {
     title "Phase 4I: SSIMULACRA2 and butteraugli as opt-in metrics, plus undershoot diagnostics"
-    state proposed
+    state completed
     scope [ path "JPXL/crates/jpxl-cli/**", path "JPXL/crates/jpxl-conformance/**" ]
     intent """
         Grade lossy output on metrics that mean something. PSNR was the only distortion metric in this repository, and it measures signal error rather than what anyone looks at -- which made every comparison against cjxl an argument about the wrong axis.
@@ -699,6 +699,7 @@ record jpegxl-rs.work.arch-phase4i-perceptual-metrics/1 : work {
                 """
             method command
             command "cargo test -p jpxl-conformance --lib --features perceptual"
+            verified_by [ @jpegxl-rs.evidence.phase4i-metrics-correct-2026-08-10/1 ]
         }
         check off-by-default-and-lint-clean {
             statement """
@@ -706,6 +707,7 @@ record jpegxl-rs.work.arch-phase4i-perceptual-metrics/1 : work {
                 """
             method command
             command "cargo clippy -p jpxl-cli -p jpxl-conformance --all-targets"
+            verified_by [ @jpegxl-rs.evidence.phase4i-off-by-default-2026-08-10/1 ]
         }
     }
     depends_on [ @jpegxl-rs.work.arch-phase4h-lossy-reachable-and-measurable/1 ]

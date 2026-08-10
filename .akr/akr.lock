@@ -5,7 +5,7 @@ build {
     tool "akr 0.3.0"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:34f924894369f666a30d67001ffa578a3daf7f485e51b5a89ca71121f79d748d"
+    source_graph "sha256:9aa954c42245c69b5f95da2f24d6b9e1e134f45d9ecd417651a0ba817b37bb89"
 }
 
 source ".akr/project.akr" {
@@ -29,8 +29,8 @@ source ".akr/records/jpegxl-rs/decisions.akr" {
 }
 
 source ".akr/records/jpegxl-rs/evidence.akr" {
-    hash "sha256:f05c15864d3096e16917e387b799bf84906884d64fe8eea82281c133bfcc9cfa"
-    records 68
+    hash "sha256:4108e6ba7e468502b64a8f3d0919e07ba384e8297efab2b82d624b9da831bc24"
+    records 70
 }
 
 source ".akr/records/jpegxl-rs/milestones.akr" {
@@ -59,7 +59,7 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:e0137990f6ac19b4336db0cc2ccd9f027c963e53a961333272607937cdf6ac06"
+    hash "sha256:5d6ff7cb7c9657a3b5fe2155419c6cbcb2c578681aa9c8f1c12f7ee24cb3537f"
     records 34
 }
 
@@ -1302,6 +1302,16 @@ seal @jpegxl-rs.evidence.phase4h-metrics-correct-2026-08-10/1 {
     hash "sha256:eae525e8e1d83214bf499ec5e9b9d8b9ff3527e3e209357bbe1766b6ea9cc670"
 }
 
+seal @jpegxl-rs.evidence.phase4i-metrics-correct-2026-08-10/1 {
+    state verified
+    hash "sha256:1dd4ba8016399e241e8223af8cd02e2aa1fe1d9bfb77641163018e7382d0c44f"
+}
+
+seal @jpegxl-rs.evidence.phase4i-off-by-default-2026-08-10/1 {
+    state verified
+    hash "sha256:9de46c6be9f162b0241cfe37ffabe9355aed0090bdc3458e035c0b0691d665fa"
+}
+
 seal @jpegxl-rs.evidence.rulings-captured/1 {
     state verified
     hash "sha256:6fa0b4ff5fc5ab2005d848d8cd8d938b136f6299bc9c158bf7488c5353bf3d48"
@@ -1725,6 +1735,11 @@ seal @jpegxl-rs.work.arch-phase4g-bounded-ranker-and-unit-fix/1 {
 seal @jpegxl-rs.work.arch-phase4h-lossy-reachable-and-measurable/1 {
     state completed
     hash "sha256:c447687f44a7a6022fdf991a558f9bd9eb69ee55713889861a6b2fc3b3085fdb"
+}
+
+seal @jpegxl-rs.work.arch-phase4i-perceptual-metrics/1 {
+    state completed
+    hash "sha256:92ff6a5a0280f18b8650ec25b7f6bc2d878650727b84aee004076bb9b9360e0a"
 }
 
 seal @jpegxl-rs.work.arch-s8-cover-lane-simd/1 {

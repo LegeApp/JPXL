@@ -723,6 +723,32 @@ record jpegxl-rs.evidence.phase4h-metrics-correct-2026-08-10/1 : evidence {
     author "GitHub Uploader"
 }
 
+record jpegxl-rs.evidence.phase4i-metrics-correct-2026-08-10/1 : evidence {
+    title "At d3950d7 the jpxl-conformance library suite with both perceptual features on is 51 passed, 0 failed, 0 ignored -- 44 pre-4I plus seven gates. Identity: ssimulacra2_scores_an_identical_image_at_one_hundred pins an image against itself at exactly 100 (the metric's ceiling), butteraugli_scores_an_identical_image_at_zero pins both its distance and pnorm3 at ~0 (the opposite end of the scale). Direction: ssimulacra2_falls_as_distortion_rises and butteraugli_rises_as_distortion_rises pin the two opposite conventions separately, and the_two_perceptual_metrics_agree_on_which_image_is_worse cross-checks them against each other on the same pair -- if either wrapper had its sign convention inverted, that test fails. Preconditions: ssimulacra2_declines_shapes_it_cannot_score and butteraugli_declines_shapes_it_cannot_score pin None for a shape mismatch and for images below the 8x8 floor both metrics impose. Separately verified on real data: identical images score exactly 100.0000 / 0.0000, and across a 0.5-to-4 bpp sweep the scores move monotonically (ssimulacra2 23.85 -> 59.62 -> 80.01 -> 92.22; butteraugli 14.12 -> 6.64 -> 3.56 -> 1.17)."
+    state verified
+    result pass
+    method command
+    observed_at git:d3950d782182f5c688c73b2d563fa82bcde13419
+    command "cargo test -p jpxl-conformance --lib --features perceptual"
+    summary """
+        At d3950d7 the jpxl-conformance library suite with both perceptual features on is 51 passed, 0 failed, 0 ignored -- 44 pre-4I plus seven gates. Identity: ssimulacra2_scores_an_identical_image_at_one_hundred pins an image against itself at exactly 100 (the metric's ceiling), butteraugli_scores_an_identical_image_at_zero pins both its distance and pnorm3 at ~0 (the opposite end of the scale). Direction: ssimulacra2_falls_as_distortion_rises and butteraugli_rises_as_distortion_rises pin the two opposite conventions separately, and the_two_perceptual_metrics_agree_on_which_image_is_worse cross-checks them against each other on the same pair -- if either wrapper had its sign convention inverted, that test fails. Preconditions: ssimulacra2_declines_shapes_it_cannot_score and butteraugli_declines_shapes_it_cannot_score pin None for a shape mismatch and for images below the 8x8 floor both metrics impose. Separately verified on real data: identical images score exactly 100.0000 / 0.0000, and across a 0.5-to-4 bpp sweep the scores move monotonically (ssimulacra2 23.85 -> 59.62 -> 80.01 -> 92.22; butteraugli 14.12 -> 6.64 -> 3.56 -> 1.17).
+        """
+    author "GitHub Uploader"
+}
+
+record jpegxl-rs.evidence.phase4i-off-by-default-2026-08-10/1 : evidence {
+    title "At d3950d7 the default build of jpxl-cli and jpxl-conformance is clippy-clean with no reference to either metric crate: both are optional dependencies gated behind the ssimulacra2 and butteraugli features, neither of which is in any default feature set, so a default cargo build --workspace does not fetch yuvxyb, thiserror, num-traits, imgref, rgb or archmage. Verified in both configurations: cargo fmt --check reports no diff in metrics.rs or main.rs, and cargo clippy reports nothing in either file with the features off or with --features jpxl-cli/perceptual on. The one lint the split surfaced -- an unused mut on the compare command's output line when neither perceptual block compiles -- is handled with a cfg_attr scoped to exactly that configuration rather than an unconditional allow."
+    state verified
+    result pass
+    method command
+    observed_at git:d3950d782182f5c688c73b2d563fa82bcde13419
+    command "cargo clippy -p jpxl-cli -p jpxl-conformance --all-targets"
+    summary """
+        At d3950d7 the default build of jpxl-cli and jpxl-conformance is clippy-clean with no reference to either metric crate: both are optional dependencies gated behind the ssimulacra2 and butteraugli features, neither of which is in any default feature set, so a default cargo build --workspace does not fetch yuvxyb, thiserror, num-traits, imgref, rgb or archmage. Verified in both configurations: cargo fmt --check reports no diff in metrics.rs or main.rs, and cargo clippy reports nothing in either file with the features off or with --features jpxl-cli/perceptual on. The one lint the split surfaced -- an unused mut on the compare command's output line when neither perceptual block compiles -- is handled with a cfg_attr scoped to exactly that configuration rather than an unconditional allow.
+        """
+    author "GitHub Uploader"
+}
+
 record jpegxl-rs.evidence.rulings-captured/1 : evidence {
     title "HANDOFF Already-fixed and Traps plus LESSONS captured as 5 decisions, 12 policies, 6 constraints"
     state verified
