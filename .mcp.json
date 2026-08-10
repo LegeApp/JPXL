@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "akr": {
+      "type": "stdio",
+      "command": "akr-mcp",
+      "args": []
+    },
+    "codegraph": {
+      "type": "stdio",
+      "command": "codegraph",
+      "args": ["serve", "--mcp", "--path", "${workspaceFolder}"]
+    }
+  }
+}
