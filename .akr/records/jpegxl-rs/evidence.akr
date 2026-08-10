@@ -206,6 +206,45 @@ record jpegxl-rs.evidence.markdown-cutover/2 : evidence {
     author "GitHub Uploader"
 }
 
+record jpegxl-rs.evidence.modular-effort-ramp-landed-2026-08-10/1 : evidence {
+    title "At 70688ac the lean default (Effort::DEFAULT = 1) reproduces the pre-change default's bytes exactly on all three photo-corpus sizes: small_0p8MP 1,075,465 B sha16 C3C60CEE4D0741D9, mid_4MP 5,157,974 B sha16 5C49AB9020706F0D, large_12MP 9,795,599 B sha16 CA27799D3E7B441D -- all IDENTICAL to the pre-ramp fingerprints. Wall time 267 / 619 / 1165 ms for the default versus 1185 / 5324 / 16919 ms for --effort 7, which reproduces the same three fingerprints and so remains the byte-identical density anchor. Speedup on this corpus is 4.4x / 8.6x / 14.5x for identical output."
+    state verified
+    result pass
+    method command
+    observed_at git:70688ac1e3cd81b3b257d409500ac778f4b6935f
+    command "pwsh -NoProfile -File .agent/scratch/effort-ramp-2026-08-10/verify_default_flip.ps1"
+    summary """
+        At 70688ac the lean default (Effort::DEFAULT = 1) reproduces the pre-change default's bytes exactly on all three photo-corpus sizes: small_0p8MP 1,075,465 B sha16 C3C60CEE4D0741D9, mid_4MP 5,157,974 B sha16 5C49AB9020706F0D, large_12MP 9,795,599 B sha16 CA27799D3E7B441D -- all IDENTICAL to the pre-ramp fingerprints. Wall time 267 / 619 / 1165 ms for the default versus 1185 / 5324 / 16919 ms for --effort 7, which reproduces the same three fingerprints and so remains the byte-identical density anchor. Speedup on this corpus is 4.4x / 8.6x / 14.5x for identical output.
+        """
+    author "GitHub Uploader"
+}
+
+record jpegxl-rs.evidence.modular-effort-ramp-tests-2026-08-10/1 : evidence {
+    title "At 70688ac the jpxl-encode library test suite is 115 passed, 0 failed, 0 ignored. The suite includes the effort-ramp gates added by this work: every_effort_round_trips_losslessly_on_a_multi_group_frame (each level 1..=9 reconstructs pixels exactly through jpxl-decode on a multi-group frame), same_effort_is_deterministic, every_effort_plans_a_valid_tree_on_the_deep_path, and effort_7_budget_is_the_pre_ramp_search (pins level 7's ModularSearchBudget field-for-field to the pre-ramp constants)."
+    state verified
+    result pass
+    method command
+    observed_at git:70688ac1e3cd81b3b257d409500ac778f4b6935f
+    command "cargo test -p jpxl-encode --lib"
+    summary """
+        At 70688ac the jpxl-encode library test suite is 115 passed, 0 failed, 0 ignored. The suite includes the effort-ramp gates added by this work: every_effort_round_trips_losslessly_on_a_multi_group_frame (each level 1..=9 reconstructs pixels exactly through jpxl-decode on a multi-group frame), same_effort_is_deterministic, every_effort_plans_a_valid_tree_on_the_deep_path, and effort_7_budget_is_the_pre_ramp_search (pins level 7's ModularSearchBudget field-for-field to the pre-ramp constants).
+        """
+    author "GitHub Uploader"
+}
+
+record jpegxl-rs.evidence.modular-search-chaff-2026-08-10/1 : evidence {
+    title "Reproduced at 70688ac on the 4000x3000 (12MP) real-photo corpus input. Effort 1: cheap_scores=1 exact_prices=0 residual_scans=1, wall_ms_median=1025.6, output_bytes=9795599, fingerprint=dc380915d983b360. Effort 7: cheap_scores=69 exact_prices=2 residual_scans=71, wall_ms_median=19651.5, output_bytes=9795599, fingerprint=dc380915d983b360. The full search performs 71x the residual scans and 19.2x the wall time to arrive at a byte-identical, fingerprint-identical codestream: on this content the search above effort 1 buys nothing at all. This is one 12MP photograph plus the corpus sweep in .agent/scratch/effort-ramp-2026-08-10; it is not a claim about flat, paletteable, or line-art content, where effort 1 was measured ~3.7% larger on a synthetic screenshot fixture."
+    state verified
+    result pass
+    method command
+    observed_at git:70688ac1e3cd81b3b257d409500ac778f4b6935f
+    command "jpxl bench modular --input large_12MP.ppm --iters 1 --effort {1,7} --diag"
+    summary """
+        Reproduced at 70688ac on the 4000x3000 (12MP) real-photo corpus input. Effort 1: cheap_scores=1 exact_prices=0 residual_scans=1, wall_ms_median=1025.6, output_bytes=9795599, fingerprint=dc380915d983b360. Effort 7: cheap_scores=69 exact_prices=2 residual_scans=71, wall_ms_median=19651.5, output_bytes=9795599, fingerprint=dc380915d983b360. The full search performs 71x the residual scans and 19.2x the wall time to arrive at a byte-identical, fingerprint-identical codestream: on this content the search above effort 1 buys nothing at all. This is one 12MP photograph plus the corpus sweep in .agent/scratch/effort-ramp-2026-08-10; it is not a claim about flat, paletteable, or line-art content, where effort 1 was measured ~3.7% larger on a synthetic screenshot fixture.
+        """
+    author "GitHub Uploader"
+}
+
 record jpegxl-rs.evidence.opt-b-bulk-bitwriter/1 : evidence {
     title "Bulk write_bits, append_writer, counting writer; modular append_bits uses append_writer; bitstream unit tests green including bulk_write_bits_matches_legacy_bit_loop."
     state verified
