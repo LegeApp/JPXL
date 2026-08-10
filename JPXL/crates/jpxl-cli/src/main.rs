@@ -85,6 +85,22 @@ Options:
     --diag                After the timed run, print Phase-0 architecture
                           counters (choose stages, residual scans, plane clones)
 
+Modular search overrides (modular mode only). These sweep the effort ladder's
+constants so they can be chosen from evidence instead of guessed. They are not
+quality dials: every setting is exact-lossless, so they move the byte count and
+the encode time, never the decoded pixels.
+
+    --modular-max-depth <n>       Override the MA-tree depth cap (root = 0)
+    --modular-max-leaves <n>      Override the MA-tree leaf/context cap
+    --modular-sample-budget <n|full>
+                          Samples the cheap ranker may score per candidate,
+                          summed across planes. This is what bounds ranking
+                          cost independently of frame size; `full` = unbounded.
+    --modular-deep-cap <n|full>
+                          Frame sample count above which the tree search
+                          collapses to one split. `full` retires the collapse
+                          (needed to reach depth at all on a real photo).
+
 Prints one line per run: mode, size, iters, wall_ms_total, wall_ms_median,
 output_bytes, fingerprint. With --diag, a second `diag=...` line follows.
 
@@ -379,6 +395,7 @@ fn cmd_bench(args: &[String]) -> u8 {
     let mut resources = jpxl_encode::EncodeResources::auto();
     let mut diag = false;
     let mut effort = jpxl_encode::Effort::DEFAULT;
+    let mut overrides = jpxl_encode::ModularSearchOverrides::default();
 
     let mut rest = args.get(1..).unwrap_or(&[]).iter();
     while let Some(arg) = rest.next() {
@@ -445,6 +462,38 @@ fn cmd_bench(args: &[String]) -> u8 {
                     }
                 }
             }
+            // Measurement overrides for the modular search budget. These sweep
+            // the effort ladder's constants so they can be chosen from
+            // evidence rather than guessed; they are not quality dials, and
+            // every setting stays exact-lossless.
+            "--modular-max-depth" => {
+                let Some(v) = rest.next().and_then(|s| s.parse::<u32>().ok()) else {
+                    fail("`--modular-max-depth` needs a non-negative integer");
+                    return EXIT_ERROR;
+                };
+                overrides.max_tree_depth = Some(v);
+            }
+            "--modular-max-leaves" => {
+                let Some(v) = rest.next().and_then(|s| s.parse::<usize>().ok()) else {
+                    fail("`--modular-max-leaves` needs a positive integer");
+                    return EXIT_ERROR;
+                };
+                overrides.max_tree_leaves = Some(v.max(1));
+            }
+            "--modular-sample-budget" => {
+                let Some(v) = rest.next().and_then(|s| parse_sample_budget(s)) else {
+                    fail("`--modular-sample-budget` needs an integer or `full`");
+                    return EXIT_ERROR;
+                };
+                overrides.cheap_sample_budget = Some(v);
+            }
+            "--modular-deep-cap" => {
+                let Some(v) = rest.next().and_then(|s| parse_sample_budget(s)) else {
+                    fail("`--modular-deep-cap` needs an integer or `full`");
+                    return EXIT_ERROR;
+                };
+                overrides.deep_search_sample_cap = Some(v);
+            }
             other => {
                 fail(&format!("unknown `bench` option `{other}`"));
                 return EXIT_ERROR;
@@ -473,7 +522,7 @@ fn cmd_bench(args: &[String]) -> u8 {
     };
 
     let timed = match mode {
-        "modular" => bench_modular(&rgb, width, height, iters, resources, effort),
+        "modular" => bench_modular(&rgb, width, height, iters, resources, effort, overrides),
         "vardct-fixed" => bench_vardct_fixed(&rgb, width, height, iters, resources),
         "vardct-rate" => bench_vardct_rate(&rgb, width, height, bpp, iters, resources),
         "vardct-probe" => bench_vardct_probe(&rgb, width, height, iters, resources),
@@ -559,6 +608,7 @@ fn bench_modular(
     iters: usize,
     resources: jpxl_encode::EncodeResources,
     effort: jpxl_encode::Effort,
+    modular_search_overrides: jpxl_encode::ModularSearchOverrides,
 ) -> Result<BenchReport, String> {
     let samples: Vec<u16> = rgb.iter().map(|&b| u16::from(b)).collect();
     let image = jpxl_encode::Image::from_interleaved(width, height, 3, 8, &samples)
@@ -566,6 +616,7 @@ fn bench_modular(
     let options = jpxl_encode::EncodeOptions {
         resources,
         effort,
+        modular_search_overrides,
         ..jpxl_encode::EncodeOptions::default()
     };
     // Warm-up (not timed).
@@ -711,6 +762,17 @@ fn synthetic_rgb8(width: u32, height: u32) -> Vec<u8> {
         }
     }
     out
+}
+
+/// Parses a sample-count argument: a plain integer, or `full` for "unbounded".
+///
+/// `full` is spelled out because `u64::MAX` is the value that means "do not
+/// bound this", and writing that on a command line is unreadable.
+fn parse_sample_budget(s: &str) -> Option<u64> {
+    if s.eq_ignore_ascii_case("full") {
+        return Some(u64::MAX);
+    }
+    s.parse::<u64>().ok()
 }
 
 fn load_rgb8_ppm(path: &str) -> Result<(u32, u32, Vec<u8>), String> {

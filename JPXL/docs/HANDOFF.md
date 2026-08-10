@@ -7,6 +7,42 @@
 Dated working ledger. **Prepend** new entries — newest first. Each entry: what
 changed, what is now proved, what is next, what is blocked.
 
+## 2026-08-10 (3) — Phase 4G: the effort ladder was inert because the cheap ranker compared two different units, not because trees were too shallow
+
+**What changed (files: `crates/jpxl-encode/src/lossless.rs`, `crates/jpxl-encode/src/modular/mod.rs`, `crates/jpxl-cli/src/main.rs` — only these three):**
+- `ModularSearchBudget::cheap_sample_budget` + `effective_cheap_stride(budget, floor, w, h, planes)`, expanded **once** at the `plan_by_full_search` stage boundary. `cheap_row_stride` becomes a *floor*. A stride is a ratio, so a fixed stride still costs `frame_area / stride`; a sample budget is an absolute bound. Every level ships at `u64::MAX` (unbounded) for now — the plumbing is a provable no-op.
+- **The real fix.** `total_cost_source` added an *unscaled* whole-frame `ma_tree_bit_cost × sections` to a residual estimate covering only `1/row_stride` of the frame. **The two terms were in different units.** A split's saving was divided by the stride while its cost was not, so every extra context was over-priced by exactly the sampling ratio — and the ratio grows with frame size. `estimate_residual_bits_sampled` now extrapolates its data cost to whole-frame bits (the fixed ANS-table overhead is deliberately *not* extrapolated: one set of tables is emitted however densely you sampled).
+- `EncodeOptions::modular_search_overrides` + `jpxl bench modular --modular-{max-depth,max-leaves,sample-budget,deep-cap}`, so ladder constants get chosen from evidence instead of guessed.
+
+**The gate fired with the opposite answer to the one planned for.** The plan assumed `deep_search_sample_cap` was the blocker and depth was the prize. Retiring the cap changes **nothing**: with `--modular-deep-cap full` at 4 MP, efforts 7, 8 and 9 all converge on the same 4,942,547 B / `771811b28ce7ab6e` they reach *with* the cap. Depth beyond one split, and the finer `THRESH_FINE` grid, buy exactly zero bytes.
+
+**Mechanism, measured before the fix** (4 MP, same content, same candidate split): stride 1 (e9) **finds** it → 4,942,547 B. Stride 4 (e7) **rejects** it → 5,157,974 B. The verdict flipped purely on the sampling ratio.
+
+**Proved after the fix:**
+
+| | before | after | Δ |
+| --- | --- | --- | --- |
+| e7 0.8 MP | 1,075,465 | 1,037,868 | −3.5% |
+| e7 4 MP | 5,157,974 | 4,942,547 | −4.2% |
+| e7 12 MP | 9,795,599 | 9,795,599 | — |
+
+Default (effort 1) is **byte-identical on all three sizes** — it short-circuits the search entirely. 122/122 `jpxl-encode` lib tests. vs `cjxl -e7` at 4 MP the gap narrows from +25.9% to +20.6% — real, and nowhere near closed.
+
+**Two things I changed that were previously load-bearing, deliberately:**
+1. **Effort 7 is no longer byte-identical to the pre-ramp encoder.** That anchor property is retired; `verify_default_flip.ps1` now pins e7 to its own post-fix baseline and the *default* remains the identity gate. `effort_7_budget_is_the_pre_ramp_search` still pins the budget **fields** — it was always a budget test, not an output test.
+2. **Effort 7 at 4 MP went from ~5.7 s to ~47–50 s** for the same ~71 residual scans. Cause: the tree that now wins contains the Weighted (H.5) predictor, and `estimate_residual_bits_sampled` must full-scan any Weighted-containing tree; once Weighted wins the sweep, all 56 split candidates carrying it forward become full-frame scans. This is a real regression in an opt-in level, traded for the density above.
+
+**Next, in priority order:**
+1. **Bound the Weighted cost** — score split *topology* with a stateless proxy, restore Weighted only in per-leaf refinement. This is what makes the −4.2% affordable rather than an 8× tax.
+2. Only then revisit finite `cheap_sample_budget` values; with depth proven inert there is no reason to spend the budget on deeper search.
+3. The remaining +20.6% vs `cjxl -e7` is **not** depth. Suspects, unmeasured: context modelling / clustering quality, and the known Phase 4D gap (`allow_lz77 = false` during search, `true` at emission).
+
+**Traps — do not "fix" these:**
+- Do **not** re-pin effort 7 to the old fingerprints. They encode the units bug.
+- `effective_cheap_stride` must never return below its floor — it is a work-*reducer*; letting it lower the stride would silently make small frames slower.
+- The table-overhead term in `hybrid_estimate_from_events` must stay **outside** the extrapolation. Scaling it would re-introduce a units error in the other direction (~51 kbit of phantom cost at a 200× stride).
+- `both_oracles_decode_a_stream_from_the_hf_mul_segment` (`jpxl-encode-policy/tests/vardct_oracle.rs`) fails on this host — **verified pre-existing** by stashing and re-running at clean HEAD. Lossy path; unrelated to this work.
+
 ## 2026-08-10 (2) — Phase 4F: elide the search the budget already answered; and a libjxl head-to-head that reframes the density story
 
 **What changed (files: `crates/jpxl-encode/src/lossless.rs` — only this one):**

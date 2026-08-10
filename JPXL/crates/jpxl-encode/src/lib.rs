@@ -251,6 +251,46 @@ pub struct EncodeOptions {
     /// Every level is exact-lossless, so this changes only the byte count and
     /// the encode time, never the decoded pixels.
     pub effort: Effort,
+    /// Measurement escape hatch: override individual levers of the search
+    /// budget [`EncodeOptions::effort`] would have selected.
+    ///
+    /// This exists so the effort ladder's *constants* can be swept and chosen
+    /// from evidence (`jpxl bench modular --modular-max-depth/--modular-sample-budget`)
+    /// instead of guessed. It is deliberately not a quality dial: `None` — the
+    /// default — is the shipped behaviour, and nothing in the encoder sets it.
+    /// Like [`EncodeOptions::effort`], every setting stays exact-lossless, so
+    /// this can change the byte count and the encode time but never the
+    /// decoded pixels.
+    pub modular_search_overrides: ModularSearchOverrides,
+}
+
+/// Per-lever overrides of the [`Effort`]-selected modular search budget.
+///
+/// Each `Some` replaces one lever; each `None` keeps what the effort chose.
+/// See [`EncodeOptions::modular_search_overrides`] for why this exists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ModularSearchOverrides {
+    /// Cap on MA-tree depth (root = 0).
+    pub max_tree_depth: Option<u32>,
+    /// Cap on MA-tree leaves / residual contexts.
+    pub max_tree_leaves: Option<usize>,
+    /// Target samples the cheap ranker may score per candidate, summed across
+    /// planes. `u64::MAX` means unbounded.
+    pub cheap_sample_budget: Option<u64>,
+    /// Frame sample count above which the tree search collapses to one split.
+    /// `u64::MAX` retires the collapse.
+    pub deep_search_sample_cap: Option<u64>,
+}
+
+impl ModularSearchOverrides {
+    /// Whether any lever is overridden.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.max_tree_depth.is_none()
+            && self.max_tree_leaves.is_none()
+            && self.cheap_sample_budget.is_none()
+            && self.deep_search_sample_cap.is_none()
+    }
 }
 
 /// An 8-bit greyscale image in raster order.

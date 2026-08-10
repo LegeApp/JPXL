@@ -1205,7 +1205,10 @@ pub fn estimate_residual_bits_indices(
     rect: Option<Rect>,
 ) -> Result<u64> {
     let events = collect_residuals_indices(source, indices, rect)?;
-    hybrid_estimate_from_events(&events, source.tree.num_contexts())
+    // Unsampled: every visited sample is an event, so there is nothing to
+    // extrapolate and the scale factor is exactly 1.
+    let scanned = u64::try_from(events.len()).unwrap_or(u64::MAX);
+    hybrid_estimate_from_events(&events, source.tree.num_contexts(), scanned, scanned)
 }
 
 /// Full-frame residual bit estimate (see [`estimate_residual_bits_indices`]).
@@ -1246,11 +1249,38 @@ pub fn estimate_residual_bits_sampled(source: &ModularSource, row_stride: u32) -
     }
     let indices: Vec<usize> = (0..source.channels.len()).collect();
     let events = collect_residuals_indices_sampled(source, &indices, row_stride)?;
-    hybrid_estimate_from_events(&events, source.tree.num_contexts())
+    // Extrapolate the sample back to a whole-frame estimate. Callers add
+    // whole-frame fixed costs -- notably `ma_tree_bit_cost * sections` in
+    // `lossless::total_cost_source` -- to whatever this returns, so returning
+    // the bits for a 1/stride subset would compare a scaled-down saving
+    // against an unscaled-up cost. That mismatch scales with the stride, so it
+    // over-prices every extra context by exactly the sampling ratio and grows
+    // worse as frames get bigger: the split that pays for itself at stride 1
+    // looks like a loss at stride 4. Extrapolating here keeps the tier's
+    // return value in one unit -- estimated bits for the whole frame -- which
+    // is the same unit `estimate_residual_bits_full` and the Exact tier speak.
+    let scanned = u64::try_from(events.len()).unwrap_or(u64::MAX);
+    let total: u64 = indices
+        .iter()
+        .filter_map(|&i| source.channels.get(i))
+        .map(|ch| u64::from(ch.width).saturating_mul(u64::from(ch.height)))
+        .fold(0u64, u64::saturating_add);
+    hybrid_estimate_from_events(&events, source.tree.num_contexts(), scanned, total)
 }
 
 /// Shared Shannon-hybrid cost tail for both the full and sampled scorers.
-fn hybrid_estimate_from_events(events: &[(usize, u32)], num_contexts: usize) -> Result<u64> {
+///
+/// `scanned` and `total` express how much of the frame `events` actually
+/// covers; the data cost is extrapolated by `total / scanned` so the result is
+/// always an estimate for the whole frame. The fixed table overhead is *not*
+/// extrapolated -- one set of ANS tables is emitted however densely the
+/// estimate sampled. Pass `scanned == total` for an unsampled scan.
+fn hybrid_estimate_from_events(
+    events: &[(usize, u32)],
+    num_contexts: usize,
+    scanned: u64,
+    total: u64,
+) -> Result<u64> {
     let num_contexts = num_contexts.max(1);
     let mut census = TokenCensus::new(num_contexts)?;
     for &(ctx, value) in events {
@@ -1259,6 +1289,17 @@ fn hybrid_estimate_from_events(events: &[(usize, u32)], num_contexts: usize) -> 
     seed_empty_contexts(&mut census, num_contexts, events.is_empty());
     let config = best_hybrid_config(&census, num_contexts, None)?;
     let data = hybrid_data_cost(&census, num_contexts, &config);
+    // Whole-frame extrapolation (see the doc comment). Exactly 1.0 when the
+    // scan was unsampled, so the full scorer is bit-for-bit unaffected.
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "sample counts stay far inside f64's exact-integer range"
+    )]
+    let data = if scanned > 0 && total > scanned {
+        data * (total as f64 / scanned as f64)
+    } else {
+        data
+    };
     // Clustered ANS tables are usually hundreds of bits; a fixed pad keeps the
     // estimate from systematically undercutting exact prices.
     const TABLE_OVERHEAD_BITS: f64 = 256.0;

@@ -206,8 +206,54 @@ struct ModularSearchBudget {
     try_palette: bool,
     /// Whether to trial the default squeeze transform.
     try_squeeze: bool,
-    /// Row stride for the sampled cheap-tier scorer (`1` = every row).
+    /// **Minimum** row stride for the sampled cheap-tier scorer (`1` = every
+    /// row). A floor, not the stride itself: the stride actually used is
+    /// [`effective_cheap_stride`], which raises this when the frame would
+    /// otherwise blow [`Self::cheap_sample_budget`].
     cheap_row_stride: u32,
+    /// Target number of samples the cheap tier may score per candidate,
+    /// summed across score planes.
+    ///
+    /// This is what keeps ranking cost *bounded*. A stride is a ratio, so a
+    /// fixed stride still costs `frame_area / stride` — linear in frame size,
+    /// which is why the tree had to be collapsed on large frames
+    /// ([`Self::deep_search_sample_cap`]). A sample budget is an absolute
+    /// bound: the stride is derived from it, so a 12 MP frame costs the same
+    /// per candidate as a 1 MP one and depth becomes affordable at any size.
+    ///
+    /// [`u64::MAX`] means "unbounded" — the floor stride wins and behaviour is
+    /// exactly the pre-budget fixed-stride search.
+    cheap_sample_budget: u64,
+}
+
+/// The row stride the cheap tier actually uses: [`ModularSearchBudget::cheap_row_stride`]
+/// raised until scoring one candidate costs at most `sample_budget` samples.
+///
+/// Pure in its arguments — constants and frame dimensions only, no RNG and no
+/// ambient state — so the search stays a deterministic function of its budget
+/// (`same_effort_is_deterministic`).
+///
+/// Never returns less than `floor_stride`, so a frame already inside the budget
+/// is scored exactly as before and this can only ever *remove* work, never add
+/// it. A zero budget (or arithmetic that saturates) also falls back to the
+/// floor rather than inventing a stride.
+fn effective_cheap_stride(
+    sample_budget: u64,
+    floor_stride: u32,
+    width: u32,
+    height: u32,
+    num_planes: usize,
+) -> u32 {
+    if sample_budget == 0 {
+        return floor_stride;
+    }
+    let samples = u64::from(width)
+        .saturating_mul(u64::from(height))
+        .saturating_mul(u64::try_from(num_planes).unwrap_or(u64::MAX));
+    // Ceiling division: the smallest stride whose scored-sample count fits.
+    let needed = samples.div_ceil(sample_budget).max(1);
+    let needed = u32::try_from(needed).unwrap_or(u32::MAX);
+    floor_stride.max(needed)
 }
 
 // Predictor ladders. Every subset keeps `PREDICTOR_CANDIDATES`' order so that
@@ -255,10 +301,17 @@ const THRESH_FINE: &[i32] = &[0, 1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64];
 impl ModularSearchBudget {
     /// Expands an [`Effort`] level into concrete search levers.
     ///
-    /// Level 7 is the pre-ramp search, field for field; changing it means
-    /// re-proving default byte-identity (see the `effort_7_budget_is_the_pre_ramp_search`
-    /// test and the corpus fingerprint gate). Levels 1-6 trade density for
-    /// speed; 8-9 trade speed for density.
+    /// Level 7's *levers* are the pre-ramp search, field for field, and
+    /// `effort_7_budget_is_the_pre_ramp_search` pins them. Its *output* is
+    /// deliberately no longer byte-identical to the pre-ramp encoder: the
+    /// cheap tier used to compare a `1/row_stride` residual estimate against
+    /// an unscaled whole-frame tree cost, which over-priced every extra
+    /// context by the sampling ratio and hid the winning split at any stride
+    /// above 1. `modular::estimate_residual_bits_sampled` now extrapolates to
+    /// whole-frame bits, so level 7 finds the tree only level 9 could reach
+    /// before (measured -3.5% at 0.8 MP, -4.2% at 4 MP, unchanged at 12 MP).
+    /// Levels 1-6 trade density for speed; 8-9 currently find nothing level 7
+    /// does not.
     fn for_effort(effort: Effort) -> Self {
         // The default/level-7 search, reused for level 7 and as a defensive
         // fallback. Every other arm is a deliberate deviation from it.
@@ -273,6 +326,12 @@ impl ModularSearchBudget {
             try_palette: true,
             try_squeeze: true,
             cheap_row_stride: SAMPLED_GATHER_ROW_STRIDE,
+            // Unbounded for now at every level: the sample-budget plumbing
+            // lands as a provable no-op, and the finite per-level budgets are
+            // set only once the depth measurement says depth is worth paying
+            // for. Level 7 must stay `MAX` permanently — it is the
+            // byte-identical density anchor.
+            cheap_sample_budget: u64::MAX,
         };
         match effort.level() {
             1 => Self {
@@ -348,6 +407,25 @@ impl ModularSearchBudget {
         }
     }
 
+    /// Applies the caller's measurement overrides on top of the effort's
+    /// levers, at the same stage boundary the effort itself is expanded.
+    ///
+    /// Each `None` keeps the effort's choice, so an empty override set is the
+    /// identity and the shipped ladder is untouched.
+    fn with_overrides(self, overrides: &crate::ModularSearchOverrides) -> Self {
+        Self {
+            max_tree_depth: overrides.max_tree_depth.unwrap_or(self.max_tree_depth),
+            max_tree_leaves: overrides.max_tree_leaves.unwrap_or(self.max_tree_leaves),
+            cheap_sample_budget: overrides
+                .cheap_sample_budget
+                .unwrap_or(self.cheap_sample_budget),
+            deep_search_sample_cap: overrides
+                .deep_search_sample_cap
+                .unwrap_or(self.deep_search_sample_cap),
+            ..self
+        }
+    }
+
     /// Whether this budget makes [`plan_for`]'s search a foregone conclusion.
     ///
     /// With a single predictor there is nothing for the sweep to rank; with an
@@ -395,7 +473,8 @@ pub fn plan_for(
     options: &EncodeOptions,
 ) -> Result<ValidatedLosslessPlan> {
     reset_multiplicity();
-    let budget = ModularSearchBudget::for_effort(options.effort);
+    let budget = ModularSearchBudget::for_effort(options.effort)
+        .with_overrides(&options.modular_search_overrides);
     let group_size_shift = options.group_size_shift.unwrap_or(DEFAULT_GROUP_SIZE_SHIFT);
 
     // Nothing in the search can move the answer at this budget, so skip
@@ -501,6 +580,18 @@ fn plan_by_full_search(
         })
         .collect();
 
+    // The one place the sample budget becomes a concrete stride: dimensions
+    // and plane count are both known here for the first time, and every cheap
+    // price below reads this single value. Per `docs/Encoder-plan1.md` §12 the
+    // budget is expanded at a stage boundary, never re-derived in a kernel.
+    let cheap_row_stride = effective_cheap_stride(
+        budget.cheap_sample_budget,
+        budget.cheap_row_stride,
+        width,
+        height,
+        shared_score.len(),
+    );
+
     for &predictor in budget.predictors {
         let tree = MaTree::single_leaf(predictor);
         let cost = total_cost_shared(
@@ -510,7 +601,7 @@ fn plan_by_full_search(
             &tree,
             group_size_shift,
             PriceTier::Cheap {
-                row_stride: budget.cheap_row_stride,
+                row_stride: cheap_row_stride,
             },
         )?;
         if best.as_ref().is_none_or(|(c, _)| cost < *c) {
@@ -551,7 +642,7 @@ fn plan_by_full_search(
                         &candidate,
                         group_size_shift,
                         PriceTier::Cheap {
-                            row_stride: budget.cheap_row_stride,
+                            row_stride: cheap_row_stride,
                         },
                     )?;
                     if cost < best_cost && round_best.as_ref().is_none_or(|(c, _)| cost < *c) {
@@ -594,7 +685,7 @@ fn plan_by_full_search(
                     &candidate,
                     group_size_shift,
                     PriceTier::Cheap {
-                        row_stride: budget.cheap_row_stride,
+                        row_stride: cheap_row_stride,
                     },
                 )?;
                 if cost < best_cost {
@@ -1554,9 +1645,14 @@ mod tests {
 
     // --- Effort ramp (speed/size dial) ---
 
-    /// Level 7 is the pre-ramp search, field for field. If this drifts, a
-    /// default encode is no longer byte-identical to the pre-effort-ramp
-    /// output; re-prove the corpus fingerprint gate before changing it.
+    /// Level 7's levers are the pre-ramp search, field for field.
+    ///
+    /// This pins the *budget*, not the output. Level 7's bytes intentionally
+    /// changed when the cheap tier stopped comparing a sampled residual
+    /// estimate against an unscaled whole-frame tree cost; see
+    /// [`ModularSearchBudget::for_effort`]. The default effort (1) is the one
+    /// whose byte-identity the corpus fingerprint gate still proves, and it
+    /// short-circuits this search entirely.
     #[test]
     fn effort_7_budget_is_the_pre_ramp_search() {
         let b = ModularSearchBudget::for_effort(Effort::new(7).expect("valid"));
@@ -1568,6 +1664,127 @@ mod tests {
         assert_eq!(b.deep_search_sample_cap, DEEP_SEARCH_SAMPLE_CAP);
         assert!(b.refine_leaves && b.try_palette && b.try_squeeze);
         assert_eq!(b.cheap_row_stride, SAMPLED_GATHER_ROW_STRIDE);
+        // The anchor must never acquire a finite sample budget: a bounded
+        // cheap tier would re-rank candidates on a subset and could move the
+        // emitted tree, which is exactly what this level exists not to do.
+        assert_eq!(
+            b.cheap_sample_budget,
+            u64::MAX,
+            "level 7 is the byte-identical density anchor; it must stay unbounded"
+        );
+    }
+
+    /// The sample budget is a *bound*, not a replacement policy: whenever the
+    /// frame already fits inside it, the derived stride must be exactly the
+    /// effort's floor, so scoring is identical to the pre-budget search. This
+    /// is what makes the plumbing step provably output-preserving.
+    #[test]
+    fn bounded_budget_is_a_noop_below_the_budget() {
+        // Every shipped effort level, against a frame comfortably inside any
+        // plausible budget.
+        for level in 1..=9u8 {
+            let b = ModularSearchBudget::for_effort(Effort::new(level).expect("level in range"));
+            let stride =
+                effective_cheap_stride(b.cheap_sample_budget, b.cheap_row_stride, 64, 64, 3);
+            assert_eq!(
+                stride, b.cheap_row_stride,
+                "effort {level}: a sub-budget frame must score at the floor stride"
+            );
+        }
+
+        // The boundary itself: exactly at the budget is still "fits".
+        assert_eq!(effective_cheap_stride(3 * 100 * 100, 4, 100, 100, 3), 4);
+        // One sample over, but the implied stride (2) is below the floor (4),
+        // so the floor still wins — the budget can only ever *raise* it.
+        assert_eq!(effective_cheap_stride(3 * 100 * 100 - 1, 4, 100, 100, 3), 4);
+    }
+
+    /// The other half of the contract: above the budget the stride rises so
+    /// that scored samples stay bounded, and it rises with frame size rather
+    /// than staying a fixed ratio. This is the property that lets the tree
+    /// depth cap be retired.
+    #[test]
+    fn bounded_budget_raises_the_stride_with_frame_size() {
+        let budget = 1u64 << 16; // 65,536 scored samples.
+        let floor = 1u32;
+
+        let small = effective_cheap_stride(budget, floor, 256, 256, 3);
+        let large = effective_cheap_stride(budget, floor, 4000, 3000, 3);
+        assert!(
+            large > small,
+            "a bigger frame must be scored more sparsely, not proportionally: {small} vs {large}"
+        );
+
+        // The bound actually holds, and — the point of the whole change — it
+        // does NOT grow with frame size. Sampling is row-granular, so the
+        // scored count can exceed the budget by at most the two partial rows
+        // the ceiling and the always-included final row contribute; that slack
+        // is a function of row cost, not of frame area.
+        for (w, h) in [(256u32, 256u32), (2400, 1800), (4000, 3000)] {
+            let stride = effective_cheap_stride(budget, floor, w, h, 3);
+            let row_cost = u64::from(w) * 3;
+            let rows = u64::from(h).div_ceil(u64::from(stride)) + 1;
+            let scored = rows * row_cost;
+            assert!(
+                scored <= budget + 2 * row_cost,
+                "{w}x{h}: scored {scored} samples against a {budget} budget \
+                 (stride {stride}, slack {} for two partial rows)",
+                2 * row_cost
+            );
+        }
+    }
+
+    /// The measurement escape hatch must be inert unless asked: an empty
+    /// override set is the identity on every effort's budget, so the shipped
+    /// ladder cannot drift just because the hatch exists.
+    #[test]
+    fn empty_overrides_leave_every_effort_budget_untouched() {
+        let none = crate::ModularSearchOverrides::default();
+        assert!(none.is_empty());
+        for level in 1..=9u8 {
+            let base = ModularSearchBudget::for_effort(Effort::new(level).expect("level in range"));
+            let after = base.with_overrides(&none);
+            let where_ = format!("effort {level}");
+            assert_eq!(after.max_tree_depth, base.max_tree_depth, "{where_}");
+            assert_eq!(after.max_tree_leaves, base.max_tree_leaves, "{where_}");
+            assert_eq!(
+                after.cheap_sample_budget, base.cheap_sample_budget,
+                "{where_}"
+            );
+            assert_eq!(
+                after.deep_search_sample_cap, base.deep_search_sample_cap,
+                "{where_}"
+            );
+            assert_eq!(after.predictors, base.predictors, "{where_}");
+            assert_eq!(after.cheap_row_stride, base.cheap_row_stride, "{where_}");
+            assert_eq!(after.refine_leaves, base.refine_leaves, "{where_}");
+        }
+    }
+
+    /// And when asked, each override replaces exactly its own lever.
+    #[test]
+    fn each_override_replaces_only_its_own_lever() {
+        let base = ModularSearchBudget::for_effort(Effort::new(7).expect("7"));
+        let after = base.with_overrides(&crate::ModularSearchOverrides {
+            max_tree_depth: Some(6),
+            cheap_sample_budget: Some(1 << 20),
+            ..crate::ModularSearchOverrides::default()
+        });
+        assert_eq!(after.max_tree_depth, 6);
+        assert_eq!(after.cheap_sample_budget, 1 << 20);
+        // Untouched levers keep the effort's values.
+        assert_eq!(after.max_tree_leaves, base.max_tree_leaves);
+        assert_eq!(after.deep_search_sample_cap, base.deep_search_sample_cap);
+    }
+
+    /// Degenerate inputs must fall back to the floor rather than inventing a
+    /// stride: a zero budget is "unset", not "score nothing".
+    #[test]
+    fn a_zero_budget_falls_back_to_the_floor_stride() {
+        assert_eq!(effective_cheap_stride(0, 4, 4000, 3000, 3), 4);
+        assert_eq!(effective_cheap_stride(u64::MAX, 4, 4000, 3000, 3), 4);
+        // Never below the floor, whatever the arithmetic.
+        assert!(effective_cheap_stride(u64::MAX, 8, 1, 1, 1) >= 8);
     }
 
     #[test]
