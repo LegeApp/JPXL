@@ -758,6 +758,46 @@ record jpegxl-rs.work.arch-phase4j-aq-tuning-measurable/1 : work {
     author "GitHub Uploader"
 }
 
+record jpegxl-rs.work.arch-phase4k-rate-loop-probe-reduction/1 : work {
+    title "Phase 4K: cut rate-loop probe count -- tolerance exit, aimed stepping with a non-monotone safety rule, Full reserve as a cap"
+    state proposed
+    scope [ path "JPXL/crates/jpxl-encode-policy/src/rate.rs" ]
+    intent """
+        Cut the number of full encodes a targeted lossy encode pays for. A rate search runs 15-40 exact prices, each one a complete frame encode, and that -- not per-probe cover cost -- is the 58-530x speed gap against cjxl. It is also why high targets are missed: the measured cause of the undershoot is the Fast ladder exhausting its 24-price cap, not the quantizer ladder running out of rungs.
+
+        Three changes, in increasing order of how much they need proving.
+
+        1. TOLERANCE EXIT. The bisection had no stopping condition for "the caller's tolerance is already met". It stopped only when the remaining opportunity was bounded (hi - best <= slack), which on a smooth curve needs the bracket narrowed to ~1% in SIZE and therefore costs most of the bisection. Now it also stops once target - best <= slack. Safe by construction: `best` only improves, so stopping early cannot change which of the priced candidates is returned; it only declines to price more.
+
+        2. AIMED STEPPING, with a safety rule. Bisection needs ~log2(width) prices and the ladder is ~2^17 rungs, which is more than the budget has after bracketing. A false-position step on log(size) against log(effective quantizer scale) usually lands within a rung or two. Interpolating on the RUNG INDEX would aim badly, because the index is not proportional to the quantizer -- above MAX_GLOBAL_SCALE each rung is an HfMul step worth a whole MAX_GLOBAL_SCALE of the lower segment -- so the interpolation runs on global_scale * HfMul, which is smooth across the kink.
+
+           The safety rule is the part that matters: AN AIMED PROBE MAY MOVE `lo` UP BUT NEVER BECOMES THE NEW `hi`. On a non-monotone size function, `hi` infeasible does NOT imply everything above `hi` is infeasible, so a badly-aimed probe that tightened `hi` could fence the incumbent off from a better feasible rung above it. Moving `lo` up is always safe: `lo` only advances to rungs proved feasible and `best` is the largest feasible ever priced, so a longer jump finds the answer sooner and cannot skip past it. Termination still comes from the interleaved midpoint steps, which do tighten `hi`.
+
+           Aiming is also abandoned permanently after one aimed probe comes back infeasible: under the safety rule such a probe cannot narrow the bracket, so it is a wasted full encode, and the same curve misfit would keep costing one per round. That bounds the worst case at "bisection plus one wasted probe" instead of "half the budget on probes that do not narrow anything", which is what a high-rate target on a stiff curve was measured doing.
+
+        3. THE FULL RESERVE BECOMES A CAP, NOT A FLOOR. Full refinement was given max_prices - used_by_fast. Before aimed stepping the Fast ladder nearly always spent its whole allowance so the distinction never showed; now that Fast can finish in a handful of prices, handing Full the remainder would spend the saving on more expensive-entropy probes instead of banking it, and breaks the "finalist-only Full" invariant that RateProbeStats::full_confined_to_refinement asserts.
+        """
+    acceptance {
+        check contracts-hold {
+            statement """
+                The loop still never exceeds its target, still lands within tolerance where the ladder can express it, still respects the price cap, and still finds the global optimum on a non-monotone sawtooth; and an aimed probe landing in an infeasible spike does not fence off the better rungs above it.
+                """
+            method command
+            command "cargo test -p jpxl-encode-policy --lib"
+        }
+        check fewer-full-encodes {
+            statement """
+                Real targeted encodes complete in materially fewer prices and less wall time than before.
+                """
+            method command
+            command "jpxl encode <corpus>.ppm out.jxl --bpp N"
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase4i-perceptual-metrics/1 ]
+    part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+    author "GitHub Uploader"
+}
+
 record jpegxl-rs.work.arch-s8-cover-lane-simd/1 : work {
     title "outside-advice.md §8 (S8), narrowed per Opus advisor review: bit-identical coefficient-lane SIMD for cover scoring"
     state completed

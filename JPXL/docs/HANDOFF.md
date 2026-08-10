@@ -7,6 +7,38 @@
 Dated working ledger. **Prepend** new entries — newest first. Each entry: what
 changed, what is now proved, what is next, what is blocked.
 
+## 2026-08-10 (7) — Phase 4K: 1.7–4.7× faster lossy encodes by spending fewer full encodes in the rate loop
+
+**What changed (file: `crates/jpxl-encode-policy/src/rate.rs` — only this one):**
+
+1. **Tolerance exit.** The bisection had **no stopping condition for "the caller's tolerance is already met"**. It stopped only on `hi - best <= slack` — a bound on remaining *opportunity*, which needs the bracket narrowed to ~1% in *size* and therefore costs most of the bisection. It now also stops on `target - best <= slack`. Provably safe: `best` only improves, so stopping early cannot change which priced candidate is returned.
+2. **Aimed stepping** — false position on log(size) vs log(**effective quantizer scale** `global_scale × HfMul`, *not* the rung index, which is not proportional to the quantizer above `MAX_GLOBAL_SCALE`).
+3. **The Full reserve is now a cap, not a floor.** It was `max_prices − used_by_fast`; with Fast finishing early that handed Full the saving instead of banking it, and broke `full_confined_to_refinement`.
+
+**The safety rule that makes (2) sound — this is the load-bearing part.** *An aimed probe may move `lo` up but never becomes the new `hi`.* On a non-monotone size function `hi` infeasible does **not** imply everything above `hi` is infeasible, so a badly-aimed probe that tightened `hi` could fence the incumbent off from a better feasible rung above it. Moving `lo` up is always safe — `lo` only advances to proved-feasible rungs and `best` is the largest feasible ever priced. Termination still comes from the interleaved midpoint steps, which *do* tighten `hi`. Pinned by `an_aimed_probe_that_lands_in_a_spike_does_not_fence_off_the_rungs_above_it`, and the pre-existing `the_loop_survives_a_non_monotone_pocket` still passes unmodified.
+
+Aiming is also **abandoned after one failure**: under the safety rule an infeasible aimed probe cannot narrow the bracket, so it is a wasted full encode, and the same misfit repeats every round. Worst case becomes "bisection plus one wasted probe".
+
+**Measured** (4 MP and 12 MP, baseline = entry 4's sweep):
+
+| case | before | after | speedup | bytes |
+| --- | --- | --- | --- | --- |
+| 4 MP @ 1 bpp | 92.2 s | **19.8 s** | **4.7×** | 537,114 → 539,797 (0.5% → **0.04%** short) |
+| 4 MP @ 2 bpp | 98.4 s | 55.3 s | 1.8× | 1,077,825 → 1,072,268 |
+| 4 MP @ 4 bpp | 241.6 s | 145.4 s | 1.66× | 8.9% → **9.5%** short |
+| 12 MP @ 1 bpp | 200.1 s | **54.3 s** | **3.7×** | 1,495,450 → 1,494,376 |
+| 12 MP @ 2 bpp | 559.3 s | 336.5 s | 1.66× | 16.3% → **17.6%** short |
+
+**The honest trade.** Where the target is reachable this is a large win in both speed *and* rate accuracy (4 MP @ 1 bpp now lands 0.04% from target instead of 0.5%). Where the target was **already** being missed, it is missed by about one more percentage point — the abandoned aiming bet costs one probe, and those cases have no probes to spare. I kept it because 3.7–4.7× on the reachable cases outweighs ~1 pp on cases that were already failing, but it is a regression and should be named as one.
+
+**The root cause is still unfixed.** Every undershooting case still reports `24 fast` — the Fast ladder exhausting its cap. Aiming did not fix that because Fast's sizes are *overestimates*, so its incumbent is conservative and the climb happens in Full refinement, which is capped at 16. The next lever is the fast/full split itself, or a cheaper Fast price, not more stepping cleverness.
+
+**Traps — do not "fix" these:**
+- Do **not** let an aimed probe set `hi`. It is the one thing that makes this safe on a non-monotone curve, and the failure is silent: you get a plausible, smaller answer.
+- Do **not** interpolate on the rung index. Above `MAX_GLOBAL_SCALE` a rung is worth a whole `MAX_GLOBAL_SCALE` of the lower segment; index-space aiming misses badly exactly where high-rate targets live.
+- Do **not** restore `remaining = max_prices - used`. The reserve is a cap; making it a floor spends the speed saving on Full probes.
+- Do **not** raise `max_prices` to fix the remaining undershoot without first making a Fast price cheaper — it multiplies the thing that is already the whole cost.
+
 ## 2026-08-10 (6) — Phase 4J: the adaptive-quantization field is a net perceptual loss; and the undershoot cause, measured at last
 
 **What changed (files: `crates/jpxl-encode-policy/src/{field.rs,request.rs,lib.rs}`, `crates/jpxl-cli/src/main.rs`):**

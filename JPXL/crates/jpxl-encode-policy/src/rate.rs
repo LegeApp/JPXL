@@ -399,6 +399,93 @@ pub fn search_ladder(
     search.run(start, tolerance, budget)
 }
 
+/// The effective quantizer fineness at a rung: `global_scale * HfMul`.
+///
+/// The rung *index* is not proportional to the quantizer. Below
+/// `MAX_GLOBAL_SCALE` a rung is a `global_scale` step; above it `global_scale`
+/// is pinned and each rung is an `HfMul` step worth `MAX_GLOBAL_SCALE` of the
+/// lower segment. Interpolating on the index therefore aims badly across that
+/// kink — which is exactly where high-rate targets live. This quantity is
+/// smooth and strictly increasing across the whole ladder.
+fn effective_scale(rung: Rung) -> u64 {
+    if rung.get() < MAX_GLOBAL_SCALE {
+        u64::from(rung.get()) + 1
+    } else {
+        u64::from(MAX_GLOBAL_SCALE) * u64::from(rung.get() - MAX_GLOBAL_SCALE + 2)
+    }
+}
+
+/// The inverse of [`effective_scale`], rounded down to a representable rung.
+fn rung_for_effective_scale(scale: u64) -> Rung {
+    let max = u64::from(MAX_GLOBAL_SCALE);
+    if scale <= max {
+        return Rung::new(u32::try_from(scale.saturating_sub(1)).unwrap_or(u32::MAX));
+    }
+    let mul = (scale / max).max(2);
+    Rung::new(u32::try_from(max + mul - 2).unwrap_or(u32::MAX))
+}
+
+/// Where to aim next inside a bracket: false position on log(size) against
+/// log(effective quantizer scale).
+///
+/// `lo` is feasible, `hi` is not. Returns a rung strictly between them, or
+/// `None` when the interpolation cannot be trusted — a degenerate bracket, a
+/// non-positive size, or a bracket whose size does not increase — in which
+/// case the caller bisects.
+///
+/// Log-log because size against quantizer scale is near power-law over the
+/// range the ladder spans: `global_scale` is a reciprocal, so equal *ratios*
+/// are the equal steps.
+///
+/// Pure, so the stepping rule is testable without encoding anything.
+fn interpolated_rung(lo: (Rung, u64), hi: (Rung, u64), target: u64) -> Option<Rung> {
+    let (lo_rung, lo_bytes) = lo;
+    let (hi_rung, hi_bytes) = hi;
+    if hi_rung.get().saturating_sub(lo_rung.get()) <= 1 || lo_bytes == 0 || target == 0 {
+        return None;
+    }
+    if hi_bytes <= lo_bytes {
+        // Not increasing across the bracket: a pocket, not a slope.
+        return None;
+    }
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "scales and byte counts stay inside f64's exact-integer range"
+    )]
+    let (lo_x, hi_x, lo_y, hi_y, t_y) = (
+        (effective_scale(lo_rung) as f64).ln(),
+        (effective_scale(hi_rung) as f64).ln(),
+        (lo_bytes as f64).ln(),
+        (hi_bytes as f64).ln(),
+        (target as f64).ln(),
+    );
+    let span = hi_y - lo_y;
+    if !span.is_finite() || span <= 0.0 {
+        return None;
+    }
+    let fraction = ((t_y - lo_y) / span).clamp(0.0, 1.0);
+    let guess_x = lo_x + fraction * (hi_x - lo_x);
+    if !guess_x.is_finite() {
+        return None;
+    }
+    let guess_scale = guess_x.exp();
+    if !guess_scale.is_finite() || guess_scale < 0.0 {
+        return None;
+    }
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "clamped into the bracket immediately below"
+    )]
+    let guess_scale = guess_scale.round() as u64;
+    let guess = rung_for_effective_scale(guess_scale).get();
+    let (low, high) = (lo_rung.get() + 1, hi_rung.get().checked_sub(1)?);
+    if low > high {
+        return None;
+    }
+    Some(Rung::new(guess.clamp(low, high)))
+}
+
 /// The search's mutable state; a struct because the price counter, the trace
 /// and the incumbent are all updated by the same one place.
 struct Search<F> {
@@ -458,13 +545,16 @@ impl<F: FnMut(QuantizerChoice) -> Result<u64>> Search<F> {
         // quantizer is a reciprocal of `global_scale`, so equal ratios are the
         // equal steps, and a linear walk from the default would take thousands
         // of encodes to reach a low-rate target.
-        let mut lo: Option<Rung> = None;
+        // `lo` carries its size too: the aimed step below interpolates through
+        // both bracket ends, so it needs the feasible end's price, not just
+        // its index.
+        let mut lo: Option<(Rung, u64)> = None;
         let mut hi: Option<(Rung, u64)> = None;
         let mut floor_bytes = None;
 
         let first = self.eval(start, RatePhase::Bracket)?;
         if first <= self.target {
-            lo = Some(start);
+            lo = Some((start, first));
             let mut current = start;
             while current < Rung::TOP && self.affordable() {
                 let next = Rung::new(current.get().saturating_mul(2).saturating_add(1));
@@ -476,7 +566,7 @@ impl<F: FnMut(QuantizerChoice) -> Result<u64>> Search<F> {
                     hi = Some((next, bytes));
                     break;
                 }
-                lo = Some(next);
+                lo = Some((next, bytes));
                 current = next;
             }
         } else {
@@ -495,7 +585,7 @@ impl<F: FnMut(QuantizerChoice) -> Result<u64>> Search<F> {
                 let next = Rung::new(current.get().div_ceil(2).saturating_sub(1));
                 let bytes = self.eval(next, RatePhase::Bracket)?;
                 if bytes <= self.target {
-                    lo = Some(next);
+                    lo = Some((next, bytes));
                     break;
                 }
                 hi = Some((next, bytes));
@@ -503,7 +593,7 @@ impl<F: FnMut(QuantizerChoice) -> Result<u64>> Search<F> {
             }
         }
 
-        let Some(mut lo) = lo else {
+        let Some((mut lo, mut lo_bytes)) = lo else {
             if let Some(floor) = floor_bytes {
                 return Err(PolicyError::TargetUnreachable {
                     target: self.target,
@@ -521,6 +611,8 @@ impl<F: FnMut(QuantizerChoice) -> Result<u64>> Search<F> {
         // `hi` priced, no candidate between `lo` and `hi` can be worth more
         // than `hi - best` bytes, so once that gap is inside the tolerance the
         // remaining encodes cannot buy the tolerance back.
+        let mut take_aimed_step = true;
+        let mut aiming_pays = true;
         while let Some((high, high_bytes)) = hi {
             if high.get().saturating_sub(lo.get()) <= 1 || !self.affordable() {
                 break;
@@ -529,12 +621,72 @@ impl<F: FnMut(QuantizerChoice) -> Result<u64>> Search<F> {
             if high_bytes.saturating_sub(best_bytes) <= slack {
                 break;
             }
-            let mid = Rung::new(lo.get() + (high.get() - lo.get()) / 2);
-            let bytes = self.eval(mid, RatePhase::Bisect)?;
-            if bytes <= self.target {
-                lo = mid;
+            // The caller asked to land within `slack` of the target, and we
+            // already have. Every further price is a full encode spent
+            // resolving a rung the tolerance does not care about.
+            //
+            // Safe by construction: `best` only ever improves, so stopping
+            // early cannot change which candidate is returned among those
+            // priced — it only declines to price more. Distinct from the bound
+            // above, which asks "can anything left still help"; this asks "do
+            // we still need help". On a smooth curve the bound needs the
+            // bracket narrowed to ~1% in *size*, which costs most of the
+            // bisection; this fires as soon as the target is met.
+            if self.target.saturating_sub(best_bytes) <= slack {
+                break;
+            }
+            // Alternate an *aimed* step with a plain midpoint.
+            //
+            // Bisection needs ~log2(width) prices, and on a ~2^17-rung ladder
+            // that is more than the budget has left after bracketing — which
+            // is how a target gets missed with rungs still available. A
+            // false-position step on log(size) usually lands within a rung or
+            // two instead.
+            //
+            // THE SAFETY RULE: an aimed probe may only move `lo` up; it never
+            // becomes the new `hi`. That is what makes this provably no worse
+            // than bisection on a non-monotone function. `hi` infeasible does
+            // NOT imply everything above `hi` is infeasible when the size
+            // function has pockets, so a badly-aimed probe that tightened `hi`
+            // could fence the incumbent off from a better feasible rung above
+            // it — which is exactly how a naive version of this loses
+            // `the_loop_survives_a_non_monotone_pocket`'s optimum. Moving `lo`
+            // up is always safe: `lo` only ever advances to rungs proved
+            // feasible, and `best` is the largest feasible ever priced, so a
+            // longer jump can only find the answer sooner, never skip past it.
+            //
+            // Termination still comes from the interleaved midpoint steps,
+            // which do tighten `hi`: the bracket strictly halves every other
+            // iteration, so the worst case is twice bisection's step count and
+            // the price cap bounds it regardless.
+            let midpoint = Rung::new(lo.get() + (high.get() - lo.get()) / 2);
+            let (probe, aimed) = if take_aimed_step && aiming_pays {
+                match interpolated_rung((lo, lo_bytes), (high, high_bytes), self.target) {
+                    Some(guess) if guess != midpoint => (guess, true),
+                    _ => (midpoint, false),
+                }
             } else {
-                hi = Some((mid, bytes));
+                (midpoint, false)
+            };
+            take_aimed_step = !take_aimed_step;
+
+            let bytes = self.eval(probe, RatePhase::Bisect)?;
+            if bytes <= self.target {
+                lo = probe;
+                lo_bytes = bytes;
+            } else if aimed {
+                // The safety rule means this probe could not tighten `hi`, so
+                // it bought nothing: a wasted full encode. Aiming is a bet on
+                // the curve being well-behaved here; one lost bet is enough to
+                // stop making it, because the same misfit will keep costing a
+                // probe per round. Falling back to pure bisection from here
+                // makes the worst case "bisection plus one wasted probe"
+                // rather than "half the budget spent on probes that do not
+                // narrow the bracket" — which is what a high-rate target on a
+                // stiff curve was measured doing.
+                aiming_pays = false;
+            } else {
+                hi = Some((probe, bytes));
             }
         }
 
@@ -756,7 +908,14 @@ pub fn search_frame(
     // remaining budget. Fast overestimates, so Full at that rung is still
     // under target and the geometric climb reclaims undershoot.
     let used = u32::try_from(search.trace.len()).unwrap_or(u32::MAX);
-    let remaining = max_prices.saturating_sub(used).max(1);
+    // The reserve is a CAP on Full refinement, not a floor. Before aimed
+    // stepping the Fast ladder nearly always spent its whole allowance, so
+    // `max_prices - used` was already about the reserve and the distinction
+    // never showed. Now that Fast can finish in a handful of prices, handing
+    // Full everything Fast did not use would spend the saving on more
+    // expensive-entropy probes instead of banking it — and would break
+    // `full_confined_to_refinement`'s "finalist-only Full" invariant.
+    let remaining = max_prices.saturating_sub(used).min(full_reserve).max(1);
     let mut full_budget = request.budget.rate;
     full_budget.max_prices = remaining;
     full_budget.lf_fill_probes = 0;
@@ -900,6 +1059,144 @@ mod tests {
                 result.trace.len() <= budget().max_prices as usize,
                 "target {target}: {} prices",
                 result.trace.len()
+            );
+        }
+    }
+
+    /// The aimed step, in isolation: false position must land inside the
+    /// bracket and near the target end, not at the middle, on a power-law
+    /// curve like the real one.
+    #[test]
+    fn an_aimed_step_targets_the_crossing_not_the_middle() {
+        let lo = (Rung::new(100), 1_000u64);
+        let hi = (Rung::new(100_000), 31_600_000u64);
+        let probe = interpolated_rung(lo, hi, 2_000).expect("a usable interpolation");
+        let midpoint = 100 + (100_000 - 100) / 2;
+        assert!(
+            probe.get() > 100 && probe.get() < 100_000,
+            "must stay strictly inside the bracket, got {}",
+            probe.get()
+        );
+        assert!(
+            probe.get() < midpoint / 10,
+            "should aim near the target end, got {} against midpoint {midpoint}",
+            probe.get()
+        );
+    }
+
+    /// Degenerate brackets decline rather than returning something that would
+    /// re-price a known point or stall the loop.
+    #[test]
+    fn an_aimed_step_declines_what_it_cannot_aim_at() {
+        // Adjacent rungs: nothing strictly between them.
+        assert_eq!(
+            interpolated_rung((Rung::new(10), 100), (Rung::new(11), 200), 150),
+            None
+        );
+        // Size does not increase across the bracket: a pocket, not a slope.
+        assert_eq!(
+            interpolated_rung((Rung::new(10), 500), (Rung::new(1_000), 400), 450),
+            None
+        );
+        // Zero size is not logarithm-able.
+        assert_eq!(
+            interpolated_rung((Rung::new(10), 0), (Rung::new(1_000), 400), 200),
+            None
+        );
+    }
+
+    /// **The safety rule.** An aimed probe may move `lo` up but must never
+    /// become the new `hi`, because `hi` infeasible does not imply everything
+    /// above `hi` is infeasible on a non-monotone curve.
+    ///
+    /// The fixture makes that concrete: a narrow infeasible spike sits exactly
+    /// where a false-position step aims, and the real optimum lies *above* the
+    /// spike. A loop that let the aimed probe tighten `hi` would fence itself
+    /// below the spike and return the smaller answer; this one must still
+    /// reach past it.
+    #[test]
+    fn an_aimed_probe_that_lands_in_a_spike_does_not_fence_off_the_rungs_above_it() {
+        let target = 10_000u64;
+        // Smooth and crossing the target near scale 3300, except for a narrow
+        // band of scales that price far above target — a spike the aimed step
+        // is likely to land in, since it aims at the crossing.
+        let price = |q: QuantizerChoice| -> u64 {
+            let scale = u64::from(q.global_scale.get()) * u64::from(q.hf_mul.get());
+            let base = 100 + scale * 3;
+            if (3_000..3_200).contains(&scale) {
+                base + 50_000
+            } else {
+                base
+            }
+        };
+        let result = search_ladder(
+            Rung::for_global_scale(32_768),
+            quant_lf(),
+            target,
+            RateTolerance {
+                bytes: 0,
+                fraction: 0.0,
+            },
+            budget(),
+            |q| Ok(price(q)),
+        )
+        .expect("feasible rungs exist");
+
+        assert!(result.bytes <= target, "never over: {}", result.bytes);
+        let optimum = (0..LADDER_LEN)
+            .filter_map(|i| QuantizerChoice::at(Rung::new(i), quant_lf()).ok())
+            .map(price)
+            .filter(|&b| b <= target)
+            .max()
+            .expect("a feasible rung");
+        assert_eq!(
+            result.bytes, optimum,
+            "an aimed probe landing in the spike fenced off the better rungs above it"
+        );
+        // And the answer really is above the spike, or the fixture proves
+        // nothing.
+        assert!(
+            optimum > 3_200 * 3,
+            "fixture is wrong: the optimum should sit above the spike"
+        );
+    }
+
+    /// The point of the change: on a smooth curve the search now reaches the
+    /// target in materially fewer full encodes than blind bisection needed.
+    /// Targets are drawn from the `global_scale` segment, as
+    /// `the_loop_lands_under_a_target_and_close_to_it` does. Above
+    /// `MAX_GLOBAL_SCALE` the ladder steps by whole `HfMul` multiples, so
+    /// adjacent rungs differ by a large factor and *no* search can land within
+    /// a 1% tolerance there — that is the ladder's own resolution, not a
+    /// property of the stepping rule, and
+    /// `a_target_above_the_ceiling_saturates_at_the_finest_rung` covers it.
+    #[test]
+    fn aimed_stepping_reaches_the_target_in_fewer_prices() {
+        for target in [1_000u64, 50_000, 98_404] {
+            let mut prices = 0usize;
+            let result = search_ladder(
+                Rung::for_global_scale(32_768),
+                quant_lf(),
+                target,
+                RateTolerance::default(),
+                budget(),
+                |q| {
+                    prices += 1;
+                    Ok(smooth(q))
+                },
+            )
+            .expect("feasible");
+            assert!(result.bytes <= target, "never over: {}", result.bytes);
+            let slack = RateTolerance::default().bytes_for(target);
+            assert!(
+                target - result.bytes <= slack.max(3),
+                "target {target}: landed {} short",
+                target - result.bytes
+            );
+            assert!(
+                prices <= 16,
+                "target {target}: took {prices} prices; blind bisection of this \
+                 ladder needs far more"
             );
         }
     }
