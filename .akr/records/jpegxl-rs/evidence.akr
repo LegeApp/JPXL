@@ -671,6 +671,32 @@ record jpegxl-rs.evidence.phase4f-elision-equivalent-2026-08-10/1 : evidence {
     author "GitHub Uploader"
 }
 
+record jpegxl-rs.evidence.phase4g-bound-and-identity-tests-2026-08-10/1 : evidence {
+    title "At 2b7b5c0 the jpxl-encode library suite is 122 passed, 0 failed, 0 ignored -- 117 pre-4G plus five gates this work added. bounded_budget_is_a_noop_below_the_budget asserts that for every shipped effort level a frame inside the budget scores at the floor stride, including the exact boundary, so the plumbing cannot change output on sub-budget frames. bounded_budget_raises_the_stride_with_frame_size asserts the stride rises with frame size and that scored samples stay within the budget plus at most two partial rows -- slack that is a function of row cost, not frame area, which is the property that makes ranking cost frame-size-independent. a_zero_budget_falls_back_to_the_floor_stride pins the degenerate cases. empty_overrides_leave_every_effort_budget_untouched and each_override_replaces_only_its_own_lever pin the measurement escape hatch as inert by default. Separately verified: the one workspace failure, both_oracles_decode_a_stream_from_the_hf_mul_segment in jpxl-encode-policy/tests/vardct_oracle.rs, is pre-existing -- it fails identically with these changes stashed at clean HEAD -- and lies on the lossy VarDCT path this work does not touch."
+    state verified
+    result pass
+    method command
+    observed_at git:2b7b5c0b8009e7cd220273cf621c72a5d3d9d4b0
+    command "cargo test -p jpxl-encode --lib"
+    summary """
+        At 2b7b5c0 the jpxl-encode library suite is 122 passed, 0 failed, 0 ignored -- 117 pre-4G plus five gates this work added. bounded_budget_is_a_noop_below_the_budget asserts that for every shipped effort level a frame inside the budget scores at the floor stride, including the exact boundary, so the plumbing cannot change output on sub-budget frames. bounded_budget_raises_the_stride_with_frame_size asserts the stride rises with frame size and that scored samples stay within the budget plus at most two partial rows -- slack that is a function of row cost, not frame area, which is the property that makes ranking cost frame-size-independent. a_zero_budget_falls_back_to_the_floor_stride pins the degenerate cases. empty_overrides_leave_every_effort_budget_untouched and each_override_replaces_only_its_own_lever pin the measurement escape hatch as inert by default. Separately verified: the one workspace failure, both_oracles_decode_a_stream_from_the_hf_mul_segment in jpxl-encode-policy/tests/vardct_oracle.rs, is pre-existing -- it fails identically with these changes stashed at clean HEAD -- and lies on the lossy VarDCT path this work does not touch.
+        """
+    author "GitHub Uploader"
+}
+
+record jpegxl-rs.evidence.phase4g-default-unchanged-2026-08-10/1 : evidence {
+    title "At 2b7b5c0 the default effort is byte-identical on all three corpus sizes: small_0p8MP 1,075,465 B sha16 C3C60CEE4D0741D9, mid_4MP 5,157,974 B sha16 5C49AB9020706F0D, large_12MP 9,795,599 B sha16 CA27799D3E7B441D -- the same fingerprints the pre-effort-ramp encoder produced. The default short-circuits the search entirely (search_is_a_foregone_conclusion), so neither the sample-budget plumbing nor the cost-model unit fix can reach it. Effort 7 deliberately DOES change and now matches its own post-fix baseline: 1,037,868 B sha16 40F0DA161B8960FC (-3.5%), 4,942,547 B sha16 EAEC691E4AAF19C6 (-4.2%), and 9,795,599 B sha16 CA27799D3E7B441D unchanged at 12 MP. The pre-fix effort-7 fingerprints were retired on purpose: they encoded a search that could not see a winning split at any stride above 1."
+    state verified
+    result pass
+    method command
+    observed_at git:2b7b5c0b8009e7cd220273cf621c72a5d3d9d4b0
+    command "pwsh -NoProfile -File .agent/scratch/effort-ramp-2026-08-10/verify_default_flip.ps1"
+    summary """
+        At 2b7b5c0 the default effort is byte-identical on all three corpus sizes: small_0p8MP 1,075,465 B sha16 C3C60CEE4D0741D9, mid_4MP 5,157,974 B sha16 5C49AB9020706F0D, large_12MP 9,795,599 B sha16 CA27799D3E7B441D -- the same fingerprints the pre-effort-ramp encoder produced. The default short-circuits the search entirely (search_is_a_foregone_conclusion), so neither the sample-budget plumbing nor the cost-model unit fix can reach it. Effort 7 deliberately DOES change and now matches its own post-fix baseline: 1,037,868 B sha16 40F0DA161B8960FC (-3.5%), 4,942,547 B sha16 EAEC691E4AAF19C6 (-4.2%), and 9,795,599 B sha16 CA27799D3E7B441D unchanged at 12 MP. The pre-fix effort-7 fingerprints were retired on purpose: they encoded a search that could not see a winning split at any stride above 1.
+        """
+    author "GitHub Uploader"
+}
+
 record jpegxl-rs.evidence.rulings-captured/1 : evidence {
     title "HANDOFF Already-fixed and Traps plus LESSONS captured as 5 decisions, 12 policies, 6 constraints"
     state verified

@@ -260,6 +260,27 @@ record jpegxl-rs.observation.libjxl-headsup-modular-2026-08-10/1 : observation {
     author "GitHub Uploader"
 }
 
+record jpegxl-rs.observation.modular-depth-is-not-the-lever-2026-08-10/1 : observation {
+    title "Retiring the tree-depth cap changes nothing; the cheap ranker's unit mismatch was the inertness"
+    state verified
+    statement """
+        MA-tree depth is not what the modular effort ladder was missing. The cheap ranker's unit mismatch was.
+
+        The deep_search_sample_cap was believed to be the blocker: it collapses the tree to max_leaves=2, max_depth=1 whenever a frame exceeds it, and its largest value (1<<18) is below every real photograph, so no effort level ever searched past one binary split. Retiring it changes nothing. With `--modular-deep-cap full` on the 4 MP corpus image, efforts 7, 8 and 9 all converge on the SAME output -- 4,942,547 bytes, fingerprint 771811b28ce7ab6e -- as they do with the cap in place. Depth beyond one split, and the finer THRESH_FINE grid that efforts 8-9 add, buy exactly zero bytes. The greedy split loop stops improving after its first round regardless of how much depth it is allowed.
+
+        What was actually wrong is a units error in lossless::total_cost_source: it added an unscaled whole-frame `ma_tree_bit_cost * sections` to a residual estimate covering only 1/row_stride of the frame. A split's saving was therefore divided by the stride while its cost was not, over-pricing every extra context by exactly the sampling ratio -- and the ratio grows with frame size, which is why the ladder looked progressively more inert on bigger images. Measured proof of the mechanism before the fix, on the 4 MP image: at stride 1 (effort 9) the winning split IS found (4,942,547 B); at stride 4 (effort 7) the same split is rejected (5,157,974 B). Same content, same candidate, different verdict purely from the sampling ratio.
+
+        With estimate_residual_bits_sampled extrapolating to whole-frame bits, effort 7 finds at stride 4 the tree that previously only stride 1 could reach: 0.8 MP 1,075,465 -> 1,037,868 B (-3.5%), 4 MP 5,157,974 -> 4,942,547 B (-4.2%), 12 MP unchanged at 9,795,599 B (no split wins there at any stride, before or after). Against cjxl -e7 the 4 MP gap narrows from +25.9% to +20.6% -- real, and nowhere near closed.
+
+        Two consequences worth acting on. (1) Effort 7's output is no longer byte-identical to the pre-effort-ramp encoder; that anchor property was retired deliberately and the corpus gate now pins the default (effort 1), which short-circuits the search entirely and is untouched. (2) Effort 7's wall time at 4 MP rose from ~5.7 s to ~47-50 s for the same ~71 residual scans, because the tree that now wins contains the Weighted (H.5) predictor, and estimate_residual_bits_sampled must fall back to a full sequential scan for any Weighted-containing tree -- so once Weighted wins the sweep, every one of the 56 split candidates carrying it forward becomes a full-frame scan. Bounding that is the obvious next target: score split TOPOLOGY with a stateless proxy and restore Weighted only in per-leaf refinement.
+
+        Scope limit: three photographs, one host, single runs. Direction-setting, not a promoted baseline.
+        """
+    observed_at git:2b7b5c0b8009e7cd220273cf621c72a5d3d9d4b0
+    method command
+    author "GitHub Uploader"
+}
+
 record jpegxl-rs.observation.negative-transfer-function/1 : observation {
     title "E.6 transfer functions below zero: sRGB odd, BT.709 not"
     state verified

@@ -597,7 +597,7 @@ record jpegxl-rs.work.arch-phase4f-elide-foregone-search/1 : work {
 
 record jpegxl-rs.work.arch-phase4g-bounded-ranker-and-unit-fix/1 : work {
     title "Phase 4G: bound the cheap ranker's cost, and fix the sampled-residual vs whole-frame-tree unit mismatch"
-    state proposed
+    state completed
     scope [
         path "JPXL/crates/jpxl-cli/src/main.rs",
         path "JPXL/crates/jpxl-encode/src/lossless.rs",
@@ -619,6 +619,7 @@ record jpegxl-rs.work.arch-phase4g-bounded-ranker-and-unit-fix/1 : work {
                 """
             method command
             command "cargo test -p jpxl-encode --lib"
+            verified_by [ @jpegxl-rs.evidence.phase4g-bound-and-identity-tests-2026-08-10/1 ]
         }
         check default-unchanged {
             statement """
@@ -626,6 +627,7 @@ record jpegxl-rs.work.arch-phase4g-bounded-ranker-and-unit-fix/1 : work {
                 """
             method command
             command "pwsh -NoProfile -File .agent/scratch/effort-ramp-2026-08-10/verify_default_flip.ps1"
+            verified_by [ @jpegxl-rs.evidence.phase4g-default-unchanged-2026-08-10/1 ]
         }
     }
     depends_on [ @jpegxl-rs.work.arch-phase4f-elide-foregone-search/1 ]
