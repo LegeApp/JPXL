@@ -347,6 +347,28 @@ impl ModularSearchBudget {
             _ => default,
         }
     }
+
+    /// Whether this budget makes [`plan_for`]'s search a foregone conclusion.
+    ///
+    /// With a single predictor there is nothing for the sweep to rank; with an
+    /// empty property *or* threshold grid the greedy split loop's inner loops
+    /// never execute, so it breaks on its first round having improved nothing;
+    /// without leaf refinement and without the palette and squeeze trials there
+    /// is no later stage that can move the answer. The plan is then exactly
+    /// `single_leaf(predictors[0])` with the caller's `rct` and neither
+    /// transform — reachable without wrapping a single plane or scanning a
+    /// single residual.
+    ///
+    /// This is a pure work-elision predicate: when it holds, the short-circuit
+    /// must emit the same plan the full path would have, and
+    /// `degenerate_budget_plans_what_the_full_search_would_have` proves it.
+    fn search_is_a_foregone_conclusion(&self) -> bool {
+        self.predictors.len() == 1
+            && (self.split_properties.is_empty() || self.split_thresholds.is_empty())
+            && !self.refine_leaves
+            && !self.try_palette
+            && !self.try_squeeze
+    }
 }
 
 /// Chooses a plan for already-transformed `planes`.
@@ -375,6 +397,76 @@ pub fn plan_for(
     reset_multiplicity();
     let budget = ModularSearchBudget::for_effort(options.effort);
     let group_size_shift = options.group_size_shift.unwrap_or(DEFAULT_GROUP_SIZE_SHIFT);
+
+    // Nothing in the search can move the answer at this budget, so skip
+    // straight to it: the RCT scoring copy, the Arc wrap of every plane, and
+    // the cheap residual scan are all pure overhead on the way to a plan the
+    // budget has already determined. This is the *whole* cost of planning at
+    // the leanest effort — at 12 MP two full 144 MB plane copies plus a
+    // strided residual scan of the frame — and none of it changes a byte of
+    // output.
+    if budget.search_is_a_foregone_conclusion() {
+        let predictor = budget
+            .predictors
+            .first()
+            .copied()
+            .unwrap_or(Predictor::Gradient);
+        return validate(LosslessPlan {
+            group_size_shift,
+            rct,
+            palette: None,
+            squeeze: false,
+            tree: MaTree::single_leaf(predictor),
+        });
+    }
+
+    plan_by_full_search(
+        width,
+        height,
+        planes,
+        rct,
+        budget,
+        group_size_shift,
+        #[cfg(test)]
+        FullSearchProbe::Normal,
+    )
+}
+
+/// In tests, forces [`plan_by_full_search`] to run even for a budget the
+/// short-circuit would have answered — the only way to compare the two paths.
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FullSearchProbe {
+    Normal,
+    /// Run the full search on a budget [`plan_for`] would have short-circuited.
+    ForegoneBudget,
+}
+
+/// The full tiered search: predictor sweep, greedy splits, leaf refinement,
+/// then the exact-priced palette and squeeze trials.
+///
+/// Split out from [`plan_for`] so that the short-circuit above can be *proved*
+/// equivalent on the budgets it claims rather than merely argued: the test
+/// `degenerate_budget_plans_what_the_full_search_would_have` calls both and
+/// compares the resulting plans.
+///
+/// # Errors
+///
+/// Any error from residual collection, ANS table build, or [`validate`].
+fn plan_by_full_search(
+    width: u32,
+    height: u32,
+    planes: &[Plane],
+    rct: bool,
+    budget: ModularSearchBudget,
+    group_size_shift: u32,
+    #[cfg(test)] probe: FullSearchProbe,
+) -> Result<ValidatedLosslessPlan> {
+    #[cfg(test)]
+    debug_assert!(
+        probe == FullSearchProbe::ForegoneBudget || !budget.search_is_a_foregone_conclusion(),
+        "plan_for should have short-circuited this budget"
+    );
     let samples = u64::from(width).saturating_mul(u64::from(height));
     let max_leaves = if samples > budget.deep_search_sample_cap {
         2
@@ -961,6 +1053,99 @@ mod tests {
         let cost = sampled_cheap_residual_bits(&source, SAMPLED_GATHER_ROW_STRIDE)
             .expect("sampled cost on a tiny frame");
         assert!(cost > 0, "a non-empty frame must not cost zero bits");
+    }
+
+    /// The short-circuit in [`plan_for`] claims that for a budget where
+    /// [`ModularSearchBudget::search_is_a_foregone_conclusion`] holds, running
+    /// the search would land on the same plan. Prove it rather than argue it:
+    /// run both paths on the same input and compare the plans field for field.
+    ///
+    /// Covers both `rct` polarities and both channel counts that matter (one
+    /// plane, and the three-plane case where the skipped work includes the RCT
+    /// scoring copy), on content with enough structure that a search which
+    /// *could* move the answer would.
+    #[test]
+    fn degenerate_budget_plans_what_the_full_search_would_have() {
+        let width = 37u32; // Deliberately not a multiple of any stride.
+        let height = 29u32;
+        let planes: Vec<Plane> = (0..3)
+            .map(|c: i32| {
+                (0..height)
+                    .flat_map(|y| {
+                        (0..width).map(move |x| {
+                            // Structured but not flat: gradient, a diagonal
+                            // edge, and a per-channel offset, so the split
+                            // properties see real variation.
+                            let base = (x as i32) * 3 + (y as i32) * 5;
+                            let edge = if x as i32 > y as i32 { 90 } else { 0 };
+                            (base + edge + c * 17) & 0xff
+                        })
+                    })
+                    .collect()
+            })
+            .collect();
+
+        for level in 1..=9u8 {
+            let effort = Effort::new(level).expect("level in range");
+            let budget = ModularSearchBudget::for_effort(effort);
+            if !budget.search_is_a_foregone_conclusion() {
+                continue;
+            }
+            for rct in [false, true] {
+                for channels in [1usize, 3] {
+                    let subset = &planes[..channels];
+                    let options = EncodeOptions {
+                        effort,
+                        ..EncodeOptions::default()
+                    };
+                    let group_size_shift =
+                        options.group_size_shift.unwrap_or(DEFAULT_GROUP_SIZE_SHIFT);
+
+                    let short = plan_for(width, height, subset, rct, &options)
+                        .expect("short-circuited plan");
+                    let full = plan_by_full_search(
+                        width,
+                        height,
+                        subset,
+                        rct,
+                        budget,
+                        group_size_shift,
+                        FullSearchProbe::ForegoneBudget,
+                    )
+                    .expect("full-search plan");
+
+                    let (s, f) = (short.plan(), full.plan());
+                    let where_ = format!("effort {level}, rct {rct}, {channels} channel(s)");
+                    assert_eq!(s.group_size_shift, f.group_size_shift, "{where_}");
+                    assert_eq!(s.rct, f.rct, "{where_}");
+                    assert_eq!(s.squeeze, f.squeeze, "{where_}");
+                    assert_eq!(s.palette.is_some(), f.palette.is_some(), "{where_}");
+                    assert_eq!(
+                        s.tree.leaf_predictors(),
+                        f.tree.leaf_predictors(),
+                        "{where_}"
+                    );
+                    assert_eq!(s.tree.num_contexts(), f.tree.num_contexts(), "{where_}");
+                    assert_eq!(s.tree.depth(), f.tree.depth(), "{where_}");
+                }
+            }
+        }
+    }
+
+    /// The short-circuit is only worth its risk if it is actually reached by
+    /// the default. If a future budget edit makes level 1 non-degenerate, this
+    /// fails loudly rather than silently restoring the two 144 MB plane copies.
+    #[test]
+    fn the_default_effort_reaches_the_short_circuit() {
+        assert!(
+            ModularSearchBudget::for_effort(Effort::DEFAULT).search_is_a_foregone_conclusion(),
+            "the default effort must skip the search it cannot use"
+        );
+        assert!(
+            !ModularSearchBudget::for_effort(Effort::new(7).expect("7"))
+                .search_is_a_foregone_conclusion(),
+            "the density anchor must still run the full search"
+        );
     }
 
     #[test]

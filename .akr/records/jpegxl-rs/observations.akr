@@ -235,6 +235,31 @@ record jpegxl-rs.observation.lf-quant-channel-order/1 : observation {
     }
 }
 
+record jpegxl-rs.observation.libjxl-headsup-modular-2026-08-10/1 : observation {
+    title "Head-to-head vs cjxl 0.13: jpxl is at cjxl -e1 density, 5-24x slower, and its effort ladder is inert above level 1"
+    state verified
+    statement """
+        Head-to-head against the libjxl oracle on the three-image real-photo corpus (.agent/scratch/realworld-bench-20260806T072202Z), lossless modular, both codecs at their default thread counts, on this Windows host. jpxl at effort 1/3/5/7/9 versus cjxl v0.13.0 (196a43d9, MinGW, AVX2) at -d 0 -e 1..9. Bytes and wall milliseconds:
+
+        small_0p8MP (1024x768): jpxl e1 1,075,465 @ 295ms; e3/e5/e7 identical bytes @ 649/837/1320ms; e9 1,037,868 @ 10,291ms. cjxl e1 1,082,673 @ 61ms; e3 890,029 @ 44ms; e7 873,503 @ 144ms; e9 866,855 @ 597ms.
+
+        mid_4MP (2400x1800): jpxl e1 5,157,974 @ 521ms; e3/e5/e7 identical @ 2258/3320/5680ms; e9 4,942,547 @ 55,156ms. cjxl e1 5,414,251 @ 33ms; e3 4,273,458 @ 139ms; e7 4,097,956 @ 520ms; e9 4,054,479 @ 2301ms.
+
+        large_12MP (4000x3000): jpxl e1 through e9 ALL emit 9,795,599 bytes, at 1272/6118/9774/18,200/65,437ms. cjxl e1 9,870,951 @ 54ms; e5 7,646,073 @ 632ms; e7 6,921,886 @ 1147ms; e9 6,756,132 @ 6825ms.
+
+        Three things follow. (1) Density: jpxl sits at roughly cjxl -e1, beating it by 0.8-4.7% on bytes, and is 20-31% larger than cjxl -e7 (12MP: 9,795,599 vs 6,921,886, +41.5% bytes for the same 1.1-1.3s of wall time). (2) Speed: jpxl -e1 is 5x slower than cjxl -e1 at 0.8MP, 16x at 4MP, 24x at 12MP -- the gap widens with size, so it is throughput, not fixed overhead. (3) The effort ladder is nearly inert: at 12MP levels 1 through 9 emit byte-identical output for 51x the wall time, and at the smaller sizes only level 9 moves at all (-3.5% / -4.2%) at 35x / 106x the time of level 1.
+
+        The mechanism behind (3) is visible in the code, not just the numbers: plan_for caps the tree at 2 leaves / depth 1 whenever the frame exceeds deep_search_sample_cap, whose largest value is 1<<18 = 262,144 samples at effort 9. Every image in this corpus, including the smallest at 786,432 samples, exceeds that cap, so no level ever searches a tree deeper than one binary split. The density levers the higher band would need -- many-context MA trees, RCT type selection (the encoder hardcodes YCoCg; H.6.3 defines 42 types), and LZ77 inside the cost model (already scoped as Phase 4D) -- are not reachable from the current ladder at any real image size.
+
+        How it was measured: a PowerShell driver (preserved at .agent/scratch/effort-ramp-2026-08-10/headsup.ps1, raw output alongside it in headsup-2026-08-10.txt) times one encode per (image, codec, setting) with Diagnostics.Stopwatch around the process invocation and reads the output length from the file system. jpxl is invoked as `jpxl encode <ppm> <out> --effort N`; cjxl as `cjxl <ppm> <out> -d 0 -e N`, using the pinned Windows oracle build in JPXL/tools/oracle-bin (cjxl v0.13.0 196a43d9, AVX2, per PINNED_REVISIONS.txt). Both codecs run at their own default thread count, so these are end-to-end wall times as a user would see them, not per-core algorithmic cost.
+
+        Scope limit: three photographs on one host, one timed run per cell, no warm-up. It is a direction-setting measurement, not a promoted baseline; the timings are not medians and should not be quoted as such.
+        """
+    observed_at git:6114b16ac3a56935becc5e14b5f117679a394117
+    method command
+    author "GitHub Uploader"
+}
+
 record jpegxl-rs.observation.negative-transfer-function/1 : observation {
     title "E.6 transfer functions below zero: sRGB odd, BT.709 not"
     state verified

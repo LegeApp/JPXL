@@ -7,6 +7,40 @@
 Dated working ledger. **Prepend** new entries — newest first. Each entry: what
 changed, what is now proved, what is next, what is blocked.
 
+## 2026-08-10 (2) — Phase 4F: elide the search the budget already answered; and a libjxl head-to-head that reframes the density story
+
+**What changed (files: `crates/jpxl-encode/src/lossless.rs` — only this one):**
+- `ModularSearchBudget::search_is_a_foregone_conclusion()`: true when the budget has one predictor, an empty split property *or* threshold grid, no leaf refinement, and neither transform trial. Under it the plan is provably `single_leaf(predictors[0])` with the caller's `rct` and no palette/squeeze, so `plan_for` now returns it directly.
+- The search body moved to `plan_by_full_search`, so the elision is *proved* rather than argued: `degenerate_budget_plans_what_the_full_search_would_have` runs both paths on the same input across every degenerate level × both `rct` polarities × 1 and 3 channels and compares plans field-for-field. `the_default_effort_reaches_the_short_circuit` fails loudly if a future budget edit stops level 1 being degenerate.
+
+**Proved:** byte-identical everywhere (corpus sha256 unchanged at default and at `--effort 7`); 12 MP default 1025.6 → 873.5 ms median (**−14.8 %**), `residual_scans` 1 → 0, `plane_clone_bytes` 288 MB → 144 MB. 117/117 `jpxl-encode` lib tests.
+
+**The head-to-head that matters more than the change** (`jpegxl-rs.observation.libjxl-headsup-modular-2026-08-10`; driver + raw output in `.agent/scratch/effort-ramp-2026-08-10/headsup.ps1` / `headsup-2026-08-10.txt`). vs `cjxl` v0.13.0 on the three-image corpus, lossless, default threads:
+
+| | jpxl e1 | jpxl e9 | cjxl -e1 | cjxl -e7 |
+| --- | --- | --- | --- | --- |
+| 0.8 MP | 1,075,465 / 295 ms | 1,037,868 / 10,291 ms | 1,082,673 / 61 ms | 873,503 / 144 ms |
+| 4 MP | 5,157,974 / 521 ms | 4,942,547 / 55,156 ms | 5,414,251 / 33 ms | 4,097,956 / 520 ms |
+| 12 MP | 9,795,599 / 1,272 ms | 9,795,599 / 65,437 ms | 9,870,951 / 54 ms | 6,921,886 / 1,147 ms |
+
+1. **Density: we are a `cjxl -e1` encoder.** We beat `-e1` by 0.8–4.7 % and lose to `-e7` by 20–31 %. At 12 MP `cjxl -e7` is 29 % smaller in the *same* wall time our default takes.
+2. **Speed: 5× / 16× / 24× slower than `cjxl -e1`.** The gap grows with image size, so it is throughput, not fixed overhead.
+3. **The ladder above level 1 is inert, not merely chaffy.** At 12 MP levels 1–9 emit *byte-identical* output for 51× the time. 4E called this "chaff on photos"; the head-to-head shows it is worse than that — the ladder cannot reach density at any real image size.
+
+**Root cause of (3), found by reading the code, not guessing:** `plan_for` collapses to `max_leaves = 2, max_depth = 1` whenever the frame exceeds `deep_search_sample_cap`, whose *largest* value is `1 << 18` = 262,144 samples at effort 9. The smallest corpus image is 786,432 samples. **Every real photograph is over the cap at every level**, so no effort ever searches past one binary split. The extra predictors, finer thresholds and finer stride that levels 2–9 buy are all applied to a tree that can never grow.
+
+**Next — the higher band, in priority order (scoped, not built):**
+1. **Make tree-search cost independent of frame size**, then retire the sample cap. The cap exists because the cheap ranker scans proportionally to the frame; bound the *ranker's* sample budget instead (score on a fixed number of sampled rows) and depth becomes affordable at 12 MP. Until this lands, nothing else in the higher band can be measured, because the tree is pinned at 2 leaves.
+2. **RCT type selection.** `LosslessPlan.rct` is a `bool` — only `RCT_TYPE_YCOCG` is ever emitted, where H.6.3 defines 42 types. Cheap to search, unknown payoff, currently untested.
+3. **LZ77 inside the cost model** (the pre-existing Phase 4D gap: `allow_lz77 = false` during search, `true` at emission).
+4. **Per-sample throughput.** 873 ms for 36 M samples is ~24 ns/sample against `cjxl -e1`'s ~1.5 ns. Needs a profile before any guess.
+
+**Traps — do not "fix" these:**
+- Do **not** raise `deep_search_sample_cap` on its own to unblock the higher band. The cap is load-bearing against the *current* ranker's cost: at 12 MP a depth-4 search over 56 split candidates is ~71 full-frame residual scans. Fix item 1 first, then the cap can go.
+- `search_is_a_foregone_conclusion` is a **work-elision predicate, not a heuristic**. If a future budget makes any skipped stage able to move the answer, the predicate must stop returning true for it — do not "extend" it to near-degenerate budgets.
+- Environment correction to the 4E entry: **libjxl *is* built for Windows here.** `JPXL/tools/oracle-bin/` holds `cjxl.exe` / `djxl.exe` / `jxlinfo.exe` (v0.13.0, 196a43d9, MinGW, AVX2) with their MinGW DLLs beside them, per `PINNED_REVISIONS.txt` dated 2026-08-05. The WSL + `LD_LIBRARY_PATH=.agent/scratch/oraclelibs` route 4E used was unnecessary; use the Windows binaries directly.
+- `.mcp.json` pointed `akr-mcp` at `/home/dk/.local/bin/akr-mcp`, a WSL path, which is why the `knowledge.*` MCP server "went unresponsive" in 4E. Now resolved from `PATH` (`C:\Users\dk\.local\bin\akr-mcp.exe`). The `akr` CLI was and remains a fine substitute.
+
 ## 2026-08-10 — Phase 4E: lossless modular effort ramp, then reoriented to a lean default (the search above e1 is chaff on real content)
 
 **What changed (files: `crates/jpxl-encode/src/lossless.rs`, `crates/jpxl-encode/src/lib.rs`, `crates/jpxl-cli/src/main.rs` — only these three):**

@@ -5,8 +5,7 @@ build {
     tool "akr 0.3.0"
     grammar "0.1"
     vocabulary "0.2"
-    commit git:78d2c6d2d733753dc63d35be02c8f18a3105c944
-    source_graph "sha256:430f92368ba07060d0022efee5e4737ee585a99eec179f01ddc37b9a1ae510e3"
+    source_graph "sha256:d72ffe3776c895d72f259fbc7e07ddcc9c7eaa6f05c4adc3d1a262f9436939ef"
 }
 
 source ".akr/project.akr" {
@@ -40,8 +39,8 @@ source ".akr/records/jpegxl-rs/milestones.akr" {
 }
 
 source ".akr/records/jpegxl-rs/observations.akr" {
-    hash "sha256:d8d22e5f798df9f6abfde9f8a4e022567f9dac61ab6a166bf5137ddef5dcb260"
-    records 25
+    hash "sha256:6792e89709dea1a40236623c0ae83b784ace3581e9319b92feadebdf894e52fe"
+    records 26
 }
 
 source ".akr/records/jpegxl-rs/papercuts.akr" {
@@ -60,8 +59,8 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:1829315617dbb4bf110f62d6ffbe7cd2330c822bd3607256ec4587edc4703234"
-    records 30
+    hash "sha256:a0cf5b98981683f3eb0ab7d076e5c2e71ea5c57da81e57a7ef24a77d4d808afa"
+    records 31
 }
 
 resolution @jpegxl-rs.decision.encoder-architecture-phases/1 {
@@ -1506,6 +1505,11 @@ seal @jpegxl-rs.observation.lf-frame-multipass/1 {
 seal @jpegxl-rs.observation.lf-quant-channel-order/1 {
     state verified
     hash "sha256:35ae8d247b0f95478a482ff19cedfb7bda0537aac68fed27490a5f4abfe5ffc1"
+}
+
+seal @jpegxl-rs.observation.libjxl-headsup-modular-2026-08-10/1 {
+    state verified
+    hash "sha256:f275c02952e77ebce2a5d259e3aad9ac3394be09ad0cdbbc746d6374b2073006"
 }
 
 seal @jpegxl-rs.observation.negative-transfer-function/1 {
