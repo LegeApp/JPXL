@@ -7,6 +7,37 @@
 Dated working ledger. **Prepend** new entries — newest first. Each entry: what
 changed, what is now proved, what is next, what is blocked.
 
+## 2026-08-10 (6) — Phase 4J: the adaptive-quantization field is a net perceptual loss; and the undershoot cause, measured at last
+
+**What changed (files: `crates/jpxl-encode-policy/src/{field.rs,request.rs,lib.rs}`, `crates/jpxl-cli/src/main.rs`):**
+- `AqTuning { strength, clamp, chroma_weight }` on `SearchBudget`, `DesiredQuantField::from_atlas_tuned`, and `jpxl encode --aq-strength/--aq-clamp/--aq-chroma`. `AqTuning::default()` is exactly the historical constants — pinned by `the_default_tuning_reproduces_the_hardcoded_field`, which compares atom-for-atom in both AQ directions. 68/68 policy lib tests.
+- `SearchBudget` loses its `Eq` derive (it now carries floats). `PartialEq` remains.
+
+**The undershoot cause, finally measured** (entry 4 finding 3, entry 5's correction). `jpxl encode --bpp 4` on the 4 MP image:
+
+> `undershot target by 191763 bytes (8.9%) — search ended short of target with budget spent, not at the ladder's limit [prices: 24 fast, 9 full]`
+
+24 is *exactly* the Fast cap (`max_prices` 40 − `full_refinement_reserve` 16). The Fast ladder spent its entire allowance and stopped short. **The ladder was never the constraint** — my original diagnosis was wrong, and so was the trap I wrote against raising `max_prices`. Findings (2) speed and (3) undershoot are therefore the *same* problem: probe count.
+
+**The finding: AQ is making quality worse.** Sweeping the field's constants at *fixed bitrate* (AQ moves where bits go, not how many, so matched size is the only honest comparison):
+
+| 0.8 MP | 1.0 bpp ssim2 / btrgli | 2.0 bpp ssim2 / btrgli |
+| --- | --- | --- |
+| **AQ off** (strength 0) | 59.38 / **6.075** | **81.97** / **3.185** |
+| shipped (0.25/1.0/0.35) | 59.62 / 6.636 | 80.01 / 3.562 |
+| every other tuning tried | — / 6.58–6.78 | 79.6–80.0 / 3.45–3.83 |
+
+Two things stand out. **AQ-off is an outlier, not the end of a trend** — every non-zero strength, clamp and chroma weight clusters tightly, while off sits well outside. So this is not a mistuned constant; having a non-neutral field *at all* costs perceptual quality here. And **the penalty does not shrink with rate** — at 2 bpp off wins on *both* metrics — which rules out the obvious explanation that the per-varblock `HfMul` signalling row is eating the coefficient budget.
+
+**Why this was never caught.** M7's acceptance evidence reads *"spatial quality uniformity improved with stable target size"*. Uniformity is what `AqMode::Uniform` optimises. **Production ships `AqMode::Masking` — the opposite direction** — whose case is perceptual masking, which a uniformity criterion does not test. The shipped direction was accepted on a criterion the *other* direction satisfies, and no perceptual metric existed here to check it against. This is precisely the AGENTS.md §6 failure mode: green criteria that do not prove the thing they are taken to prove.
+
+**Explicitly NOT done: the default is unchanged.** One image, two rates, one host is not enough to flip production behaviour. Before that: the other two corpus images, more rates, `AqMode::Uniform` (to separate "wrong direction" from "the machinery costs quality either way"), and non-photographic content, where masking is likeliest to earn its keep.
+
+**Traps — do not "fix" these:**
+- Do **not** flip `AqMode` to `Off` on this evidence. It is one image. The infrastructure to settle it now exists; use it.
+- Do **not** re-tune `AQ_STRENGTH` and call it fixed. Every strength tried loses to off; the constant is not the problem.
+- Do **not** cite M7's uniformity evidence as validation of the Masking default again. It validates the direction that is not shipped.
+
 ## 2026-08-10 (5) — Phase 4I: perceptual metrics (SSIMULACRA2 + butteraugli); the RD gap depends on which metric you ask; and a corrected undershoot diagnosis
 
 **What changed (files: `Cargo.toml`, `crates/jpxl-conformance/{Cargo.toml,src/metrics.rs}`, `crates/jpxl-cli/{Cargo.toml,src/main.rs}`):**

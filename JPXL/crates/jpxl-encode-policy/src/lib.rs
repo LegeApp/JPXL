@@ -103,7 +103,7 @@ pub use diagnostics::{
     ChooseStage, EncodeDiag, last_encode_diag, reset_encode_diag, take_encode_diag,
 };
 pub use error::{PolicyError, Result};
-pub use field::AqMode;
+pub use field::{AqMode, AqTuning};
 
 use field::{DesiredQuantField, mul_lattice};
 pub use rate::{
@@ -756,7 +756,11 @@ impl AqSetup {
             quant_lf: quantizer.quant_lf,
             baseline: quantizer.hf_mul,
         };
-        let field = match DesiredQuantField::from_atlas(atlas, request.budget.aq_mode) {
+        let field = match DesiredQuantField::from_atlas_tuned(
+            atlas,
+            request.budget.aq_mode,
+            request.budget.aq_tuning,
+        ) {
             Some(field) if !field.is_neutral() => field,
             _ => return off,
         };

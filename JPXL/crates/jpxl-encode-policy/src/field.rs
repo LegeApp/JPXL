@@ -85,6 +85,67 @@ const CHROMA_AQ_WEIGHT: f32 = 0.35;
 /// same thing they mean in the 8-bit literature.
 const VARIANCE_TO_8BIT: f32 = 255.0 * 255.0;
 
+/// The three constants that shape the perceptual field, as data.
+///
+/// [`AQ_STRENGTH`], [`AQ_CLAMP`] and [`CHROMA_AQ_WEIGHT`] came from the
+/// 8-bit x265-family literature and have never been validated against a
+/// perceptual metric *on this codec's output* — until recently the repository
+/// had no perceptual metric to validate them with. They are the frame's
+/// perceptual bit-allocation policy, which is where a butteraugli-tuned
+/// encoder's advantage lives, so they need to be swept and chosen from
+/// evidence rather than inherited.
+///
+/// [`Self::default()`] is exactly the historical constants, so an untouched
+/// request encodes byte-for-byte as before.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AqTuning {
+    /// Octaves of quantizer adjustment per octave of activity deviation.
+    pub strength: f32,
+    /// Hard clamp on the per-atom adjustment, in octaves, both directions.
+    pub clamp: f32,
+    /// How much an atom's chroma activity counts relative to its luma.
+    pub chroma_weight: f32,
+}
+
+impl Default for AqTuning {
+    fn default() -> Self {
+        Self {
+            strength: AQ_STRENGTH,
+            clamp: AQ_CLAMP,
+            chroma_weight: CHROMA_AQ_WEIGHT,
+        }
+    }
+}
+
+impl AqTuning {
+    /// Clamps every knob into a range the `HfMul` lattice can express, so a
+    /// sweep cannot ask for a field the wire cannot carry.
+    ///
+    /// `strength` and `chroma_weight` are non-negative; `clamp` is at least a
+    /// half-octave (the lattice's own step — below that every adjustment snaps
+    /// to zero and the field is neutral) and at most two octaves.
+    #[must_use]
+    pub fn sanitised(self) -> Self {
+        Self {
+            strength: if self.strength.is_finite() {
+                self.strength.clamp(0.0, 4.0)
+            } else {
+                AQ_STRENGTH
+            },
+            clamp: if self.clamp.is_finite() {
+                self.clamp.clamp(0.5, 2.0)
+            } else {
+                AQ_CLAMP
+            },
+            chroma_weight: if self.chroma_weight.is_finite() {
+                self.chroma_weight.clamp(0.0, 4.0)
+            } else {
+                CHROMA_AQ_WEIGHT
+            },
+        }
+    }
+}
+
 /// §7.1's `DesiredQuantField`: one log-step adjustment per 8x8 atom, in
 /// octaves relative to the frame baseline.
 #[derive(Debug, Clone)]
@@ -94,9 +155,18 @@ pub struct DesiredQuantField {
 }
 
 impl DesiredQuantField {
-    /// Builds the field from the atlas, or `None` for [`AqMode::Off`].
+    /// Builds the field from the atlas at the default tuning, or `None` for
+    /// [`AqMode::Off`].
     #[must_use]
     pub fn from_atlas(atlas: &AnalysisAtlas, mode: AqMode) -> Option<Self> {
+        Self::from_atlas_tuned(atlas, mode, AqTuning::default())
+    }
+
+    /// As [`Self::from_atlas`], with the perceptual constants supplied rather
+    /// than inherited. `AqTuning::default()` reproduces `from_atlas` exactly.
+    #[must_use]
+    pub fn from_atlas_tuned(atlas: &AnalysisAtlas, mode: AqMode, tuning: AqTuning) -> Option<Self> {
+        let tuning = tuning.sanitised();
         let sign = match mode {
             AqMode::Off => return None,
             AqMode::Masking => 1.0f32,
@@ -113,7 +183,7 @@ impl DesiredQuantField {
                     let luma = (1.0 + f.variance_xyb[1] * VARIANCE_TO_8BIT).log2();
                     let chroma =
                         (1.0 + (f.variance_xyb[0] + f.variance_xyb[2]) * VARIANCE_TO_8BIT).log2();
-                    luma + CHROMA_AQ_WEIGHT * chroma
+                    luma + tuning.chroma_weight * chroma
                 });
                 sum += f64::from(a);
                 activity.push(a);
@@ -131,7 +201,7 @@ impl DesiredQuantField {
 
         let adj = activity
             .into_iter()
-            .map(|a| (sign * AQ_STRENGTH * (a - mean)).clamp(-AQ_CLAMP, AQ_CLAMP))
+            .map(|a| (sign * tuning.strength * (a - mean)).clamp(-tuning.clamp, tuning.clamp))
             .collect();
         Some(Self {
             width: grid.width,
@@ -319,5 +389,90 @@ mod tests {
         assert_eq!(capped, baseline);
         let still_fine = field.mul_for_footprint(1, 1, 1, 1, baseline, true);
         assert_eq!(still_fine, fine);
+    }
+
+    /// Making the perceptual constants tunable must not move the default.
+    /// `AqTuning::default()` has to reproduce the hardcoded field exactly, or
+    /// every existing lossy fingerprint silently changes.
+    #[test]
+    fn the_default_tuning_reproduces_the_hardcoded_field() {
+        let atlas = atlas_of(128, 64, &half_flat_half_noise(128, 64));
+        for mode in [AqMode::Masking, AqMode::Uniform] {
+            let inherited = DesiredQuantField::from_atlas(&atlas, mode).expect("field");
+            let tuned = DesiredQuantField::from_atlas_tuned(&atlas, mode, AqTuning::default())
+                .expect("field");
+            let grid = atlas.grid();
+            for y in 0..grid.height {
+                for x in 0..grid.width {
+                    assert_eq!(
+                        inherited.adj_at(x, y),
+                        tuned.adj_at(x, y),
+                        "{mode:?} atom ({x}, {y}) drifted when the constants became data"
+                    );
+                }
+            }
+        }
+    }
+
+    /// The knobs have to actually do something, and in the direction their
+    /// names promise: more strength means a wider spread of adjustments.
+    #[test]
+    fn a_stronger_tuning_spreads_the_field_further() {
+        let atlas = atlas_of(128, 64, &half_flat_half_noise(128, 64));
+        // Clamp wide open, so this measures `strength` alone. At the shipped
+        // clamp this fixture's flat/noise contrast saturates at any strength
+        // worth testing, which would make the comparison vacuous.
+        let spread = |strength: f32| {
+            let field = DesiredQuantField::from_atlas_tuned(
+                &atlas,
+                AqMode::Masking,
+                AqTuning {
+                    strength,
+                    clamp: 2.0,
+                    ..AqTuning::default()
+                },
+            )
+            .expect("field");
+            let grid = atlas.grid();
+            let mut lo = f32::MAX;
+            let mut hi = f32::MIN;
+            for y in 0..grid.height {
+                for x in 0..grid.width {
+                    let a = field.adj_at(x, y);
+                    lo = lo.min(a);
+                    hi = hi.max(a);
+                }
+            }
+            hi - lo
+        };
+        assert!(
+            spread(0.10) > spread(0.05),
+            "doubling strength must widen the field: {} vs {}",
+            spread(0.10),
+            spread(0.05)
+        );
+        assert!(
+            spread(0.0) == 0.0,
+            "zero strength must give a neutral field, got {}",
+            spread(0.0)
+        );
+    }
+
+    /// Out-of-range knobs are clamped into what the `HfMul` lattice can carry
+    /// rather than producing a field the wire cannot express.
+    #[test]
+    fn tuning_is_sanitised_into_the_representable_range() {
+        let wild = AqTuning {
+            strength: -5.0,
+            clamp: 100.0,
+            chroma_weight: f32::NAN,
+        }
+        .sanitised();
+        assert_eq!(wild.strength, 0.0, "negative strength clamps to zero");
+        assert_eq!(wild.clamp, 2.0, "clamp is capped at two octaves");
+        assert_eq!(
+            wild.chroma_weight, CHROMA_AQ_WEIGHT,
+            "a NaN weight falls back to the default rather than poisoning the field"
+        );
     }
 }

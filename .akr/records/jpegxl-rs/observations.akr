@@ -1,6 +1,33 @@
 akr 0.1
 project jpegxl-rs
 
+record jpegxl-rs.observation.aq-field-is-a-net-perceptual-loss-2026-08-10/1 : observation {
+    title "At matched bitrate the adaptive-quantization field is a net perceptual loss: AQ off beats every tuning tried, on both metrics"
+    state verified
+    statement """
+        The adaptive-quantization field, as tuned and as shipped, is a net PERCEPTUAL LOSS at matched bitrate. Turning it off improves both perceptual metrics.
+
+        Method: sweep the field's three constants at a FIXED bitrate and score each result with jpxl compare. Fixed-rate because AQ does not change how many bits are spent, only where, so the honest question is "at the same file size, which allocation looks better". Driver and raw output in .agent/scratch/effort-ramp-2026-08-10/aq-sweep.ps1 and aq-sweep-0p8MP-{1,2}bpp.txt. `strength = 0` produces a neutral field, which AqSetup treats exactly as AqMode::Off, so that row IS "AQ disabled".
+
+        small_0p8MP at 1.0 bpp (bytes, ssimulacra2 higher-better, butteraugli lower-better):
+        AQ OFF (strength 0) -- 98141, 59.378, 6.075. Shipped (0.25/1.0/0.35) -- 97769, 59.617, 6.636.
+        Every other config tried: strength 0.10 (6.710), 0.40 (6.776), 0.60 (6.732), 1.00 (6.633); clamp 0.5 (6.781), 2.0 (6.583); chroma 0.0 (6.756), 1.0 (6.784).
+
+        small_0p8MP at 2.0 bpp:
+        AQ OFF -- 196459, 81.971, 3.185. Shipped -- 195444, 80.007, 3.562.
+        Every other config: ssimulacra2 79.64-80.01, butteraugli 3.447-3.828.
+
+        Two things stand out. First, AQ-off is not the end of a trend -- it is an OUTLIER. Every non-zero strength, every clamp and every chroma weight clusters tightly (butteraugli 6.58-6.78 at 1 bpp, 3.45-3.83 at 2 bpp) while AQ-off sits well outside it. So this is not "the strength constant is mistuned"; it is that having a non-neutral field at all costs perceptual quality here. Second, the penalty does not shrink as the rate rises -- at 2 bpp AQ-off is better on BOTH metrics (+1.96 ssimulacra2 and -10.6% butteraugli), where at 1 bpp it was better on butteraugli (-8.4%) and marginally worse on ssimulacra2. That rules out the obvious explanation of the per-varblock HfMul signalling row eating the coefficient budget, which would fade as a fraction of a larger file.
+
+        A likely reason it was never caught: M7's acceptance evidence (jpegxl-rs.evidence.m7-adaptive-quant) reads "spatial quality uniformity improved with stable target size". Uniformity is what AqMode::Uniform optimises -- busy atoms finer, error equalised. Production ships the opposite direction, AqMode::Masking (busy atoms coarser), whose case is perceptual masking and which the uniformity criterion does not test. So the shipped direction was accepted on a criterion the other direction satisfies, and no perceptual metric existed in this repository to check it against until now.
+
+        NOT YET ESTABLISHED, and this should not become a default flip until it is: one image, two rates, one host. Untested are the other two corpus images, other rates, AqMode::Uniform (which would separate "this direction is wrong" from "the machinery costs quality regardless of direction"), and any non-photographic content, where masking is most likely to earn its keep. The measurement infrastructure to settle all of that now exists (EncodeRequest::budget.aq_tuning, `jpxl encode --aq-strength/--aq-clamp/--aq-chroma`, `jpxl compare --features perceptual`).
+        """
+    observed_at git:ff2d5ce4a16e396f9e626bb736cc7ebf8a1e098a
+    method command
+    author "GitHub Uploader"
+}
+
 record jpegxl-rs.observation.cropped-frames-orientation-kblack/1 : observation {
     title "Cropped frames, orientation, kBlack channels"
     state verified
@@ -260,9 +287,38 @@ record jpegxl-rs.observation.libjxl-headsup-modular-2026-08-10/1 : observation {
     author "GitHub Uploader"
 }
 
+record jpegxl-rs.observation.lossy-perceptual-baseline-2026-08-10/1 : observation {
+    title "Lossy RD on three metrics: 12-20% behind cjxl on SSIMULACRA2 but 39-53% on butteraugli, localising the deficit to perceptual bit allocation"
+    state verified
+    statement """
+        Rate/distortion baseline for the lossy VarDCT path against cjxl v0.13.0, scored on three metrics: PSNR (signal error), SSIMULACRA2 (perceptual, higher better, 100 = identical) and butteraugli distance (perceptual, LOWER better, and the metric cjxl -d actually optimises). Corpus: the three real photographs in .agent/scratch/realworld-bench-20260806T072202Z. JPXL swept by --bpp, cjxl by -d, cjxl output decoded with the oracle's own djxl. Full 24-cell table in .agent/scratch/effort-ramp-2026-08-10/headsup-lossy-perceptual-baseline.txt.
+
+        THE HEADLINE: the size of the gap depends on which metric you ask, by a factor of three, and the two readings say different things.
+
+        Comparing at EQUAL QUALITY (interpolating cjxl's curve to jpxl's operating point), cjxl's bitrate saving is:
+
+        SSIMULACRA2 -- 0.8 MP ~17% (jpxl 80.0 at 1.988 bpp vs cjxl ~1.66), 4 MP ~12% (jpxl 85.3 at 1.996 vs cjxl ~1.76), 12 MP ~20% (jpxl 87.9 at 1.673 vs cjxl ~1.34).
+        PSNR -- 0.8 MP ~26%, 4 MP ~25%, 12 MP ~37%.
+        Butteraugli -- 0.8 MP ~43% (jpxl 3.56 at 1.988 bpp vs cjxl ~1.13), 4 MP ~39% (jpxl 2.01 at 1.996 vs cjxl ~1.21), 12 MP ~53% (jpxl 1.96 at 1.673 vs cjxl ~0.79).
+
+        Two conclusions follow, and they are not the same conclusion.
+
+        (1) On SSIMULACRA2 the codec is within 12-20% of cjxl. That is a much smaller deficit than the PSNR-only reading in jpegxl-rs.observation.lossy-vardct-headsup-2026-08-10 suggested, and it says the transform, quantization and entropy layers are fundamentally sound -- this is not an encoder that is broadly behind.
+
+        (2) On butteraugli the deficit is 39-53%, three to four times the SSIMULACRA2 figure. Butteraugli is what cjxl tunes for, so some of that is expected; but a gap that much larger on one perceptual metric than another localises the deficit to PERCEPTUAL BIT ALLOCATION -- where bits go within a frame -- rather than to coding efficiency, which both metrics would punish equally. Concretely that points at the adaptive-quantization field (jpxl-encode-policy/src/field.rs), whose three constants (AQ_STRENGTH 0.25, AQ_CLAMP 1.0, CHROMA_AQ_WEIGHT 0.35) came from the 8-bit x265-family literature and had never been validated against any perceptual metric on this codec's output, because until this session the repository had none.
+
+        Speed, unchanged from the earlier PSNR-only run and still the largest practical gap: jpxl is 58-530x slower at every size and rate (8.7-71 s vs 0.09-0.20 s at 0.8 MP; 63-687 s vs 0.75-1.62 s at 12 MP).
+
+        Scope limit: three photographs, one host, one timed run per cell. The equal-quality bitrates are interpolated between adjacent cjxl rungs, not measured directly, so treat them as approximate. Direction-setting, not a promoted baseline. PSNR and SSIMULACRA2 and butteraugli disagree here by design -- do not quote one of them as "the" gap.
+        """
+    observed_at git:ff2d5ce4a16e396f9e626bb736cc7ebf8a1e098a
+    method command
+    author "GitHub Uploader"
+}
+
 record jpegxl-rs.observation.lossy-vardct-headsup-2026-08-10/1 : observation {
     title "Lossy VarDCT vs cjxl: ~25-40% more bits for equal PSNR, 58-530x slower, and the rate loop undershoots at high rates"
-    state verified
+    state superseded
     statement """
         First rate/distortion comparison of the lossy VarDCT path against the oracle. Corpus: the three real photographs in .agent/scratch/realworld-bench-20260806T072202Z. JPXL swept by --bpp (its only knob), cjxl v0.13.0 swept by -d, cjxl output decoded with the oracle's own djxl so a JPXL decode bug cannot masquerade as a cjxl quality difference. Raw rows in .agent/scratch/effort-ramp-2026-08-10/headsup-lossy.ps1 output.
 
@@ -283,6 +339,37 @@ record jpegxl-rs.observation.lossy-vardct-headsup-2026-08-10/1 : observation {
         """
     observed_at git:65fe2e101f17841970e0767d622cc68f35f6d2b3
     method command
+    author "GitHub Uploader"
+}
+
+record jpegxl-rs.observation.lossy-vardct-headsup-2026-08-10/2 : observation {
+    title "Lossy VarDCT vs cjxl (PSNR-only, superseded as a summary): 58-530x slower, and the high-rate undershoot is budget exhaustion, not a ladder ceiling"
+    state verified
+    statement """
+        First rate/distortion comparison of the lossy VarDCT path against the oracle. Corpus: the three real photographs in .agent/scratch/realworld-bench-20260806T072202Z. JPXL swept by --bpp, cjxl v0.13.0 swept by -d, cjxl output decoded with the oracle's own djxl so a JPXL decode bug cannot masquerade as a cjxl quality difference. Raw rows in .agent/scratch/effort-ramp-2026-08-10/headsup-lossy-2026-08-10.txt.
+
+        SCOPE CORRECTION (revision 2): this record measured PSNR only, because PSNR was the only distortion metric in the repository at the time. PSNR turned out to be a poor summary of this comparison -- see jpegxl-rs.observation.lossy-perceptual-baseline-2026-08-10, which re-measures the same corpus on SSIMULACRA2 and butteraugli and finds the gap is 12-20% on one and 39-53% on the other. Finding (1) below should be read as "the PSNR gap", not "the gap". Finding (3) was WRONG and is corrected below.
+
+        Measured (bpp, PSNR dB, encode ms):
+        0.8 MP -- jpxl (0.499, 24.94, 8724) (0.995, 28.72, 17602) (1.988, 34.04, 34973) (3.999, 41.56, 55646); cjxl (0.839, 30.55, 154) (1.466, 34.22, 94) (2.321, 37.91, 106) (3.428, 41.00, 104).
+        4 MP -- jpxl (0.498, 27.47, 38076) (0.995, 32.64, 55376) (1.996, 37.40, 106791) (3.645, 41.62, 178646); cjxl (0.565, 32.27, 551) (0.941, 35.15, 336) (1.490, 37.78, 341) (2.366, 40.18, 309).
+        12 MP -- jpxl (0.499, 31.67, 63214) (0.997, 36.67, 144969) (1.673, 39.32, 472352) (3.942, 45.72, 462885); cjxl (0.414, 34.83, 1534) (0.677, 37.18, 944) (1.074, 39.54, 897) (1.765, 42.18, 754).
+
+        (1) DENSITY, ON PSNR. cjxl reaches equal PSNR at roughly 25-37% fewer bits, widening with image size. Superseded as a summary by the three-metric baseline above.
+
+        (2) SPEED. jpxl is 58-530x slower across every size and rate: 8.7-55.6 s versus 0.09-0.15 s at 0.8 MP, 38-179 s versus 0.31-0.55 s at 4 MP, 63-472 s versus 0.75-1.53 s at 12 MP. A targeted lossy encode runs 15-40 full frame encodes through rate::search_frame's two ladders. This finding stands and is the largest practical gap.
+
+        (3) THE RATE LOOP UNDERSHOOTS AT HIGH RATES -- CAUSE CORRECTED. Asked for 4.0 bpp at 4 MP the loop delivers 3.645; asked for 2.0 bpp at 12 MP it delivers 1.673.
+
+        Revision 1 of this record attributed that to the quantizer ladder running out of rungs ("the finest ladder rung is still under target"), and drew the conclusion that no extra search budget could help. THAT WAS WRONG. It was inferred from the existence of the RateOutcome::saturated field, never measured, and the data already contradicted it: at 12 MP --bpp 4 succeeds (3.942) while --bpp 2 misses, which a ladder ceiling cannot produce -- a ladder that cannot reach 2 bpp cannot reach 4 bpp either.
+
+        MEASURED CAUSE: budget exhaustion in the Fast ladder. `jpxl encode --bpp 4` on the 4 MP image now reports: "undershot target by 191763 bytes (8.9%) -- search ended short of target with budget spent, not at the ladder's limit [prices: 24 fast, 9 full]". 24 is exactly the Fast cap (max_prices 40 minus a full_refinement_reserve of 16), so the Fast ladder consumed its entire allowance bracketing and bisecting and stopped short. The ladder was never the constraint.
+
+        Consequence: the fix direction is fewer, better-aimed probes, not more ladder. That also makes finding (2) and finding (3) the same problem -- probe count -- rather than two.
+        """
+    observed_at git:6114b16ac3a56935becc5e14b5f117679a394117
+    method command
+    supersedes [ @jpegxl-rs.observation.lossy-vardct-headsup-2026-08-10/1 ]
     author "GitHub Uploader"
 }
 

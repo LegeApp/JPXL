@@ -160,12 +160,22 @@ impl Default for RateSearchBudget {
 /// lists — beam width, retained plans, quantization points per candidate,
 /// iteration counts — joins this struct with the milestone that first reads
 /// it, so that a budget field never means "ignored".
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+// `Eq` is deliberately absent: `aq_tuning` holds floats, and a budget that
+// carries a perceptual tuning is not a thing with exact equality.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct SearchBudget {
     /// How the cover search explores.
     pub cover_mode: CoverMode,
     /// How adaptive quantization points its field (default Masking).
     pub aq_mode: crate::field::AqMode,
+    /// The perceptual constants that shape that field.
+    ///
+    /// Defaults to the historical hardcoded values, so an untouched request
+    /// encodes exactly as before. Exposed because this is the frame's
+    /// perceptual bit-allocation policy — the thing a butteraugli-tuned
+    /// encoder gets right — and it needs to be swept against a perceptual
+    /// metric rather than inherited from the 8-bit literature.
+    pub aq_tuning: crate::field::AqTuning,
     /// What the rate loop may spend (milestone 4).
     pub rate: RateSearchBudget,
 }

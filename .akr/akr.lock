@@ -5,8 +5,7 @@ build {
     tool "akr 0.3.0"
     grammar "0.1"
     vocabulary "0.2"
-    commit git:803df0e613ec073e665e78c4d1b8584ecedf3036
-    source_graph "sha256:9aa954c42245c69b5f95da2f24d6b9e1e134f45d9ecd417651a0ba817b37bb89"
+    source_graph "sha256:57a2f9c7d52bb1d5e655d3e0f1d5beabd4db87f4ad0cfbc2333dbfec125addf6"
 }
 
 source ".akr/project.akr" {
@@ -40,8 +39,8 @@ source ".akr/records/jpegxl-rs/milestones.akr" {
 }
 
 source ".akr/records/jpegxl-rs/observations.akr" {
-    hash "sha256:7743c18bf350bb27a5e32762a24cfe9451eb1d21b214b62ec6160def990c9776"
-    records 28
+    hash "sha256:64166853ddbfe2f55bd76889b9c78adc27eab1590524ec8e275a6d4f51da8e42"
+    records 31
 }
 
 source ".akr/records/jpegxl-rs/papercuts.akr" {
@@ -60,8 +59,8 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:5d6ff7cb7c9657a3b5fe2155419c6cbcb2c578681aa9c8f1c12f7ee24cb3537f"
-    records 34
+    hash "sha256:5ad129e707e191adb163bd9276fdd5db6f7453fdac93b3dddc6d99420db6a640"
+    records 35
 }
 
 resolution @jpegxl-rs.decision.encoder-architecture-phases/1 {
@@ -1483,6 +1482,11 @@ seal @jpegxl-rs.milestone.spine-bootstrap/1 {
     hash "sha256:df7662c178a233de8a7b385c1f35a7e92556b887da5866b12f936deb4af8c16d"
 }
 
+seal @jpegxl-rs.observation.aq-field-is-a-net-perceptual-loss-2026-08-10/1 {
+    state verified
+    hash "sha256:f3d0bc1e56d48773bcdabadb5bac3f4cdc571918b728b274f3db20af590fd449"
+}
+
 seal @jpegxl-rs.observation.cropped-frames-orientation-kblack/1 {
     state verified
     hash "sha256:a0bad99c9992e720d1bf528c16ce6b1ac0f29e7efb975e896a088c353b3a3a47"
@@ -1553,9 +1557,19 @@ seal @jpegxl-rs.observation.libjxl-headsup-modular-2026-08-10/1 {
     hash "sha256:f275c02952e77ebce2a5d259e3aad9ac3394be09ad0cdbbc746d6374b2073006"
 }
 
-seal @jpegxl-rs.observation.lossy-vardct-headsup-2026-08-10/1 {
+seal @jpegxl-rs.observation.lossy-perceptual-baseline-2026-08-10/1 {
     state verified
-    hash "sha256:fe102fa71ff6d0764a8599b7ec2aab19f7775913d039fdaea743e7a9ccd6d955"
+    hash "sha256:564b86715afb8043ea9fe2d2aef75bd928f668a149ec0b56a68bc175963b5e67"
+}
+
+seal @jpegxl-rs.observation.lossy-vardct-headsup-2026-08-10/1 {
+    state superseded
+    hash "sha256:1c74db77e383ee32e4306dfe1f2c4aebc30d0244cc3b0ee61282fdef9d787b92"
+}
+
+seal @jpegxl-rs.observation.lossy-vardct-headsup-2026-08-10/2 {
+    state verified
+    hash "sha256:443a14ead4307802998ae42a75a5bc5216236f461538c314a2bf83ef85540f78"
 }
 
 seal @jpegxl-rs.observation.modular-depth-is-not-the-lever-2026-08-10/1 {

@@ -292,6 +292,7 @@ fn cmd_boxes(args: &[String]) -> u8 {
 fn cmd_encode(args: &[String]) -> u8 {
     let mut options = jpxl_encode::EncodeOptions::default();
     let mut rate_target: Option<jpxl_encode_policy::RateTarget> = None;
+    let mut aq_tuning = jpxl_encode_policy::AqTuning::default();
     let mut positional: Vec<&String> = Vec::new();
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
@@ -307,6 +308,33 @@ fn cmd_encode(args: &[String]) -> u8 {
                     return EXIT_ERROR;
                 }
                 rate_target = Some(jpxl_encode_policy::RateTarget::BitsPerPixel(v));
+            }
+            // Perceptual bit-allocation sweep knobs (lossy only). These shape
+            // the adaptive-quantization field: how hard it reacts to activity,
+            // how far it may swing, and how much chroma counts. They exist to
+            // be measured against `jpxl compare`'s perceptual metrics, because
+            // the shipped values came from the 8-bit x265 literature and have
+            // never been validated on this codec's output.
+            "--aq-strength" => {
+                let Some(v) = rest.next().and_then(|v| v.parse::<f32>().ok()) else {
+                    fail("`--aq-strength` needs a number (octaves per octave of activity)");
+                    return EXIT_ERROR;
+                };
+                aq_tuning.strength = v;
+            }
+            "--aq-clamp" => {
+                let Some(v) = rest.next().and_then(|v| v.parse::<f32>().ok()) else {
+                    fail("`--aq-clamp` needs a number (octaves)");
+                    return EXIT_ERROR;
+                };
+                aq_tuning.clamp = v;
+            }
+            "--aq-chroma" => {
+                let Some(v) = rest.next().and_then(|v| v.parse::<f32>().ok()) else {
+                    fail("`--aq-chroma` needs a number (chroma weight relative to luma)");
+                    return EXIT_ERROR;
+                };
+                aq_tuning.chroma_weight = v;
             }
             "--target-bytes" => {
                 let Some(v) = rest.next().and_then(|v| v.parse::<u64>().ok()) else {
@@ -385,7 +413,7 @@ fn cmd_encode(args: &[String]) -> u8 {
     // lossless modular encoder it has always been.
     let mut lossy: Option<LossyReport> = None;
     let encoded = match rate_target {
-        Some(target) => match encode_lossy_to_target(&image, target) {
+        Some(target) => match encode_lossy_to_target(&image, target, aq_tuning) {
             Ok(report) => {
                 let bytes = report.codestream.clone();
                 lossy = Some(report);
@@ -969,6 +997,7 @@ struct LossyReport {
 fn encode_lossy_to_target(
     image: &jpxl_encode::Image,
     target: jpxl_encode_policy::RateTarget,
+    aq_tuning: jpxl_encode_policy::AqTuning,
 ) -> Result<LossyReport, String> {
     if image.num_channels() != 3 || image.bits_per_sample() != 8 {
         return Err(format!(
@@ -990,7 +1019,8 @@ fn encode_lossy_to_target(
             rgb.push(u8::try_from(v).unwrap_or(0));
         }
     }
-    let request = jpxl_encode_policy::EncodeRequest::for_target(target);
+    let mut request = jpxl_encode_policy::EncodeRequest::for_target(target);
+    request.budget.aq_tuning = aq_tuning;
     jpxl_encode_policy::encode_srgb8_to_target(
         image.width(),
         image.height(),
