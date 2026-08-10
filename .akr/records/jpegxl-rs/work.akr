@@ -635,6 +635,44 @@ record jpegxl-rs.work.arch-phase4g-bounded-ranker-and-unit-fix/1 : work {
     author "GitHub Uploader"
 }
 
+record jpegxl-rs.work.arch-phase4h-lossy-reachable-and-measurable/1 : work {
+    title "Phase 4H: make the lossy VarDCT path reachable from the CLI and measurable against the oracle"
+    state proposed
+    scope [
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/crates/jpxl-conformance/src/metrics.rs"
+    ]
+    intent """
+        Make the lossy VarDCT path reachable and measurable. It has been the more complete half of this encoder since M1-M8, but nothing outside the library and `jpxl bench` could invoke it, and it had never been compared against the oracle at all -- the same blind spot that let the modular effort ladder ship inert for a whole phase.
+
+        Three small pieces, no encoder change:
+        - `jpxl encode --bpp <f>` / `--target-bytes <n>` route to jpxl_encode_policy::encode_srgb8_to_target. Without a rate flag the command stays the lossless modular encoder it has always been. 8-bit RGB only, because the VarDCT path converts sRGB8 to XYB and has no route for greyscale or deeper samples; anything else is refused rather than silently mangled.
+        - Deliberately NO `--distance` flag. cjxl's -d targets butteraugli; this encoder has no perceptual model and its rate loop hits a size. Naming a flag --distance would promise something the encoder cannot deliver.
+        - jpxl_conformance::metrics gains rmse and psnr over the integer PPM Image type. RMSE previously existed only on the NPY FloatImage conformance path, which grades a decode against a float reference per channel -- not what comparing two encoders needs. `jpxl compare <ref.ppm> <b.ppm>` exposes them so a rate/distortion sweep is drivable from a shell script with no numpy.
+
+        PSNR is used because it is exactly reproducible in-repo, not because it is the right quality model; the harness documents that the only fair reading is the curve, never a single operating point.
+        """
+    acceptance {
+        check lossy-is-reachable-end-to-end {
+            statement """
+                `jpxl encode --bpp` produces a codestream that hits its rate target and that both jpxl-decode and the independent djxl oracle accept.
+                """
+            method command
+            command "pwsh -NoProfile -File .agent/scratch/effort-ramp-2026-08-10/headsup-lossy.ps1"
+        }
+        check metrics-are-correct {
+            statement """
+                RMSE and PSNR match hand-computed values, return infinity rather than NaN for identical images, and return None on a shape mismatch as the neighbouring metrics do.
+                """
+            method command
+            command "cargo test -p jpxl-conformance --lib"
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase4g-bounded-ranker-and-unit-fix/1 ]
+    part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+    author "GitHub Uploader"
+}
+
 record jpegxl-rs.work.arch-s8-cover-lane-simd/1 : work {
     title "outside-advice.md §8 (S8), narrowed per Opus advisor review: bit-identical coefficient-lane SIMD for cover scoring"
     state completed

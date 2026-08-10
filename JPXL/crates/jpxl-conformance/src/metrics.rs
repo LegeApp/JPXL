@@ -175,6 +175,59 @@ pub fn peak_error_per_channel(a: &Image, b: &Image) -> Option<Vec<u32>> {
     Some(peaks)
 }
 
+/// Root-mean-square difference over all samples, in sample units.
+///
+/// Returns `None` on a shape mismatch, mirroring [`max_abs_error`]. Unlike
+/// [`Similarity::channel_rmse`], which grades a conformance decode per channel
+/// against a float reference, this is a single whole-image figure over the
+/// integer PPM domain — what a rate/distortion comparison of two *encoders*
+/// needs.
+#[must_use]
+pub fn rmse(a: &Image, b: &Image) -> Option<f64> {
+    if !a.same_shape(b) {
+        return None;
+    }
+    if a.samples.is_empty() {
+        return Some(0.0);
+    }
+    let sq: f64 = a
+        .samples
+        .iter()
+        .zip(&b.samples)
+        .map(|(&x, &y)| {
+            let d = f64::from(x.abs_diff(y));
+            d * d
+        })
+        .sum();
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "sample counts stay far inside f64's exact-integer range"
+    )]
+    let count = a.samples.len() as f64;
+    Some((sq / count).sqrt())
+}
+
+/// Peak signal-to-noise ratio in decibels, against the image's own `max_value`.
+///
+/// Returns `None` on a shape mismatch, and [`f64::INFINITY`] for identical
+/// images (zero error) — the mathematically correct value, which callers
+/// formatting a table should special-case rather than print.
+///
+/// **This is not a perceptual metric.** `cjxl -d` targets butteraugli, which
+/// this repository does not implement; PSNR and butteraugli disagree, sometimes
+/// sharply, about which of two images looks better. Use this to compare
+/// encoders along a rate/distortion *curve*, never to claim one encoder's
+/// output is perceptually better at a single operating point.
+#[must_use]
+pub fn psnr(a: &Image, b: &Image) -> Option<f64> {
+    let err = rmse(a, b)?;
+    if err == 0.0 {
+        return Some(f64::INFINITY);
+    }
+    let peak = f64::from(a.max_value);
+    Some(20.0 * (peak / err).log10())
+}
+
 /// Why a PPM could not be parsed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PpmError {
@@ -894,6 +947,54 @@ mod tests {
         bytes.extend_from_slice(&len.to_le_bytes());
         bytes.extend_from_slice(header.as_bytes());
         assert_eq!(FloatImage::from_npy(&bytes), Err(NpyError::BadShape));
+    }
+
+    /// A 2x1 grey PPM whose two pixels differ from the reference by 0 and 4 in
+    /// every channel: RMSE is `sqrt((0*3 + 16*3)/6) = sqrt(8)`, and PSNR is
+    /// `20*log10(255/sqrt(8))`. Both hand-computed, so this pins the formula
+    /// rather than whatever the code happens to do.
+    #[test]
+    fn psnr_and_rmse_match_hand_computed_values() {
+        let ppm = |a: u8, b: u8| {
+            let mut bytes = b"P6\n2 1\n255\n".to_vec();
+            bytes.extend_from_slice(&[a, a, a, b, b, b]);
+            Image::from_ppm(&bytes).expect("valid PPM")
+        };
+        let reference = ppm(100, 100);
+        let decoded = ppm(100, 104);
+
+        let err = rmse(&reference, &decoded).expect("same shape");
+        assert!(
+            (err - 8.0_f64.sqrt()).abs() < 1e-12,
+            "rmse was {err}, expected sqrt(8)"
+        );
+
+        let db = psnr(&reference, &decoded).expect("same shape");
+        let expected = 20.0 * (255.0 / 8.0_f64.sqrt()).log10();
+        assert!(
+            (db - expected).abs() < 1e-12,
+            "psnr was {db}, expected {expected}"
+        );
+    }
+
+    /// Identical images have zero error, so PSNR is infinite rather than a
+    /// large finite number or a division-by-zero NaN.
+    #[test]
+    fn identical_images_have_zero_rmse_and_infinite_psnr() {
+        let bytes = b"P6\n1 1\n255\n\x10\x20\x30".to_vec();
+        let image = Image::from_ppm(&bytes).expect("valid PPM");
+        assert_eq!(rmse(&image, &image), Some(0.0));
+        assert_eq!(psnr(&image, &image), Some(f64::INFINITY));
+    }
+
+    /// Shape mismatch is `None`, not a panic and not a meaningless number —
+    /// the same contract `max_abs_error` and `peak_error_per_channel` keep.
+    #[test]
+    fn mismatched_shapes_have_no_rmse_or_psnr() {
+        let one = Image::from_ppm(b"P6\n1 1\n255\n\x00\x00\x00").expect("valid");
+        let two = Image::from_ppm(b"P6\n2 1\n255\n\x00\x00\x00\x00\x00\x00").expect("valid");
+        assert_eq!(rmse(&one, &two), None);
+        assert_eq!(psnr(&one, &two), None);
     }
 
     /// Hand-computed: reference is all zero, decoded is `[0, 0, 0, 1]` in a

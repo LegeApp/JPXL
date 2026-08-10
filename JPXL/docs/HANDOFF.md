@@ -7,6 +7,25 @@
 Dated working ledger. **Prepend** new entries — newest first. Each entry: what
 changed, what is now proved, what is next, what is blocked.
 
+## 2026-08-10 (4) — Phase 4H: the lossy path is finally reachable and measurable
+
+**What changed (files: `crates/jpxl-cli/src/main.rs`, `crates/jpxl-conformance/src/metrics.rs` — only these two; no encoder change):**
+- `jpxl encode --bpp <f>` / `--target-bytes <n>` route to `jpxl_encode_policy::encode_srgb8_to_target`. No rate flag → the lossless modular encoder, unchanged. 8-bit RGB only (VarDCT converts sRGB8→XYB; greyscale and deeper samples are refused, not mangled).
+- **No `--distance` flag, on purpose.** `cjxl -d` targets butteraugli; this encoder has no perceptual model and its rate loop hits a *size*. A `--distance` flag would promise something the encoder cannot deliver.
+- `jpxl_conformance::metrics::{rmse, psnr}` over the integer PPM `Image`, plus `jpxl compare <ref.ppm> <b.ppm>`. RMSE previously existed only on the NPY `FloatImage` conformance path (per-channel, decode-vs-float-reference) — not what comparing two *encoders* needs.
+- `.agent/scratch/effort-ramp-2026-08-10/headsup-lossy.ps1`: RD sweep, jpxl `--bpp` vs `cjxl -d`, decoding cjxl's output with the oracle's own `djxl` so a JPXL decode bug can't masquerade as a cjxl quality difference.
+
+**Proved:** `jpxl encode --bpp 1.0` on the 0.8 MP image emits 97,769 B against a 98,304 B target, and **both** `jpxl decode` and the independent `djxl` oracle accept it. 44/44 `jpxl-conformance` lib tests, with PSNR/RMSE pinned to hand-computed values.
+
+**Why this mattered enough to do now:** VarDCT has been the more complete half of this encoder since M1–M8, but nothing outside the library and `jpxl bench` could invoke it, and it had **never been compared against the oracle**. That is the same blind spot that let the modular effort ladder ship inert for a whole phase.
+
+**First numbers, and a caution.** Early sweep rows at 0.8 MP: 0.5 bpp → 24.9 dB in 8.7 s; 1.0 → 28.7 dB in 17.6 s; 2.0 → 34.0 dB in 35.0 s. **The wall times are the story** — tens of seconds for a 0.8 MP lossy encode, because a targeted encode runs 15–40 full frame encodes (`rate::search_frame`'s two ladders). Compare curves, never single points: the two encoders optimise different objectives and PSNR is not perceptual.
+
+**Traps — do not "fix" these:**
+- Do **not** add `--distance` as an alias for `--bpp`. It would read as a butteraugli target that does not exist.
+- Do **not** quote a single (bytes, PSNR) pair as beating or losing to cjxl. Only the curve is meaningful; PSNR is used because it is exactly reproducible in-repo, not because it is the right quality model.
+- `--effort` is lossless-only and is ignored on the lossy path; the lossy path has no effort ramp at all yet (`RateSearchBudget{max_prices: 40}` is its only dial).
+
 ## 2026-08-10 (3) — Phase 4G: the effort ladder was inert because the cheap ranker compared two different units, not because trees were too shallow
 
 **What changed (files: `crates/jpxl-encode/src/lossless.rs`, `crates/jpxl-encode/src/modular/mod.rs`, `crates/jpxl-cli/src/main.rs` — only these three):**

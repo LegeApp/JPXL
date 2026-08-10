@@ -32,7 +32,10 @@ Usage:
     jpxl info <file>              Identify a file and print its stream kind
     jpxl boxes <file.jxl>         List the Part 2 box structure of a container
     jpxl decode <in.jxl> <out>    Decode to a binary PGM (P5) or PPM (P6)
-    jpxl encode [opts] <in> <out> Encode a binary PGM (P5) or PPM (P6) losslessly
+    jpxl encode [opts] <in> <out> Encode a binary PGM (P5) or PPM (P6); lossless
+                                  modular by default, lossy VarDCT with --bpp
+    jpxl compare <ref.ppm> <b.ppm>
+                                  Print RMSE and PSNR between two decoded PPMs
     jpxl bench <mode> [opts]      Time one encode path (see `jpxl bench --help`)
     jpxl --help                   Show this message
     jpxl --version                Show the version
@@ -47,6 +50,15 @@ Encode options:
                                   (18181-2 9.10); implies --container
     --threads <n>                 Section-parallel workers (default: host
                                   available_parallelism; 1 = serial)
+
+Lossy options (8-bit RGB only; either one selects the VarDCT path):
+    --bpp <f>                     Target bits per pixel
+    --target-bytes <n>            Target output size in bytes
+
+    There is no `--distance`. cjxl's -d targets butteraugli; JPXL has no
+    perceptual model, so its rate loop hits a *size*, not a visual quality.
+    Naming a flag --distance would promise something this encoder cannot
+    deliver. --effort is lossless-only and is ignored on the lossy path.
 
 Exit codes:
     0  success (info: recognised as JPEG XL)
@@ -136,6 +148,7 @@ fn run(args: &[String]) -> u8 {
         "boxes" => cmd_boxes(rest),
         "decode" => cmd_decode(rest),
         "encode" => cmd_encode(rest),
+        "compare" => cmd_compare(rest),
         "bench" => cmd_bench(rest),
         other => {
             fail(&format!("unknown command `{other}`"));
@@ -276,11 +289,30 @@ fn cmd_boxes(args: &[String]) -> u8 {
 /// `jpxl encode [opts] <in.pgm|in.ppm> <out.jxl>`: encode losslessly.
 fn cmd_encode(args: &[String]) -> u8 {
     let mut options = jpxl_encode::EncodeOptions::default();
+    let mut rate_target: Option<jpxl_encode_policy::RateTarget> = None;
     let mut positional: Vec<&String> = Vec::new();
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
         match arg.as_str() {
             "--container" => options.container = true,
+            "--bpp" => {
+                let Some(v) = rest.next().and_then(|v| v.parse::<f64>().ok()) else {
+                    fail("`--bpp` needs a positive bits-per-pixel target");
+                    return EXIT_ERROR;
+                };
+                if !(v.is_finite() && v > 0.0) {
+                    fail("`--bpp` needs a positive, finite bits-per-pixel target");
+                    return EXIT_ERROR;
+                }
+                rate_target = Some(jpxl_encode_policy::RateTarget::BitsPerPixel(v));
+            }
+            "--target-bytes" => {
+                let Some(v) = rest.next().and_then(|v| v.parse::<u64>().ok()) else {
+                    fail("`--target-bytes` needs a positive byte count");
+                    return EXIT_ERROR;
+                };
+                rate_target = Some(jpxl_encode_policy::RateTarget::Bytes(v));
+            }
             "--effort" => {
                 let Some(level) = rest.next().and_then(|v| v.parse::<u8>().ok()) else {
                     fail("`--effort` needs an integer in 1..=9");
@@ -347,23 +379,42 @@ fn cmd_encode(args: &[String]) -> u8 {
         }
     };
 
-    let encoded = match jpxl_encode::encode(&image, &options) {
-        Ok(encoded) => encoded,
-        Err(err) => {
-            fail(&format!("{input}: {err}"));
-            return EXIT_ERROR;
-        }
+    // A rate target selects the lossy VarDCT path; without one this stays the
+    // lossless modular encoder it has always been.
+    let encoded = match rate_target {
+        Some(target) => match encode_lossy_to_target(&image, target) {
+            Ok(encoded) => encoded,
+            Err(err) => {
+                fail(&format!("{input}: {err}"));
+                return EXIT_ERROR;
+            }
+        },
+        None => match jpxl_encode::encode(&image, &options) {
+            Ok(encoded) => encoded,
+            Err(err) => {
+                fail(&format!("{input}: {err}"));
+                return EXIT_ERROR;
+            }
+        },
     };
 
     match std::fs::write(Path::new(output.as_str()), &encoded) {
         Ok(()) => {
+            let mode = match rate_target {
+                Some(jpxl_encode_policy::RateTarget::BitsPerPixel(b)) => {
+                    format!("lossy VarDCT, target {b} bpp")
+                }
+                Some(jpxl_encode_policy::RateTarget::Bytes(n)) => {
+                    format!("lossy VarDCT, target {n} bytes")
+                }
+                None => format!("lossless modular, effort {}", options.effort.level()),
+            };
             println!(
-                "{output}: {}x{}, {} channel(s), {} bits per sample, effort {}, {} bytes",
+                "{output}: {}x{}, {} channel(s), {} bits per sample, {mode}, {} bytes",
                 image.width(),
                 image.height(),
                 image.num_channels(),
                 image.bits_per_sample(),
-                options.effort.level(),
                 encoded.len()
             );
             EXIT_OK
@@ -373,6 +424,58 @@ fn cmd_encode(args: &[String]) -> u8 {
             EXIT_ERROR
         }
     }
+}
+
+/// `jpxl compare <a.ppm> <b.ppm>`: distortion between two decoded images.
+///
+/// Exists so a rate/distortion sweep can be driven from a shell script without
+/// a Python or numpy dependency: encode at a rate, decode, compare. Prints
+/// `rmse=<f> psnr_db=<f>`, or `psnr_db=inf` when the images are identical.
+fn cmd_compare(args: &[String]) -> u8 {
+    let [a_path, b_path] = args else {
+        fail("`compare` takes two PPM paths (reference, then decoded)");
+        return EXIT_ERROR;
+    };
+
+    let mut images = Vec::with_capacity(2);
+    for path in [a_path, b_path] {
+        let bytes = match std::fs::read(Path::new(path.as_str())) {
+            Ok(bytes) => bytes,
+            Err(err) => {
+                fail(&format!("{path}: {err}"));
+                return EXIT_ERROR;
+            }
+        };
+        match jpxl_conformance::metrics::Image::from_ppm(&bytes) {
+            Ok(image) => images.push(image),
+            Err(err) => {
+                fail(&format!("{path}: {err}"));
+                return EXIT_ERROR;
+            }
+        }
+    }
+    let (Some(a), Some(b)) = (images.first(), images.get(1)) else {
+        fail("`compare` needs two readable PPMs");
+        return EXIT_ERROR;
+    };
+
+    let (Some(err), Some(db)) = (
+        jpxl_conformance::metrics::rmse(a, b),
+        jpxl_conformance::metrics::psnr(a, b),
+    ) else {
+        fail(&format!(
+            "shape mismatch: {}x{}x{} vs {}x{}x{}",
+            a.w, a.h, a.channels, b.w, b.h, b.channels
+        ));
+        return EXIT_ERROR;
+    };
+
+    if db.is_infinite() {
+        println!("rmse=0 psnr_db=inf");
+    } else {
+        println!("rmse={err:.6} psnr_db={db:.4}");
+    }
+    EXIT_OK
 }
 
 /// `jpxl bench <mode> [opts]`: time one isolated encode path.
@@ -762,6 +865,48 @@ fn synthetic_rgb8(width: u32, height: u32) -> Vec<u8> {
         }
     }
     out
+}
+
+/// Encodes `image` through the lossy VarDCT rate loop to `target`.
+///
+/// The policy crate's façade takes interleaved sRGB8, so this re-interleaves
+/// the validated planes rather than re-reading the file. 8-bit RGB only: the
+/// VarDCT path converts sRGB8 to XYB and has no route for greyscale or deeper
+/// samples yet, so anything else is refused rather than silently mangled.
+fn encode_lossy_to_target(
+    image: &jpxl_encode::Image,
+    target: jpxl_encode_policy::RateTarget,
+) -> Result<Vec<u8>, String> {
+    if image.num_channels() != 3 || image.bits_per_sample() != 8 {
+        return Err(format!(
+            "lossy encoding needs 8-bit RGB (P6 with maxval 255); this is {} channel(s) at {} bits",
+            image.num_channels(),
+            image.bits_per_sample()
+        ));
+    }
+    let planes = image.planes();
+    let (Some(r), Some(g), Some(b)) = (planes.first(), planes.get(1), planes.get(2)) else {
+        return Err("lossy encoding needs three colour planes".to_owned());
+    };
+    let mut rgb = Vec::with_capacity(r.len().saturating_mul(3));
+    for i in 0..r.len() {
+        for plane in [r, g, b] {
+            // Planes are validated to [0, 255] for an 8-bit image, so the
+            // clamp is belt-and-braces rather than load-bearing.
+            let v = plane.get(i).copied().unwrap_or(0).clamp(0, 255);
+            rgb.push(u8::try_from(v).unwrap_or(0));
+        }
+    }
+    let request = jpxl_encode_policy::EncodeRequest::for_target(target);
+    jpxl_encode_policy::encode_srgb8_to_target(
+        image.width(),
+        image.height(),
+        &rgb,
+        &request,
+        target,
+    )
+    .map(|outcome| outcome.codestream)
+    .map_err(|e| e.to_string())
 }
 
 /// Parses a sample-count argument: a plain integer, or `full` for "unbounded".
