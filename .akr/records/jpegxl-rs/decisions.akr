@@ -109,6 +109,27 @@ record jpegxl-rs.decision.ledger-conventions/1 : decision {
     author "GitHub Uploader"
 }
 
+record jpegxl-rs.decision.modular-lean-default/1 : decision {
+    title "Modular default effort is the lean level 1; the full search is opt-in"
+    state active
+    scope [ path "JPXL/crates/jpxl-cli/**", path "JPXL/crates/jpxl-encode/**" ]
+    decision """
+        Effort::DEFAULT for the lossless modular path is Effort::MIN (level 1): one predictor, no split search, no per-leaf refinement, no palette/squeeze trials, coarse sampling stride, collapsed tree. The full pre-ramp search is retained verbatim at level 7 -- a byte-identical density anchor pinned by the effort_7_budget_is_the_pre_ramp_search test -- and levels 8-9 add finer stride and deeper search for density chasing. Effort is expanded once at the plan_for stage boundary into a ModularSearchBudget (Encoder-plan1.md 12), never re-checked in a kernel.
+        """
+    context """
+        The full search was measured to be chaff on the photo corpus: byte-identical output to level 1 at ~16x the wall time (jpegxl-rs.assessment.modular-effort-lean-default). Quality is preserved unconditionally because every level is exact-lossless.
+        """
+    consequences """
+        Default encodes are 4.6-16.9x faster on photos with byte-identical output (verified: .agent/scratch/effort-ramp-2026-08-10/verify_default_flip.ps1). Flat/paletteable content encodes a few percent larger by default (measured 3.7% on a synthetic screenshot) unless a higher effort is selected. This default-output change is deliberate but validated only on a limited corpus; a broader real-world UI/line-art corpus should confirm the tradeoff before any method is deleted (as opposed to demoted).
+        """
+    implements [
+        @jpegxl-rs.constraint.correctness-before-speed,
+        @jpegxl-rs.policy.optimization-correctness-gates
+    ]
+    supported_by [ @jpegxl-rs.assessment.modular-effort-lean-default ]
+    author "GitHub Uploader"
+}
+
 record jpegxl-rs.decision.opt-p-wide-rayon-deps/1 : decision {
     title "wide and rayon are feature-gated default dependencies for Opt-P"
     state proposed

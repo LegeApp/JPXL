@@ -527,6 +527,36 @@ record jpegxl-rs.work.arch-phase4b-sampled-gather-scoped/1 : work {
     ]
 }
 
+record jpegxl-rs.work.arch-phase4e-modular-effort-ramp/1 : work {
+    title "Phase 4E: lossless modular effort ramp, then reoriented to a lean default (the search above e1 is chaff)"
+    state proposed
+    scope [
+        path "path \"JPXL/crates/jpxl-cli/**\"",
+        path "path \"JPXL/crates/jpxl-encode/**\""
+    ]
+    intent """
+        Build the lossless modular effort ramp (speed/size dial) per Encoder-plan1.md §12. Reoriented by measurement: the full search is chaff on real photos, earning zero bytes for 16× the wall time. Prune the default path: flip Effort::DEFAULT to the lean level 1, demote the full search to opt-in, keep level 7 as the byte-identical density anchor.
+        """
+    acceptance {
+        check default-byte-identical {
+            statement """
+                The lean default (Effort::DEFAULT = 1) is byte-identical to the pre-change default on the photo corpus, at a fraction of the time.
+                """
+            method command
+            command "pwsh -NoProfile -File .agent/scratch/effort-ramp-2026-08-10/verify_default_flip.ps1"
+        }
+        check tests-green {
+            statement """
+                Every effort level reconstructs pixels exactly and round-trips; level 7 reproduces the pre-ramp search field-for-field.
+                """
+            method command
+            command "cargo test -p jpxl-encode --lib"
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase4b-sampled-gather-scoped/1 ]
+    part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+}
+
 record jpegxl-rs.work.arch-s8-cover-lane-simd/1 : work {
     title "outside-advice.md §8 (S8), narrowed per Opus advisor review: bit-identical coefficient-lane SIMD for cover scoring"
     state completed

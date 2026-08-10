@@ -63,6 +63,19 @@ record jpegxl-rs.assessment.encoder-static-optimization/1 : assessment {
     }
 }
 
+record jpegxl-rs.assessment.modular-effort-lean-default/1 : assessment {
+    title "Modular full search is chaff on real content; the lean config should be the default"
+    state verified
+    statement """
+        On real photographic and smooth content the full modular search earns zero bytes over a single-predictor, single-leaf, collapsed search, while costing ~16x the wall time. Measured at 12MP (jpxl bench modular --diag): effort 1 does 1 residual scan, effort 7 does 71, and both emit the identical fingerprint dc380915d983b360 / 9,795,599 bytes. A content sweep (.agent/scratch/effort-ramp-2026-08-10) shows effort 1 within 0% of best on photos and gradients, ~3.7% on a flat-block screenshot, at 5-17x the speed.
+
+        Per the bpg-rs precedent (commit 4e68042 'effort-tier restructuring': three canonical presets with explicit pipeline policies, the expensive tier kept cheap where it does not help), the expensive machinery (Weighted full-scans, the 56-candidate split grid, per-leaf refinement, finer stride, palette/squeeze trials) should be demoted to opt-in rather than remaining a tax on the default path. It is deliberately NOT deleted: those methods are load-bearing on content the synthetic fixtures do not represent (real UI/line-art -> palette; textured/noisy -> Weighted), and proving a method universally dead needs a broader real-world corpus.
+
+        Prose citations (V-005: an assessment cannot target a work record via supported_by): the implementing work is jpegxl-rs.work.arch-phase4e-modular-effort-ramp; the measurement evidence is jpegxl-rs.evidence.modular-search-chaff-2026-08-10 and jpegxl-rs.evidence.modular-effort-ramp-landed-2026-08-10.
+        """
+    author "GitHub Uploader"
+}
+
 record jpegxl-rs.assessment.phase4-density-gap-is-vs-e7-only/1 : assessment {
     title "Correction: the '118x' figure is a wall-time ratio, not a density gap; jpxl-modular already beats cjxl -e1 on bytes"
     state verified

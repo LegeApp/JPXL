@@ -7,6 +7,33 @@
 Dated working ledger. **Prepend** new entries — newest first. Each entry: what
 changed, what is now proved, what is next, what is blocked.
 
+## 2026-08-10 — Phase 4E: lossless modular effort ramp, then reoriented to a lean default (the search above e1 is chaff on real content)
+
+**What changed (files: `crates/jpxl-encode/src/lossless.rs`, `crates/jpxl-encode/src/lib.rs`, `crates/jpxl-cli/src/main.rs` — only these three):**
+- Added `Effort(u8)` (1..=9) and an internal `ModularSearchBudget` expanded **once** at the `plan_for` stage boundary (per `Encoder-plan1.md` §12: a budget selected at a stage boundary, never effort checks scattered through kernels). The budget parameterises every lossless search lever: predictor set, split property/threshold grid, tree depth/leaf caps, deep-search sample cap, per-leaf refinement, palette/squeeze trials, and the sampled-gather row stride. `EncodeOptions.effort` + `jpxl encode --effort N` + `jpxl bench modular --effort N`.
+- Stage-C exact re-price is now skipped when neither palette nor squeeze will run (pure overhead otherwise; the emitted tree is unaffected).
+
+**The finding that reoriented the work (user's steer + bpg-rs `4e68042` pattern):** on real content the full search is **chaff**. Measured at 12MP (`jpxl bench modular --diag`): effort 1 does **1** residual scan, effort 7 does **71**, and both emit the **identical fingerprint `dc380915d983b360`** / **9,795,599 bytes**. Content sweep (`.agent/scratch/effort-ramp-2026-08-10/`): effort 1 is within **0%** of the best on photos and gradients, ~3.7% on a flat-block screenshot, at **5–17× the speed**. The extra predictors, Weighted full-scans, 56-candidate split grid, per-leaf refinement, and finer stride buy essentially nothing on the common case.
+
+**Decision (default output changes on non-photo content only):** `Effort::DEFAULT` is now the lean **level 1**, not the full search. The full pre-ramp search is retained as **level 7**, and higher levels (8–9) add finer stride/deeper search for density chasing. This prunes the chaff out of the *default path* while keeping every method reachable for the content that needs it (real screenshots → palette; textured → Weighted; etc.), following bpg-rs's "canonical presets, keep the expensive tier opt-in" discipline rather than deleting load-bearing methods.
+
+**Proved:**
+1. **Default flip is byte-identical on the photo corpus.** `jpxl encode` (default) vs the pre-change default: sha256 IDENTICAL on small/mid/large (`C3C60CEE…`, `5C49AB90…`, `CA27799D…`), at 297ms/561ms/1338ms vs the old 1359ms/6752ms/22629ms — a 4.6–16.9× speedup for the *same bytes*. The common case does not regress.
+2. **`--effort 7` reproduces the pre-change fingerprints exactly** (the retained density anchor); a unit test (`effort_7_budget_is_the_pre_ramp_search`) pins level 7's budget field-for-field to the old constants.
+3. **Every effort round-trips losslessly** through `jpxl-decode` on a multi-group frame, and is deterministic per level (`every_effort_round_trips_losslessly_on_a_multi_group_frame`, `same_effort_is_deterministic`). `jpxl-encode` lib: **115/115** green.
+4. Oracle usable again: WSL `cjxl`/`djxl` run with `LD_LIBRARY_PATH=.agent/scratch/oraclelibs` (locally-extracted `libgif.so.7`, no system install). cjxl e1/e7 anchors reproduced from the cached corpus.
+
+**Next (the actual pruning follow-up, not done here):**
+- Deeper prune needs a **broader real-world corpus** (UI/screenshots/line-art with anti-aliasing) to measure per-method load-bearing rates before deleting any method's *code* — my synthetic fixtures are too degenerate to prove any method universally dead (e.g. the flat-block screenshot didn't even need palette). Until then, prune from the *default path* only (done), keep methods opt-in.
+- A content-adaptive default (cheap classifier → enable palette/splits only when they'll pay) would recover the ≤3.7% the lean default leaves on flat/paletteable content without the 5–17× tax. Scoped, not built.
+
+**Traps — do not "fix" these:**
+- `jpxl-conformance` `bike_5_reference_npy_and_thresholds_are_readable` fails with `BadMagic`: the gitignored corpus `reference_image.npy` is absent/placeholder on this host. Pre-existing (fails identically with my changes stashed); fix is `tools/fetch-conformance.sh`, not code.
+- `cargo fmt --all --check` and `cargo clippy --workspace -- -D warnings` are **red on clean HEAD** (28 fmt-drift files incl. `jpxl-core`/`jpxl-bitstream`/`jpxl-encode-policy`; `jpxl-core` `excessive_precision` ×70) — toolchain-1.97.1 drift that predates this change. Do **not** reformat/rewrite those 28 files to make the gate green (AGENTS §8: no edits outside the task's file set). My three files are clippy- and fmt-clean; `lib.rs:598` fmt drift is pre-existing code I did not touch.
+- Do **not** re-inflate the default effort back to the full search "for density": it buys ~0% on photos/gradients and costs 5–17×. Density chasing is `--effort 7-9`, opt-in by design.
+
+**Ledger (created this session, via the `akr` CLI — the `knowledge.*` MCP server went unresponsive mid-session with "unsupported call"):** `jpegxl-rs.work.arch-phase4e-modular-effort-ramp` (**proposed**, part_of `jpegxl-rs.track.encoder-optimization`, depends_on 4B), `jpegxl-rs.assessment.modular-effort-lean-default` (verified), `jpegxl-rs.decision.modular-lean-default` (active). **Deferred to the commit (forward-only):** the two evidence records (chaff measurement; ramp-landed verification) and `knowledge.complete` on the work record — recording evidence against pre-change HEAD then completing after a commit is the documented "evidence predates completion" landmine (AGENTS §10 AKR gotcha), so the code must be committed via `akr change`/`akr git commit` first, then evidence pinned to that commit and the work completed with `verify_default_flip.ps1` + the lib tests as check evidence. Scratch: `.agent/scratch/effort-ramp-2026-08-10/` (ramp.ps1, content_experiment.ps1, verify_default_flip.ps1, make_fixtures.ps1, rec-*.akr body files) and `.agent/scratch/oraclelibs/` (extracted libgif for the WSL oracle).
+
 ## 2026-08-07 (9) — S8 Phase D: prune wired behind a flag; safe and decision-preserving, but slower — flag stays off
 
 **What changed:**

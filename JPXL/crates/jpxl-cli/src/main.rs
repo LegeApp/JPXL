@@ -39,6 +39,9 @@ Usage:
 
 Encode options:
     --container                   Wrap the codestream in a Part 2 container
+    --effort <1..9>               Lossless search effort (default 1 = fastest).
+                                  Higher is slower and only occasionally smaller;
+                                  every level is exact-lossless (pixels identical).
     --group-size-shift <0..3>     Force group_dim = 128 << shift (default 2)
     --jxlp <bytes>                Split the codestream across jxlp boxes
                                   (18181-2 9.10); implies --container
@@ -78,6 +81,7 @@ Options:
     --bpp <f>             Target bits/pixel for vardct-rate (default 1.0)
     --threads <n>         Section-parallel workers (default: auto; 1 = serial)
     --input <path.ppm>    Use a real P6 image instead of the synthetic RGB
+    --effort <1..9>       Modular search effort (default 1; modular mode only)
     --diag                After the timed run, print Phase-0 architecture
                           counters (choose stages, residual scans, plane clones)
 
@@ -261,6 +265,19 @@ fn cmd_encode(args: &[String]) -> u8 {
     while let Some(arg) = rest.next() {
         match arg.as_str() {
             "--container" => options.container = true,
+            "--effort" => {
+                let Some(level) = rest.next().and_then(|v| v.parse::<u8>().ok()) else {
+                    fail("`--effort` needs an integer in 1..=9");
+                    return EXIT_ERROR;
+                };
+                match jpxl_encode::Effort::new(level) {
+                    Ok(effort) => options.effort = effort,
+                    Err(_) => {
+                        fail("`--effort` needs an integer in 1..=9");
+                        return EXIT_ERROR;
+                    }
+                }
+            }
             "--group-size-shift" => {
                 let Some(value) = rest.next().and_then(|v| v.parse::<u32>().ok()) else {
                     fail("`--group-size-shift` needs a number in 0..=3");
@@ -325,11 +342,12 @@ fn cmd_encode(args: &[String]) -> u8 {
     match std::fs::write(Path::new(output.as_str()), &encoded) {
         Ok(()) => {
             println!(
-                "{output}: {}x{}, {} channel(s), {} bits per sample, {} bytes",
+                "{output}: {}x{}, {} channel(s), {} bits per sample, effort {}, {} bytes",
                 image.width(),
                 image.height(),
                 image.num_channels(),
                 image.bits_per_sample(),
+                options.effort.level(),
                 encoded.len()
             );
             EXIT_OK
@@ -360,6 +378,7 @@ fn cmd_bench(args: &[String]) -> u8 {
     let mut input: Option<&str> = None;
     let mut resources = jpxl_encode::EncodeResources::auto();
     let mut diag = false;
+    let mut effort = jpxl_encode::Effort::DEFAULT;
 
     let mut rest = args.get(1..).unwrap_or(&[]).iter();
     while let Some(arg) = rest.next() {
@@ -413,6 +432,19 @@ fn cmd_bench(args: &[String]) -> u8 {
                 };
                 input = Some(path.as_str());
             }
+            "--effort" => {
+                let Some(level) = rest.next().and_then(|s| s.parse::<u8>().ok()) else {
+                    fail("`--effort` needs an integer in 1..=9");
+                    return EXIT_ERROR;
+                };
+                match jpxl_encode::Effort::new(level) {
+                    Ok(e) => effort = e,
+                    Err(_) => {
+                        fail("`--effort` needs an integer in 1..=9");
+                        return EXIT_ERROR;
+                    }
+                }
+            }
             other => {
                 fail(&format!("unknown `bench` option `{other}`"));
                 return EXIT_ERROR;
@@ -441,7 +473,7 @@ fn cmd_bench(args: &[String]) -> u8 {
     };
 
     let timed = match mode {
-        "modular" => bench_modular(&rgb, width, height, iters, resources),
+        "modular" => bench_modular(&rgb, width, height, iters, resources, effort),
         "vardct-fixed" => bench_vardct_fixed(&rgb, width, height, iters, resources),
         "vardct-rate" => bench_vardct_rate(&rgb, width, height, bpp, iters, resources),
         "vardct-probe" => bench_vardct_probe(&rgb, width, height, iters, resources),
@@ -526,12 +558,16 @@ fn bench_modular(
     height: u32,
     iters: usize,
     resources: jpxl_encode::EncodeResources,
+    effort: jpxl_encode::Effort,
 ) -> Result<BenchReport, String> {
     let samples: Vec<u16> = rgb.iter().map(|&b| u16::from(b)).collect();
     let image = jpxl_encode::Image::from_interleaved(width, height, 3, 8, &samples)
         .map_err(|e| e.to_string())?;
-    let mut options = jpxl_encode::EncodeOptions::default();
-    options.resources = resources;
+    let options = jpxl_encode::EncodeOptions {
+        resources,
+        effort,
+        ..jpxl_encode::EncodeOptions::default()
+    };
     // Warm-up (not timed).
     let warm = jpxl_encode::encode(&image, &options).map_err(|e| e.to_string())?;
     time_iters(iters, warm.len(), fnv1a64(&warm), || {

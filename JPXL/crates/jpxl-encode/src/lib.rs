@@ -76,6 +76,7 @@ use modular::{ModularSource, Plane, Rect};
 use section::SectionStore;
 
 pub use error::{EncodeError, Result};
+pub use lossless::Effort;
 pub use resources::{EncodeResources, ParallelAxis};
 
 /// The largest bit depth this encoder writes (18181-1 D.7 carries more; the
@@ -241,6 +242,15 @@ pub struct EncodeOptions {
     /// when the `parallel` feature is on. Under Contract A the codestream must
     /// not depend on [`EncodeResources::threads`].
     pub resources: EncodeResources,
+    /// Lossless-modular search effort (speed/size dial), 1..=9.
+    ///
+    /// [`Effort::DEFAULT`] is the lean level 1: fastest, and byte-identical to
+    /// the full search on photographic/smooth content. Higher levels spend more
+    /// time and only occasionally (a few percent, on specific content) produce
+    /// a smaller file; level 7 is the full search retained as a density anchor.
+    /// Every level is exact-lossless, so this changes only the byte count and
+    /// the encode time, never the decoded pixels.
+    pub effort: Effort,
 }
 
 /// An 8-bit greyscale image in raster order.

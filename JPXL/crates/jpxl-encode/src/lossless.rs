@@ -114,6 +114,241 @@ const MAX_TREE_LEAVES: usize = 8;
 /// dominates multi-group planning time.
 const DEEP_SEARCH_SAMPLE_CAP: u64 = 64 * 64;
 
+/// The lossless-modular encoder's **effort** budget: how hard the planner
+/// searches for a small file, from `1` (fastest, largest) to `9` (slowest,
+/// densest). Effort is an encoder-side *speed/size* dial the standard leaves
+/// entirely free; every level is exact-lossless, so it never changes the
+/// pixels a conforming decoder reconstructs — only the encoded byte count and
+/// the time the search spends.
+///
+/// Effort and a (future) *quality* target are separate axes
+/// (`docs/Encoder-plan1.md` §12): quality picks the fidelity, effort picks how
+/// much compute is spent reaching it. This type is the effort axis for the
+/// lossless track. It is expanded **once**, at the [`plan_for`] stage
+/// boundary, into a `ModularSearchBudget`; no kernel re-reads the level.
+///
+/// [`Effort::DEFAULT`] is the **lean** level 1. On photographic and smooth
+/// content it produces byte-identical output to the full search (level 7) in a
+/// fraction of the time: that search's extra predictors, split grid, per-leaf
+/// refinement and finer stride are chaff on such content — measured at 71
+/// residual scans versus 1 for the *same* bytes
+/// (jpegxl-rs.evidence.modular-search-chaff-2026-08-10). Levels above the
+/// default only help, and only by a few percent, on specific content
+/// (flat/paletteable, or squeezing the last few percent out of a photo); that
+/// cost is opt-in, not a tax every encode pays. Level 7 is retained as the
+/// full pre-ramp search — a byte-identical density anchor for content the lean
+/// default leaves on the table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Effort(u8);
+
+impl Effort {
+    /// Fastest, leanest search — and the default: one strong predictor, no
+    /// transform trials, collapsed tree search.
+    pub const MIN: Effort = Effort(1);
+    /// Slowest, densest output.
+    pub const MAX: Effort = Effort(9);
+    /// The default effort: the lean level 1. More effort rarely reduces size on
+    /// typical content, so the sensible default is the fast one and density
+    /// chasing is opt-in via a higher level.
+    pub const DEFAULT: Effort = Effort(1);
+
+    /// Wraps `level`, which must be in `1..=9`.
+    ///
+    /// # Errors
+    ///
+    /// [`EncodeError::ValueOutOfRange`] if `level` is `0` or above `9`.
+    pub fn new(level: u8) -> Result<Self> {
+        if !(1..=9).contains(&level) {
+            return Err(EncodeError::ValueOutOfRange {
+                what: "effort",
+                value: i64::from(level),
+            });
+        }
+        Ok(Self(level))
+    }
+
+    /// The effort level, in `1..=9`.
+    #[must_use]
+    pub const fn level(self) -> u8 {
+        self.0
+    }
+}
+
+impl Default for Effort {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
+/// The concrete search levers an [`Effort`] expands into, chosen **once** at
+/// the [`plan_for`] stage boundary (`docs/Encoder-plan1.md` §12: select the
+/// budget at a stage boundary, never scatter effort checks through kernels).
+/// Every field controls only the *search*: none of them affects decoded pixels
+/// (lossless is exact at every level), and the Stage-C exact-price gate
+/// re-prices the settled winner regardless of how cheaply the search ranked it.
+#[derive(Debug, Clone, Copy)]
+struct ModularSearchBudget {
+    /// Predictors tried in the single-leaf sweep and per-leaf refinement.
+    predictors: &'static [Predictor],
+    /// Table H.4 property indices tried for splits.
+    split_properties: &'static [u32],
+    /// Thresholds tried for `property > value` decisions.
+    split_thresholds: &'static [i32],
+    /// Cap on MA-tree depth (root = 0).
+    max_tree_depth: u32,
+    /// Cap on MA-tree leaves / residual contexts.
+    max_tree_leaves: usize,
+    /// Above this sample count the tree search collapses to one split.
+    deep_search_sample_cap: u64,
+    /// Whether to run per-leaf predictor refinement.
+    refine_leaves: bool,
+    /// Whether to trial an exact-colour palette transform.
+    try_palette: bool,
+    /// Whether to trial the default squeeze transform.
+    try_squeeze: bool,
+    /// Row stride for the sampled cheap-tier scorer (`1` = every row).
+    cheap_row_stride: u32,
+}
+
+// Predictor ladders. Every subset keeps `PREDICTOR_CANDIDATES`' order so that
+// level 7's tie-breaks (the sweep keeps the earliest predictor at the minimum
+// cost) match the pre-ramp search exactly. Efforts 1-6 exclude the stateful
+// Weighted predictor (6), whose every trial forces a full sequential scan
+// (`estimate_residual_bits_sampled` falls back to the full scan for any
+// Weighted-containing tree) — dropping it is the single largest low-effort
+// speed win.
+const PREDS_E1: &[Predictor] = &[Predictor::Gradient];
+const PREDS_E2: &[Predictor] = &[Predictor::West, Predictor::North, Predictor::Gradient];
+const PREDS_E3: &[Predictor] = &[
+    Predictor::Zero,
+    Predictor::West,
+    Predictor::North,
+    Predictor::Gradient,
+];
+/// The six order-independent predictors (the pre-4A set): `PREDICTOR_CANDIDATES`
+/// without Weighted. Used by efforts 4-6.
+const PREDS_STATELESS: &[Predictor] = &[
+    Predictor::Zero,
+    Predictor::West,
+    Predictor::North,
+    Predictor::AverageWestNorth,
+    Predictor::Select,
+    Predictor::Gradient,
+];
+
+const PROPS_E2: &[u32] = &[6, 7];
+const PROPS_E3: &[u32] = &[4, 6, 7];
+const PROPS_E4: &[u32] = &[4, 5, 6, 7];
+const PROPS_E5: &[u32] = &[4, 5, 6, 7, 9];
+
+const THRESH_E2: &[i32] = &[0, 4];
+const THRESH_E3: &[i32] = &[0, 2, 8];
+const THRESH_E4: &[i32] = &[0, 1, 4, 16];
+const THRESH_E5: &[i32] = &[0, 1, 2, 8, 32];
+/// Finer threshold grid for efforts 8-9. The *property* axis is already maxed
+/// at level 7 — the encoder computes only properties {4,5,6,7,9,10,11}
+/// (`modular::property_value`; every other index reads as a constant 0), so a
+/// higher rung earns density from finer thresholds, deeper trees, a larger
+/// deep-search cap, and a finer sampling stride, not from new properties.
+const THRESH_FINE: &[i32] = &[0, 1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64];
+
+impl ModularSearchBudget {
+    /// Expands an [`Effort`] level into concrete search levers.
+    ///
+    /// Level 7 is the pre-ramp search, field for field; changing it means
+    /// re-proving default byte-identity (see the `effort_7_budget_is_the_pre_ramp_search`
+    /// test and the corpus fingerprint gate). Levels 1-6 trade density for
+    /// speed; 8-9 trade speed for density.
+    fn for_effort(effort: Effort) -> Self {
+        // The default/level-7 search, reused for level 7 and as a defensive
+        // fallback. Every other arm is a deliberate deviation from it.
+        let default = Self {
+            predictors: PREDICTOR_CANDIDATES,
+            split_properties: SPLIT_PROPERTIES,
+            split_thresholds: SPLIT_THRESHOLDS,
+            max_tree_depth: MAX_TREE_DEPTH,
+            max_tree_leaves: MAX_TREE_LEAVES,
+            deep_search_sample_cap: DEEP_SEARCH_SAMPLE_CAP,
+            refine_leaves: true,
+            try_palette: true,
+            try_squeeze: true,
+            cheap_row_stride: SAMPLED_GATHER_ROW_STRIDE,
+        };
+        match effort.level() {
+            1 => Self {
+                predictors: PREDS_E1,
+                split_properties: &[],
+                split_thresholds: &[],
+                max_tree_depth: 0,
+                max_tree_leaves: 1,
+                refine_leaves: false,
+                try_palette: false,
+                try_squeeze: false,
+                cheap_row_stride: 8,
+                ..default
+            },
+            2 => Self {
+                predictors: PREDS_E2,
+                split_properties: PROPS_E2,
+                split_thresholds: THRESH_E2,
+                max_tree_depth: 1,
+                max_tree_leaves: 2,
+                refine_leaves: false,
+                try_palette: true,
+                try_squeeze: false,
+                cheap_row_stride: 8,
+                ..default
+            },
+            3 => Self {
+                predictors: PREDS_E3,
+                split_properties: PROPS_E3,
+                split_thresholds: THRESH_E3,
+                max_tree_depth: 2,
+                max_tree_leaves: 4,
+                refine_leaves: false,
+                cheap_row_stride: 6,
+                ..default
+            },
+            4 => Self {
+                predictors: PREDS_STATELESS,
+                split_properties: PROPS_E4,
+                split_thresholds: THRESH_E4,
+                max_tree_depth: 3,
+                max_tree_leaves: 6,
+                ..default
+            },
+            5 => Self {
+                predictors: PREDS_STATELESS,
+                split_properties: PROPS_E5,
+                split_thresholds: THRESH_E5,
+                ..default
+            },
+            6 => Self {
+                predictors: PREDS_STATELESS,
+                ..default
+            },
+            8 => Self {
+                split_thresholds: THRESH_FINE,
+                max_tree_depth: 5,
+                max_tree_leaves: 10,
+                deep_search_sample_cap: 1 << 16,
+                cheap_row_stride: 2,
+                ..default
+            },
+            9 => Self {
+                split_thresholds: THRESH_FINE,
+                max_tree_depth: 6,
+                max_tree_leaves: 12,
+                deep_search_sample_cap: 1 << 18,
+                cheap_row_stride: 1,
+                ..default
+            },
+            // 7 (and any out-of-range level a caller forced past `Effort::new`).
+            _ => default,
+        }
+    }
+}
+
 /// Chooses a plan for already-transformed `planes`.
 ///
 /// Policy (slice 19d + Opt-M tiered scoring):
@@ -138,17 +373,18 @@ pub fn plan_for(
     options: &EncodeOptions,
 ) -> Result<ValidatedLosslessPlan> {
     reset_multiplicity();
+    let budget = ModularSearchBudget::for_effort(options.effort);
     let group_size_shift = options.group_size_shift.unwrap_or(DEFAULT_GROUP_SIZE_SHIFT);
     let samples = u64::from(width).saturating_mul(u64::from(height));
-    let max_leaves = if samples > DEEP_SEARCH_SAMPLE_CAP {
+    let max_leaves = if samples > budget.deep_search_sample_cap {
         2
     } else {
-        MAX_TREE_LEAVES
+        budget.max_tree_leaves
     };
-    let max_depth = if samples > DEEP_SEARCH_SAMPLE_CAP {
+    let max_depth = if samples > budget.deep_search_sample_cap {
         1
     } else {
-        MAX_TREE_DEPTH
+        budget.max_tree_depth
     };
 
     let mut best: Option<(u64, MaTree)> = None;
@@ -173,7 +409,7 @@ pub fn plan_for(
         })
         .collect();
 
-    for &predictor in PREDICTOR_CANDIDATES {
+    for &predictor in budget.predictors {
         let tree = MaTree::single_leaf(predictor);
         let cost = total_cost_shared(
             width,
@@ -181,7 +417,9 @@ pub fn plan_for(
             &shared_score,
             &tree,
             group_size_shift,
-            PriceTier::Cheap,
+            PriceTier::Cheap {
+                row_stride: budget.cheap_row_stride,
+            },
         )?;
         if best.as_ref().is_none_or(|(c, _)| cost < *c) {
             best = Some((cost, tree));
@@ -203,8 +441,8 @@ pub fn plan_for(
 
         for ctx in 0..leaf_count {
             let parent_pred = leaf_preds.get(ctx).copied().unwrap_or(Predictor::Gradient);
-            for &property in SPLIT_PROPERTIES {
-                for &value in SPLIT_THRESHOLDS {
+            for &property in budget.split_properties {
+                for &value in budget.split_thresholds {
                     // Same predictor both sides first (cheap topology search).
                     let Ok(candidate) =
                         best_tree.split_leaf(ctx, property, value, parent_pred, parent_pred)
@@ -220,7 +458,9 @@ pub fn plan_for(
                         &shared_score,
                         &candidate,
                         group_size_shift,
-                        PriceTier::Cheap,
+                        PriceTier::Cheap {
+                            row_stride: budget.cheap_row_stride,
+                        },
                     )?;
                     if cost < best_cost && round_best.as_ref().is_none_or(|(c, _)| cost < *c) {
                         round_best = Some((cost, candidate));
@@ -240,52 +480,63 @@ pub fn plan_for(
     }
 
     // Per-leaf predictor refinement on the settled topology (cheap).
-    let leaf_count = best_tree.num_contexts();
-    for ctx in 0..leaf_count {
-        let current = best_tree
-            .leaf_predictors()
-            .get(ctx)
-            .copied()
-            .unwrap_or(Predictor::Gradient);
-        for &predictor in PREDICTOR_CANDIDATES {
-            if predictor == current {
-                continue;
-            }
-            let Ok(candidate) = best_tree.with_leaf_predictor(ctx, predictor) else {
-                continue;
-            };
-            let cost = total_cost_shared(
-                width,
-                height,
-                &shared_score,
-                &candidate,
-                group_size_shift,
-                PriceTier::Cheap,
-            )?;
-            if cost < best_cost {
-                best_cost = cost;
-                best_tree = candidate;
+    if budget.refine_leaves {
+        let leaf_count = best_tree.num_contexts();
+        for ctx in 0..leaf_count {
+            let current = best_tree
+                .leaf_predictors()
+                .get(ctx)
+                .copied()
+                .unwrap_or(Predictor::Gradient);
+            for &predictor in budget.predictors {
+                if predictor == current {
+                    continue;
+                }
+                let Ok(candidate) = best_tree.with_leaf_predictor(ctx, predictor) else {
+                    continue;
+                };
+                let cost = total_cost_shared(
+                    width,
+                    height,
+                    &shared_score,
+                    &candidate,
+                    group_size_shift,
+                    PriceTier::Cheap {
+                        row_stride: budget.cheap_row_stride,
+                    },
+                )?;
+                if cost < best_cost {
+                    best_cost = cost;
+                    best_tree = candidate;
+                }
             }
         }
     }
 
-    // Stage C: exact residual price of the MA finalist (baseline for transforms).
-    let ma_source = modular::ModularSource::direct_shared(
-        width,
-        height,
-        &shared_score,
-        false,
-        best_tree.clone(),
-        false,
-    );
-    best_cost = total_cost_source(&ma_source, group_size_shift, PriceTier::Exact)?;
+    // Stage C: exact residual price of the MA finalist, the baseline the
+    // palette/squeeze trials compare against. Skipped when neither trial will
+    // run (effort 1 drops both; effort 2 keeps only palette), because the
+    // exact re-price is then pure overhead — the emitted tree is `best_tree`
+    // regardless of this number.
+    if budget.try_palette || budget.try_squeeze {
+        let ma_source = modular::ModularSource::direct_shared(
+            width,
+            height,
+            &shared_score,
+            false,
+            best_tree.clone(),
+            false,
+        );
+        best_cost = total_cost_source(&ma_source, group_size_shift, PriceTier::Exact)?;
+    }
 
     // Nested palette trial on *source* samples (not RCT). Exact-price gate.
     let mut palette: Option<PaletteForward> = None;
     let mut use_rct = rct;
     let mut use_squeeze = false;
     let num_c = planes.len();
-    if (num_c == 1 || num_c == 3)
+    if budget.try_palette
+        && (num_c == 1 || num_c == 3)
         && let Some(fwd) = try_exact_palette(width, height, planes, 0, num_c)?
     {
         let tree = MaTree::single_leaf(Predictor::Zero);
@@ -303,7 +554,10 @@ pub fn plan_for(
     }
 
     // Default squeeze on MA-scored planes. Skip when palette won. Exact gate.
-    if palette.is_none() && squeeze::default_would_run(width, height, score_planes.len()) {
+    if budget.try_squeeze
+        && palette.is_none()
+        && squeeze::default_would_run(width, height, score_planes.len())
+    {
         let tree = MaTree::single_leaf(Predictor::Gradient);
         let source = modular::ModularSource::with_default_squeeze(
             width,
@@ -347,8 +601,9 @@ pub fn plan_for(
 /// How residual candidates are priced (Opt-M tiered planner).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PriceTier {
-    /// Collect residuals + Shannon hybrid estimate (no ANS emit).
-    Cheap,
+    /// Collect residuals + Shannon hybrid estimate (no ANS emit). `row_stride`
+    /// is the sampled-gather stride the effort budget chose (`1` = every row).
+    Cheap { row_stride: u32 },
     /// Full residual ANS write path (count-only BitWriter).
     Exact,
 }
@@ -466,14 +721,15 @@ fn residual_stream_cost_source(
     tier: PriceTier,
 ) -> Result<u64> {
     match tier {
-        PriceTier::Cheap => {
+        PriceTier::Cheap { row_stride } => {
             bump_cheap();
             #[cfg(feature = "phase4b-sampled-gather")]
             {
-                sampled_cheap_residual_bits(source)
+                sampled_cheap_residual_bits(source, row_stride)
             }
             #[cfg(not(feature = "phase4b-sampled-gather"))]
             {
+                let _ = row_stride;
                 cheap_residual_bits(source, group_size_shift)
             }
         }
@@ -484,10 +740,11 @@ fn residual_stream_cost_source(
     }
 }
 
-/// Row stride for [`sampled_cheap_residual_bits`] (Phase 4B). Every 4th row
-/// (plus the last), so the topology search's cost scales roughly a quarter
-/// as fast with pixel count as the full-plane scan it stands in for.
-#[cfg(any(feature = "phase4b-sampled-gather", test))]
+/// The level-7 (default) cheap-tier row stride: every 4th row (plus the last),
+/// so the topology search costs roughly a quarter of a full-plane scan. The
+/// effort budget varies this (efforts 1-2 use `8`, effort 9 uses `1` = every
+/// row); `ModularSearchBudget::for_effort` reads this for the default level, so
+/// it is compiled in every configuration.
 const SAMPLED_GATHER_ROW_STRIDE: u32 = 4;
 
 /// Phase 4B additive scorer: rows a strided subset instead of a full plane
@@ -498,8 +755,8 @@ const SAMPLED_GATHER_ROW_STRIDE: u32 = 4;
 ///
 /// See jpegxl-rs.work.arch-phase4b-sampled-gather-scoped.
 #[cfg(any(feature = "phase4b-sampled-gather", test))]
-fn sampled_cheap_residual_bits(source: &modular::ModularSource) -> Result<u64> {
-    modular::estimate_residual_bits_sampled(source, SAMPLED_GATHER_ROW_STRIDE)
+fn sampled_cheap_residual_bits(source: &modular::ModularSource, row_stride: u32) -> Result<u64> {
+    modular::estimate_residual_bits_sampled(source, row_stride)
 }
 
 /// Stage-B estimate: one residual collect + hybrid Shannon cost (no ANS emit).
@@ -639,7 +896,8 @@ mod tests {
                 );
                 let full_cost =
                     cheap_residual_bits(&source, DEFAULT_GROUP_SIZE_SHIFT).expect("full cost");
-                let sampled_cost = sampled_cheap_residual_bits(&source).expect("sampled cost");
+                let sampled_cost = sampled_cheap_residual_bits(&source, SAMPLED_GATHER_ROW_STRIDE)
+                    .expect("sampled cost");
                 if baseline_best.as_ref().is_none_or(|(c, _)| full_cost < *c) {
                     baseline_best = Some((full_cost, predictor));
                 }
@@ -700,7 +958,8 @@ mod tests {
             tree,
             false,
         );
-        let cost = sampled_cheap_residual_bits(&source).expect("sampled cost on a tiny frame");
+        let cost = sampled_cheap_residual_bits(&source, SAMPLED_GATHER_ROW_STRIDE)
+            .expect("sampled cost on a tiny frame");
         assert!(cost > 0, "a non-empty frame must not cost zero bits");
     }
 
@@ -728,7 +987,7 @@ mod tests {
         let plane: Plane = (0..height)
             .flat_map(|y| (0..width).map(move |x| ((x * 3 + y * 5) % 200) as i32))
             .collect();
-        let _ = plan_for(width, height, &[plane], false, &EncodeOptions::default()).expect("plan");
+        let _ = plan_for(width, height, &[plane], false, &full_search_options()).expect("plan");
         let m = last_plan_multiplicity();
         assert!(
             m.cheap_scores >= 6,
@@ -781,8 +1040,7 @@ mod tests {
                 })
             })
             .collect();
-        let plan =
-            plan_for(width, height, &[plane], false, &EncodeOptions::default()).expect("plan");
+        let plan = plan_for(width, height, &[plane], false, &full_search_options()).expect("plan");
         assert!(
             plan.plan().palette.is_some(),
             "scattered few-colour gray should adopt an exact palette"
@@ -1052,9 +1310,9 @@ mod tests {
         let plan = plan_for(
             width,
             height,
-            &[plane.clone()],
+            std::slice::from_ref(&plane),
             false,
-            &EncodeOptions::default(),
+            &full_search_options(),
         )
         .expect("plan");
         let with_weighted =
@@ -1107,5 +1365,173 @@ mod tests {
             with_weighted.len(),
             baseline_bytes.len()
         );
+    }
+
+    // --- Effort ramp (speed/size dial) ---
+
+    /// Level 7 is the pre-ramp search, field for field. If this drifts, a
+    /// default encode is no longer byte-identical to the pre-effort-ramp
+    /// output; re-prove the corpus fingerprint gate before changing it.
+    #[test]
+    fn effort_7_budget_is_the_pre_ramp_search() {
+        let b = ModularSearchBudget::for_effort(Effort::new(7).expect("valid"));
+        assert_eq!(b.predictors, PREDICTOR_CANDIDATES);
+        assert_eq!(b.split_properties, SPLIT_PROPERTIES);
+        assert_eq!(b.split_thresholds, SPLIT_THRESHOLDS);
+        assert_eq!(b.max_tree_depth, MAX_TREE_DEPTH);
+        assert_eq!(b.max_tree_leaves, MAX_TREE_LEAVES);
+        assert_eq!(b.deep_search_sample_cap, DEEP_SEARCH_SAMPLE_CAP);
+        assert!(b.refine_leaves && b.try_palette && b.try_squeeze);
+        assert_eq!(b.cheap_row_stride, SAMPLED_GATHER_ROW_STRIDE);
+    }
+
+    #[test]
+    fn default_effort_is_the_lean_level_1() {
+        assert_eq!(Effort::default().level(), 1);
+        assert_eq!(EncodeOptions::default().effort, Effort::DEFAULT);
+        assert_eq!(Effort::DEFAULT, Effort::MIN);
+    }
+
+    #[test]
+    fn effort_new_rejects_out_of_range() {
+        assert!(Effort::new(0).is_err());
+        assert!(Effort::new(10).is_err());
+        assert!(Effort::new(255).is_err());
+        for level in 1..=9u8 {
+            assert_eq!(Effort::new(level).expect("valid").level(), level);
+        }
+    }
+
+    /// A multi-group RGB fixture: gradient plus a hashed speckle so the tree
+    /// search has real decisions but no single predictor trivially wins.
+    fn effort_fixture() -> crate::Image {
+        let (width, height) = (160u32, 160u32);
+        let make = |seed: u32| -> Plane {
+            (0..height)
+                .flat_map(|y| {
+                    (0..width).map(move |x| {
+                        let h = x
+                            .wrapping_mul(2_654_435_761)
+                            .wrapping_add(y.wrapping_mul(40_503))
+                            .wrapping_add(seed.wrapping_mul(2_246_822_519));
+                        (((x + y).wrapping_add(h >> 27)) % 256) as i32
+                    })
+                })
+                .collect()
+        };
+        crate::Image::new(width, height, 8, vec![make(0), make(1), make(2)]).expect("image")
+    }
+
+    /// Options that force the full pre-ramp search (effort 7), for tests that
+    /// exercise methods the lean default (effort 1) deliberately skips: the
+    /// multi-predictor sweep, greedy splits, per-leaf refinement, Weighted, and
+    /// the palette/squeeze transform trials.
+    fn full_search_options() -> EncodeOptions {
+        EncodeOptions {
+            effort: Effort::new(7).expect("valid effort"),
+            ..EncodeOptions::default()
+        }
+    }
+
+    /// Every effort level must plan without panicking on the full (non-collapsed)
+    /// deep-search path, and honour its own leaf cap. 48×48 is below every
+    /// level's `deep_search_sample_cap`, so this exercises efforts 1-9 through
+    /// the multi-split search cheaply.
+    #[test]
+    fn every_effort_plans_a_valid_tree_on_the_deep_path() {
+        let (w, h) = (48u32, 48u32);
+        let plane: Plane = (0..h)
+            .flat_map(|y| (0..w).map(move |x| ((x * 3 + y * 5) % 200) as i32))
+            .collect();
+        for level in 1..=9u8 {
+            let effort = Effort::new(level).expect("valid");
+            let options = EncodeOptions {
+                effort,
+                ..EncodeOptions::default()
+            };
+            let plan = plan_for(w, h, std::slice::from_ref(&plane), false, &options)
+                .unwrap_or_else(|e| panic!("effort {level} failed to plan: {e}"));
+            let contexts = plan.plan().tree.num_contexts();
+            let budget = ModularSearchBudget::for_effort(effort);
+            assert!(contexts >= 1, "effort {level}: at least one context");
+            assert!(
+                contexts <= budget.max_tree_leaves.max(1),
+                "effort {level}: {contexts} contexts exceeds cap {}",
+                budget.max_tree_leaves
+            );
+        }
+    }
+
+    /// The ramp's correctness gate: every effort level reconstructs the source
+    /// pixels exactly (lossless is exact at every level) and round-trips
+    /// through the in-tree decoder on a multi-group frame; level 7 matches the
+    /// default-options encode byte for byte. Speed and size may vary across
+    /// levels; pixels may not.
+    #[test]
+    fn every_effort_round_trips_losslessly_on_a_multi_group_frame() {
+        use jpxl_core::limits::Limits;
+        let image = effort_fixture();
+        let opts = |effort: Effort| EncodeOptions {
+            group_size_shift: Some(0), // group_dim 128 -> 160x160 is a 2x2 grid
+            resources: crate::EncodeResources::serial(),
+            effort,
+            ..EncodeOptions::default()
+        };
+        let mut level_default: Option<Vec<u8>> = None;
+        for level in 1..=9u8 {
+            let effort = Effort::new(level).expect("valid");
+            let bytes = crate::encode(&image, &opts(effort)).expect("encode");
+            let decoded = jpxl_decode::decode(&bytes, &Limits::default()).expect("decode");
+            assert_eq!(
+                decoded.planes.len(),
+                image.planes().len(),
+                "effort {level}: channel count"
+            );
+            for (ch, src) in image.planes().iter().enumerate() {
+                let got = &decoded.planes.get(ch).expect("plane").samples;
+                assert!(
+                    got == src,
+                    "effort {level} channel {ch}: pixels must be exact"
+                );
+            }
+            if level == 1 {
+                level_default = Some(bytes);
+            }
+        }
+        let default = crate::encode(
+            &image,
+            &EncodeOptions {
+                group_size_shift: Some(0),
+                resources: crate::EncodeResources::serial(),
+                ..EncodeOptions::default()
+            },
+        )
+        .expect("encode");
+        assert_eq!(
+            level_default.expect("level 1 ran"),
+            default,
+            "default options must encode identically to explicit effort 1"
+        );
+    }
+
+    /// Same source + same effort + same options is byte-identical: the search
+    /// is a pure function of its budget.
+    #[test]
+    fn same_effort_is_deterministic() {
+        let image = effort_fixture();
+        for level in [1u8, 4, 7, 9] {
+            let options = EncodeOptions {
+                group_size_shift: Some(0),
+                resources: crate::EncodeResources::serial(),
+                effort: Effort::new(level).expect("valid"),
+                ..EncodeOptions::default()
+            };
+            let a = crate::encode(&image, &options).expect("encode a");
+            let b = crate::encode(&image, &options).expect("encode b");
+            assert_eq!(
+                a, b,
+                "effort {level}: repeated encode must be byte-identical"
+            );
+        }
     }
 }
