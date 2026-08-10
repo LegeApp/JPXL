@@ -697,6 +697,32 @@ record jpegxl-rs.evidence.phase4g-default-unchanged-2026-08-10/1 : evidence {
     author "GitHub Uploader"
 }
 
+record jpegxl-rs.evidence.phase4h-lossy-reachable-2026-08-10/1 : evidence {
+    title "At 65fe2e1 the harness completed all 24 cells (3 images x 4 rates x 2 codecs) with no encode or decode failure, so the lossy path is reachable from the CLI end to end. Every JPXL cell was encoded by jpxl encode --bpp, decoded by jpxl decode, and scored by jpxl compare against the source PPM; every cjxl cell was decoded by the oracle's own djxl. Rate targets are hit at low and mid rates: 0.4986/0.9946/1.9882 bpp against 0.5/1/2 at 0.8 MP, 0.4977/0.9947/1.9960 at 4 MP, 0.4991/0.9970 at 12 MP. Two cells undershoot because the quantizer ladder runs out of fine steps rather than because of any failure: 3.645 bpp against a 4.0 target at 4 MP, and 1.673 against 2.0 at 12 MP -- recorded as a finding in jpegxl-rs.observation.lossy-vardct-headsup-2026-08-10, not as a harness error. Spot check independent of the harness: jpxl encode --bpp 1.0 on the 0.8 MP image emitted 97,769 bytes against a 98,304-byte target and was accepted by both jpxl-decode and djxl v0.13.0."
+    state verified
+    result pass
+    method command
+    observed_at git:65fe2e101f17841970e0767d622cc68f35f6d2b3
+    command "pwsh -NoProfile -File .agent/scratch/effort-ramp-2026-08-10/headsup-lossy.ps1"
+    summary """
+        At 65fe2e1 the harness completed all 24 cells (3 images x 4 rates x 2 codecs) with no encode or decode failure, so the lossy path is reachable from the CLI end to end. Every JPXL cell was encoded by jpxl encode --bpp, decoded by jpxl decode, and scored by jpxl compare against the source PPM; every cjxl cell was decoded by the oracle's own djxl. Rate targets are hit at low and mid rates: 0.4986/0.9946/1.9882 bpp against 0.5/1/2 at 0.8 MP, 0.4977/0.9947/1.9960 at 4 MP, 0.4991/0.9970 at 12 MP. Two cells undershoot because the quantizer ladder runs out of fine steps rather than because of any failure: 3.645 bpp against a 4.0 target at 4 MP, and 1.673 against 2.0 at 12 MP -- recorded as a finding in jpegxl-rs.observation.lossy-vardct-headsup-2026-08-10, not as a harness error. Spot check independent of the harness: jpxl encode --bpp 1.0 on the 0.8 MP image emitted 97,769 bytes against a 98,304-byte target and was accepted by both jpxl-decode and djxl v0.13.0.
+        """
+    author "GitHub Uploader"
+}
+
+record jpegxl-rs.evidence.phase4h-metrics-correct-2026-08-10/1 : evidence {
+    title "At 65fe2e1 the jpxl-conformance library suite is 44 passed, 0 failed, 0 ignored, including three gates this work added. psnr_and_rmse_match_hand_computed_values checks a 2x1 PPM whose pixels differ by 0 and 4 in every channel against hand-computed sqrt(8) RMSE and 20*log10(255/sqrt(8)) dB, to 1e-12, so the formulas are pinned rather than self-consistent. identical_images_have_zero_rmse_and_infinite_psnr pins the zero-error case to f64::INFINITY rather than a NaN from division by zero or an arbitrary large finite number. mismatched_shapes_have_no_rmse_or_psnr pins the None contract that max_abs_error and peak_error_per_channel already keep."
+    state verified
+    result pass
+    method command
+    observed_at git:65fe2e101f17841970e0767d622cc68f35f6d2b3
+    command "cargo test -p jpxl-conformance --lib"
+    summary """
+        At 65fe2e1 the jpxl-conformance library suite is 44 passed, 0 failed, 0 ignored, including three gates this work added. psnr_and_rmse_match_hand_computed_values checks a 2x1 PPM whose pixels differ by 0 and 4 in every channel against hand-computed sqrt(8) RMSE and 20*log10(255/sqrt(8)) dB, to 1e-12, so the formulas are pinned rather than self-consistent. identical_images_have_zero_rmse_and_infinite_psnr pins the zero-error case to f64::INFINITY rather than a NaN from division by zero or an arbitrary large finite number. mismatched_shapes_have_no_rmse_or_psnr pins the None contract that max_abs_error and peak_error_per_channel already keep.
+        """
+    author "GitHub Uploader"
+}
+
 record jpegxl-rs.evidence.rulings-captured/1 : evidence {
     title "HANDOFF Already-fixed and Traps plus LESSONS captured as 5 decisions, 12 policies, 6 constraints"
     state verified

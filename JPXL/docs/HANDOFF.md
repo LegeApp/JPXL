@@ -19,12 +19,29 @@ changed, what is now proved, what is next, what is blocked.
 
 **Why this mattered enough to do now:** VarDCT has been the more complete half of this encoder since M1–M8, but nothing outside the library and `jpxl bench` could invoke it, and it had **never been compared against the oracle**. That is the same blind spot that let the modular effort ladder ship inert for a whole phase.
 
-**First numbers, and a caution.** Early sweep rows at 0.8 MP: 0.5 bpp → 24.9 dB in 8.7 s; 1.0 → 28.7 dB in 17.6 s; 2.0 → 34.0 dB in 35.0 s. **The wall times are the story** — tens of seconds for a 0.8 MP lossy encode, because a targeted encode runs 15–40 full frame encodes (`rate::search_frame`'s two ladders). Compare curves, never single points: the two encoders optimise different objectives and PSNR is not perceptual.
+**The numbers** (`jpegxl-rs.observation.lossy-vardct-headsup-2026-08-10`; raw rows in `headsup-lossy-2026-08-10.txt`). Read at **equal PSNR**, which is the only fair comparison:
+
+| | jpxl bpp | cjxl bpp | cjxl saving |
+| --- | --- | --- | --- |
+| 0.8 MP @ ~34 dB | 1.988 | 1.466 | −26% |
+| 4 MP @ ~37.5 dB | 1.996 | 1.490 | −25%, *and* 0.4 dB better |
+| 12 MP @ ~39.4 dB | 1.673 | 1.074 | −36% |
+
+Three findings:
+1. **Density: cjxl reaches equal PSNR at ~25–40% fewer bits, and the gap widens with image size.** This comparison is if anything *unfavourable* to cjxl — it optimises butteraugli, not the PSNR being measured — and it still wins on every rung.
+2. **Speed: 58–530× slower**, at every size and rate (8.7–55.6 s vs 0.09–0.15 s at 0.8 MP; 63–472 s vs 0.75–1.53 s at 12 MP). Cause is structural and familiar: `rate::search_frame` runs 15–40 full frame encodes, and `tile_region`/`block_cost_bounded` re-runs the exact `HfQuantizer::choose` loop over every coefficient cell *per candidate transform* inside each one. Same defect as the modular ranker — per-candidate work proportional to frame size with no sample bound — one layer up.
+3. **The rate loop undershoots at high rates, and nobody was looking for this.** Asked for 4.0 bpp at 4 MP it delivered 3.645; asked for 2.0 bpp at 12 MP it delivered 1.673 (−16%). Both are the "finest ladder rung still under target" case: the quantizer ladder cannot express a fine enough step. **The encoder currently cannot reach mid-to-high quality on a 12 MP frame at all.** This bounds the top of the quality range independently of finding 1, and is invisible to any benchmark that only sweeps low rates.
 
 **Traps — do not "fix" these:**
 - Do **not** add `--distance` as an alias for `--bpp`. It would read as a butteraugli target that does not exist.
 - Do **not** quote a single (bytes, PSNR) pair as beating or losing to cjxl. Only the curve is meaningful; PSNR is used because it is exactly reproducible in-repo, not because it is the right quality model.
 - `--effort` is lossless-only and is ignored on the lossy path; the lossy path has no effort ramp at all yet (`RateSearchBudget{max_prices: 40}` is its only dial).
+- Do **not** "fix" the high-rate undershoot by raising `max_prices`. The loop is not running out of *probes*, it is running out of *ladder*: the finest quantizer rung is still under target. More probes would burn wall time re-pricing the same rung.
+
+**Next for the lossy path, in priority order:**
+1. **The high-rate ceiling** (finding 3) — a correctness-shaped limit, not a tuning one. Nothing else matters if 12 MP tops out at 1.67 bpp.
+2. **Bound the cover search's per-candidate cost** (finding 2) — the same fix shape as 4G, one layer up: `block_cost_bounded` should score on a bounded sample rather than every coefficient cell.
+3. **A lossy effort ramp** — there is currently no dial between "40 full encodes" and nothing.
 
 ## 2026-08-10 (3) — Phase 4G: the effort ladder was inert because the cheap ranker compared two different units, not because trees were too shallow
 
