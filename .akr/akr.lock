@@ -5,7 +5,7 @@ build {
     tool "akr 0.3.0"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:57a2f9c7d52bb1d5e655d3e0f1d5beabd4db87f4ad0cfbc2333dbfec125addf6"
+    source_graph "sha256:e254b485d974b5d251c9bd3a6adb91447130bd9b06d21c17df57bd5f9e5c8bde"
 }
 
 source ".akr/project.akr" {
@@ -29,8 +29,8 @@ source ".akr/records/jpegxl-rs/decisions.akr" {
 }
 
 source ".akr/records/jpegxl-rs/evidence.akr" {
-    hash "sha256:4108e6ba7e468502b64a8f3d0919e07ba384e8297efab2b82d624b9da831bc24"
-    records 70
+    hash "sha256:644eed71dfd6d2f5d8dc10b8b7584fd371456d2506cd0ce6f527a976d081685e"
+    records 72
 }
 
 source ".akr/records/jpegxl-rs/milestones.akr" {
@@ -39,8 +39,8 @@ source ".akr/records/jpegxl-rs/milestones.akr" {
 }
 
 source ".akr/records/jpegxl-rs/observations.akr" {
-    hash "sha256:64166853ddbfe2f55bd76889b9c78adc27eab1590524ec8e275a6d4f51da8e42"
-    records 31
+    hash "sha256:15ac67c88b5b8f038dbd38c10c07b578408f47d9df21f66e4898364eb50381cb"
+    records 34
 }
 
 source ".akr/records/jpegxl-rs/papercuts.akr" {
@@ -59,7 +59,7 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:5ad129e707e191adb163bd9276fdd5db6f7453fdac93b3dddc6d99420db6a640"
+    hash "sha256:574058e39ebd29c210ca489cac6b0de132bc0543bc8c0438b0b415df1fdfbd40"
     records 35
 }
 
@@ -1312,6 +1312,16 @@ seal @jpegxl-rs.evidence.phase4i-off-by-default-2026-08-10/1 {
     hash "sha256:9de46c6be9f162b0241cfe37ffabe9355aed0090bdc3458e035c0b0691d665fa"
 }
 
+seal @jpegxl-rs.evidence.phase4j-sweep-runs-2026-08-10/1 {
+    state verified
+    hash "sha256:67533a3206f6ecb5cc3a6b462b58d2604b9cb27e8afffba2f8e479ac3f3a06aa"
+}
+
+seal @jpegxl-rs.evidence.phase4j-tuning-is-default-preserving-2026-08-10/1 {
+    state verified
+    hash "sha256:f65dc2c89348175e236251cd13e9ee5081a70b0a1ec8611e5bc87738600e88c2"
+}
+
 seal @jpegxl-rs.evidence.rulings-captured/1 {
     state verified
     hash "sha256:6fa0b4ff5fc5ab2005d848d8cd8d938b136f6299bc9c158bf7488c5353bf3d48"
@@ -1483,8 +1493,23 @@ seal @jpegxl-rs.milestone.spine-bootstrap/1 {
 }
 
 seal @jpegxl-rs.observation.aq-field-is-a-net-perceptual-loss-2026-08-10/1 {
+    state superseded
+    hash "sha256:811f3dbef3e373081a59766c989fded8e293111ac369708881a974eb51edd703"
+}
+
+seal @jpegxl-rs.observation.aq-field-is-a-net-perceptual-loss-2026-08-10/2 {
     state verified
-    hash "sha256:f3d0bc1e56d48773bcdabadb5bac3f4cdc571918b728b274f3db20af590fd449"
+    hash "sha256:98ff2140bbfb2d6b47ddeaa8c8f357fb5b7aaefd3e812209b21a5bceec32c545"
+}
+
+seal @jpegxl-rs.observation.bpg-rs-aq-precedent-2026-08-10/1 {
+    state superseded
+    hash "sha256:aa8ec6b8e9933fccf18ddef786294a097f959d81841a66a0980f9a26f5e0f213"
+}
+
+seal @jpegxl-rs.observation.bpg-rs-aq-precedent-2026-08-10/2 {
+    state verified
+    hash "sha256:79464fa8d3443339e2019ed254d4f9a508402ee5d22e0759b1888565e9b0f8c0"
 }
 
 seal @jpegxl-rs.observation.cropped-frames-orientation-kblack/1 {
@@ -1755,6 +1780,11 @@ seal @jpegxl-rs.work.arch-phase4h-lossy-reachable-and-measurable/1 {
 seal @jpegxl-rs.work.arch-phase4i-perceptual-metrics/1 {
     state completed
     hash "sha256:92ff6a5a0280f18b8650ec25b7f6bc2d878650727b84aee004076bb9b9360e0a"
+}
+
+seal @jpegxl-rs.work.arch-phase4j-aq-tuning-measurable/1 {
+    state completed
+    hash "sha256:3a407157e2762d2904e4c80b5d798e6d5cba1ea59a01502fe13d03525cbefe11"
 }
 
 seal @jpegxl-rs.work.arch-s8-cover-lane-simd/1 {

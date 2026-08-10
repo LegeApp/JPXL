@@ -749,6 +749,32 @@ record jpegxl-rs.evidence.phase4i-off-by-default-2026-08-10/1 : evidence {
     author "GitHub Uploader"
 }
 
+record jpegxl-rs.evidence.phase4j-sweep-runs-2026-08-10/1 : evidence {
+    title "At 5c6a138 the sweep completes all ten cells and reproduces the pre-commit run exactly, so the bit-allocation policy is now measurable end to end. Rows (bytes, ssimulacra2, butteraugli) at 0.8 MP / 2.0 bpp: shipped-default 195444, 80.0066, 3.5615; strength=0.0 196459, 81.9707, 3.1849; strength=0.10 196608, 79.7208, 3.8281; strength=0.40 195600, 79.7705, 3.5755; strength=0.60 195176, 79.6434, 3.5892; strength=1.00 196458, 79.8281, 3.5615; clamp=0.5 196045, 80.0022, 3.5488; clamp=2.0 196243, 79.6389, 3.4497; chroma=0.0 195384, 79.9275, 3.4474; chroma=1.0 195849, 79.8532, 3.5891. Every config encodes within 0.7% of the same size, so the comparison is at matched rate as intended. strength=0.0 produces a neutral field, which AqSetup treats exactly as AqMode::Off, and it is the best cell on both metrics -- the finding recorded in jpegxl-rs.observation.aq-field-is-a-net-perceptual-loss-2026-08-10."
+    state verified
+    result pass
+    method command
+    observed_at git:5c6a1381aa0de2cd592b91b2bf869d88677e07eb
+    command "pwsh -NoProfile -File .agent/scratch/effort-ramp-2026-08-10/aq-sweep.ps1 small_0p8MP 2.0"
+    summary """
+        At 5c6a138 the sweep completes all ten cells and reproduces the pre-commit run exactly, so the bit-allocation policy is now measurable end to end. Rows (bytes, ssimulacra2, butteraugli) at 0.8 MP / 2.0 bpp: shipped-default 195444, 80.0066, 3.5615; strength=0.0 196459, 81.9707, 3.1849; strength=0.10 196608, 79.7208, 3.8281; strength=0.40 195600, 79.7705, 3.5755; strength=0.60 195176, 79.6434, 3.5892; strength=1.00 196458, 79.8281, 3.5615; clamp=0.5 196045, 80.0022, 3.5488; clamp=2.0 196243, 79.6389, 3.4497; chroma=0.0 195384, 79.9275, 3.4474; chroma=1.0 195849, 79.8532, 3.5891. Every config encodes within 0.7% of the same size, so the comparison is at matched rate as intended. strength=0.0 produces a neutral field, which AqSetup treats exactly as AqMode::Off, and it is the best cell on both metrics -- the finding recorded in jpegxl-rs.observation.aq-field-is-a-net-perceptual-loss-2026-08-10.
+        """
+    author "GitHub Uploader"
+}
+
+record jpegxl-rs.evidence.phase4j-tuning-is-default-preserving-2026-08-10/1 : evidence {
+    title "At 5c6a138 the jpxl-encode-policy library suite is 68 passed, 0 failed, 0 ignored -- 65 pre-4J plus three gates. the_default_tuning_reproduces_the_hardcoded_field compares DesiredQuantField::from_atlas against from_atlas_tuned(AqTuning::default()) atom for atom across the whole grid in both AQ directions, so turning the constants into data provably did not move any existing lossy output. a_stronger_tuning_spreads_the_field_further pins that the strength knob widens the field's range, measured with the clamp opened so it isolates strength (at the shipped clamp this fixture's flat/noise contrast saturates, which would have made the comparison vacuous), and that zero strength yields a neutral field. tuning_is_sanitised_into_the_representable_range pins that a negative strength clamps to zero, an absurd clamp caps at two octaves, and a NaN chroma weight falls back to the default rather than poisoning the field."
+    state verified
+    result pass
+    method command
+    observed_at git:5c6a1381aa0de2cd592b91b2bf869d88677e07eb
+    command "cargo test -p jpxl-encode-policy --lib"
+    summary """
+        At 5c6a138 the jpxl-encode-policy library suite is 68 passed, 0 failed, 0 ignored -- 65 pre-4J plus three gates. the_default_tuning_reproduces_the_hardcoded_field compares DesiredQuantField::from_atlas against from_atlas_tuned(AqTuning::default()) atom for atom across the whole grid in both AQ directions, so turning the constants into data provably did not move any existing lossy output. a_stronger_tuning_spreads_the_field_further pins that the strength knob widens the field's range, measured with the clamp opened so it isolates strength (at the shipped clamp this fixture's flat/noise contrast saturates, which would have made the comparison vacuous), and that zero strength yields a neutral field. tuning_is_sanitised_into_the_representable_range pins that a negative strength clamps to zero, an absurd clamp caps at two octaves, and a NaN chroma weight falls back to the default rather than poisoning the field.
+        """
+    author "GitHub Uploader"
+}
+
 record jpegxl-rs.evidence.rulings-captured/1 : evidence {
     title "HANDOFF Already-fixed and Traps plus LESSONS captured as 5 decisions, 12 policies, 6 constraints"
     state verified

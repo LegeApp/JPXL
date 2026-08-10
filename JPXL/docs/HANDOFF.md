@@ -33,8 +33,20 @@ Two things stand out. **AQ-off is an outlier, not the end of a trend** — every
 
 **Explicitly NOT done: the default is unchanged.** One image, two rates, one host is not enough to flip production behaviour. Before that: the other two corpus images, more rates, `AqMode::Uniform` (to separate "wrong direction" from "the machinery costs quality either way"), and non-photographic content, where masking is likeliest to earn its keep.
 
+**AQ WORK IS STOPPED HERE — and the reason is sharper than "AQ doesn't pay".** Cross-project precedent from the sibling codec at `D:\Rust-projects\bpg-rs` (still265), recorded as `jpegxl-rs.observation.bpg-rs-aq-precedent-2026-08-10`:
+
+- **Two-pass *measured* AQ pays there: 3–10%.** Pass 1 measures per-quantization-group *coded coefficient energy*; pass 2 redistributes QP; a candidate-compare gate against a uniform-QP encode at equal bytes means it "can improve a picture but never regress one". An A/B over candidate signals found coefficient energy beat rd, SSE and bits "decisively".
+- **Every single-pass mode busted.** The default-on per-CU variance AQ was backed out a day after landing ("hurt quality and scrambled the ladder"), and the docs record the single-pass activity attempts as *"neutral-to-negative on photos"*.
+
+**Ours is a single-pass activity field** — `log2(1+variance)` per atom against the frame mean — i.e. exactly the class that busted, which is why the sweep above found no tuning of it beats switching it off. **The three constants are not the problem; the signal is.** Retuning them cannot work.
+
+If AQ is ever revisited here it has to be built as two-pass measured, which is a substantial build that multiplies encode cost in a codec already 58–530× slower than `cjxl`. Deferred until speed and the rate loop are fixed.
+
+(Correction to an earlier draft of that record: an automated read of the bpg-rs repo found no committed AQ payoff number and I initially wrote that none existed. Wrong — the harness writes result CSVs that were never committed, so a repo-only read cannot see them. Absence of a committed file is not absence of a result.)
+
 **Traps — do not "fix" these:**
-- Do **not** flip `AqMode` to `Off` on this evidence. It is one image. The infrastructure to settle it now exists; use it.
+- Do **not** resume AQ tuning **of the current field**. Two codebases measure single-pass activity AQ neutral-to-negative. The path, if any, is two-pass measured — and not now.
+- Do **not** flip `AqMode` to `Off` either, on this evidence — it is one image, and the change is not worth spending verification effort on right now. Leave the default alone.
 - Do **not** re-tune `AQ_STRENGTH` and call it fixed. Every strength tried loses to off; the constant is not the problem.
 - Do **not** cite M7's uniformity evidence as validation of the Masking default again. It validates the direction that is not shipped.
 

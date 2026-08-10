@@ -717,7 +717,7 @@ record jpegxl-rs.work.arch-phase4i-perceptual-metrics/1 : work {
 
 record jpegxl-rs.work.arch-phase4j-aq-tuning-measurable/1 : work {
     title "Phase 4J: make the AQ field's perceptual constants data, and sweep them"
-    state proposed
+    state completed
     scope [
         path "JPXL/crates/jpxl-cli/src/main.rs",
         path "JPXL/crates/jpxl-encode-policy/src/field.rs",
@@ -740,6 +740,9 @@ record jpegxl-rs.work.arch-phase4j-aq-tuning-measurable/1 : work {
                 """
             method command
             command "cargo test -p jpxl-encode-policy --lib"
+            verified_by [
+                @jpegxl-rs.evidence.phase4j-tuning-is-default-preserving-2026-08-10/1
+            ]
         }
         check sweep-runs-end-to-end {
             statement """
@@ -747,6 +750,7 @@ record jpegxl-rs.work.arch-phase4j-aq-tuning-measurable/1 : work {
                 """
             method command
             command "pwsh -NoProfile -File .agent/scratch/effort-ramp-2026-08-10/aq-sweep.ps1 small_0p8MP 2.0"
+            verified_by [ @jpegxl-rs.evidence.phase4j-sweep-runs-2026-08-10/1 ]
         }
     }
     depends_on [ @jpegxl-rs.work.arch-phase4i-perceptual-metrics/1 ]

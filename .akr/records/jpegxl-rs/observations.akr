@@ -3,7 +3,7 @@ project jpegxl-rs
 
 record jpegxl-rs.observation.aq-field-is-a-net-perceptual-loss-2026-08-10/1 : observation {
     title "At matched bitrate the adaptive-quantization field is a net perceptual loss: AQ off beats every tuning tried, on both metrics"
-    state verified
+    state superseded
     statement """
         The adaptive-quantization field, as tuned and as shipped, is a net PERCEPTUAL LOSS at matched bitrate. Turning it off improves both perceptual metrics.
 
@@ -25,6 +25,83 @@ record jpegxl-rs.observation.aq-field-is-a-net-perceptual-loss-2026-08-10/1 : ob
         """
     observed_at git:ff2d5ce4a16e396f9e626bb736cc7ebf8a1e098a
     method command
+    author "GitHub Uploader"
+}
+
+record jpegxl-rs.observation.aq-field-is-a-net-perceptual-loss-2026-08-10/2 : observation {
+    title "At matched bitrate our single-pass activity AQ field is a net perceptual loss: off beats every tuning tried, on both metrics"
+    state verified
+    statement """
+        The adaptive-quantization field, as tuned and as shipped, is a net PERCEPTUAL LOSS at matched bitrate. Turning it off improves both perceptual metrics.
+
+        Method: sweep the field's three constants at a FIXED bitrate and score each result with jpxl compare. Fixed-rate because AQ does not change how many bits are spent, only where, so the honest question is "at the same file size, which allocation looks better". Driver and raw output in .agent/scratch/effort-ramp-2026-08-10/aq-sweep.ps1 and aq-sweep-0p8MP-{1,2}bpp.txt. `strength = 0` produces a neutral field, which AqSetup treats exactly as AqMode::Off, so that row IS "AQ disabled".
+
+        small_0p8MP at 1.0 bpp (bytes, ssimulacra2 higher-better, butteraugli lower-better):
+        AQ OFF (strength 0) -- 98141, 59.378, 6.075. Shipped (0.25/1.0/0.35) -- 97769, 59.617, 6.636.
+        Every other config tried: strength 0.10 (6.710), 0.40 (6.776), 0.60 (6.732), 1.00 (6.633); clamp 0.5 (6.781), 2.0 (6.583); chroma 0.0 (6.756), 1.0 (6.784).
+
+        small_0p8MP at 2.0 bpp:
+        AQ OFF -- 196459, 81.971, 3.185. Shipped -- 195444, 80.007, 3.562.
+        Every other config: ssimulacra2 79.64-80.01, butteraugli 3.447-3.828.
+
+        Two things stand out. First, AQ-off is not the end of a trend -- it is an OUTLIER. Every non-zero strength, every clamp and every chroma weight clusters tightly (butteraugli 6.58-6.78 at 1 bpp, 3.45-3.83 at 2 bpp) while AQ-off sits well outside it. So this is not "the strength constant is mistuned"; it is that having a non-neutral field at all costs perceptual quality here. Second, the penalty does not shrink as the rate rises -- at 2 bpp AQ-off is better on BOTH metrics (+1.96 ssimulacra2 and -10.6% butteraugli), where at 1 bpp it was better on butteraugli (-8.4%) and marginally worse on ssimulacra2. That rules out the obvious explanation of the per-varblock HfMul signalling row eating the coefficient budget, which would fade as a fraction of a larger file.
+
+        A likely reason it was never caught: M7's acceptance evidence (jpegxl-rs.evidence.m7-adaptive-quant) reads "spatial quality uniformity improved with stable target size". Uniformity is what AqMode::Uniform optimises -- busy atoms finer, error equalised. Production ships the opposite direction, AqMode::Masking (busy atoms coarser), whose case is perceptual masking and which the uniformity criterion does not test. So the shipped direction was accepted on a criterion the other direction satisfies, and no perceptual metric existed in this repository to check it against until now.
+
+        INTERPRETATION, sharpened by cross-project evidence (jpegxl-rs.observation.bpg-rs-aq-precedent-2026-08-10/2): this field is a SINGLE-PASS ACTIVITY field, and that is the class that also busted in bpg-rs, where two-pass measured AQ pays 3-10% but every single-pass mode did not. So the right reading is not "AQ does not pay here" but "this KIND of AQ does not pay here, and retuning its constants cannot fix it because the signal is the problem". NOT YET ESTABLISHED, and this should not become a default flip until it is: one image, two rates, one host. Untested are the other two corpus images, other rates, AqMode::Uniform (which would separate "this direction is wrong" from "the machinery costs quality regardless of direction"), and any non-photographic content, where masking is most likely to earn its keep. The measurement infrastructure to settle all of that now exists (EncodeRequest::budget.aq_tuning, `jpxl encode --aq-strength/--aq-clamp/--aq-chroma`, `jpxl compare --features perceptual`).
+        """
+    observed_at git:ff2d5ce4a16e396f9e626bb736cc7ebf8a1e098a
+    method command
+    supersedes [ @jpegxl-rs.observation.aq-field-is-a-net-perceptual-loss-2026-08-10/1 ]
+    author "GitHub Uploader"
+}
+
+record jpegxl-rs.observation.bpg-rs-aq-precedent-2026-08-10/1 : observation {
+    title "Cross-project precedent: bpg-rs spent five phases on AQ, recorded no positive payoff, and ships it off by default on every tier"
+    state superseded
+    statement """
+        Cross-project precedent: the sibling still-image codec at D:\\Rust-projects\\bpg-rs (still265, HEVC lineage) spent roughly five phases over a month on adaptive quantization and NEVER RECORDED A POSITIVE MEASURED PAYOFF FOR IT. AQ is AqMode::Off by default on every effort tier there to this day. Gathered by reading that repository's git history, docs tree and .akr ledger; it was not modified.
+
+        A number worth stating precisely, because it is easy to misremember in our favour: the "~3%" figure in bpg-rs is NOT an AQ gain. Commit 6fc5dae (2026-06-17) reads "still265 Best within ~3% BD-rate of x265 m9 (4:2:0 photos)" and "BD-rate (fastest 22.9% -> best 3.0% vs x265 m9)" -- that is the whole-encoder gap against x265, and the same commit TURNED AQ OFF to get there: "AQ off by default (new StillHevcConfig::adaptive_qp opt-in); the per-CU variance AQ on the speed tiers hurt quality and scrambled the ladder." So AQ's recorded payoff there is not 3%; it is nothing.
+
+        What that project's own docs concluded, verbatim: "the current AQ attempts were neutral-to-negative on photos" and "AQ was not the main photo-gap lever" (docs/ssimtune.md:325); "I would not expect AQ alone to close your photo gap ... the remaining gap is more likely SAO plus core search/partition/psy behavior" (ssimtune.md:443); "AQ remains explicitly deferred ... parity work should first target non-AQ search/quant/RDO quality-speed behavior" (docs/handoff.md:382). The thing that actually moved quality there was sign-data hiding -- "a clean equal-bytes WIN", ~+0.05 dB, 15-20% of the measured gap -- which was promoted to default; AQ never earned that.
+
+        Cost of the attempt: initial default-on variance AQ (d87aee7), backed out a day later (6fc5dae), rebuilt with an AqMode enum, chroma-aware and two-pass measured variants plus a candidate-compare safety gate (fec6680), a psy-rd/psy-rdoq addition of 1,599 lines across 21 files (aa273f4, also off by default), and a hard correctness blocker in between: nonzero external AQ maps produced "catastrophic decoded quality" on 4:2:0, closing with "Next AQ work is correctness, not tuning." AQ also costs parallelism there -- AQ-active configs are forced out of the WPP fast path.
+
+        Why this matters here: it independently corroborates jpegxl-rs.observation.aq-field-is-a-net-perceptual-loss-2026-08-10, which measured our own AQ field to be neutral-to-negative on photos at matched bitrate. Two codecs, different transforms, different metrics, same conclusion. Combined with our own far larger open problems -- the lossy encoder is 58-530x slower than cjxl and its rate loop exhausts its price budget before reaching high targets -- the ordering conclusion is that AQ is a late-stage, low-yield, high-effort lever and should not be worked on now.
+
+        Scope limit: this is evidence about one other implementation's experience, not a theorem. It says AQ was a poor investment at that project's stage of maturity, which resembles ours; it does not prove AQ can never pay.
+        """
+    observed_at git:5c6a1381aa0de2cd592b91b2bf869d88677e07eb
+    method manual
+    author "GitHub Uploader"
+}
+
+record jpegxl-rs.observation.bpg-rs-aq-precedent-2026-08-10/2 : observation {
+    title "AQ precedent from bpg-rs: two-pass measured AQ pays 3-10%; every single-pass activity mode busted -- and ours is single-pass"
+    state verified
+    statement """
+        Cross-project precedent from the sibling still-image codec at D:\\Rust-projects\\bpg-rs (still265, HEVC lineage), on which kinds of adaptive quantization pay and which do not.
+
+        THE SPLIT THAT MATTERS: two-pass *measured* AQ works there -- 3-10% gains. Every single-pass mode was a bust. That distinction, not "AQ good/bad", is the transferable lesson.
+
+        Source note and a correction to an earlier draft of this record: an automated read of that repository's git history, docs and ledger found no committed number crediting AQ, and this record initially concluded there was no payoff. That was wrong. The two-pass result is known directly from the project's author; the harness (scripts/aq_experiment.py) writes bdrate_vs_uniform.csv / equal_byte_deltas.csv and those output files were never committed, which is why a repository-only read could not see them. Absence of a committed CSV is not absence of a result -- a reminder that a repo read is evidence about the repo, not about what was measured.
+
+        What busted there, and is visible in the history: the initial default-on per-CU variance AQ (commit d87aee7) was backed out a day later (6fc5dae) -- "the per-CU variance AQ on the speed tiers hurt quality and scrambled the ladder" -- and the same commit set AQ off by default. The docs record the single-pass activity attempts as "neutral-to-negative on photos" and "not the main photo-gap lever" (docs/ssimtune.md:325). The AqMode enum's other single-pass variants (LegacyShrink, Perceptual, PerceptualChroma, PsnrProbe, PositiveProbe) were likewise not adopted.
+
+        What works there: AqMode::TwoPassMeasured (commit fec6680). Pass 1 encodes and measures per-quantization-group *coded coefficient energy*; pass 2 redistributes QP from that measurement. An A/B over candidate signals -- coefficient energy vs rd(D+lambda R) vs SSE vs bits -- found coefficient energy "wins decisively". A three-pass candidate-compare gate gives it a safety property: it encodes a uniform-QP pass too, compares at equal bytes, and reverts to uniform when AQ would lose, so "two-pass AQ can improve a picture but never regress one".
+
+        Also on record there, unchanged by the correction: the "~3%" in commit 6fc5dae is the whole-encoder BD-rate gap against x265 m9, not an AQ figure, and that commit turned AQ off. Sign-data hiding was a separate, clean equal-bytes win (~+0.05 dB, 15-20% of the measured gap) and was promoted to default. AQ-active configs are forced out of the WPP parallel fast path, so AQ costs throughput as well as effort.
+
+        WHY THIS MATTERS HERE, and it is not what it first appeared. Our field (jpxl-encode-policy/src/field.rs) is a SINGLE-PASS ACTIVITY field: log2(1+variance) per 8x8 atom against the frame mean, luma plus down-weighted chroma, x265-family strength and clamp. That is precisely the class that busted in bpg-rs -- and jpegxl-rs.observation.aq-field-is-a-net-perceptual-loss-2026-08-10 independently measures ours to be neutral-to-negative on photos at matched bitrate, the same verdict. Two codecs, different transforms, different metrics, same result for the same class of method.
+
+        So the conclusion is NOT "AQ does not pay". It is: single-pass activity AQ does not pay, and no amount of retuning our three constants will change that, because the signal is the problem. If AQ is ever revisited here it should be built as two-pass measured -- measure coded coefficient energy per group in pass 1, redistribute in pass 2, and gate it against a uniform-QP encode at equal bytes so it cannot regress. That is a substantial build, it multiplies encode cost in a codec already 58-530x slower than cjxl, and it is explicitly deferred until the speed and rate-loop problems are fixed.
+
+        Scope limit: evidence about one other implementation's experience, and one of the numbers in it is reported rather than read from a file.
+        """
+    observed_at git:5c6a1381aa0de2cd592b91b2bf869d88677e07eb
+    method manual
+    supersedes [ @jpegxl-rs.observation.bpg-rs-aq-precedent-2026-08-10/1 ]
     author "GitHub Uploader"
 }
 
