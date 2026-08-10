@@ -561,7 +561,7 @@ record jpegxl-rs.work.arch-phase4e-modular-effort-ramp/1 : work {
 
 record jpegxl-rs.work.arch-phase4f-elide-foregone-search/1 : work {
     title "Phase 4F: elide the modular search when the effort budget already fixes its answer"
-    state proposed
+    state completed
     scope [ path "JPXL/crates/jpxl-encode/src/lossless.rs" ]
     intent """
         Stop paying for a search whose answer the effort budget already fixed.
@@ -579,6 +579,7 @@ record jpegxl-rs.work.arch-phase4f-elide-foregone-search/1 : work {
                 """
             method command
             command "pwsh -NoProfile -File .agent/scratch/effort-ramp-2026-08-10/verify_default_flip.ps1"
+            verified_by [ @jpegxl-rs.evidence.phase4f-bytes-unchanged-2026-08-10/1 ]
         }
         check elision-is-equivalent {
             statement """
@@ -586,6 +587,7 @@ record jpegxl-rs.work.arch-phase4f-elide-foregone-search/1 : work {
                 """
             method command
             command "cargo test -p jpxl-encode --lib"
+            verified_by [ @jpegxl-rs.evidence.phase4f-elision-equivalent-2026-08-10/1 ]
         }
     }
     depends_on [ @jpegxl-rs.work.arch-phase4e-modular-effort-ramp/1 ]

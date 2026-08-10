@@ -645,6 +645,32 @@ record jpegxl-rs.evidence.phase4b-sampled-gather-interleaved-2026-08-08/1 : evid
         """
 }
 
+record jpegxl-rs.evidence.phase4f-bytes-unchanged-2026-08-10/1 : evidence {
+    title "At 08e67ef the corpus fingerprints are unchanged by the search elision. Default effort: small_0p8MP 1,075,465 B sha16 C3C60CEE4D0741D9 in 240 ms, mid_4MP 5,157,974 B sha16 5C49AB9020706F0D in 470 ms, large_12MP 9,795,599 B sha16 CA27799D3E7B441D in 1008 ms -- all three IDENTICAL to the pre-4E fingerprints, so 4F changed no byte at the default. Effort 7 likewise reproduces all three fingerprints (1207 / 5366 / 15646 ms), confirming the elision does not fire on the density anchor. Separately, jpxl bench modular --iters 3 at 12 MP reports the median falling from 1025.6 ms to 873.5 ms (-14.8%) with diag residual_scans 1 -> 0 and plane_clone_bytes 288,000,000 -> 144,000,000: the skipped work was the RCT scoring copy, the Arc wrap of every plane, and one strided residual scan."
+    state verified
+    result pass
+    method command
+    observed_at git:08e67ef11742aefb93158e27fc997d7f646583a2
+    command "pwsh -NoProfile -File .agent/scratch/effort-ramp-2026-08-10/verify_default_flip.ps1"
+    summary """
+        At 08e67ef the corpus fingerprints are unchanged by the search elision. Default effort: small_0p8MP 1,075,465 B sha16 C3C60CEE4D0741D9 in 240 ms, mid_4MP 5,157,974 B sha16 5C49AB9020706F0D in 470 ms, large_12MP 9,795,599 B sha16 CA27799D3E7B441D in 1008 ms -- all three IDENTICAL to the pre-4E fingerprints, so 4F changed no byte at the default. Effort 7 likewise reproduces all three fingerprints (1207 / 5366 / 15646 ms), confirming the elision does not fire on the density anchor. Separately, jpxl bench modular --iters 3 at 12 MP reports the median falling from 1025.6 ms to 873.5 ms (-14.8%) with diag residual_scans 1 -> 0 and plane_clone_bytes 288,000,000 -> 144,000,000: the skipped work was the RCT scoring copy, the Arc wrap of every plane, and one strided residual scan.
+        """
+    author "GitHub Uploader"
+}
+
+record jpegxl-rs.evidence.phase4f-elision-equivalent-2026-08-10/1 : evidence {
+    title "At 08e67ef the jpxl-encode library suite is 117 passed, 0 failed, 0 ignored -- 115 pre-4F plus the two gates this work added. degenerate_budget_plans_what_the_full_search_would_have runs plan_for (which short-circuits) and plan_by_full_search (forced past the short-circuit via FullSearchProbe::ForegoneBudget) on the same 37x29 structured input, for every effort level whose budget is a foregone conclusion, crossed with both rct polarities and 1- and 3-channel inputs, and asserts the two plans agree on group_size_shift, rct, squeeze, palette presence, leaf predictors, context count and depth. the_default_effort_reaches_the_short_circuit asserts the elision fires at Effort::DEFAULT and does not fire at level 7, so a future budget edit that silently restores the skipped work fails the suite rather than passing quietly."
+    state verified
+    result pass
+    method command
+    observed_at git:08e67ef11742aefb93158e27fc997d7f646583a2
+    command "cargo test -p jpxl-encode --lib"
+    summary """
+        At 08e67ef the jpxl-encode library suite is 117 passed, 0 failed, 0 ignored -- 115 pre-4F plus the two gates this work added. degenerate_budget_plans_what_the_full_search_would_have runs plan_for (which short-circuits) and plan_by_full_search (forced past the short-circuit via FullSearchProbe::ForegoneBudget) on the same 37x29 structured input, for every effort level whose budget is a foregone conclusion, crossed with both rct polarities and 1- and 3-channel inputs, and asserts the two plans agree on group_size_shift, rct, squeeze, palette presence, leaf predictors, context count and depth. the_default_effort_reaches_the_short_circuit asserts the elision fires at Effort::DEFAULT and does not fire at level 7, so a future budget edit that silently restores the skipped work fails the suite rather than passing quietly.
+        """
+    author "GitHub Uploader"
+}
+
 record jpegxl-rs.evidence.rulings-captured/1 : evidence {
     title "HANDOFF Already-fixed and Traps plus LESSONS captured as 5 decisions, 12 policies, 6 constraints"
     state verified
