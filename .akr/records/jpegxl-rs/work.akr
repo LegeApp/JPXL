@@ -760,7 +760,7 @@ record jpegxl-rs.work.arch-phase4j-aq-tuning-measurable/1 : work {
 
 record jpegxl-rs.work.arch-phase4k-rate-loop-probe-reduction/1 : work {
     title "Phase 4K: cut rate-loop probe count -- tolerance exit, aimed stepping with a non-monotone safety rule, Full reserve as a cap"
-    state proposed
+    state completed
     scope [ path "JPXL/crates/jpxl-encode-policy/src/rate.rs" ]
     intent """
         Cut the number of full encodes a targeted lossy encode pays for. A rate search runs 15-40 exact prices, each one a complete frame encode, and that -- not per-probe cover cost -- is the 58-530x speed gap against cjxl. It is also why high targets are missed: the measured cause of the undershoot is the Fast ladder exhausting its 24-price cap, not the quantizer ladder running out of rungs.
@@ -784,6 +784,7 @@ record jpegxl-rs.work.arch-phase4k-rate-loop-probe-reduction/1 : work {
                 """
             method command
             command "cargo test -p jpxl-encode-policy --lib"
+            verified_by [ @jpegxl-rs.evidence.phase4k-contracts-hold-2026-08-10/1 ]
         }
         check fewer-full-encodes {
             statement """
@@ -791,6 +792,7 @@ record jpegxl-rs.work.arch-phase4k-rate-loop-probe-reduction/1 : work {
                 """
             method command
             command "jpxl encode <corpus>.ppm out.jxl --bpp N"
+            verified_by [ @jpegxl-rs.evidence.phase4k-fewer-full-encodes-2026-08-10/1 ]
         }
     }
     depends_on [ @jpegxl-rs.work.arch-phase4i-perceptual-metrics/1 ]
