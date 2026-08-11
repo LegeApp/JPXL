@@ -801,6 +801,18 @@ record jpegxl-rs.evidence.phase4k-fewer-full-encodes-2026-08-10/1 : evidence {
     author "GitHub Uploader"
 }
 
+record jpegxl-rs.evidence.phase4l-contracts-recorded-after-work-2026-08-11/1 : evidence {
+    title "Committed Phase 4L record carries the passing contract result"
+    state verified
+    result pass
+    method observation
+    observed_at git:95c0217ece883a13611e6bf084d6306a21d6d1ef
+    artifact ".akr/records/jpegxl-rs/evidence.akr"
+    summary """
+        Commit 95c0217 contains the Phase 4L work record and the verified contract result from the temporary Full-only prototype: 72 library tests and 11 non-ignored rate_loop tests passed before the prototype was reverted.
+        """
+}
+
 record jpegxl-rs.evidence.phase4l-full-only-ab-negative-2026-08-11/1 : evidence {
     title "Phase 4L Full-only prototype failed the real-photo speed gate"
     state verified
@@ -824,6 +836,94 @@ record jpegxl-rs.evidence.phase4l-full-only-contracts-2026-08-11/1 : evidence {
     artifact ".agent/scratch/phase4l-full-only-ab-2026-08-11.md"
     summary """
         The temporary Full-only prototype passed 72 library tests and all 11 non-ignored real-image rate-loop integration tests; the prototype was then reverted after the performance gate failed.
+        """
+}
+
+record jpegxl-rs.evidence.phase4l-negative-recorded-after-work-2026-08-11/1 : evidence {
+    title "Committed Phase 4L record carries the negative A/B result"
+    state verified
+    result pass
+    method observation
+    observed_at git:95c0217ece883a13611e6bf084d6306a21d6d1ef
+    artifact ".akr/records/jpegxl-rs/observations.akr"
+    summary """
+        Commit 95c0217 contains the verified Phase 4L A/B observation: Full-only preserved bytes but was 7%, 16%, and 105% slower at 1, 2, and 4 bpp, so the prototype was reverted and the negative-result branch of the acceptance check was satisfied.
+        """
+}
+
+record jpegxl-rs.evidence.phase4m-handoff-visible-2026-08-11/1 : evidence {
+    title "Phase 4M diagnostic exposes Fast/Full boundary"
+    state verified
+    result pass
+    method command
+    observed_at git:95c0217ece883a13611e6bf084d6306a21d6d1ef
+    command "cd JPXL && target/release/jpxl bench vardct-rate --input ../.agent/scratch/phase4m-photo-2400x1800.ppm --iters 1 --bpp 4 --diag"
+    artifact ".agent/scratch/phase4m-lf-fill-direction-2026-08-11.md"
+    summary """
+        At 95c0217, vardct-rate --diag reported bracket/bisect/fill/LF-fill/Final counts plus Fast best/upper, Full start, and chosen rung and quant_lf values.
+        """
+}
+
+record jpegxl-rs.evidence.phase4m-rate-contracts-2026-08-11/1 : evidence {
+    title "Phase 4M rate-loop and CLI tests pass"
+    state verified
+    result pass
+    method command
+    observed_at git:95c0217ece883a13611e6bf084d6306a21d6d1ef
+    command "cd JPXL && cargo test -p jpxl-encode-policy --lib && cargo test -p jpxl-encode-policy --test rate_loop && cargo test -p jpxl-cli"
+    summary """
+        At 95c0217, jpxl-encode-policy passed 73 library tests and 11 non-ignored rate_loop integration tests (1 ignored); jpxl-cli passed its test target. Existing never-over, cap, non-monotone, fill-notch, and decode contracts remained green.
+        """
+}
+
+record jpegxl-rs.evidence.phase4m-real-content-gate-2026-08-11/1 : evidence {
+    title "Phase 4M improves high-rate target adherence"
+    state verified
+    result pass
+    method command
+    observed_at git:95c0217ece883a13611e6bf084d6306a21d6d1ef
+    command "cd JPXL && target/release/jpxl bench vardct-rate --input ../.agent/scratch/phase4m-photo-2400x1800.ppm --iters 1 --bpp 4 --diag"
+    artifact ".agent/scratch/phase4m-lf-fill-direction-2026-08-11.md"
+    summary """
+        At 95c0217 on pinned 2400x1800 real content at 4 bpp, finer-only LF fill improved output from 1,954,100 to 2,003,736 bytes against a 2,160,000-byte target (about 9.5% to 7.2% undershoot) for about 2% single-run wall-time cost; 1024x768 at 1/2 bpp stayed byte-identical and 4 bpp stayed byte-identical.
+        """
+}
+
+record jpegxl-rs.evidence.retire-handoff-durable-facts-2026-08-11/1 : evidence {
+    title "HANDOFF permanent facts are represented in AKR"
+    state verified
+    result pass
+    method manual
+    observed_at git:95c0217ece883a13611e6bf084d6306a21d6d1ef
+    artifact "JPXL/docs/HANDOFF.md"
+    summary """
+        The twelve permanent Already-fixed/Trap facts from HANDOFF were individually matched to current AKR decisions or policies before retirement; no durable invariant depended only on the Markdown ledger.
+        """
+}
+
+record jpegxl-rs.evidence.retire-handoff-no-live-workflow-2026-08-11/1 : evidence {
+    title "Contributor instructions no longer maintain HANDOFF"
+    state verified
+    result pass
+    method command
+    observed_at git:95c0217ece883a13611e6bf084d6306a21d6d1ef
+    command "rg -n 'HANDOFF.md|HANDOFF' AGENTS.md JPXL/docs --glob '*.md'"
+    artifact "AGENTS.md"
+    summary """
+        At 95c0217, remaining live references describe HANDOFF as retired; the only other references are the tombstone itself and frozen experiment reports with historical citations.
+        """
+}
+
+record jpegxl-rs.evidence.retire-handoff-tombstone-2026-08-11/1 : evidence {
+    title "HANDOFF is a concise legacy tombstone"
+    state verified
+    result pass
+    method command
+    observed_at git:95c0217ece883a13611e6bf084d6306a21d6d1ef
+    command "wc -l JPXL/docs/HANDOFF.md"
+    artifact "JPXL/docs/HANDOFF.md"
+    summary """
+        At 95c0217, JPXL/docs/HANDOFF.md is 30 lines and redirects readers to AKR generated views, the knowledge workflow, scratch logs, and Git history.
         """
 }
 

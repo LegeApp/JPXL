@@ -135,3 +135,15 @@ record jpegxl-rs.papercut.opt-f-multiplicity-counters-are-still-only/1 : papercu
     author "grok-4.5"
     created_at 2026-08-06
 }
+
+record jpegxl-rs.papercut.while-repairing-phase-4l-evidence-chronology/1 : papercut {
+    title "While repairing Phase 4L evidence chronology, knowledge.revise returned…"
+    state verified
+    statement """
+        While repairing Phase 4L evidence chronology, knowledge.revise returned the completed work revision to proposed even though the call explicitly passed state="completed". A follow-up knowledge.complete restored the intended terminal state; the tool documentation and project gotcha both say re-passing state should preserve it.
+        """
+    observed_at git:95c0217ece883a13611e6bf084d6306a21d6d1ef
+    about "akr"
+    author "codex"
+    created_at 2026-08-11
+}

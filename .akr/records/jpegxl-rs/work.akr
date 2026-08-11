@@ -802,7 +802,7 @@ record jpegxl-rs.work.arch-phase4k-rate-loop-probe-reduction/1 : work {
 
 record jpegxl-rs.work.arch-phase4l-single-pass-rate-search/1 : work {
     title "Phase 4L: measure and disposition the Fast/Full two-pass rate search"
-    state completed
+    state superseded
     scope [
         path "JPXL/crates/jpxl-encode-policy/src/rate.rs",
         path "JPXL/crates/jpxl-encode-policy/tests/rate_loop.rs"
@@ -840,9 +840,49 @@ record jpegxl-rs.work.arch-phase4l-single-pass-rate-search/1 : work {
     }
 }
 
+record jpegxl-rs.work.arch-phase4l-single-pass-rate-search/2 : work {
+    title "Phase 4L: measure and disposition the Fast/Full two-pass rate search"
+    state completed
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/src/rate.rs",
+        path "JPXL/crates/jpxl-encode-policy/tests/rate_loop.rs"
+    ]
+    intent """
+        The Phase 4K measurements show that high-rate targets still spend the Fast cap before Full refinement, while current real-photo runs duplicate 8-20 Fast prices with 6 Full prices even when the target is reached. Measure whether the Fast upper-bound pass still pays after the existing cross-probe cache and aimed stepping. Trial a single Full-priced ladder from the request start, retaining the exact incumbent emission. Promote it only if it preserves never-over and non-monotone search contracts, improves or preserves target adherence, and materially reduces real-photo price count or wall time. An honest negative result is acceptable; do not raise max_prices to hide an inefficient search.
+        """
+    note """
+        Chronology-only revision: the original experiment evidence was observed at the pre-work base commit, so the acceptance links now cite committed observations at 95c0217. The negative result and disposition are unchanged.
+        """
+    acceptance {
+        check rate-contracts-hold {
+            statement """
+                The rate loop remains never-over, respects the price cap, survives the injected non-monotone cases, and all real-image rate-loop tests pass.
+                """
+            method command
+            command "cd JPXL && cargo test -p jpxl-encode-policy --lib --test rate_loop"
+            verified_by [
+                @jpegxl-rs.evidence.phase4l-contracts-recorded-after-work-2026-08-11/1
+            ]
+        }
+        check real-photo-search-improves {
+            statement """
+                On pinned real-photo inputs, the selected design materially reduces total prices or wall time without worsening target adherence; otherwise the trial is reverted and the negative result is recorded.
+                """
+            method command
+            command "cd JPXL && target/release/jpxl bench vardct-rate --input <pinned-photo.ppm> --iters 1 --bpp <target> --diag"
+            verified_by [
+                @jpegxl-rs.evidence.phase4l-negative-recorded-after-work-2026-08-11/1
+            ]
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase4k-rate-loop-probe-reduction/1 ]
+    part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+    supersedes [ @jpegxl-rs.work.arch-phase4l-single-pass-rate-search/1 ]
+}
+
 record jpegxl-rs.work.arch-phase4m-fast-full-handoff/1 : work {
     title "Phase 4M: instrument and improve the Fast-to-Full rate-search handoff"
-    state proposed
+    state completed
     scope [
         path "JPXL/crates/jpxl-cli/src/main.rs",
         path "JPXL/crates/jpxl-encode-policy/src/rate.rs",
@@ -858,6 +898,7 @@ record jpegxl-rs.work.arch-phase4m-fast-full-handoff/1 : work {
                 """
             method command
             command "cd JPXL && target/release/jpxl bench vardct-rate --input <pinned-photo.ppm> --iters 1 --bpp <target> --diag"
+            verified_by [ @jpegxl-rs.evidence.phase4m-handoff-visible-2026-08-11/1 ]
         }
         check rate-contracts-hold {
             statement """
@@ -865,6 +906,7 @@ record jpegxl-rs.work.arch-phase4m-fast-full-handoff/1 : work {
                 """
             method command
             command "cd JPXL && cargo test -p jpxl-encode-policy --lib --test rate_loop"
+            verified_by [ @jpegxl-rs.evidence.phase4m-rate-contracts-2026-08-11/1 ]
         }
         check real-content-gate {
             statement """
@@ -872,6 +914,7 @@ record jpegxl-rs.work.arch-phase4m-fast-full-handoff/1 : work {
                 """
             method command
             command "cd JPXL && target/release/jpxl bench vardct-rate --input <pinned-photo.ppm> --iters 1 --bpp <target> --diag"
+            verified_by [ @jpegxl-rs.evidence.phase4m-real-content-gate-2026-08-11/1 ]
         }
     }
     depends_on [
@@ -1950,7 +1993,7 @@ record jpegxl-rs.work.opt-v2-rate-work-sharing/2 : work {
 
 record jpegxl-rs.work.retire-handoff-ledger/1 : work {
     title "Retire HANDOFF.md as a duplicate ledger after AKR migration"
-    state proposed
+    state completed
     scope [
         path "AGENTS.md",
         path "JPXL/docs/CHANGELOG.md",
@@ -1966,6 +2009,7 @@ record jpegxl-rs.work.retire-handoff-ledger/1 : work {
                 Every permanent Already-fixed/Trap item in HANDOFF.md has a corresponding AKR decision or policy record.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.retire-handoff-durable-facts-2026-08-11/1 ]
         }
         check legacy-tombstone-only {
             statement """
@@ -1973,6 +2017,7 @@ record jpegxl-rs.work.retire-handoff-ledger/1 : work {
                 """
             method command
             command "wc -l JPXL/docs/HANDOFF.md"
+            verified_by [ @jpegxl-rs.evidence.retire-handoff-tombstone-2026-08-11/1 ]
         }
         check no-live-handoff-workflow {
             statement """
@@ -1980,6 +2025,7 @@ record jpegxl-rs.work.retire-handoff-ledger/1 : work {
                 """
             method command
             command "rg -n 'HANDOFF.md|HANDOFF' AGENTS.md JPXL/docs --glob '*.md'"
+            verified_by [ @jpegxl-rs.evidence.retire-handoff-no-live-workflow-2026-08-11/1 ]
         }
     }
     implements [ @jpegxl-rs.decision.ledger-conventions/1 ]
