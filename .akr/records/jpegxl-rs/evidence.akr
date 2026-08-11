@@ -801,6 +801,18 @@ record jpegxl-rs.evidence.phase4k-fewer-full-encodes-2026-08-10/1 : evidence {
     author "GitHub Uploader"
 }
 
+record jpegxl-rs.evidence.phase4l-contracts-after-revision-2026-08-11/1 : evidence {
+    title "Phase 4L revision retains the passing contract result"
+    state verified
+    result pass
+    method observation
+    observed_at git:555998d64b765d738207ade1a33c4bd935c9f408
+    artifact ".akr/records/jpegxl-rs/work.akr"
+    summary """
+        Commit 555998d contains Phase 4L revision 2 and the full evidence chain for the reverted Full-only prototype: 72 library tests and 11 non-ignored rate_loop tests passed.
+        """
+}
+
 record jpegxl-rs.evidence.phase4l-contracts-recorded-after-work-2026-08-11/1 : evidence {
     title "Committed Phase 4L record carries the passing contract result"
     state verified
@@ -836,6 +848,18 @@ record jpegxl-rs.evidence.phase4l-full-only-contracts-2026-08-11/1 : evidence {
     artifact ".agent/scratch/phase4l-full-only-ab-2026-08-11.md"
     summary """
         The temporary Full-only prototype passed 72 library tests and all 11 non-ignored real-image rate-loop integration tests; the prototype was then reverted after the performance gate failed.
+        """
+}
+
+record jpegxl-rs.evidence.phase4l-negative-after-revision-2026-08-11/1 : evidence {
+    title "Phase 4L revision retains the negative A/B disposition"
+    state verified
+    result pass
+    method observation
+    observed_at git:555998d64b765d738207ade1a33c4bd935c9f408
+    artifact ".akr/records/jpegxl-rs/work.akr"
+    summary """
+        Commit 555998d contains Phase 4L revision 2 and the full A/B evidence chain showing Full-only was 7%, 16%, and 105% slower, so the prototype was reverted as required.
         """
 }
 

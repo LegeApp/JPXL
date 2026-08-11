@@ -861,6 +861,7 @@ record jpegxl-rs.work.arch-phase4l-single-pass-rate-search/2 : work {
             method command
             command "cd JPXL && cargo test -p jpxl-encode-policy --lib --test rate_loop"
             verified_by [
+                @jpegxl-rs.evidence.phase4l-contracts-after-revision-2026-08-11/1,
                 @jpegxl-rs.evidence.phase4l-contracts-recorded-after-work-2026-08-11/1
             ]
         }
@@ -871,6 +872,7 @@ record jpegxl-rs.work.arch-phase4l-single-pass-rate-search/2 : work {
             method command
             command "cd JPXL && target/release/jpxl bench vardct-rate --input <pinned-photo.ppm> --iters 1 --bpp <target> --diag"
             verified_by [
+                @jpegxl-rs.evidence.phase4l-negative-after-revision-2026-08-11/1,
                 @jpegxl-rs.evidence.phase4l-negative-recorded-after-work-2026-08-11/1
             ]
         }

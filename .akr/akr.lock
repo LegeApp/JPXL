@@ -5,7 +5,7 @@ build {
     tool "akr 0.1.0"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:09a23d692901f0edd75ef2d83b2f69541f606782b92193bd5bf5e916dcb2226c"
+    source_graph "sha256:6eaaf65136b0719ffa9a480df5e1f699d50d2dc305c7434496d6f007af9ff5a8"
 }
 
 source ".akr/project.akr" {
@@ -29,8 +29,8 @@ source ".akr/records/jpegxl-rs/decisions.akr" {
 }
 
 source ".akr/records/jpegxl-rs/evidence.akr" {
-    hash "sha256:a173e52982956599c040e44dc903774bf7486364904915520f61bcdb166bc3ef"
-    records 84
+    hash "sha256:8116c21c27854db19d22350aa01a282c01ad10b5014982c201828fdb98270204"
+    records 86
 }
 
 source ".akr/records/jpegxl-rs/milestones.akr" {
@@ -59,7 +59,7 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:af56e8d5e83961c41747e7b2b3a3e65346c79f71c497bae6a70d0eba4f052ed2"
+    hash "sha256:5a93c465db302d2a945f35406b31a0d01fec0e146ce613df1280b3e894e7df2d"
     records 40
 }
 
@@ -1332,6 +1332,11 @@ seal @jpegxl-rs.evidence.phase4k-fewer-full-encodes-2026-08-10/1 {
     hash "sha256:997321ae6e29a7d22cef40420ba6f6c9507f6885fa0f9e6cd6f9ca11e32e5a91"
 }
 
+seal @jpegxl-rs.evidence.phase4l-contracts-after-revision-2026-08-11/1 {
+    state verified
+    hash "sha256:6037b26c116354bea0ac144f224cb1cdfeb0439688f39d1ab145d21803fbc0c4"
+}
+
 seal @jpegxl-rs.evidence.phase4l-contracts-recorded-after-work-2026-08-11/1 {
     state verified
     hash "sha256:0e1e93385e32b4e398a38aa22a06fb9b2039720b501e02462f583a8fb2ded5d4"
@@ -1345,6 +1350,11 @@ seal @jpegxl-rs.evidence.phase4l-full-only-ab-negative-2026-08-11/1 {
 seal @jpegxl-rs.evidence.phase4l-full-only-contracts-2026-08-11/1 {
     state verified
     hash "sha256:e624e640248af0cc83110d78ef3da1f5b6974f99b1ed40b4212d6f6689281353"
+}
+
+seal @jpegxl-rs.evidence.phase4l-negative-after-revision-2026-08-11/1 {
+    state verified
+    hash "sha256:ce73b4f31cddf667e12d0712e92fd83527050a812abe65c8b85af28a7a8b35f4"
 }
 
 seal @jpegxl-rs.evidence.phase4l-negative-recorded-after-work-2026-08-11/1 {
@@ -1894,7 +1904,7 @@ seal @jpegxl-rs.work.arch-phase4l-single-pass-rate-search/1 {
 
 seal @jpegxl-rs.work.arch-phase4l-single-pass-rate-search/2 {
     state completed
-    hash "sha256:ca3ac4c526a4ec364cdc35f082115ad4ef83fca0a7a98ce3abe246b05cfc7346"
+    hash "sha256:9918d30c8718793c7a30b2617ce2d29eb213b92f42aaa106079e00af88658af7"
 }
 
 seal @jpegxl-rs.work.arch-phase4m-fast-full-handoff/1 {
