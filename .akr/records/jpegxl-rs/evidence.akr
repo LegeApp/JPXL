@@ -801,6 +801,32 @@ record jpegxl-rs.evidence.phase4k-fewer-full-encodes-2026-08-10/1 : evidence {
     author "GitHub Uploader"
 }
 
+record jpegxl-rs.evidence.phase4l-full-only-ab-negative-2026-08-11/1 : evidence {
+    title "Phase 4L Full-only prototype failed the real-photo speed gate"
+    state verified
+    result pass
+    method command
+    observed_at git:315e763d72e164a36a890ce3f3660f6eb7f62dc3
+    command "cd JPXL && cargo build --release -p jpxl-cli && target/release/jpxl bench vardct-rate --input ../.agent/scratch/realworld-bench-20260806T072202Z/small_0p8MP.ppm --iters 1 --bpp <1.0|2.0|4.0> --diag"
+    artifact ".agent/scratch/phase4l-full-only-ab-2026-08-11.md"
+    summary """
+        Full-only preserved exact output at all three rates but regressed wall time by 7%, 16%, and 105%; the trial was reverted and the honest negative result recorded.
+        """
+}
+
+record jpegxl-rs.evidence.phase4l-full-only-contracts-2026-08-11/1 : evidence {
+    title "Phase 4L Full-only prototype preserved rate-loop contracts"
+    state verified
+    result pass
+    method command
+    observed_at git:315e763d72e164a36a890ce3f3660f6eb7f62dc3
+    command "cd JPXL && cargo test -p jpxl-encode-policy --lib --test rate_loop"
+    artifact ".agent/scratch/phase4l-full-only-ab-2026-08-11.md"
+    summary """
+        The temporary Full-only prototype passed 72 library tests and all 11 non-ignored real-image rate-loop integration tests; the prototype was then reverted after the performance gate failed.
+        """
+}
+
 record jpegxl-rs.evidence.rulings-captured/1 : evidence {
     title "HANDOFF Already-fixed and Traps plus LESSONS captured as 5 decisions, 12 policies, 6 constraints"
     state verified

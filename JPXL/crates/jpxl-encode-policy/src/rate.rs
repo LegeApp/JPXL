@@ -214,6 +214,24 @@ fn full_refinement_reserve(max_prices: u32) -> u32 {
 /// The set is intentionally sparse: each probe is a full encode.
 const QUANT_LF_FILL: &[u32] = &[8, 12, 16, 24, 32, 48, 64, 96, 128, 192, 256, 512, 1024];
 
+/// LF-fill candidates in distortion-preserving direction.
+///
+/// The fill runs only when the selected stream is under target. I.2.1 divides
+/// the LF step by `quant_lf`, so values below the caller's balance make LF
+/// coarser: even if entropy non-monotonicity made such a stream a few bytes
+/// larger, spending bytes by throwing away LF precision is the wrong trade.
+/// Probe only finer LF values, nearest first; exact writer pricing still makes
+/// the never-over decision.
+fn quant_lf_fill_candidates(base: QuantLf) -> Vec<u32> {
+    let mut candidates: Vec<u32> = QUANT_LF_FILL
+        .iter()
+        .copied()
+        .filter(|&value| value > base.get())
+        .collect();
+    candidates.sort_by_key(|&value| value.abs_diff(base.get()));
+    candidates
+}
+
 /// One priced candidate. The trace is the loop's evidence, and the tests read
 /// it: an iteration count, a bracket, and where non-monotonicity showed up.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -851,19 +869,14 @@ pub fn search_frame(
     if let Some((rung, base_lf, base_bytes)) = lf_fill {
         let undershoot = target_bytes.saturating_sub(base_bytes);
         if lf_probes > 0 && undershoot > slack {
-            let mut candidates: Vec<u32> = QUANT_LF_FILL.to_vec();
-            candidates.sort_by_key(|&v| v.abs_diff(base_lf.get()));
             let mut tried = 0usize;
-            for lf_val in candidates {
+            for lf_val in quant_lf_fill_candidates(base_lf) {
                 if search.trace.len() >= fast_cap_usize || tried >= lf_probes {
                     break;
                 }
                 let Ok(lf) = QuantLf::new(lf_val) else {
                     continue;
                 };
-                if lf == base_lf {
-                    continue;
-                }
                 let Ok(quantizer) = QuantizerChoice::at(rung, lf) else {
                     continue;
                 };
@@ -984,6 +997,17 @@ mod tests {
 
     fn quant_lf() -> QuantLf {
         QuantLf::new(16).expect("legal")
+    }
+
+    #[test]
+    fn lf_fill_only_spends_probes_on_finer_lf_values() {
+        let base = quant_lf();
+        let candidates = quant_lf_fill_candidates(base);
+        assert_eq!(
+            candidates,
+            vec![24, 32, 48, 64, 96, 128, 192, 256, 512, 1024]
+        );
+        assert!(candidates.iter().all(|&value| value > base.get()));
     }
 
     #[test]

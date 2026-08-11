@@ -16,7 +16,8 @@ for the encoder that follows.
 implementation, not habit. Where the standard does not answer, the fallback
 chain in section 2 applies and the decision is tagged `[provisional]`. Existing
 `[provisional]` tags predate the OCR and now require re-audit against
-`part1.md` — that re-audit is queued work, tracked in `JPXL/docs/HANDOFF.md`.
+`part1.md` — any remaining re-audit work is tracked in AKR and surfaced in
+`docs/generated/ACTIVE-WORK.md`.
 
 **Slow is smooth, smooth is fast.** The goal for the first phase is a correct,
 readable reference pair — scalar, single-threaded, obvious. No SIMD, no rayon,
@@ -62,7 +63,8 @@ down this list and stop at the first that answers:
    One safeguard survives the ranking: if the two Part 1 sources disagree on a
    **numeric constant**, treat the disagreement itself as a signal and settle
    it via step 3 or 5 — a handful of digit slips exist in both directions
-   (see HANDOFF traps), and a wrong constant parses plausibly.
+   (see the transcription decisions and policies in
+   `docs/generated/CURRENT-STATE.md`), and a wrong constant parses plausibly.
 3. `original-pdfs-do-not-read-first-if-markdown-exists/ISO_IEC_18181-1_2024_transcription.pdf`
    — text-only transcription of Part 1, text-searchable and cheap relative to
    the image scans. Use it when 1 and 2 disagree.
@@ -107,7 +109,7 @@ per page — orders of magnitude more tokens than the equivalent markdown. So:
 | `JPXL/docs/CHANGELOG.md` | Released, user-visible changes only. Nothing else. |
 | `JPXL/docs/CONFORMANCE.md` | Which clauses/features are supported and the status of the tests that prove it. |
 | `JPXL/docs/PERFORMANCE.md` | Current reproducible baselines with full provenance. Not a history of attempts. |
-| `JPXL/docs/HANDOFF.md` | Dated working ledger between sessions and agents. |
+| `JPXL/docs/HANDOFF.md` | Retired legacy pointer. Live handoff and planning state is generated from AKR. |
 | `JPXL/docs/experiments/` | Immutable experiment reports, including negative results. |
 
 **Keep living docs small.** The previous project's changelog reached 6,965
@@ -184,22 +186,25 @@ conditional fields, region handling, and edge clipping.
 had hundreds of green tests while VarDCT rendered garbage. State what a test
 proves; if you cannot, it proves nothing.
 
-## 7. Handoff discipline
+## 7. AKR handoff discipline
 
-`JPXL/docs/HANDOFF.md` is the working ledger. Prepend dated entries (newest
-first). Every entry states what changed, what is proved, and what is next.
+AKR is the working ledger and the generated views under `docs/generated/` are
+the reading surface. Do not prepend dated Markdown handoff entries or maintain a
+parallel plan:
 
-Two sections are permanent and must be maintained:
+- Start scoped work with `knowledge.context --goal <record>` and the expected
+  touched paths.
+- Record settled fixes and decisions as `decision`; record traps and strict
+  checks that must not be loosened as `policy`.
+- Record measurements as `observation` or `evidence`, with raw logs under
+  `.agent/scratch/`; close acceptance through `knowledge.complete`.
+- When a diagnosis changes, use `knowledge.revise` or `knowledge.supersede` so
+  the ledger exposes one current claim and preserves the history explicitly.
+- Before handoff, build the generated views and run `knowledge.validate` (or
+  `akr check`), reporting any remaining diagnostics.
 
-- **"Already fixed — do not redo"**: settled decisions and repaired bugs, so
-  the next session does not relitigate them.
-- **"Traps — do not fix these by loosening a check"**: places where a failing
-  assertion or strict limit is correct and the bug is upstream. Name the check
-  and the real cause.
-
-When a diagnosis turns out wrong, correct it **in place** and say it was
-corrected. Do not leave a wrong explanation standing with a rebuttal appended
-three entries later.
+`JPXL/docs/HANDOFF.md` is a legacy tombstone only. Historical detail remains in
+Git history; durable conclusions have been migrated to AKR records.
 
 ## 8. Multi-agent ownership
 
@@ -209,7 +214,7 @@ Work is dispatched as briefs that list whole files. Rules:
   set. No opportunistic fixes in someone else's file.
 - Shared types in `jpxl-core` change only through the task that owns
   `jpxl-core`. If you need a new shared type, state the requirement in your
-  handoff entry rather than adding it yourself.
+  AKR work record or checkpoint note rather than adding it yourself.
 - If two briefs appear to overlap, stop and report the conflict; do not
   arbitrate it by editing first.
 
@@ -309,9 +314,9 @@ diagnostics, fix them or say so explicitly — don't hand back silently.
 **Planning is in AKR, not Markdown.** The authoritative plan and its generated
 views (`ROADMAP`, `CURRENT-STATE`, `DECISION-HISTORY`, `OPEN-QUESTIONS`,
 `REVIEW-REQUIRED`, `PAPERCUTS` under `docs/generated/`) come from the ledger.
-`JPXL/docs/HANDOFF.md`, `PLAN.md` and `CONFORMANCE.md` are retained as working
-logs / legacy reference pending full migration; prefer the generated views
-when they conflict.
+`PLAN.md` and `CONFORMANCE.md` remain legacy references pending full migration;
+prefer the generated views when they conflict. `JPXL/docs/HANDOFF.md` is
+retired and must not accumulate new entries.
 
 Gate before finalizing (clean tree): `scripts/ci-akr.ps1` / `scripts/ci-akr.sh`
 runs `akr check`, `akr check --views-current`, and `cargo fmt --check`.

@@ -421,7 +421,7 @@ record jpegxl-rs.observation.lossy-vardct-headsup-2026-08-10/1 : observation {
 
 record jpegxl-rs.observation.lossy-vardct-headsup-2026-08-10/2 : observation {
     title "Lossy VarDCT vs cjxl (PSNR-only, superseded as a summary): 58-530x slower, and the high-rate undershoot is budget exhaustion, not a ladder ceiling"
-    state verified
+    state superseded
     statement """
         First rate/distortion comparison of the lossy VarDCT path against the oracle. Corpus: the three real photographs in .agent/scratch/realworld-bench-20260806T072202Z. JPXL swept by --bpp, cjxl v0.13.0 swept by -d, cjxl output decoded with the oracle's own djxl so a JPXL decode bug cannot masquerade as a cjxl quality difference. Raw rows in .agent/scratch/effort-ramp-2026-08-10/headsup-lossy-2026-08-10.txt.
 
@@ -448,6 +448,31 @@ record jpegxl-rs.observation.lossy-vardct-headsup-2026-08-10/2 : observation {
     method command
     supersedes [ @jpegxl-rs.observation.lossy-vardct-headsup-2026-08-10/1 ]
     author "GitHub Uploader"
+}
+
+record jpegxl-rs.observation.lossy-vardct-headsup-2026-08-10/3 : observation {
+    title "Lossy VarDCT vs cjxl (PSNR-only, superseded as a summary): 58-530x slower; high-rate miss traced to LF-fill ordering at adjacent rungs"
+    state verified
+    statement """
+        First rate/distortion comparison of the lossy VarDCT path against the oracle. Corpus: the three real photographs in .agent/scratch/realworld-bench-20260806T072202Z. JPXL swept by --bpp, cjxl v0.13.0 swept by -d, cjxl output decoded with the oracle's own djxl so a JPXL decode bug cannot masquerade as a cjxl quality difference. Raw original rows: .agent/scratch/effort-ramp-2026-08-10/headsup-lossy-2026-08-10.txt.
+
+        SCOPE CORRECTION (revision 2, retained): this record measured PSNR only. jpegxl-rs.observation.lossy-perceptual-baseline-2026-08-10 re-measures SSIMULACRA2 and butteraugli and finds a 12-20% gap on one and 39-53% on the other. The original density result is only the PSNR gap.
+
+        Measured original (bpp, PSNR dB, encode ms): 0.8 MP -- jpxl (0.499,24.94,8724) (0.995,28.72,17602) (1.988,34.04,34973) (3.999,41.56,55646); cjxl (0.839,30.55,154) (1.466,34.22,94) (2.321,37.91,106) (3.428,41.00,104). 4 MP -- jpxl (0.498,27.47,38076) (0.995,32.64,55376) (1.996,37.40,106791) (3.645,41.62,178646); cjxl (0.565,32.27,551) (0.941,35.15,336) (1.490,37.78,341) (2.366,40.18,309). 12 MP -- jpxl (0.499,31.67,63214) (0.997,36.67,144969) (1.673,39.32,472352) (3.942,45.72,462885); cjxl (0.414,34.83,1534) (0.677,37.18,944) (1.074,39.54,897) (1.765,42.18,754).
+
+        (1) On PSNR, cjxl reaches equal PSNR at roughly 25-37% fewer bits. Superseded as a general quality summary by the perceptual record above. (2) Speed: jpxl was 58-530x slower because a targeted encode prices 15-40 full-frame plans; this remains the largest practical gap.
+
+        (3) HIGH-RATE UNDERSHOOT -- CAUSE CORRECTED AGAIN IN REVISION 3. Revision 1 incorrectly called it a ladder ceiling. Revision 2 correctly rejected that but then inferred from `24 fast` that bracketing/bisection exhausted the Fast cap. Phase 4M's new phase/rung telemetry shows that inference was also wrong.
+
+        At 0.8 MP / 4 bpp, the 20 Fast prices split into 3 Bracket + 7 Bisect + 2 Fill + 8 LF-fill; Fast best/upper were adjacent rungs 73728/73729 and Full started/ended at 73728. At 4 MP / 4 bpp, 24 Fast split into 3 Bracket + 14 Bisect + 3 Fill + 4 LF-fill; Fast best/upper were adjacent 73729/73730 and Full started/ended at 73729. The ladder had settled; the aggregate count included secondary LF probes.
+
+        The actual narrow defect was LF-fill order. With requested quant_lf=16 and only four remaining slots, absolute-distance order tried 12, 8, 24, 32. The first two make LF coarser while trying to spend an undershoot. Finer-only order reached 24, 32, 48, 64; exact pricing selected 64 and raised the 4 MP result from 1,954,100 to 2,003,736 bytes, reducing the miss from about 9.5% to 7.2%, for about a 2% single-run diagnostic wall increase. Lower-rate 0.8 MP outputs stayed byte-identical. Raw Phase 4M summary: .agent/scratch/phase4m-lf-fill-direction-2026-08-11.md.
+
+        The remaining 4 MP miss is not attributed here beyond the measured trace; the 12 MP / 2 bpp case has not yet been re-run with phase telemetry and remains unknown. Do not restore either the ladder-ceiling or generic Fast-bracketing-exhaustion diagnosis.
+        """
+    observed_at git:315e763d72e164a36a890ce3f3660f6eb7f62dc3
+    method command
+    supersedes [ @jpegxl-rs.observation.lossy-vardct-headsup-2026-08-10/2 ]
 }
 
 record jpegxl-rs.observation.modular-depth-is-not-the-lever-2026-08-10/1 : observation {
@@ -560,6 +585,18 @@ record jpegxl-rs.observation.phase1-diag-12mp-2026-08-06/1 : observation {
     observed_at git:81de004fdfd13c35e9f107faed21a697989c979b
     method command
     author "grok-build"
+}
+
+record jpegxl-rs.observation.phase4l-full-only-negative-2026-08-11/1 : observation {
+    title "Full-only rate search is slower despite fewer prices"
+    state verified
+    scope [ path "JPXL/crates/jpxl-encode-policy/src/rate.rs" ]
+    statement """
+        At base commit 315e763d72e164a36a890ce3f3660f6eb7f62dc3, a temporary uncommitted Phase 4L prototype replaced the Fast upper-bound ladder plus Full refinement with one Full-entropy ladder under the same 40-price cap. All jpxl-encode-policy lib and rate_loop tests passed and output bytes/fingerprints were identical at 1, 2, and 4 bpp on the pinned 1024x768 photo, but wall time regressed from 6460.695 to 6924.504 ms (+7%), 15765.131 to 18241.482 ms (+16%), and 27284.956 to 55846.541 ms (+105%). Price counts fell from 8 Fast + 6 Full, 13 Fast + 6 Full, and 20 Fast + 6 Full to 8, 13, and 20 Full prices respectively. The prototype was reverted. Fast remains economically useful; future work should improve Fast-to-Full handoff or Fast planning cost rather than replace all Fast prices with Full emissions. Raw diagnostic summary: .agent/scratch/phase4l-full-only-ab-2026-08-11.md.
+        """
+    observed_at git:315e763d72e164a36a890ce3f3660f6eb7f62dc3
+    method command
+    watches [ "JPXL/crates/jpxl-encode-policy/src/rate.rs" ]
 }
 
 record jpegxl-rs.observation.preopt-encode-baseline-2026-08-06/1 : observation {

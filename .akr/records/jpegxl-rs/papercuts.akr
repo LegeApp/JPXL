@@ -56,6 +56,18 @@ record jpegxl-rs.papercut.akr-view-active-work-current-state-etc-returned/1 : pa
     created_at 2026-08-06
 }
 
+record jpegxl-rs.papercut.fff-grep-transport-closed-while-locating-bench/1 : papercut {
+    title "FFF grep transport closed while locating bench_vardct_rate; the indexed…"
+    state verified
+    statement """
+        FFF grep transport closed while locating bench_vardct_rate; the indexed CodeGraph search/node fallback returned the symbol and source immediately.
+        """
+    observed_at git:58d797a0e2c0f94dfa13349261c29f48f3c7cc89
+    about "fff"
+    author "gpt-5"
+    created_at 2026-08-11
+}
+
 record jpegxl-rs.papercut.hybrid-intel-plain-cycles-u-records-cpu-atom/1 : papercut {
     title "Hybrid Intel: plain cycles:u records cpu_atom+cpu_core; atom samples…"
     state verified
@@ -87,6 +99,30 @@ record jpegxl-rs.papercut.knowledge-complete-s-cited-evidence-gets-its/1 : paper
     observed_at git:d11219f6cc0b81eaa13bbe59c291213dce429910
     author "claude"
     created_at 2026-08-07
+}
+
+record jpegxl-rs.papercut.knowledge-propose-documents-observation/1 : papercut {
+    title "knowledge.propose documents observation observed_at as required but…"
+    state verified
+    statement """
+        knowledge.propose documents observation observed_at as required but does not say it must be a git:<40-hex> locator; passing the natural ISO date 2026-08-11 produced parser errors about a 4-digit commit hash.
+        """
+    observed_at git:58d797a0e2c0f94dfa13349261c29f48f3c7cc89
+    about "akr"
+    author "gpt-5"
+    created_at 2026-08-11
+}
+
+record jpegxl-rs.papercut.knowledge-propose-says-observation-requires/1 : papercut {
+    title "knowledge.propose says observation requires statement and observed_at,…"
+    state verified
+    statement """
+        knowledge.propose says observation requires statement and observed_at, but a verified observation also requires method/source/evidence (V-022); after adding method, the natural accompanying command slot is rejected because observation does not permit command.
+        """
+    observed_at git:58d797a0e2c0f94dfa13349261c29f48f3c7cc89
+    about "akr"
+    author "gpt-5"
+    created_at 2026-08-11
 }
 
 record jpegxl-rs.papercut.opt-f-multiplicity-counters-are-still-only/1 : papercut {

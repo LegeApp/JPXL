@@ -789,6 +789,26 @@ fn cmd_bench(args: &[String]) -> u8 {
                                 s.fast_prices, s.full_prices, s.dct_cache_hits, s.dct_cache_misses,
                             );
                         }
+                        if let Some(t) = report.rate_trace {
+                            println!(
+                                "rate_trace=bracket={} bisect={} fill={} lf_fill={} final={} \
+                                 fast_best_rung={:?} fast_best_quant_lf={:?} \
+                                 fast_upper_rung={:?} full_start_rung={:?} \
+                                 full_start_quant_lf={:?} chosen_rung={} chosen_quant_lf={}",
+                                t.bracket,
+                                t.bisect,
+                                t.fill,
+                                t.lf_fill,
+                                t.final_prices,
+                                t.fast_best_rung,
+                                t.fast_best_quant_lf,
+                                t.fast_upper_rung,
+                                t.full_start_rung,
+                                t.full_start_quant_lf,
+                                t.chosen_rung,
+                                t.chosen_quant_lf,
+                            );
+                        }
                     }
                     _ => {}
                 }
@@ -810,6 +830,77 @@ struct BenchReport {
     /// Rate-search multiplicity counters from the last timed iteration.
     /// `vardct-rate` only; every other mode leaves this `None`.
     rate_stats: Option<jpxl_encode_policy::RateProbeStats>,
+    /// Control-flow and rung summary from the last timed rate search.
+    rate_trace: Option<RateTraceStats>,
+}
+
+/// Compact handoff telemetry for `vardct-rate --diag`.
+///
+/// The full trace can contain forty prices and is intentionally not printed.
+/// These counts and boundary rungs distinguish time spent locating a Fast
+/// incumbent from time spent turning it into the final Full-priced winner.
+#[derive(Debug, Clone, Copy, Default)]
+struct RateTraceStats {
+    bracket: usize,
+    bisect: usize,
+    fill: usize,
+    lf_fill: usize,
+    final_prices: usize,
+    fast_best_rung: Option<u32>,
+    fast_best_quant_lf: Option<u32>,
+    fast_upper_rung: Option<u32>,
+    full_start_rung: Option<u32>,
+    full_start_quant_lf: Option<u32>,
+    chosen_rung: u32,
+    chosen_quant_lf: u32,
+}
+
+impl RateTraceStats {
+    fn from_outcome(outcome: &jpxl_encode_policy::RateOutcome) -> Self {
+        use jpxl_encode_policy::RatePhase;
+
+        let mut out = Self {
+            chosen_rung: outcome.chosen.rung.get(),
+            chosen_quant_lf: outcome.chosen.quant_lf.get(),
+            ..Self::default()
+        };
+        for step in &outcome.trace {
+            match step.phase {
+                RatePhase::Bracket => out.bracket += 1,
+                RatePhase::Bisect => out.bisect += 1,
+                RatePhase::Fill => out.fill += 1,
+                RatePhase::LfFill => out.lf_fill += 1,
+                RatePhase::Final => out.final_prices += 1,
+            }
+        }
+
+        let fast_best = outcome
+            .trace
+            .iter()
+            .filter(|step| step.phase != RatePhase::Final && step.feasible)
+            .max_by_key(|step| (step.bytes, step.quantizer.rung));
+        out.fast_best_rung = fast_best.map(|step| step.quantizer.rung.get());
+        out.fast_best_quant_lf = fast_best.map(|step| step.quantizer.quant_lf.get());
+        out.fast_upper_rung = fast_best.and_then(|best| {
+            outcome
+                .trace
+                .iter()
+                .filter(|step| {
+                    step.phase != RatePhase::Final
+                        && !step.feasible
+                        && step.quantizer.rung > best.quantizer.rung
+                })
+                .min_by_key(|step| step.quantizer.rung)
+                .map(|step| step.quantizer.rung.get())
+        });
+        let full_start = outcome
+            .trace
+            .iter()
+            .find(|step| step.phase == RatePhase::Final);
+        out.full_start_rung = full_start.map(|step| step.quantizer.rung.get());
+        out.full_start_quant_lf = full_start.map(|step| step.quantizer.quant_lf.get());
+        out
+    }
 }
 
 fn bench_modular(
@@ -870,18 +961,20 @@ fn bench_vardct_rate(
         .map_err(|e| e.to_string())?;
     let warm_len = warm.codestream.len();
     let warm_fp = fnv1a64(&warm.codestream);
-    // Multiplicity counters from the last timed iteration (Opt-V2 telemetry;
-    // rate-loop-specific, so `time_iters`'s shared `BenchReport` doesn't carry
-    // it — attached to the result below instead).
+    // Rate-loop-specific telemetry from the last timed iteration; attached to
+    // `time_iters`'s shared report below.
     let last_stats = std::cell::Cell::new(warm.stats);
+    let last_trace = std::cell::Cell::new(RateTraceStats::from_outcome(&warm));
     let mut report = time_iters(iters, warm_len, warm_fp, || {
         let outcome =
             jpxl_encode_policy::encode_srgb8_to_target(width, height, rgb, &request, target)
                 .map_err(|e| e.to_string())?;
         last_stats.set(outcome.stats);
+        last_trace.set(RateTraceStats::from_outcome(&outcome));
         Ok(outcome.codestream)
     })?;
     report.rate_stats = Some(last_stats.get());
+    report.rate_trace = Some(last_trace.get());
     Ok(report)
 }
 
@@ -949,6 +1042,7 @@ where
         output_bytes,
         fingerprint,
         rate_stats: None,
+        rate_trace: None,
     })
 }
 

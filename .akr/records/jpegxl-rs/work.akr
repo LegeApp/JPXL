@@ -800,6 +800,87 @@ record jpegxl-rs.work.arch-phase4k-rate-loop-probe-reduction/1 : work {
     author "GitHub Uploader"
 }
 
+record jpegxl-rs.work.arch-phase4l-single-pass-rate-search/1 : work {
+    title "Phase 4L: measure and disposition the Fast/Full two-pass rate search"
+    state completed
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/src/rate.rs",
+        path "JPXL/crates/jpxl-encode-policy/tests/rate_loop.rs"
+    ]
+    intent """
+        The Phase 4K measurements show that high-rate targets still spend the Fast cap before Full refinement, while current real-photo runs duplicate 8-20 Fast prices with 6 Full prices even when the target is reached. Measure whether the Fast upper-bound pass still pays after the existing cross-probe cache and aimed stepping. Trial a single Full-priced ladder from the request start, retaining the exact incumbent emission. Promote it only if it preserves never-over and non-monotone search contracts, improves or preserves target adherence, and materially reduces real-photo price count or wall time. An honest negative result is acceptable; do not raise max_prices to hide an inefficient search.
+        """
+    acceptance {
+        check rate-contracts-hold {
+            statement """
+                The rate loop remains never-over, respects the price cap, survives the injected non-monotone cases, and all real-image rate-loop tests pass.
+                """
+            method command
+            command "cd JPXL && cargo test -p jpxl-encode-policy --lib --test rate_loop"
+            verified_by [ @jpegxl-rs.evidence.phase4l-full-only-contracts-2026-08-11/1 ]
+        }
+        check real-photo-search-improves {
+            statement """
+                On pinned real-photo inputs, the selected design materially reduces total prices or wall time without worsening target adherence; otherwise the trial is reverted and the negative result is recorded.
+                """
+            method command
+            command "cd JPXL && target/release/jpxl bench vardct-rate --input <pinned-photo.ppm> --iters 1 --bpp <target> --diag"
+            verified_by [ @jpegxl-rs.evidence.phase4l-full-only-ab-negative-2026-08-11/1 ]
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase4k-rate-loop-probe-reduction/1 ]
+    part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+    source {
+        kind internal
+        role rationale
+        path "JPXL/docs/HANDOFF.md"
+        use """
+            The Phase 4K entry identifies the remaining Fast-cap/full-refinement duplication and names the next lever.
+            """
+    }
+}
+
+record jpegxl-rs.work.arch-phase4m-fast-full-handoff/1 : work {
+    title "Phase 4M: instrument and improve the Fast-to-Full rate-search handoff"
+    state proposed
+    scope [
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/rate.rs",
+        path "JPXL/crates/jpxl-encode-policy/tests/rate_loop.rs"
+    ]
+    intent """
+        Phase 4L proved that replacing Fast prices with Full emissions is slower by 7-105%, so retain the two-pass design. Add rate-trace phase/rung telemetry to `jpxl bench vardct-rate --diag`, measure the known high-rate undershoot, then make the narrowest safe handoff change supported by that trace. Preserve the never-over contract and the aimed-probe non-monotone safety rule; do not increase max_prices. Promote only a change that improves wall time or target adherence on pinned real content without regressing the other materially. Honest negative trials are acceptable and must be reverted/recorded.
+        """
+    acceptance {
+        check handoff-visible {
+            statement """
+                vardct-rate --diag reports Fast phase counts and the Full start/chosen rungs needed to explain the handoff rather than only aggregate price counts.
+                """
+            method command
+            command "cd JPXL && target/release/jpxl bench vardct-rate --input <pinned-photo.ppm> --iters 1 --bpp <target> --diag"
+        }
+        check rate-contracts-hold {
+            statement """
+                The selected handoff preserves never-over, price caps, non-monotone safety, decoding, and the real-image rate-loop matrix.
+                """
+            method command
+            command "cd JPXL && cargo test -p jpxl-encode-policy --lib --test rate_loop"
+        }
+        check real-content-gate {
+            statement """
+                The selected design improves wall time or target adherence on pinned real content without a material regression in the other; otherwise the trial is reverted and recorded as a negative.
+                """
+            method command
+            command "cd JPXL && target/release/jpxl bench vardct-rate --input <pinned-photo.ppm> --iters 1 --bpp <target> --diag"
+        }
+    }
+    depends_on [
+        @jpegxl-rs.work.arch-phase4k-rate-loop-probe-reduction/1,
+        @jpegxl-rs.work.arch-phase4l-single-pass-rate-search/1
+    ]
+    part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+}
+
 record jpegxl-rs.work.arch-s8-cover-lane-simd/1 : work {
     title "outside-advice.md §8 (S8), narrowed per Opus advisor review: bit-identical coefficient-lane SIMD for cover scoring"
     state completed
@@ -1865,4 +1946,41 @@ record jpegxl-rs.work.opt-v2-rate-work-sharing/2 : work {
     }
     part_of [ @jpegxl-rs.milestone.m-opt-vardct-rate ]
     supersedes [ @jpegxl-rs.work.opt-v2-rate-work-sharing/1 ]
+}
+
+record jpegxl-rs.work.retire-handoff-ledger/1 : work {
+    title "Retire HANDOFF.md as a duplicate ledger after AKR migration"
+    state proposed
+    scope [
+        path "AGENTS.md",
+        path "JPXL/docs/CHANGELOG.md",
+        path "JPXL/docs/HANDOFF.md",
+        path "JPXL/docs/PLAN.md"
+    ]
+    intent """
+        Complete the migration already declared by jpegxl-rs.decision.ledger-conventions: AKR records and generated views are the only live planning/handoff surface. The HANDOFF permanent sections have been audited: read_u32 wrapping, XYB inverse matrix, quant-bias defaults, modular LZ77 distance multiplier, asymmetric H.5.2 clamp, restoration filters off, E.4.4 tag count, modular 16-bit buffers, transcription-pipeline escalation, Annex H constants, C.2.6 alias mapping, and oracle output format all have matching decision or policy records. Replace the 2,185-line duplicate ledger with a short legacy tombstone, update contributor and changelog instructions to point to AKR/generated views, and preserve historical detail through Git history and the migrated records. Frozen experiment reports are not edited; the tombstone explains that their historical HANDOFF references resolve through Git history.
+        """
+    acceptance {
+        check durable-facts-in-akr {
+            statement """
+                Every permanent Already-fixed/Trap item in HANDOFF.md has a corresponding AKR decision or policy record.
+                """
+            method observation
+        }
+        check legacy-tombstone-only {
+            statement """
+                JPXL/docs/HANDOFF.md is a concise legacy redirect rather than a second plan, experiment database, or dated work ledger.
+                """
+            method command
+            command "wc -l JPXL/docs/HANDOFF.md"
+        }
+        check no-live-handoff-workflow {
+            statement """
+                Contributor and changelog instructions no longer direct work-in-progress or handoff updates into HANDOFF.md; remaining HANDOFF references are the legacy tombstone or frozen historical experiment citations.
+                """
+            method command
+            command "rg -n 'HANDOFF.md|HANDOFF' AGENTS.md JPXL/docs --glob '*.md'"
+        }
+    }
+    implements [ @jpegxl-rs.decision.ledger-conventions/1 ]
 }
