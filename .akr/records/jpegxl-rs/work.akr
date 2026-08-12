@@ -1781,7 +1781,7 @@ record jpegxl-rs.work.arch-phase5o-special8-transform-screen/1 : work {
 
 record jpegxl-rs.work.arch-phase5p-special8-exact-distortion-screen/1 : work {
     title "Phase 5P: screen special transforms with exact sample-domain distortion"
-    state active
+    state completed
     scope [
         path "JPXL/crates/jpxl-cli/src/main.rs",
         path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
@@ -1801,24 +1801,28 @@ record jpegxl-rs.work.arch-phase5p-special8-exact-distortion-screen/1 : work {
                 Tests compare the exact sample-domain scorer to direct inverse-reconstruction SSE and show at least one special transform is not silently treated as a square-DCT Parseval case.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase5p-distortion-proof-2026-08-12 ]
         }
         check policy-decision {
             statement """
                 Production changes only if the full matrix has no Butteraugli regression under an explicit Contract B; otherwise the research mode is removed and production fingerprint restored.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.phase5p-policy-decision-2026-08-12 ]
         }
         check quality-screen {
             statement """
                 Pre-registered Phase 5O regressors and winners are scored symmetrically at production byte caps; a full matrix is run only if direction is non-regressing.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.phase5p-quality-screen-2026-08-12 ]
         }
         check rate-oracle {
             statement """
                 An active exact-distortion special-transform stream stays under target and decodes consistently in djxl and jxl-oxide.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase5p-rate-oracle-2026-08-12 ]
         }
     }
     depends_on [ @jpegxl-rs.work.arch-phase5o-special8-transform-screen ]
