@@ -2449,6 +2449,39 @@ record jpegxl-rs.work.arch-phase7-1-run-aware-rate-estimate/1 : work {
     part_of [ @jpegxl-rs.track.encoder-optimization ]
 }
 
+record jpegxl-rs.work.arch-phase7-1a-rate-proxy-gap/1 : work {
+    title "Phase 7.1a: measure how much of the rate residual_bits cannot see"
+    state active
+    scope [ path "JPXL/crates/jpxl-encode-policy/tests/rate_proxy_gap.rs" ]
+    intent """
+        Phase 7.0 diagnosed its own SSIMULACRA2 regression as the rate proxy being blind to structure, so it zeroes uniformly instead of selectively. Before building a replacement, size the blindness and identify which specific part of it is the lever -- the same measure-before-design discipline Phases 6.0 and 6.2 used.
+
+        Run the REAL coefficient walk (jpxl_encode::vardct::walk_frame, the function the writer and the census both use, not a reimplementation) over a planned frame and classify every symbol it emits against what residual_bits charges for the same coefficients. Report at several rates, because Phase 6.5 and 7.0 both behaved differently with rate and the proxy's blindness plausibly does too.
+
+        Measurement only: no encoder behaviour changes.
+        """
+    acceptance {
+        check gap-measured {
+            statement """
+                The share of emitted symbols residual_bits prices at zero is reported at several rates, using the real walk rather than a reimplementation of it.
+                """
+            method command
+        }
+        check lever-identified {
+            statement """
+                The record states which specific blindness is the lever and what design that forces, rather than leaving the replacement's shape to be guessed.
+                """
+            method observation
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase7-0-rate-distortion-quantizer ]
+    derived_from [
+        @jpegxl-rs.observation.the-quantizer-is-the-lever-and-its-rate-proxy-is-the-defect-2026-08-12
+    ]
+    implements [ @jpegxl-rs.decision.encoder-architecture-phases ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+}
+
 record jpegxl-rs.work.arch-s8-cover-lane-simd/1 : work {
     title "outside-advice.md §8 (S8), narrowed per Opus advisor review: bit-identical coefficient-lane SIMD for cover scoring"
     state completed

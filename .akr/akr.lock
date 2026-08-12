@@ -5,7 +5,7 @@ build {
     tool "akr 0.3.1"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:74028177bc6984a9aed89e829435a9cc19140c8b0b5fdf50012126f355cbc002"
+    source_graph "sha256:8ad4658afdeb4cc931a50510e4fd6739268608e860c3232460947dbed7fb098e"
 }
 
 source ".akr/project.akr" {
@@ -64,8 +64,8 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:bff901834558938834d265b165270734e65bcb816dae41c8e5658c876ca7ae3c"
-    records 71
+    hash "sha256:74cbfde7c1f0dd7af7a5ea91775f9807c94cc7dee4b2dbe39a7cfef5331be230"
+    records 72
 }
 
 resolution @jpegxl-rs.decision.encoder-architecture-phases/1 {
@@ -2300,6 +2300,30 @@ resolution @jpegxl-rs.work.arch-phase7-1-run-aware-rate-estimate/1 {
     hash "sha256:49975e17bd10998d72b08fccfe98fdea9bdf68ef56e4404dd68e94e1e2d75f23"
 }
 
+resolution @jpegxl-rs.work.arch-phase7-1a-rate-proxy-gap/1 {
+    slot depends_on
+    to @jpegxl-rs.work.arch-phase7-0-rate-distortion-quantizer/1
+    hash "sha256:6f51dc8f308be40ac2a985e7db9658e99d21a7814112180cf9c93e894815ce65"
+}
+
+resolution @jpegxl-rs.work.arch-phase7-1a-rate-proxy-gap/1 {
+    slot derived_from
+    to @jpegxl-rs.observation.the-quantizer-is-the-lever-and-its-rate-proxy-is-the-defect-2026-08-12/1
+    hash "sha256:5c90a8fbca6ea837c35102427a256dbcce4f55feb5ceeab9b121221d2e7fc6d4"
+}
+
+resolution @jpegxl-rs.work.arch-phase7-1a-rate-proxy-gap/1 {
+    slot implements
+    to @jpegxl-rs.decision.encoder-architecture-phases/1
+    hash "sha256:bebc6ba8560b5b033c8661d3025f45375dcd7f485639aba3dcc1338c845dcfa4"
+}
+
+resolution @jpegxl-rs.work.arch-phase7-1a-rate-proxy-gap/1 {
+    slot part_of
+    to @jpegxl-rs.track.encoder-optimization/1
+    hash "sha256:49975e17bd10998d72b08fccfe98fdea9bdf68ef56e4404dd68e94e1e2d75f23"
+}
+
 resolution @jpegxl-rs.work.arch-s8-cover-lane-simd/1 {
     slot implements
     to @jpegxl-rs.decision.encoder-architecture-phases/1
@@ -4123,6 +4147,11 @@ seal @jpegxl-rs.work.arch-phase6-5b-promote-donor-weight/1 {
 seal @jpegxl-rs.work.arch-phase7-0-rate-distortion-quantizer/1 {
     state completed
     hash "sha256:6f51dc8f308be40ac2a985e7db9658e99d21a7814112180cf9c93e894815ce65"
+}
+
+seal @jpegxl-rs.work.arch-phase7-1a-rate-proxy-gap/1 {
+    state active
+    hash "sha256:489b79355a995aebc2595f3338963c647098043650f21996e7802ab15afb006d"
 }
 
 seal @jpegxl-rs.work.arch-s8-cover-lane-simd/1 {
