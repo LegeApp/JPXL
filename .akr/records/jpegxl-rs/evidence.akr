@@ -1418,6 +1418,42 @@ record jpegxl-rs.evidence.phase6-1-step-proportional-harness-2026-08-12/1 : evid
         """
 }
 
+record jpegxl-rs.evidence.phase6-2-cross-size-decision-2026-08-12/1 : evidence {
+    title "Phase 6.2 decision: one frequency curve fits all sizes, quantizer normalisation does not, and large transforms are under-penalised"
+    state verified
+    result pass
+    method observation
+    observed_at git:a015011c3d86727100e61f69d83d3a380b1d9888
+    artifact "JPXL/docs/experiments/2026-08-12-per-transform-frequency-weight.md"
+    summary """
+        Equal-coefficient-error curves collapse across the three squares once binned by radial normalised frequency and levelled (worst shared-bin disagreement 1.15x, six of nine bins within 5%), so one frequency curve prices all three; the step-proportional residual does NOT collapse (worst 2.05x, DCT8x8 a shallow bowl against DCT32x32 rising monotonically 0.59 to 2.79), so quantizer normalisation is rejected as the form of the weight; and at equal total sample-domain error a DCT32x32 basis costs 4-21% more butteraugli than DCT8x8 bases in every bin on both photographs
+        """
+}
+
+record jpegxl-rs.evidence.phase6-2-cross-size-harness-2026-08-12/1 : evidence {
+    title "Phase 6.2 cross-size harness ran clean at equalised injected energy"
+    state verified
+    result pass
+    method command
+    observed_at git:a015011c3d86727100e61f69d83d3a380b1d9888
+    command "JPXL_CALIB_REF=.agent/scratch/realworld-bench-20260806T072202Z/{small_0p8MP,mid_4MP}.ppm JPXL_CALIB_SIDE=512 JPXL_CALIB_CHANNELS=y JPXL_CALIB_AMPS=0.25,0.5 JPXL_CALIB_TRANSFORMS=8,16,32 cargo test --release -p jpxl-conformance --features perceptual --test perceptual_frequency -- --ignored --nocapture {dct8x8_perceptual,dct8x8_quantizer_normalised}"
+    artifact ".agent/scratch/phase6-2-per-transform-2026-08-12/"
+    summary """
+        Both sweeps ran for DCT8x8/16x16/32x32 on two photographs at two amplitudes, 5292 probes each, each size using its own I.7.3 inverse, its own I.2.5 matrix and its own LLF exclusion, on an identical DCT32x32-aligned crop; amplitude was corrected to sample-domain units and scaled by side/8 so total injected energy is equal across sizes and raw butteraugli is directly comparable
+        """
+}
+
+record jpegxl-rs.evidence.phase6-2-transpose-immaterial-2026-08-12/1 : evidence {
+    title "The 6.0/6.1 coefficient-index transpose changes no result: the default square matrices are exactly symmetric"
+    state verified
+    result pass
+    method command
+    observed_at git:a015011c3d86727100e61f69d83d3a380b1d9888
+    summary """
+        idct2d_8x8 (used by Phases 6.0/6.1) and idct_2d_raw (I.7.3, the encoder's own convention via forward_dct_rc) are both orthonormal but differ by a transpose of the coefficient index; the I.2.5 default square dequant matrices were measured exactly symmetric (worst relative asymmetry 0.000000 for every channel at 8x8, 16x16 and 32x32), so 6.1 paired every cell with the correct step regardless, and only the u/v labels in the 6.0/6.1 tables are transposed
+        """
+}
+
 record jpegxl-rs.evidence.retire-handoff-durable-facts-2026-08-11/1 : evidence {
     title "HANDOFF permanent facts are represented in AKR"
     state verified

@@ -1913,7 +1913,49 @@ record jpegxl-rs.work.arch-phase6-1-quantizer-normalised-residual/1 : work {
 
 record jpegxl-rs.work.arch-phase6-2-per-transform-step-shapes/1 : work {
     title "Phase 6.2: per-transform step shapes, so a frequency weight can be applied across transform sizes"
-    state proposed
+    state superseded
+    scope [ path "JPXL/crates/jpxl-conformance/tests/perceptual_frequency.rs" ]
+    intent """
+        Phases 6.0 and 6.1 measured DCT8x8 only. block_cost_bounded's whole job is comparing a large square transform against four sub-quadrants, so a weight defined only for 8x8 cannot be wired into it: applying an 8x8 table to a cross-size comparison would introduce a new bias rather than remove the existing one. This work item is the prerequisite that makes the Phase 6.3 encoder change safe, and it must complete before 6.3 lands.
+
+        Extend the harness to DCT16x16 and DCT32x32: generalise the injection loop off the hard-coded SIDE/CELLS constants to a transform's own coefficient grid, use the matching jpxl_core::dct inverse and the matching I.2.5 default dequant matrix, and run both the Phase 6.0 (equal coefficient error) and Phase 6.1 (step-proportional) sweeps for each size on the same corpus and amplitude ladder.
+
+        The question is not just each size's own shape but whether the three are consistent under a single frequency parameterisation. Report each size's normalised weight against normalised spatial frequency rather than raw cell index, so a 16x16 cell at half-Nyquist can be compared with the 8x8 cell at half-Nyquist. If the three collapse onto one curve, a single per-transform table derived from the standard's matrices is sound and 6.3 can proceed. If they do not, say so: a weight that is right for 8x8 and wrong for 32x32 would bias cover selection toward or against large transforms, which is exactly the decision this track is trying to fix.
+
+        Also report, per size, the sample-domain SSE control and the ratio of the size's own step shape, since the larger transforms have wider grids and may reach further outside the linear regime -- the same effect that made Phase 6.1's chroma numbers unusable.
+
+        Measurement only: no encoder change lands here.
+        """
+    acceptance {
+        check cross-size-consistency-decided {
+            statement """
+                The three sizes' normalised weights are reported against normalised spatial frequency and the record states explicitly whether they collapse onto one curve, and therefore whether a per-transform weight can be applied to cover selection without biasing the cross-size comparison.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.phase6-2-cross-size-decision-2026-08-12/1 ]
+        }
+        check sizes-measured {
+            statement """
+                Both the equal-coefficient-error and step-proportional sweeps run for DCT8x8, DCT16x16 and DCT32x32 on the same corpus and amplitude ladder, each with its own inverse transform, its own I.2.5 default matrix, the zero-self-distance assertion and the sample-domain SSE control.
+                """
+            method command
+            verified_by [ @jpegxl-rs.evidence.phase6-2-cross-size-harness-2026-08-12/1 ]
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase6-1-quantizer-normalised-residual ]
+    derived_from [
+        @jpegxl-rs.observation.quantizer-normalised-distortion-is-the-lever-2026-08-12
+    ]
+    implements [
+        @jpegxl-rs.decision.encoder-architecture-phases,
+        @jpegxl-rs.policy.optimization-correctness-gates
+    ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+}
+
+record jpegxl-rs.work.arch-phase6-2-per-transform-step-shapes/2 : work {
+    title "Phase 6.2: per-transform step shapes, so a frequency weight can be applied across transform sizes"
+    state active
     scope [ path "JPXL/crates/jpxl-conformance/tests/perceptual_frequency.rs" ]
     intent """
         Phases 6.0 and 6.1 measured DCT8x8 only. block_cost_bounded's whole job is comparing a large square transform against four sub-quadrants, so a weight defined only for 8x8 cannot be wired into it: applying an 8x8 table to a cross-size comparison would introduce a new bias rather than remove the existing one. This work item is the prerequisite that makes the Phase 6.3 encoder change safe, and it must complete before 6.3 lands.
@@ -1949,11 +1991,75 @@ record jpegxl-rs.work.arch-phase6-2-per-transform-step-shapes/1 : work {
         @jpegxl-rs.policy.optimization-correctness-gates
     ]
     part_of [ @jpegxl-rs.track.encoder-optimization ]
+    supersedes [ @jpegxl-rs.work.arch-phase6-2-per-transform-step-shapes/1 ]
+}
+
+record jpegxl-rs.work.arch-phase6-3-frequency-weight-cover-objective/1 : work {
+    title "Phase 6.3: a first-principles frequency weight plus a per-transform level correction, in the cover/CfL objective"
+    state proposed
+    scope [
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/quantize.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/request.rs",
+        path "JPXL/crates/jpxl-encode-policy/tests/rate_loop.rs",
+        path "JPXL/crates/jpxl-encode-policy/tests/vardct_oracle.rs",
+        path "test-set/**"
+    ]
+    intent """
+        Replaces the superseded quantizer-normalised plan, which Phase 6.2 falsified: weighting by 1/step^2 is approximately right at DCT8x8 (2.86x step ratio) and badly wrong at DCT32x32 (13.05x), where it would price high-frequency error as cheap exactly where measurement says it is most expensive.
+
+        Give block_cost_bounded's Y-channel distortion term two multipliers instead, both behind a research feature flag with the flat objective as the byte-identical default until a corpus gate passes.
+
+        (1) A per-cell frequency weight from a first-principles contrast-sensitivity function, evaluated at each cell's normalised spatial frequency on that transform's own grid. Phase 6.2 Result A licenses one curve for all three squares: the measured curves agree to 1.15x once levelled, six of nine shared bins within 5%. The CSF is derived independently and *checked* against that measured curve, never fitted to it -- that is what keeps the perceptual model this project's own (AGENTS.md section 2, and the butteraugli note in the workspace manifest). Pre-register the agreement tolerance before looking at the fit.
+
+        (2) A per-transform level correction from Phase 6.2 Result B: at equal total sample-domain error a DCT32x32 basis costs 4-21% more butteraugli than DCT8x8 bases, monotonically in size, in every bin on both photographs, because error on a large support is spatially coherent where the same energy in sixteen independently-signed 8x8 patches is closer to maskable noise. block_cost_bounded's to_sample_domain = side^2 assumes parity, so the cover is currently biased toward merging. Re-measure the magnitude at the rates the corpus actually encodes at before using it as a constant; 6.2 measured direction robustly but magnitude at only two amplitudes.
+
+        X and B stay flat; chroma is Phase 6.4.
+
+        Required work beyond the two multipliers: recalibrate HfQuantizers::lambda, whose derivation (16 / mean(s^2) over the non-LLF DCT8x8 cells) assumes an unweighted sample-domain distortion term -- a stale lambda would silently reweight rate against distortion and confound the screen. Prove the flag off is byte-identical, prove the weighted scorer agrees with a direct recomputation on fixtures, then screen the six-scene matrix at matched rate under Contract B.
+
+        Honest-negative acceptable and pre-registered: a better-priced ruler can still fail to move Butteraugli if the deficit does not live in cover and CfL selection, since HfQuantizer::choose remains nearest-reconstruction and those two are all this can touch. That outcome would localise the deficit and is a plan-sanctioned result.
+        """
+    acceptance {
+        check csf-checked-not-fitted {
+            statement """
+                The contrast-sensitivity curve is derived independently of the measurement and its agreement with Phase 6.2's measured curve is reported against a tolerance stated before the comparison, so the weight is checked rather than fitted.
+                """
+            method observation
+        }
+        check default-byte-identical {
+            statement """
+                With the flag off, the corpus fingerprints are byte-identical to the pre-6.3 encoder for the same requests, so the flat objective remains shipped behaviour until a gate passes.
+                """
+            method command
+        }
+        check quality-screen {
+            statement """
+                Matched-rate Butteraugli and SSIMULACRA2 across the six-scene matrix decide whether the re-priced objective is promoted under Contract B, or recorded as an honest negative that localises the deficit away from cover and CfL selection.
+                """
+            method observation
+        }
+        check scorer-proof {
+            statement """
+                Tests prove the weighted term matches a direct recomputation from the same reconstruction error, that the per-transform level correction applies per candidate size, that both apply to Y alone, and that lambda is recalibrated into the new units rather than carried over.
+                """
+            method command
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase6-2-per-transform-step-shapes ]
+    derived_from [ @jpegxl-rs.observation.one-frequency-curve-fits-all-squares-2026-08-12 ]
+    implements [
+        @jpegxl-rs.decision.encoder-architecture-phases,
+        @jpegxl-rs.policy.optimization-correctness-gates
+    ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+    supersedes [ @jpegxl-rs.work.arch-phase6-3-quantizer-normalised-y-distortion/1 ]
 }
 
 record jpegxl-rs.work.arch-phase6-3-quantizer-normalised-y-distortion/1 : work {
     title "Phase 6.3: land quantizer-normalised Y distortion in the cover/CfL objective, behind a flag"
-    state proposed
+    state superseded
     scope [
         path "JPXL/crates/jpxl-cli/src/main.rs",
         path "JPXL/crates/jpxl-encode-policy/src/lib.rs",

@@ -1,5 +1,5 @@
-//! Phase 6.0: what does a unit of the encoder's distortion currency actually
-//! cost perceptually, per DCT8x8 frequency?
+//! Phase 6: what does a unit of the encoder's distortion currency actually cost
+//! perceptually, per transform and per frequency?
 //!
 //! `jpxl-encode-policy`'s cover/CfL objective is
 //! `J = bits + lambda_c * side^2 * sum_cells (recon - target)^2` — a **flat**
@@ -10,12 +10,26 @@
 //! closest on the metric its own objective *is*.
 //!
 //! This harness measures the missing weight directly, without an encoder in the
-//! loop. For each XYB channel and each of the 64 DCT8x8 cells it injects a
-//! controlled coefficient error of equal magnitude — so the current objective
-//! assigns every cell exactly the same cost — and reports what each one costs on
-//! butteraugli and SSIMULACRA2. The spread across cells *is* the weighting the
-//! objective is missing; a flat objective is only correct if the response is
-//! flat.
+//! loop. For each square transform, XYB channel and non-LLF coefficient cell it
+//! injects a controlled error and reports what that cell costs on butteraugli
+//! and SSIMULACRA2. Two sweeps, one test each:
+//!
+//! * `dct8x8_perceptual_frequency_response` injects **equal coefficient error**
+//!   in every cell — exactly what the current objective prices identically — so
+//!   the spread across cells *is* the weighting the objective is missing.
+//! * `dct8x8_quantizer_normalised_frequency_response` injects error
+//!   **proportional to each cell's I.2.5 dequant step**, which is what real
+//!   quantization produces. A flat response there means the standard's own
+//!   matrices already carry the weighting, and the objective's only mistake is
+//!   measuring in dequantized rather than quantizer-normalised units.
+//!
+//! Both sweeps run over whichever squares `JPXL_CALIB_TRANSFORMS` asks for.
+//! Phases 6.0 and 6.1 measured DCT8x8 alone (the default); Phase 6.2 adds
+//! DCT16x16 and DCT32x32, because `block_cost_bounded`'s whole job is comparing
+//! a large square against four sub-quadrants and a weight validated only for
+//! 8x8 would bias that comparison rather than fix it. The `fu`/`fv` columns give
+//! each cell's frequency as a fraction of Nyquist, which is what makes the
+//! sizes comparable.
 //!
 //! Clean-room note (AGENTS.md §2, and the `butteraugli` note in the workspace
 //! manifest): this is a **behavioural experiment against a black-box metric**,
@@ -37,8 +51,10 @@
 //! Knobs, all optional: `JPXL_CALIB_AMPS` (comma-separated amplitudes, as a
 //! fraction of the channel's own sample standard deviation, default
 //! `0.25,0.5,1.0`), `JPXL_CALIB_CHANNELS` (`x`, `y`, `b`, or a comma list;
-//! default all three) and `JPXL_CALIB_SIDE` (centre-crop edge in pixels,
-//! default 512).
+//! default all three), `JPXL_CALIB_TRANSFORMS` (`8`, `16`, `32`, or a comma
+//! list; default `8`) and `JPXL_CALIB_SIDE` (centre-crop edge in pixels,
+//! default 512, always rounded down to a whole DCT32x32 so every transform
+//! tiles the identical crop).
 
 #![cfg(all(feature = "butteraugli", feature = "ssimulacra2"))]
 
@@ -46,14 +62,13 @@ use jpxl_conformance::metrics::{Image, butteraugli_distance, ssimulacra2_score};
 use jpxl_core::color::{
     linear_srgb_to_xyb_planes, linear_to_srgb, srgb_to_linear, xyb_to_linear_srgb_planes,
 };
-use jpxl_core::dct::idct2d_8x8;
+use jpxl_core::dct::idct_2d_raw;
 use jpxl_core::dequant::DequantMatrices;
 use jpxl_core::varblock::TransformType;
 
-/// One 8x8 block's worth of coefficients.
-const CELLS: usize = 64;
-/// The DCT8x8 edge, in samples.
-const SIDE: usize = 8;
+/// The largest square this harness measures, and the crop alignment: every
+/// requested transform must tile the same pixels.
+const MAX_SIDE: usize = 32;
 
 /// Three planar XYB channels plus their shape.
 struct Xyb {
@@ -142,30 +157,90 @@ fn sign_for(block: usize, cell: usize) -> f32 {
     if h & 1 == 0 { 1.0 } else { -1.0 }
 }
 
-/// Adds `amplitude` of DCT8x8 basis function `cell` to every whole block of one
-/// channel, with a per-block sign, and returns the realized sample-domain sum of
-/// squared error in that channel.
-fn inject(xyb: &mut Xyb, channel: usize, cell: usize, amplitude: f32) -> f64 {
-    let blocks_x = xyb.w / SIDE;
-    let blocks_y = xyb.h / SIDE;
+/// One square transform under test: its type, its coefficient/sample edge, and
+/// the edge of its LLF sub-block.
+#[derive(Clone, Copy)]
+struct Square {
+    ty: TransformType,
+    /// Coefficient (and sample) edge: 8, 16 or 32.
+    side: usize,
+    /// LLF edge in cells — `block_dims().0`, i.e. 1, 2 or 4.
+    llf: usize,
+}
+
+impl Square {
+    fn new(ty: TransformType) -> Self {
+        let side = ty.coeff_cols();
+        assert_eq!(side, ty.coeff_rows(), "this harness measures square DCTs");
+        Self {
+            ty,
+            side,
+            llf: ty.block_dims().0,
+        }
+    }
+
+    fn cells(&self) -> usize {
+        self.side * self.side
+    }
+
+    /// Whether `cell` belongs to the LLF sub-block, which the HF scorer skips
+    /// (`col_start = if row < n { n } else { 0 }`) because LF is a separate
+    /// path. Excluded from every statistic here for the same reason.
+    fn is_llf(&self, cell: usize) -> bool {
+        cell / self.side < self.llf && cell % self.side < self.llf
+    }
+
+    fn name(&self) -> String {
+        format!("DCT{s}x{s}", s = self.side)
+    }
+}
+
+/// Adds `amplitude` of `square`'s basis function `cell` to every whole block of
+/// one channel, with a per-block sign, and returns the realized sample-domain
+/// sum of squared error in that channel.
+fn inject(xyb: &mut Xyb, square: Square, channel: usize, cell: usize, amplitude: f32) -> f64 {
+    let side = square.side;
+    let blocks_x = xyb.w / side;
+    let blocks_y = xyb.h / side;
     let w = xyb.w;
     let plane = &mut xyb.planes[channel];
 
     // The basis function is the same for every block; only its sign varies, so
-    // the inverse transform runs once.
-    let mut basis = [0.0f32; CELLS];
-    basis[cell] = amplitude;
-    idct2d_8x8(&mut basis);
+    // the inverse transform runs once. Square transforms are their own
+    // landscape layout, so this is plain row-major `side x side`.
+    let mut coeffs = vec![0.0f32; square.cells()];
+    coeffs[cell] = amplitude;
+    let mut basis = idct_2d_raw(&coeffs, side, side);
+    // I.7.2's inverse is the orthonormal DCT-III scaled by sqrt(s) per
+    // dimension, so `idct_2d_raw` multiplies amplitude by `side` for a square.
+    // Dividing it back out makes `amplitude` mean **sample-domain** injected
+    // error: each block receives exactly `amplitude^2` of squared sample error
+    // whatever the transform size.
+    //
+    // That is the only unit in which the sizes can be compared, and it is the
+    // encoder's own choice: `block_cost_bounded` multiplies each candidate's
+    // coefficient error by its `side^2` for exactly this reason, because the
+    // forward transforms are not Parseval. Working in the common sample domain
+    // here means the measured weight is the correction needed *on top of* that
+    // normalisation, not a restatement of it.
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "side is 8, 16 or 32; exact in f32"
+    )]
+    let orthonormal = 1.0 / side as f32;
+    for slot in &mut basis {
+        *slot *= orthonormal;
+    }
 
     let mut sse = 0.0f64;
     for by in 0..blocks_y {
         for bx in 0..blocks_x {
             let block = by * blocks_x + bx;
             let sign = sign_for(block, cell);
-            for row in 0..SIDE {
-                let base = (by * SIDE + row) * w + bx * SIDE;
-                for col in 0..SIDE {
-                    let d = sign * basis[row * SIDE + col];
+            for row in 0..side {
+                let base = (by * side + row) * w + bx * side;
+                for col in 0..side {
+                    let d = sign * basis[row * side + col];
                     plane[base + col] += d;
                     sse += f64::from(d) * f64::from(d);
                 }
@@ -193,8 +268,8 @@ fn env_list(key: &str) -> Option<Vec<String>> {
         .map(|v| v.split(',').map(|s| s.trim().to_owned()).collect())
 }
 
-/// Everything the two sweeps share: the crop, its XYB planes, the reference
-/// image they score against, and the requested channel/amplitude ladder.
+/// Everything the sweeps share: the crop, its XYB planes, the reference image
+/// they score against, and the requested transform/channel/amplitude ladder.
 struct Setup {
     reference: String,
     w: usize,
@@ -205,6 +280,7 @@ struct Setup {
     base: Image,
     amplitudes: Vec<f32>,
     channels: Vec<usize>,
+    squares: Vec<Square>,
 }
 
 impl Setup {
@@ -217,17 +293,33 @@ impl Setup {
         assert_eq!(img.channels, 3, "the harness scores RGB");
         assert_eq!(img.max_value, 255, "butteraugli scoring is 8-bit only");
 
+        let squares: Vec<Square> = env_list("JPXL_CALIB_TRANSFORMS")
+            .map(|v| {
+                v.iter()
+                    .filter_map(|s| match s.as_str() {
+                        "8" => Some(Square::new(TransformType::Dct8x8)),
+                        "16" => Some(Square::new(TransformType::Dct16x16)),
+                        "32" => Some(Square::new(TransformType::Dct32x32)),
+                        _ => None,
+                    })
+                    .collect::<Vec<Square>>()
+            })
+            .filter(|v| !v.is_empty())
+            .unwrap_or_else(|| vec![Square::new(TransformType::Dct8x8)]);
+
         let want_side: usize = std::env::var("JPXL_CALIB_SIDE")
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(512);
-        // Whole blocks only, and centred so a crop of a photograph keeps its
-        // subject.
-        let w = (img.w as usize).min(want_side) / SIDE * SIDE;
-        let h = (img.h as usize).min(want_side) / SIDE * SIDE;
+        // Aligned to the largest square this harness supports, not to the
+        // largest one requested, so every transform tiles the *identical* crop
+        // whichever subset a run asks for. A weight compared across sizes has
+        // to come from the same pixels.
+        let w = (img.w as usize).min(want_side) / MAX_SIDE * MAX_SIDE;
+        let h = (img.h as usize).min(want_side) / MAX_SIDE * MAX_SIDE;
         assert!(
-            w >= SIDE && h >= SIDE,
-            "reference is smaller than one block"
+            w >= MAX_SIDE && h >= MAX_SIDE,
+            "reference is smaller than one DCT32x32 block"
         );
         let x0 = ((img.w as usize) - w) / 2;
         let y0 = ((img.h as usize) - h) / 2;
@@ -276,68 +368,181 @@ impl Setup {
             base,
             amplitudes,
             channels,
+            squares,
         })
     }
 
-    fn blocks(&self) -> usize {
-        (self.w / SIDE) * (self.h / SIDE)
+    fn blocks(&self, square: Square) -> usize {
+        (self.w / square.side) * (self.h / square.side)
     }
 
     fn header(&self, title: &str) {
         println!("# {title}");
         println!("# reference: {}", self.reference);
-        println!(
-            "# crop: {}x{} at ({},{}), {} blocks",
-            self.w,
-            self.h,
-            self.x0,
-            self.y0,
-            self.blocks()
-        );
+        println!("# crop: {}x{} at ({},{})", self.w, self.h, self.x0, self.y0);
         println!(
             "# channel_std: X={:.6} Y={:.6} B={:.6}",
             self.clean.std_dev(0),
             self.clean.std_dev(1),
             self.clean.std_dev(2)
         );
-        println!("chan\tamp\tcell\tu\tv\tcoeff_sse\tsample_sse\tba_distance\tba_pnorm3\tssim2");
+        for square in &self.squares {
+            println!(
+                "# transform {}: {} cells, {} LLF, {} blocks in the crop",
+                square.name(),
+                square.cells(),
+                square.llf * square.llf,
+                self.blocks(*square)
+            );
+        }
+        // `fu`/`fv` are the cell's frequency as a fraction of Nyquist, which is
+        // what makes a 16x16 cell comparable with the 8x8 cell at the same
+        // spatial frequency. `cell`/`u`/`v` stay raw so a row can be traced
+        // back to its coefficient.
+        println!(
+            "tf\tchan\tamp\tcell\tu\tv\tfu\tfv\tcoeff_sse\tsample_sse\tba_distance\tba_pnorm3\tssim2"
+        );
     }
 
-    /// Runs the cell sweep. `cell_scale` returns the per-cell multiplier on the
-    /// base amplitude: constant 1.0 is Phase 6.0's equal-coefficient-error
-    /// probe, and the quantizer step shape is Phase 6.1's.
-    fn sweep(&self, cell_scale: &dyn Fn(usize, usize) -> f32) {
-        for &channel in &self.channels {
-            let scale = self.clean.std_dev(channel);
-            assert!(scale > 0.0, "channel {channel} is constant");
-            for &amp in &self.amplitudes {
-                for cell in 0..CELLS {
-                    let amplitude = amp * scale * cell_scale(channel, cell);
-                    let mut probe = Xyb {
-                        w: self.clean.w,
-                        h: self.clean.h,
-                        planes: self.clean.planes.clone(),
-                    };
-                    let coeff_sse =
-                        f64::from(amplitude) * f64::from(amplitude) * self.blocks() as f64;
-                    let _realized = inject(&mut probe, channel, cell, amplitude);
-                    let perturbed = probe.to_image();
-                    let ba = butteraugli_distance(&self.base, &perturbed).expect("butteraugli");
-                    let s2 = ssimulacra2_score(&self.base, &perturbed).expect("ssimulacra2");
-                    let sample_sse = image_sse(&self.base, &perturbed);
-                    println!(
-                        "{}\t{amp}\t{cell}\t{}\t{}\t{coeff_sse:.6}\t{sample_sse:.1}\t{:.6}\t{:.6}\t{:.4}",
-                        ["X", "Y", "B"][channel],
-                        cell / SIDE,
-                        cell % SIDE,
-                        ba.distance,
-                        ba.pnorm3,
-                        s2
-                    );
+    /// Runs the cell sweep over every requested square. `cell_scale` returns the
+    /// per-cell multiplier on the base amplitude: constant 1.0 is Phase 6.0's
+    /// equal-coefficient-error probe, and the quantizer step shape is 6.1's.
+    fn sweep(&self, cell_scale: &dyn Fn(Square, usize, usize) -> f32) {
+        for &square in &self.squares {
+            let side = square.side;
+            for &channel in &self.channels {
+                let scale = self.clean.std_dev(channel);
+                assert!(scale > 0.0, "channel {channel} is constant");
+                for &amp in &self.amplitudes {
+                    for cell in 0..square.cells() {
+                        if square.is_llf(cell) {
+                            continue;
+                        }
+                        // A larger square tiles the same crop with fewer
+                        // blocks, so equal per-block energy would mean
+                        // 16x less *total* injected energy at DCT32x32 than
+                        // at DCT8x8 — the three sizes would then be compared
+                        // at three different distortion levels, and
+                        // butteraugli's thresholds are not linear. Scaling by
+                        // `side / 8` holds total injected sample-domain energy
+                        // constant across sizes, so a shape difference between
+                        // curves is a shape difference and not an operating
+                        // point difference.
+                        #[allow(
+                            clippy::cast_precision_loss,
+                            reason = "side is 8, 16 or 32; exact in f32"
+                        )]
+                        let size_norm = side as f32 / 8.0;
+                        let amplitude = amp * scale * size_norm * cell_scale(square, channel, cell);
+                        let mut probe = Xyb {
+                            w: self.clean.w,
+                            h: self.clean.h,
+                            planes: self.clean.planes.clone(),
+                        };
+                        let coeff_sse = f64::from(amplitude)
+                            * f64::from(amplitude)
+                            * self.blocks(square) as f64;
+                        let _realized = inject(&mut probe, square, channel, cell, amplitude);
+                        let perturbed = probe.to_image();
+                        let ba = butteraugli_distance(&self.base, &perturbed).expect("butteraugli");
+                        let s2 = ssimulacra2_score(&self.base, &perturbed).expect("ssimulacra2");
+                        let sample_sse = image_sse(&self.base, &perturbed);
+                        let (u, v) = (cell / side, cell % side);
+                        println!(
+                            "{}\t{}\t{amp}\t{cell}\t{u}\t{v}\t{:.5}\t{:.5}\t{coeff_sse:.6}\t{sample_sse:.1}\t{:.6}\t{:.6}\t{:.4}",
+                            side,
+                            ["X", "Y", "B"][channel],
+                            u as f32 / side as f32,
+                            v as f32 / side as f32,
+                            ba.distance,
+                            ba.pnorm3,
+                            s2
+                        );
+                    }
                 }
             }
         }
     }
+}
+
+/// The I.2.5 default dequantization step shape for one square and channel,
+/// normalised so its root-mean-square over the non-LLF cells is 1.
+///
+/// `HfQuantizer` builds its step as `scale[channel] * matrix.at(x, y)` with
+/// `scale` constant across cells, so the matrix *is* the step shape and the
+/// constant cancels under this normalisation. Normalising by RMS (not mean)
+/// keeps the total injected energy equal to the constant-amplitude sweep, so
+/// the two experiments sit at the same operating point and their butteraugli
+/// numbers are directly comparable.
+///
+/// The LLF sub-block is excluded from the normalisation because it is not
+/// quantized by this path, and its large steps would otherwise dominate.
+fn step_shape(square: Square, channel: usize) -> Vec<f32> {
+    let defaults = DequantMatrices::all_default().expect("I.2.5 default matrices");
+    let matrix = defaults
+        .for_transform(square.ty, channel)
+        .expect("a dequantization matrix for this transform");
+    let mut shape = vec![0.0f32; square.cells()];
+    for (cell, slot) in shape.iter_mut().enumerate() {
+        *slot = matrix.at(cell % square.side, cell / square.side);
+    }
+    let mut sum_sq = 0.0f64;
+    let mut count = 0usize;
+    for (cell, &v) in shape.iter().enumerate() {
+        if square.is_llf(cell) {
+            continue;
+        }
+        sum_sq += f64::from(v) * f64::from(v);
+        count += 1;
+    }
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "an RMS of finite matrix entries is well inside f32"
+    )]
+    let rms = (sum_sq / count.max(1) as f64).sqrt() as f32;
+    assert!(
+        rms > 0.0,
+        "{} channel {channel} has a degenerate step shape",
+        square.name()
+    );
+    for slot in &mut shape {
+        *slot /= rms;
+    }
+    shape
+}
+
+/// Reports each requested square's step-shape spread, so a run whose extreme
+/// cells sit far outside the linear regime is visible in its own log rather
+/// than only in the scores. Phase 6.1's chroma numbers were unusable for
+/// exactly this reason.
+fn report_step_shapes(setup: &Setup) -> Vec<[Vec<f32>; 3]> {
+    let mut all = Vec::with_capacity(setup.squares.len());
+    for &square in &setup.squares {
+        let shapes = [
+            step_shape(square, 0),
+            step_shape(square, 1),
+            step_shape(square, 2),
+        ];
+        for (channel, shape) in shapes.iter().enumerate() {
+            let mut lo = f32::MAX;
+            let mut hi = f32::MIN;
+            for (cell, &v) in shape.iter().enumerate() {
+                if square.is_llf(cell) {
+                    continue;
+                }
+                lo = lo.min(v);
+                hi = hi.max(v);
+            }
+            println!(
+                "# step_shape[{}][{}]: non-LLF range {lo:.4}..{hi:.4}, ratio {:.2}x",
+                square.name(),
+                ["X", "Y", "B"][channel],
+                hi / lo
+            );
+        }
+        all.push(shapes);
+    }
+    all
 }
 
 #[test]
@@ -347,47 +552,10 @@ fn dct8x8_perceptual_frequency_response() {
         eprintln!("skipped: set JPXL_CALIB_REF to an 8-bit binary PPM");
         return;
     };
-    setup.header("Phase 6.0 DCT8x8 perceptual frequency response");
+    setup.header("Phase 6.0/6.2 perceptual frequency response, equal coefficient error");
     // Every cell gets the *same* injected coefficient energy, which is exactly
     // what the current objective prices identically.
-    setup.sweep(&|_channel, _cell| 1.0);
-}
-
-/// The I.2.5 default DCT8x8 dequantization step shape for one channel,
-/// normalised so its root-mean-square over the 63 non-LLF cells is 1.
-///
-/// `HfQuantizer` builds its step as `scale[channel] * matrix.at(x, y)` with
-/// `scale` constant across cells, so the matrix *is* the step shape and the
-/// constant cancels under this normalisation. Normalising by RMS (not mean)
-/// keeps the total injected energy equal to Phase 6.0's constant-amplitude
-/// sweep, so the two experiments sit at the same operating point and their
-/// butteraugli numbers are directly comparable.
-fn dct8x8_step_shape(channel: usize) -> [f32; CELLS] {
-    let defaults = DequantMatrices::all_default().expect("I.2.5 default matrices");
-    let matrix = defaults
-        .for_transform(TransformType::Dct8x8, channel)
-        .expect("a DCT8x8 dequantization matrix");
-    let mut shape = [0.0f32; CELLS];
-    for (cell, slot) in shape.iter_mut().enumerate() {
-        *slot = matrix.at(cell % SIDE, cell / SIDE);
-    }
-    // Cell 0 is the LLF and is quantized by the LF path, not this one; leaving
-    // it out of the normalisation keeps a large DC weight from dominating.
-    let sum_sq: f64 = shape
-        .iter()
-        .skip(1)
-        .map(|&v| f64::from(v) * f64::from(v))
-        .sum();
-    #[allow(
-        clippy::cast_possible_truncation,
-        reason = "an RMS of 63 finite matrix entries is well inside f32"
-    )]
-    let rms = (sum_sq / (CELLS - 1) as f64).sqrt() as f32;
-    assert!(rms > 0.0, "channel {channel} has a degenerate step shape");
-    for slot in &mut shape {
-        *slot /= rms;
-    }
-    shape
+    setup.sweep(&|_square, _channel, _cell| 1.0);
 }
 
 #[test]
@@ -397,30 +565,25 @@ fn dct8x8_quantizer_normalised_frequency_response() {
         eprintln!("skipped: set JPXL_CALIB_REF to an 8-bit binary PPM");
         return;
     };
-    let shapes: [[f32; CELLS]; 3] = [
-        dct8x8_step_shape(0),
-        dct8x8_step_shape(1),
-        dct8x8_step_shape(2),
-    ];
-    setup.header("Phase 6.1 DCT8x8 quantizer-normalised frequency response");
+    setup.header("Phase 6.1/6.2 quantizer-normalised frequency response");
     println!("# injection amplitude per cell is proportional to that cell's I.2.5 dequant step");
-    for (channel, shape) in shapes.iter().enumerate() {
-        let name = ["X", "Y", "B"][channel];
-        let lo = shape.iter().skip(1).copied().fold(f32::MAX, f32::min);
-        let hi = shape.iter().skip(1).copied().fold(f32::MIN, f32::max);
-        println!(
-            "# step_shape[{name}]: non-LLF range {lo:.4}..{hi:.4}, ratio {:.2}x",
-            hi / lo
-        );
-    }
+    let shapes = report_step_shapes(&setup);
+    let index: std::collections::HashMap<usize, usize> = setup
+        .squares
+        .iter()
+        .enumerate()
+        .map(|(i, s)| (s.side, i))
+        .collect();
     // Real quantization injects error proportional to each cell's step, so this
     // is what the encoder's decisions are actually made under. A flat response
     // here means the standard's matrices already carry the frequency weighting
     // and the objective's only mistake is measuring in dequantized rather than
     // quantizer-normalised units.
-    setup.sweep(&|channel, cell| {
-        shapes
-            .get(channel)
+    setup.sweep(&|square, channel, cell| {
+        index
+            .get(&square.side)
+            .and_then(|&i| shapes.get(i))
+            .and_then(|s| s.get(channel))
             .and_then(|s| s.get(cell))
             .copied()
             .unwrap_or(1.0)

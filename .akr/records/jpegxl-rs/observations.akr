@@ -638,6 +638,55 @@ record jpegxl-rs.observation.noise-xorshift/1 : observation {
     }
 }
 
+record jpegxl-rs.observation.one-frequency-curve-fits-all-squares-2026-08-12/1 : observation {
+    title "One frequency curve prices all three squares, quantizer normalisation does not, and the objective under-penalises large transforms by 4-21%"
+    state verified
+    scope [
+        path "JPXL/crates/jpxl-conformance/tests/perceptual_frequency.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs"
+    ]
+    statement """
+        Phases 6.0 and 6.1 measured DCT8x8 alone. block_cost_bounded's entire job is comparing one large square against four sub-quadrants, so Phase 6.2 measured DCT8x8, DCT16x16 and DCT32x32 on an identical DCT32x32-aligned crop, each with its own I.7.3 inverse, its own I.2.5 default matrix and its own LLF exclusion. Y channel, two photographs, two amplitudes, 5,292 probes per sweep. Two harness corrections were required: amplitude is now in sample-domain units (I.7.2's inverse scales a square's amplitude by side, which idct_2d_raw carries and the harness divides back out), and amplitude is scaled by side/8 so total injected sample-domain energy is equal across sizes -- which makes raw butteraugli directly comparable between them.
+
+        RESULT A -- THE PERCEPTUAL WEIGHT IS SIZE-INDEPENDENT. Binned by radial normalised frequency and levelled to each size's own f=0.4-0.5 bin, the equal-coefficient-error curves agree to a worst shared-bin disagreement of 1.15x, with six of nine shared bins within 5%. A single weight expressed as a function of normalised spatial frequency prices all three square transforms. This is what the phase was scoped to test and it passes.
+
+        RESULT B -- LARGE TRANSFORMS ARE UNDER-PENALISED. Because total injected energy is equalised, the raw per-bin means compare directly, and they are not equal: the same total squared sample error costs 4% to 21% more butteraugli when carried by a DCT32x32 basis than by DCT8x8 bases -- monotonically in size, in every one of nine bins, on both photographs (e.g. low frequency 3.837 / 4.338 / 4.655). Error on a 32x32 support is spatially coherent over a large region, where the same energy spread across sixteen independently-signed 8x8 patches is closer to noise and easier to mask. block_cost_bounded assumes the opposite -- that its to_sample_domain = side^2 factor makes candidates of different sizes comparable. It does not, so the hierarchical cover is biased toward merging. The correction is a per-transform scalar, not a per-cell table.
+
+        RESULT C -- QUANTIZER NORMALISATION IS REJECTED AS THE FORM OF THE WEIGHT. The step-proportional residual, which Phase 6.1 proposed to ship as sum (delta_k / step_k)^2, does not collapse across sizes: worst shared-bin disagreement 2.05x, and the shapes differ qualitatively. DCT8x8's residual is 6.1's shallow bowl (1.21 -> 0.83 -> 1.23); DCT32x32 rises monotonically from 0.59 to 2.79. The cause is in the matrices: the I.2.5 defaults' non-LLF Y step ratio is 2.86x at DCT8x8 but 8.05x at DCT16x16 and 13.05x at DCT32x32, so they coarsen high frequencies far more aggressively at large sizes than perception justifies. Weighting by 1/step^2 uniformly would be approximately right for DCT8x8 and badly wrong for DCT32x32 -- it would price high-frequency error in a 32x32 block as cheap exactly where measurement says it is the most expensive thing in the table. That is the new bias this phase existed to catch, caught before it shipped.
+
+        REPLACEMENT PLAN. Result A licenses a single first-principles contrast-sensitivity curve evaluated on each transform's own normalised grid, checked against the measured curve rather than fitted to it, plus Result B's per-transform level correction. Both are cheap -- a per-cell constant and a per-transform scalar, precomputed once -- and this form is MORE clean-room-defensible than 6.1's proposal, because it stops borrowing its shape from the dequant tables. jpegxl-rs.work.arch-phase6-3-quantizer-normalised-y-distortion is superseded accordingly.
+
+        CONVENTION ERROR FOUND AND DISPOSITIONED. idct2d_8x8 (used by 6.0/6.1) and idct_2d_raw (I.7.3, the encoder's own convention via forward_dct_rc -> dct_2d_in_place, and the layout HfQuantizer indexes its matrix in) are both orthonormal but differ by a transpose of the coefficient index. Nothing moves: the I.2.5 default square matrices were measured exactly symmetric (worst relative asymmetry 0.000000 for every channel at all three sizes), so 6.1 paired every cell with the correct step regardless, and 6.0's spread and stability statistics are invariant under relabeling. Only the u/v labels in the published 6.0/6.1 tables are transposed relative to the encoder's grid, and the measured Y map is near-symmetric anyway.
+
+        STILL NOT ESTABLISHED. Y only, and cover/CfL only, since HfQuantizer::choose remains nearest-reconstruction. Result B's direction is consistent across every bin and both images but its magnitude should be re-measured at the rates the corpus actually encodes at before being used as a calibration constant. The f=0.4-0.5 reference bin is a normalisation choice rather than a fitted parameter, and it is also a local rise against its neighbours -- the same index-4 feature 6.0 and 6.1 both flagged as probably belonging to butteraugli's multi-scale pyramid; that it survives at all three sizes is weak evidence it is a property of the metric, and another reason to fit a smooth CSF rather than these numbers.
+
+        Full tables and method: JPXL/docs/experiments/2026-08-12-per-transform-frequency-weight.md. Raw output: .agent/scratch/phase6-2-per-transform-2026-08-12/.
+        """
+    observed_at git:a015011c3d86727100e61f69d83d3a380b1d9888
+    method command
+    watches [
+        "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        "JPXL/crates/jpxl-encode-policy/src/quantize.rs",
+        "JPXL/crates/jpxl-conformance/tests/perceptual_frequency.rs"
+    ]
+    derived_from [
+        @jpegxl-rs.observation.quantizer-normalised-distortion-is-the-lever-2026-08-12
+    ]
+    verified_by [
+        @jpegxl-rs.evidence.phase6-2-cross-size-decision-2026-08-12,
+        @jpegxl-rs.evidence.phase6-2-cross-size-harness-2026-08-12,
+        @jpegxl-rs.evidence.phase6-2-transpose-immaterial-2026-08-12
+    ]
+    source {
+        kind internal
+        role evidence
+        path "JPXL/docs/experiments/2026-08-12-per-transform-frequency-weight.md"
+        use """
+            Method, the two harness corrections, the three binned cross-size tables and the transpose disposition.
+            """
+    }
+}
+
 record jpegxl-rs.observation.patches-k3/1 : observation {
     title "Patches (K.3) corpus content and proof path"
     state verified
