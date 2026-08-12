@@ -115,7 +115,7 @@ pub use rate::{
 };
 pub use request::{
     CoverFrequencyWeight, CoverMode, CoverSizePenalty, EncodeRequest, EpfSharpnessMode,
-    RateSearchBudget, RateTarget, RateTolerance, SearchBudget,
+    QuantizerChoiceMode, RateSearchBudget, RateTarget, RateTolerance, SearchBudget,
 };
 pub use source::PreparedFrame;
 // Re-export so callers can set [`EncodeRequest::restoration`] without a
@@ -332,6 +332,7 @@ fn plan_at_with_cfl(
         request.b_qm_scale.get(),
         request.cover_size_penalty,
         request.cover_frequency_weight,
+        request.quantizer_choice,
     )?;
 
     // The cover is selected before chroma-from-luma is estimated: the estimate
@@ -874,6 +875,7 @@ impl HfQuantizers {
             NEUTRAL_QM_SCALE,
             CoverSizePenalty::Neutral,
             CoverFrequencyWeight::Flat,
+            QuantizerChoiceMode::Nearest,
         )
     }
 
@@ -885,6 +887,7 @@ impl HfQuantizers {
         b_qm_scale: u32,
         size_penalty: CoverSizePenalty,
         frequency_weight: CoverFrequencyWeight,
+        quantizer_choice: QuantizerChoiceMode,
     ) -> Result<Self> {
         let mut by_key = Vec::with_capacity(SQUARE_TRANSFORMS.len() * muls.len());
         for transform in SQUARE_TRANSFORMS {
@@ -937,13 +940,43 @@ impl HfQuantizers {
                 })
                 .collect(),
         };
-        Ok(Self {
+        let mut built = Self {
             by_key,
             baseline,
             lambda,
             size_penalty,
             frequency_weights,
-        })
+        };
+
+        // Phase 7.0: hand each quantizer the *same* Lagrange weight
+        // `block_cost_bounded` applies to that cell, so the quantizer's local
+        // choice minimises the same objective the cover search sums. Doing it
+        // here rather than in `HfQuantizer::new` is forced by ordering:
+        // `lambda` is calibrated from the finished DCT8x8 baseline quantizer,
+        // so it does not exist until every quantizer is built.
+        if quantizer_choice == QuantizerChoiceMode::RateDistortion {
+            let lambda = built.lambda;
+            let penalty = built.size_penalty;
+            let weights: Vec<(usize, Vec<f32>)> = built.frequency_weights.clone();
+            for ((transform, _), quant) in &mut built.by_key {
+                let side = transform.coeff_cols();
+                #[allow(
+                    clippy::cast_precision_loss,
+                    reason = "side is at most 32; exact in f64"
+                )]
+                let to_sample_domain = (side * side) as f64 * penalty.multiplier(side);
+                let freq = weights
+                    .iter()
+                    .find(|(s, _)| *s == side)
+                    .map(|(_, w)| w.clone())
+                    .unwrap_or_default();
+                quant.install_rd_weights(|channel, cell| {
+                    let w = freq.get(cell).copied().map_or(1.0, f64::from);
+                    lambda.get(channel).copied().unwrap_or(0.0) * to_sample_domain * w
+                });
+            }
+        }
+        Ok(built)
     }
 
     /// Phase 6.3's per-cell frequency weight table for one transform, or an
@@ -3021,6 +3054,7 @@ mod tests {
                     NEUTRAL_QM_SCALE,
                     CoverSizePenalty::Neutral,
                     mode,
+                    QuantizerChoiceMode::Nearest,
                 )
                 .expect("quantizers");
                 let table = quants.frequency_weights(transform);
@@ -3061,6 +3095,7 @@ mod tests {
             NEUTRAL_QM_SCALE,
             CoverSizePenalty::Neutral,
             CoverFrequencyWeight::Flat,
+            QuantizerChoiceMode::Nearest,
         )
         .expect("quantizers");
         for transform in SQUARE_TRANSFORMS {
@@ -3069,6 +3104,119 @@ mod tests {
                 "the flat policy must build no table for {transform:?}"
             );
         }
+    }
+
+    #[test]
+    fn the_nearest_quantizer_is_the_default_and_byte_identical() {
+        assert_eq!(
+            QuantizerChoiceMode::default(),
+            QuantizerChoiceMode::Nearest,
+            "production must stay nearest"
+        );
+        let rgb = mixed_detail_rgb(256, 256);
+        let mut explicit = hierarchical_request();
+        explicit.quantizer_choice = QuantizerChoiceMode::Nearest;
+        let baseline = encode_srgb8_vardct(256, 256, &rgb, &hierarchical_request()).expect("enc");
+        assert_eq!(
+            baseline,
+            encode_srgb8_vardct(256, 256, &rgb, &explicit).expect("enc"),
+            "an explicitly nearest request must be byte-identical to the default"
+        );
+
+        let mut rd = hierarchical_request();
+        rd.quantizer_choice = QuantizerChoiceMode::RateDistortion;
+        assert_ne!(
+            baseline,
+            encode_srgb8_vardct(256, 256, &rgb, &rd).expect("enc"),
+            "rate-distortion choice must reach the wire; if this passes \
+             trivially the mode is not being applied"
+        );
+    }
+
+    #[test]
+    fn rate_distortion_choice_minimises_its_own_objective_and_widens_the_dead_zone() {
+        // Two claims. First, that no candidate beats the one chosen on
+        // `residual_bits + rd * error^2` — recomputed here from the public
+        // surface, so a regression in the private cost function is caught.
+        // Second, that the mode only ever zeroes *more* than nearest, never
+        // less: zero is the one candidate that costs no bits, so a rate term
+        // can only widen the dead zone.
+        let muls = [HfMul::new(1).expect("legal")];
+        let nearest = HfQuantizers::new_with_scales(
+            45_000,
+            muls[0],
+            &muls,
+            NEUTRAL_QM_SCALE,
+            NEUTRAL_QM_SCALE,
+            CoverSizePenalty::Neutral,
+            CoverFrequencyWeight::Flat,
+            QuantizerChoiceMode::Nearest,
+        )
+        .expect("quantizers");
+        let rd = HfQuantizers::new_with_scales(
+            45_000,
+            muls[0],
+            &muls,
+            NEUTRAL_QM_SCALE,
+            NEUTRAL_QM_SCALE,
+            CoverSizePenalty::Neutral,
+            CoverFrequencyWeight::Flat,
+            QuantizerChoiceMode::RateDistortion,
+        )
+        .expect("quantizers");
+
+        let mut widened = 0usize;
+        for transform in SQUARE_TRANSFORMS {
+            let side = transform.coeff_cols();
+            let qn = nearest.get(transform, muls[0]).expect("nearest");
+            let qr = rd.get(transform, muls[0]).expect("rd");
+            let lambda = rd.lambda[1];
+            #[allow(clippy::cast_precision_loss, reason = "side is at most 32")]
+            let to_sample = (side * side) as f64;
+            for cell in 1..side * side {
+                let step = f64::from(qr.step(1, cell));
+                if step <= 0.0 {
+                    continue;
+                }
+                for k in 0..24 {
+                    let target = (f64::from(k) * 0.25 * step) as f32;
+                    let a = qn.choose(target, 1, cell).expect("nearest choice");
+                    let b = qr.choose(target, 1, cell).expect("rd choice");
+                    if b.abs() < a.abs() {
+                        widened += 1;
+                    }
+                    assert!(
+                        b.abs() <= a.abs(),
+                        "{transform:?} cell {cell} target {target}: rd chose {b}, \
+                         which is larger than nearest's {a} — a rate term cannot \
+                         make a coefficient more expensive"
+                    );
+                    // No candidate may beat the chosen one on the RD objective.
+                    let cost = |q: i32| -> f64 {
+                        let e = f64::from(qr.reconstruct(q, 1, cell) - target);
+                        let bits = if q == 0 {
+                            0.0
+                        } else {
+                            f64::from(33 - q.unsigned_abs().leading_zeros())
+                        };
+                        bits + lambda * to_sample * e * e
+                    };
+                    let chosen = cost(b);
+                    for cand in [0, b - 1, b + 1] {
+                        assert!(
+                            cost(cand) >= chosen - 1e-6,
+                            "{transform:?} cell {cell} target {target}: candidate \
+                             {cand} costs {} against the chosen {b}'s {chosen}",
+                            cost(cand)
+                        );
+                    }
+                }
+            }
+        }
+        assert!(
+            widened > 0,
+            "the rate term must zero something the nearest rule kept, or it is inert"
+        );
     }
 
     #[test]

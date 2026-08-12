@@ -2284,6 +2284,60 @@ record jpegxl-rs.work.arch-phase6-5-quant-donor-weight/1 : work {
     resolves [ @jpegxl-rs.question.which-perceptual-weight-crosses-the-cleanroom-line ]
 }
 
+record jpegxl-rs.work.arch-phase7-0-rate-distortion-quantizer/1 : work {
+    title "Phase 7.0: make the HF quantizer rate-distortion aware instead of nearest-reconstruction"
+    state active
+    scope [
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/quantize.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/request.rs",
+        path "test-set/**"
+    ]
+    intent """
+        Three phases now point at the same wall. Phase 6.2b re-priced the cover's transform-size axis and got a null. Phase 6.3 re-priced frequency and got a rate-split. Phase 6.5 re-priced frequency well (median 1.41x against the measured target) and got a large win at 0.5 bpp fading to a no-op at 4 bpp. All three are bounded by the same fact: HfQuantizer::choose picks the nearest reconstruction level, so cover and CfL selection are the only decisions any weight can move, and they matter least exactly where the most coefficients survive quantization.
+
+        sources/outside-advice.md names the same thing directly: quantization is reconstruction-nearest rather than rate-distortion optimized, so it can spend bits on visually unimportant small coefficients while under-protecting important structure elsewhere.
+
+        Make the choice rate-aware. choose already evaluates the candidate set [0, est-1, est, est+1] and picks the smallest |recon - target|; the change is to pick the smallest residual_bits(q) + rd * (recon - target)^2 instead, where rd is exactly the coefficient block_cost_bounded already multiplies squared coefficient error by -- lambda[channel] * side^2 * size_penalty * frequency_weight[cell]. Minimising that per coefficient minimises the same total the cover objective sums, so the quantizer and the cover search finally agree on one currency.
+
+        The rd table is installed on the quantizer at construction rather than threaded through choose's signature, because the decision rule is a property of the operating point. None means nearest, which keeps the shipped path bit-identical.
+
+        KNOWN LIMITATION, stated up front rather than discovered later. residual_bits(q) charges only magnitude bit length plus sign; sources/outside-advice.md is explicit that it knows nothing about entropy context, zero-run behaviour, coefficient order, neighbouring nonzeros, token probabilities or table overhead. The classic rate-distortion quantization win is zeroing a coefficient to extend a zero run, and this proxy cannot see runs at all. So this captures the first-order effect only -- a nonzero coefficient costs at least 2 bits where zero costs none, which widens the effective dead zone where the distortion saved does not pay for the bits -- and a null result would not rule out rate-distortion quantization in general, only this rate proxy.
+
+        Also: choose_lane4 must stay bit-identical to choose (an existing test pins that), and cell_lower_bound's provable prune assumes the nearest rule, so the s8-cover-prune feature is not validated against this mode and must stay off.
+
+        Screen at 0.5/1/2/4 bpp on the same 7-scene corpus and protocol Phases 6.2b/6.3/6.5 used, so the four results are directly comparable. Honest-negative acceptable: if a rate-aware quantizer does not move perceptual quality either, the deficit is not in per-coefficient decisions at all and the track should turn to the entropy model, which is what the rate proxy's crudeness would then be pointing at.
+        """
+    acceptance {
+        check default-byte-identical {
+            statement """
+                Nearest remains the default and an explicitly-nearest request encodes byte-identically to it; the default encode of test-set/20240501_110934 at 1 bpp still reproduces 97,539 bytes, SSIMULACRA2 62.5738 and butteraugli 5.0325.
+                """
+            method command
+        }
+        check quality-screen {
+            statement """
+                Matched-rate Butteraugli and SSIMULACRA2 across 7 scenes at 0.5, 1, 2 and 4 bpp, reported split by rate and alongside Phases 6.3 and 6.5 on the same protocol, decide whether the rate-aware quantizer is promoted under Contract B or recorded as an honest negative that redirects the track to the entropy model.
+                """
+            method observation
+        }
+        check rd-choice-proof {
+            statement """
+                Tests prove the rate-distortion mode never selects a candidate whose residual_bits + rd * squared error exceeds another candidate's, that choose_lane4 stays bit-identical to choose under both modes, and that the mode widens the effective dead zone rather than narrowing it.
+                """
+            method command
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase6-5-quant-donor-weight ]
+    derived_from [ @jpegxl-rs.observation.donor-weight-wins-at-low-rate-and-fades-2026-08-12 ]
+    implements [
+        @jpegxl-rs.decision.encoder-architecture-phases,
+        @jpegxl-rs.policy.optimization-correctness-gates
+    ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+}
+
 record jpegxl-rs.work.arch-s8-cover-lane-simd/1 : work {
     title "outside-advice.md §8 (S8), narrowed per Opus advisor review: bit-identical coefficient-lane SIMD for cover scoring"
     state completed

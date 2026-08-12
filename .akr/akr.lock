@@ -5,7 +5,7 @@ build {
     tool "akr 0.3.1"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:ce68a586eb5e7a1f4ad741dcdec685a239aec77c4badb5ae29832fe95d4b635b"
+    source_graph "sha256:5919dcce2207a78e327aafcd6e5ef5a7967d5be3f41e9bedd98db18babaf3ee0"
 }
 
 source ".akr/project.akr" {
@@ -64,8 +64,8 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:faacc2481b95772d5f730375b56fd60acb8d20cec3cf121520ff0f1ebe7ce535"
-    records 68
+    hash "sha256:8d028c7b67fca061c8940bd40db3490dbe8d266893ce2ec78603955cd41d8598"
+    records 69
 }
 
 resolution @jpegxl-rs.decision.encoder-architecture-phases/1 {
@@ -2168,6 +2168,36 @@ resolution @jpegxl-rs.work.arch-phase6-5-quant-donor-weight/1 {
     hash "sha256:6c64f611344c1cf01f143c1a915c4a6ff07515957195129ed799cf594b349666"
 }
 
+resolution @jpegxl-rs.work.arch-phase7-0-rate-distortion-quantizer/1 {
+    slot depends_on
+    to @jpegxl-rs.work.arch-phase6-5-quant-donor-weight/1
+    hash "sha256:1a4896075a5cd76db3707b94fa11c6bdc8ae46c14137165b25e3ebf45b82a474"
+}
+
+resolution @jpegxl-rs.work.arch-phase7-0-rate-distortion-quantizer/1 {
+    slot derived_from
+    to @jpegxl-rs.observation.donor-weight-wins-at-low-rate-and-fades-2026-08-12/2
+    hash "sha256:6acd5475393af896dc2de7df736c72f40822de7ad1211192e5d17804d737d4e1"
+}
+
+resolution @jpegxl-rs.work.arch-phase7-0-rate-distortion-quantizer/1 {
+    slot implements
+    to @jpegxl-rs.decision.encoder-architecture-phases/1
+    hash "sha256:bebc6ba8560b5b033c8661d3025f45375dcd7f485639aba3dcc1338c845dcfa4"
+}
+
+resolution @jpegxl-rs.work.arch-phase7-0-rate-distortion-quantizer/1 {
+    slot implements
+    to @jpegxl-rs.policy.optimization-correctness-gates/1
+    hash "sha256:2d55841ae9cef36d25aa5be36434795cda6df34a3609490f1d8ede3c919b3cd5"
+}
+
+resolution @jpegxl-rs.work.arch-phase7-0-rate-distortion-quantizer/1 {
+    slot part_of
+    to @jpegxl-rs.track.encoder-optimization/1
+    hash "sha256:49975e17bd10998d72b08fccfe98fdea9bdf68ef56e4404dd68e94e1e2d75f23"
+}
+
 resolution @jpegxl-rs.work.arch-s8-cover-lane-simd/1 {
     slot implements
     to @jpegxl-rs.decision.encoder-architecture-phases/1
@@ -3951,6 +3981,11 @@ seal @jpegxl-rs.work.arch-phase6-3-quantizer-normalised-y-distortion/1 {
 seal @jpegxl-rs.work.arch-phase6-5-quant-donor-weight/1 {
     state completed
     hash "sha256:1a4896075a5cd76db3707b94fa11c6bdc8ae46c14137165b25e3ebf45b82a474"
+}
+
+seal @jpegxl-rs.work.arch-phase7-0-rate-distortion-quantizer/1 {
+    state active
+    hash "sha256:c31675cd74a4baff972684b2d5482f1bb3d6e0c58a978b259f05015239a97fb8"
 }
 
 seal @jpegxl-rs.work.arch-s8-cover-lane-simd/1 {

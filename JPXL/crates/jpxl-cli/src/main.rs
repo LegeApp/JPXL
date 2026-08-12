@@ -75,6 +75,8 @@ Lossy options (8-bit RGB only; either one selects the VarDCT path):
                                   scale: neutral (default) or measured (Phase
                                   6.2's large-transform correction); research
                                   control
+    --quantizer-choice <mode>     HF quantizer rule: nearest (default) or
+                                  rate-distortion (Phase 7.0); research control
     --cover-freq-weight <mode>    Cover objective's per-cell frequency weight:
                                   flat (default), csf (Mannos-Sakrison at 60
                                   ppd, rejected by Phase 6.3), or quant-donor
@@ -325,6 +327,7 @@ fn cmd_encode(args: &[String]) -> u8 {
     let mut epf_sharpness: Option<jpxl_encode_policy::EpfSharpnessMode> = None;
     let mut cover_size_penalty: Option<jpxl_encode_policy::CoverSizePenalty> = None;
     let mut cover_frequency_weight: Option<jpxl_encode_policy::CoverFrequencyWeight> = None;
+    let mut quantizer_choice: Option<jpxl_encode_policy::QuantizerChoiceMode> = None;
     let mut positional: Vec<&String> = Vec::new();
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
@@ -460,6 +463,20 @@ fn cmd_encode(args: &[String]) -> u8 {
                     }
                 });
             }
+            "--quantizer-choice" => {
+                let Some(value) = rest.next() else {
+                    fail("`--quantizer-choice` needs one of: nearest, rate-distortion");
+                    return EXIT_ERROR;
+                };
+                quantizer_choice = Some(match value.as_str() {
+                    "nearest" => jpxl_encode_policy::QuantizerChoiceMode::Nearest,
+                    "rate-distortion" => jpxl_encode_policy::QuantizerChoiceMode::RateDistortion,
+                    _ => {
+                        fail("`--quantizer-choice` needs one of: nearest, rate-distortion");
+                        return EXIT_ERROR;
+                    }
+                });
+            }
             "--target-bytes" => {
                 let Some(v) = rest.next().and_then(|v| v.parse::<u64>().ok()) else {
                     fail("`--target-bytes` needs a positive byte count");
@@ -551,6 +568,7 @@ fn cmd_encode(args: &[String]) -> u8 {
                     epf_sharpness,
                     cover_size_penalty,
                     cover_frequency_weight,
+                    quantizer_choice,
                 },
             ) {
                 Ok(report) => {
@@ -1238,6 +1256,7 @@ struct LossyOverrides {
     epf_sharpness: Option<jpxl_encode_policy::EpfSharpnessMode>,
     cover_size_penalty: Option<jpxl_encode_policy::CoverSizePenalty>,
     cover_frequency_weight: Option<jpxl_encode_policy::CoverFrequencyWeight>,
+    quantizer_choice: Option<jpxl_encode_policy::QuantizerChoiceMode>,
 }
 
 fn encode_lossy_to_target(
@@ -1300,6 +1319,9 @@ fn encode_lossy_to_target(
     }
     if let Some(weight) = overrides.cover_frequency_weight {
         request.cover_frequency_weight = weight;
+    }
+    if let Some(mode) = overrides.quantizer_choice {
+        request.quantizer_choice = mode;
     }
     jpxl_encode_policy::encode_srgb8_to_target(
         image.width(),

@@ -283,6 +283,31 @@ pub enum CoverFrequencyWeight {
     QuantDonor,
 }
 
+/// Research policy for how the HF quantizer picks an integer.
+///
+/// [`Self::Nearest`] is the shipped rule: among `[0, est-1, est, est+1]`, take
+/// the smallest `|recon - target|`. It has no rate term at all, so it can spend
+/// bits on coefficients whose distortion saving does not pay for them --
+/// exactly what `sources/outside-advice.md` names.
+///
+/// [`Self::RateDistortion`] minimises `residual_bits(q) + rd * (recon-target)^2`
+/// instead, with `rd` the same Lagrange weight `block_cost_bounded` applies to
+/// that cell, so the quantizer and the cover search minimise one currency.
+///
+/// **Bounded by its rate proxy.** `residual_bits` charges magnitude bit length
+/// plus sign and knows nothing about zero runs, entropy context or coefficient
+/// order, so this captures the first-order "is this coefficient worth any bits"
+/// decision -- a widened dead zone -- and not the run-extension win that makes
+/// rate-distortion quantization pay in a mature encoder.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum QuantizerChoiceMode {
+    /// Nearest reconstruction: the shipped rule, bit-identical.
+    #[default]
+    Nearest,
+    /// Rate-aware choice against the cover objective's own Lagrange weight.
+    RateDistortion,
+}
+
 /// One encode request.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct EncodeRequest {
@@ -339,6 +364,9 @@ pub struct EncodeRequest {
     /// Production stays at [`CoverFrequencyWeight::Flat`], which is
     /// bit-identical to the pre-Phase-6 objective.
     pub cover_frequency_weight: CoverFrequencyWeight,
+    /// Research policy for how the HF quantizer picks an integer. Production
+    /// stays at [`QuantizerChoiceMode::Nearest`], which is bit-identical.
+    pub quantizer_choice: QuantizerChoiceMode,
     /// Coarse section-parallelism policy for emission (Opt-P).
     ///
     /// Default is [`jpxl_encode::EncodeResources::auto`]. Rate-loop intermediate
@@ -383,6 +411,7 @@ impl EncodeRequest {
             epf_sharpness: EpfSharpnessMode::default(),
             cover_size_penalty: CoverSizePenalty::default(),
             cover_frequency_weight: CoverFrequencyWeight::default(),
+            quantizer_choice: QuantizerChoiceMode::default(),
             resources: jpxl_encode::EncodeResources::auto(),
         }
     }

@@ -164,6 +164,14 @@ pub struct HfQuantizer {
     /// `0.5 * quant_bias[c] * steps[c][cell]` — zero wins under the nearest-
     /// reconstruction + lower-magnitude tie rule when `|target| <=` this.
     zero_threshold: [Box<[f32]>; NUM_CHANNELS],
+    /// Phase 7.0: per-`(channel, cell)` Lagrange weight for the rate-aware
+    /// choice — exactly the coefficient `block_cost_bounded` multiplies squared
+    /// coefficient error by, i.e. `lambda[channel] * side^2 * size_penalty *
+    /// frequency_weight[cell]`.
+    ///
+    /// `None` is the shipped nearest-reconstruction rule, and the branch on it
+    /// is what keeps that path bit-identical.
+    rd: Option<[Box<[f32]>; NUM_CHANNELS]>,
 }
 
 impl HfQuantizer {
@@ -250,7 +258,64 @@ impl HfQuantizer {
             quant_bias_numerator: jpxl_core::color::DEFAULT_QUANT_BIAS_NUMERATOR,
             steps,
             zero_threshold,
+            rd: None,
         })
+    }
+
+    /// Installs Phase 7.0's per-cell Lagrange weights, switching this
+    /// quantizer from nearest-reconstruction to rate-distortion choice.
+    ///
+    /// `weight_at(channel, cell)` must return exactly the coefficient
+    /// [`crate::block_cost_bounded`] multiplies that cell's squared error by,
+    /// or the quantizer and the cover search will be minimising different
+    /// objectives — which is the whole defect this fixes.
+    pub(crate) fn install_rd_weights(&mut self, mut weight_at: impl FnMut(usize, usize) -> f64) {
+        let cells = self.steps.first().map_or(0, |s| s.len());
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "a Lagrange weight in bits per squared sample unit is well inside f32"
+        )]
+        let table: [Box<[f32]>; NUM_CHANNELS] = core::array::from_fn(|channel| {
+            (0..cells)
+                .map(|cell| weight_at(channel, cell) as f32)
+                .collect::<Vec<f32>>()
+                .into_boxed_slice()
+        });
+        self.rd = Some(table);
+    }
+
+    /// The rate-distortion weight for one cell, or `None` under the shipped
+    /// nearest rule.
+    #[inline]
+    fn rd_weight(&self, channel: usize, cell: usize) -> Option<f32> {
+        self.rd
+            .as_ref()
+            .and_then(|t| t.get(channel))
+            .and_then(|c| c.get(cell).copied())
+    }
+
+    /// The rate-distortion cost of one candidate: `residual_bits(q) + rd * e^2`.
+    ///
+    /// The rate term mirrors `crate::residual_bits` exactly — zero costs
+    /// nothing, and a nonzero costs its magnitude's bit length plus a sign bit.
+    /// It is deliberately the *same* crude proxy the cover objective sums, so
+    /// the two agree; `sources/outside-advice.md` is right that it knows
+    /// nothing about zero runs or entropy context, which bounds what this mode
+    /// can capture to the first-order "is this coefficient worth any bits at
+    /// all" decision.
+    #[inline]
+    fn rd_cost(q: i32, error: f32, rd: f32) -> f32 {
+        let bits = if q == 0 {
+            0.0f32
+        } else {
+            #[allow(
+                clippy::cast_precision_loss,
+                reason = "a bit length is at most 33; exact in f32"
+            )]
+            let b = (33 - q.unsigned_abs().leading_zeros()) as f32;
+            b
+        };
+        bits + rd * error * error
     }
 
     /// I.5.3's bias adjustment.
@@ -355,6 +420,27 @@ impl HfQuantizer {
         cell_base: usize,
     ) -> Result<([i32; 4], [f32; 4])> {
         use wide::{CmpLe, f32x4};
+
+        // Phase 7.0: the vectorised body below implements the *nearest* rule.
+        // Under rate-distortion choice, fall back to four scalar `choose`
+        // calls — the same thing the non-simd build does — so the two paths
+        // stay bit-identical by construction rather than by a second
+        // hand-vectorised implementation of the RD comparison that would have
+        // to be kept in sync.
+        if self.rd_weight(channel, cell_base).is_some() {
+            let mut q = [0i32; 4];
+            let mut recon = [0.0f32; 4];
+            for i in 0..4 {
+                let cell = cell_base + i;
+                let target = targets.get(i).copied().unwrap_or(0.0);
+                let qi = self.choose(target, channel, cell)?;
+                if let (Some(qs), Some(rs)) = (q.get_mut(i), recon.get_mut(i)) {
+                    *qs = qi;
+                    *rs = self.reconstruct(qi, channel, cell);
+                }
+            }
+            return Ok((q, recon));
+        }
 
         let mut step_arr = [0.0f32; 4];
         let mut thr_arr = [0.0f32; 4];
@@ -535,17 +621,44 @@ impl HfQuantizer {
         }
         // Exact zero shortcut: |target| <= 0.5 * quant_bias * step ⇒ zero
         // reconstructs at least as close as ±1 and wins ties by magnitude.
+        //
+        // Only sound under the nearest rule. Rate-distortion choice widens the
+        // dead zone strictly (zero is the only candidate that costs no bits),
+        // so the shortcut would still return the right answer *inside* the
+        // threshold — but taking it would skip the wider zeroing the mode
+        // exists for, so the RD path runs the full comparison.
+        let rd = self.rd_weight(channel, cell);
         let thr = self
             .zero_threshold
             .get(channel)
             .and_then(|t| t.get(cell).copied())
             .unwrap_or(0.0);
-        if target.abs() <= thr {
+        if rd.is_none() && target.abs() <= thr {
             return Ok(0);
         }
 
         let estimate = clamp_round(target / step)?;
         let candidates = [0, estimate - 1, estimate, estimate + 1];
+
+        if let Some(rd) = rd {
+            let mut best = 0i32;
+            let mut best_cost = f32::INFINITY;
+            for q in candidates {
+                if q.abs() > MAX_QUANT {
+                    continue;
+                }
+                let error = self.bias_adjust(q, channel) * step - target;
+                let cost = Self::rd_cost(q, error, rd);
+                // Same tie rule as the nearest path: equal cost prefers the
+                // smaller magnitude, so the choice stays deterministic and
+                // biased toward cheaper symbols.
+                if cost < best_cost || (cost == best_cost && q.abs() < best.abs()) {
+                    best = q;
+                    best_cost = cost;
+                }
+            }
+            return Ok(best);
+        }
 
         #[cfg(feature = "simd")]
         {
