@@ -1998,7 +1998,7 @@ record jpegxl-rs.work.arch-phase6-2-per-transform-step-shapes/2 : work {
 
 record jpegxl-rs.work.arch-phase6-2b-large-transform-penalty-screen/1 : work {
     title "Phase 6.2b: screen Phase 6.2 Result B alone -- the per-transform distortion scale, without the CSF curve"
-    state active
+    state completed
     scope [
         path "JPXL/crates/jpxl-cli/src/main.rs",
         path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
@@ -2022,18 +2022,21 @@ record jpegxl-rs.work.arch-phase6-2b-large-transform-penalty-screen/1 : work {
                 Neutral's multiplier is exactly 1.0 for every transform size and an explicitly-neutral request encodes byte-identically to the default request, so the shipped objective is unchanged.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase6-2b-neutral-byte-identical-2026-08-12/1 ]
         }
         check penalty-moves-the-cover {
             statement """
                 Tests prove the measured multipliers are strictly increasing in transform size and that, on a fixture which merges under the neutral objective, charging large transforms more reduces merging rather than increasing it.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase6-2b-penalty-moves-cover-2026-08-12/1 ]
         }
         check quality-screen {
             statement """
                 Matched-rate Butteraugli and SSIMULACRA2 across the screened scenes and both rates decide whether the per-transform scale is carried into Phase 6.3 as a promoted correction, or recorded as an honest negative that localises the deficit away from cover selection.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.phase6-2b-quality-negative-2026-08-12/2 ]
         }
     }
     blocks [ @jpegxl-rs.work.arch-phase6-3-frequency-weight-cover-objective ]
@@ -2047,8 +2050,8 @@ record jpegxl-rs.work.arch-phase6-2b-large-transform-penalty-screen/1 : work {
 }
 
 record jpegxl-rs.work.arch-phase6-3-frequency-weight-cover-objective/1 : work {
-    title "Phase 6.3: a first-principles frequency weight plus a per-transform level correction, in the cover/CfL objective"
-    state proposed
+    title "Phase 6.3: a first-principles frequency weight in the cover/CfL objective"
+    state active
     scope [
         path "JPXL/crates/jpxl-cli/src/main.rs",
         path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
@@ -2061,22 +2064,20 @@ record jpegxl-rs.work.arch-phase6-3-frequency-weight-cover-objective/1 : work {
     intent """
         Replaces the superseded quantizer-normalised plan, which Phase 6.2 falsified: weighting by 1/step^2 is approximately right at DCT8x8 (2.86x step ratio) and badly wrong at DCT32x32 (13.05x), where it would price high-frequency error as cheap exactly where measurement says it is most expensive.
 
-        Give block_cost_bounded's Y-channel distortion term two multipliers instead, both behind a research feature flag with the flat objective as the byte-identical default until a corpus gate passes.
+        NARROWED BY PHASE 6.2b. The original plan paired a frequency weight (6.2 Result A) with a per-transform level correction (Result B). 6.2b screened Result B alone and it is an honest negative: butteraugli regressed in 9 of 14 matched-rate cells (mean +2.03%) and SSIMULACRA2 in 11 of 14, because charging large transforms more makes the cover split more and the DctSelect and per-varblock bits those splits cost exceed what the better size choice buys. Result B is therefore NOT part of this change. The CoverSizePenalty control stays in place, production-neutral and bit-identical, so the combination can still be tested cheaply.
 
-        (1) A per-cell frequency weight from a first-principles contrast-sensitivity function, evaluated at each cell's normalised spatial frequency on that transform's own grid. Phase 6.2 Result A licenses one curve for all three squares: the measured curves agree to 1.15x once levelled, six of nine shared bins within 5%. The CSF is derived independently and *checked* against that measured curve, never fitted to it -- that is what keeps the perceptual model this project's own (AGENTS.md section 2, and the butteraugli note in the workspace manifest). Pre-register the agreement tolerance before looking at the fit.
+        So: give block_cost_bounded's Y-channel distortion term one per-cell multiplier, a contrast-sensitivity weight evaluated at each cell's normalised spatial frequency on that transform's own grid. Phase 6.2 Result A licenses a single curve for all three squares -- the measured curves agree to 1.15x once levelled, six of nine shared bins within 5%. Derive the CSF independently and *check* it against that measured curve, never fit it: that is what keeps the perceptual model this project's own (AGENTS.md section 2, and the butteraugli note in the workspace manifest). Pre-register the agreement tolerance before looking at the fit.
 
-        (2) A per-transform level correction from Phase 6.2 Result B: at equal total sample-domain error a DCT32x32 basis costs 4-21% more butteraugli than DCT8x8 bases, monotonically in size, in every bin on both photographs, because error on a large support is spatially coherent where the same energy in sixteen independently-signed 8x8 patches is closer to maskable noise. block_cost_bounded's to_sample_domain = side^2 assumes parity, so the cover is currently biased toward merging. Re-measure the magnitude at the rates the corpus actually encodes at before using it as a constant; 6.2 measured direction robustly but magnitude at only two amplitudes.
+        Behind a research feature flag, with the flat objective as the byte-identical default until a corpus gate passes. X and B stay flat; chroma is Phase 6.4.
 
-        X and B stay flat; chroma is Phase 6.4.
+        Required work beyond the multiplier: recalibrate HfQuantizers::lambda, whose derivation (16 / mean(s^2) over the non-LLF DCT8x8 cells) assumes an unweighted sample-domain distortion term -- a stale lambda would silently reweight rate against distortion and confound the screen. Prove the flag off is byte-identical, prove the weighted scorer agrees with a direct recomputation on fixtures, then screen at matched rate under Contract B.
 
-        Required work beyond the two multipliers: recalibrate HfQuantizers::lambda, whose derivation (16 / mean(s^2) over the non-LLF DCT8x8 cells) assumes an unweighted sample-domain distortion term -- a stale lambda would silently reweight rate against distortion and confound the screen. Prove the flag off is byte-identical, prove the weighted scorer agrees with a direct recomputation on fixtures, then screen the six-scene matrix at matched rate under Contract B.
-
-        Honest-negative acceptable and pre-registered: a better-priced ruler can still fail to move Butteraugli if the deficit does not live in cover and CfL selection, since HfQuantizer::choose remains nearest-reconstruction and those two are all this can touch. That outcome would localise the deficit and is a plan-sanctioned result.
+        PRIOR, STATED BEFORE RUNNING. 6.2b repriced one axis of this same objective correctly and the perceptual result did not follow. The frequency axis is a much larger mispricing (2.65x against 1.09-1.13x) and applies within every candidate rather than only between sizes, so this is not the same experiment. But a second null would strongly suggest the deficit is not in cover/CfL selection at all -- HfQuantizer::choose is still nearest-reconstruction rather than RD, so those two decisions are all any of this can move -- and that the next round belongs on the quantizer. That outcome is plan-sanctioned and is the main reason to run this before anything larger.
         """
     acceptance {
         check csf-checked-not-fitted {
             statement """
-                The contrast-sensitivity curve is derived independently of the measurement and its agreement with Phase 6.2's measured curve is reported against a tolerance stated before the comparison, so the weight is checked rather than fitted.
+                The contrast-sensitivity curve is derived independently of the measurement and its agreement with Phase 6.2 Result A's measured curve is reported against a tolerance stated before the comparison, so the weight is checked rather than fitted.
                 """
             method observation
         }
@@ -2088,19 +2089,22 @@ record jpegxl-rs.work.arch-phase6-3-frequency-weight-cover-objective/1 : work {
         }
         check quality-screen {
             statement """
-                Matched-rate Butteraugli and SSIMULACRA2 across the six-scene matrix decide whether the re-priced objective is promoted under Contract B, or recorded as an honest negative that localises the deficit away from cover and CfL selection.
+                Matched-rate Butteraugli and SSIMULACRA2 across the screened scenes and both rates decide whether the re-priced objective is promoted under Contract B, or recorded as an honest negative that localises the deficit away from cover and CfL selection and redirects the track to the quantizer.
                 """
             method observation
         }
         check scorer-proof {
             statement """
-                Tests prove the weighted term matches a direct recomputation from the same reconstruction error, that the per-transform level correction applies per candidate size, that both apply to Y alone, and that lambda is recalibrated into the new units rather than carried over.
+                Tests prove the weighted term matches a direct recomputation from the same reconstruction error, that the weight is evaluated on each transform's own normalised frequency grid, that it applies to Y alone, and that lambda is recalibrated into the new units rather than carried over.
                 """
             method command
         }
     }
-    depends_on [ @jpegxl-rs.work.arch-phase6-2-per-transform-step-shapes ]
-    derived_from [ @jpegxl-rs.observation.one-frequency-curve-fits-all-squares-2026-08-12 ]
+    depends_on [ @jpegxl-rs.work.arch-phase6-2b-large-transform-penalty-screen ]
+    derived_from [
+        @jpegxl-rs.observation.one-frequency-curve-fits-all-squares-2026-08-12,
+        @jpegxl-rs.observation.transform-size-axis-is-not-the-deficit-2026-08-12
+    ]
     implements [
         @jpegxl-rs.decision.encoder-architecture-phases,
         @jpegxl-rs.policy.optimization-correctness-gates

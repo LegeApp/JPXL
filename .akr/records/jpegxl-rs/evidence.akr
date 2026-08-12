@@ -1485,6 +1485,57 @@ record jpegxl-rs.evidence.phase6-2-transpose-immaterial-2026-08-12/1 : evidence 
         """
 }
 
+record jpegxl-rs.evidence.phase6-2b-neutral-byte-identical-2026-08-12/1 : evidence {
+    title "Phase 6.2b neutral policy is bit-identical to the shipped objective"
+    state verified
+    result pass
+    method command
+    observed_at git:7924f0a71a5bccdf16798f83fee6d89fb233b579
+    command "cargo test --workspace"
+    summary """
+        the_neutral_size_penalty_is_exactly_one_and_byte_identical asserts CoverSizePenalty::Neutral returns exactly 1.0 for edges 8, 16 and 32, that it is the Default, and that a default request and an explicitly-neutral one encode byte-identically; independently, the neutral encode of test-set/20240501_110934 at 1 bpp reproduces the Phase 5O production row exactly (97,539 bytes, SSIMULACRA2 62.5738, butteraugli 5.0325); full workspace suite green
+        """
+}
+
+record jpegxl-rs.evidence.phase6-2b-penalty-moves-cover-2026-08-12/1 : evidence {
+    title "The measured penalty is strictly increasing in size and reduces merging"
+    state verified
+    result pass
+    method command
+    observed_at git:7924f0a71a5bccdf16798f83fee6d89fb233b579
+    command "cargo test -p jpxl-encode-policy --lib the_measured_size_penalty -- --nocapture"
+    summary """
+        the_measured_size_penalty_charges_larger_transforms_more_and_splits_more asserts the multipliers are strictly increasing in size and that on the mixed-detail fixture the cover responds in the expected direction: DCT16x16 count falls 10 to 5 and DCT8x8 rises 24 to 44, with DCT32x32 unchanged at 60 where the merge margin is wide
+        """
+}
+
+record jpegxl-rs.evidence.phase6-2b-quality-negative-2026-08-12/1 : evidence {
+    title "Phase 6.2b honest negative: correctly repricing transform size does not improve perceptual quality"
+    state superseded
+    result fail
+    method observation
+    observed_at git:7924f0a71a5bccdf16798f83fee6d89fb233b579
+    artifact "JPXL/docs/experiments/2026-08-12-large-transform-penalty-screen.md"
+    summary """
+        Across 14 exactly-matched-rate cells (7 test-set photographs at 1 and 2 bpp, measured encoded to neutral's achieved byte count, both decoded with the pinned djxl) the measured per-transform scale improved butteraugli in 5 cells and regressed 9, mean +2.03% and median +1.18% with a range of -5.9% to +14.2%, and regressed SSIMULACRA2 in 11 of 14 (mean -0.41); measured lands 0.55% under the cap on average, worth about +0.55% butteraugli on this corpus's local RD slope, so roughly a quarter of the mean is that confound and the rest is real
+        """
+}
+
+record jpegxl-rs.evidence.phase6-2b-quality-negative-2026-08-12/2 : evidence {
+    title "Phase 6.2b honest negative: correctly repricing transform size does not improve perceptual quality"
+    state verified
+    result pass
+    method observation
+    observed_at git:7924f0a71a5bccdf16798f83fee6d89fb233b579
+    artifact """
+        JPXL/docs/experiments/2026-08-12-large-transform-penalty-screen.md
+        """
+    summary """
+        The screen ran and decided (honest negative, per the Phase 5 convention that a completed screen is a passing observation whatever direction it reports). Across 14 exactly-matched-rate cells (7 test-set photographs at 1 and 2 bpp, measured encoded to neutral's achieved byte count, both decoded with the pinned djxl) the measured per-transform scale improved butteraugli in 5 cells and regressed 9, mean +2.03% and median +1.18% with a range of -5.9% to +14.2%, and regressed SSIMULACRA2 in 11 of 14 (mean -0.41). Measured lands 0.55% under the cap on average, worth about +0.55% butteraugli on this corpus's local RD slope, so roughly a quarter of the mean is that confound and the rest is real. Production remains CoverSizePenalty::Neutral and the correction is not carried into Phase 6.3.
+        """
+    supersedes [ @jpegxl-rs.evidence.phase6-2b-quality-negative-2026-08-12/1 ]
+}
+
 record jpegxl-rs.evidence.retire-handoff-durable-facts-2026-08-11/1 : evidence {
     title "HANDOFF permanent facts are represented in AKR"
     state verified

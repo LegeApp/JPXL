@@ -1564,6 +1564,53 @@ record jpegxl-rs.observation.realworld-encode-vs-cjxl-2026-08-06/1 : observation
     author "grok-build"
 }
 
+record jpegxl-rs.observation.transform-size-axis-is-not-the-deficit-2026-08-12/1 : observation {
+    title "Correctly repricing the cover's transform-size axis does not improve quality: the extra splits cost more bits than the better size choice buys"
+    state verified
+    scope [
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/request.rs"
+    ]
+    statement """
+        Phase 6.2 Result B measured that block_cost_bounded's side^2 sample-domain normalisation does not make candidates of different sizes comparable: at equal injected sample-domain error a DCT32x32 basis costs 4-21% more butteraugli than DCT8x8 bases. Phase 6.2b screened that correction alone, split out of Phase 6.3 because it is one scalar per size rather than a CSF derivation, and because it answers the prior question 6.3 depends on -- does re-pricing the cover objective move Butteraugli at all.
+
+        CONSTANTS. Butteraugli is not linear in injected energy, so the measured excess cannot be used as a distortion multiplier directly. Over the measured 4x energy step it follows ba ~ E^p with p = 0.4477, 0.4477 and 0.4433 for the three sizes (mean 0.4462), a consistency that makes the conversion trustworthy; a butteraugli ratio r means r^(1/p) of distortion, mapping the 3.8% and 5.7% mean excesses onto multipliers 1.0000 / 1.0881 / 1.1331 for DCT8x8 / DCT16x16 / DCT32x32, stable across both probe amplitudes.
+
+        RESULT -- HONEST NEGATIVE. Across 14 exactly-matched-rate cells (7 test-set photographs at 1 and 2 bpp; measured encoded to neutral's achieved byte count; both decoded with the pinned djxl) butteraugli improved in 5 cells and regressed in 9, mean +2.03%, median +1.18%, range -5.9% to +14.2%. SSIMULACRA2 regressed in 11 of 14, mean -0.41. Measured lands 0.55% under the cap on average -- the rate loop's undershoot, worth about +0.55% butteraugli on this corpus's local RD slope -- so roughly a quarter of the mean is that confound and about +1.5% is real. The confound cannot explain the +14.2% worst cell and does not touch the SSIMULACRA2 loss at all.
+
+        WHY A CORRECT MEASUREMENT PRODUCED A WORSE ENCODER. Result B is not wrong; it holds on two photographs, in every frequency bin, at both amplitudes. What fails is the inference that correcting it improves the encode. Charging large transforms more makes the cover split more -- on the mixed-detail unit fixture DCT16x16 falls from 10 to 5 and DCT8x8 rises from 24 to 44 -- and those splits cost DctSelect signalling and per-varblock overhead. At a fixed byte cap those bits come out of quality everywhere else, and the better size decision does not pay for them. The RD tradeoff near the current operating point is flat enough that a 9-13% repricing moves the decision without moving the outcome.
+
+        CONSEQUENCE. The cover's transform-size axis is not where the Butteraugli deficit lives. Result B is therefore NOT carried into Phase 6.3 as a promoted correction; 6.3 screens the Result A frequency weight alone. The CoverSizePenalty control is retained rather than removed -- production-neutral, exactly 1.0, bit-identical -- so 6.3 can test the combination cheaply.
+
+        This also weakens the prior for 6.3, which is worth stating before running it: one axis of this objective was repriced correctly and the perceptual result did not follow. The frequency axis is a much larger mispricing (2.65x against 1.09-1.13x) and applies within every candidate rather than only between sizes, so it is not the same experiment -- but a second null would strongly suggest the deficit is not in cover/CfL selection at all, and that the next round belongs on the quantizer, which is still nearest-reconstruction rather than RD.
+
+        BASELINE CHECK. The neutral encode of test-set/20240501_110934 at 1 bpp reproduces the Phase 5O production row exactly (97,539 bytes, SSIMULACRA2 62.5738, butteraugli 5.0325), so none of the Phase 6 plumbing moved the shipped encoder.
+
+        Full tables and the byte-confound arithmetic: JPXL/docs/experiments/2026-08-12-large-transform-penalty-screen.md. Raw rows and driver: .agent/scratch/phase6-2b-size-penalty-2026-08-12/.
+        """
+    observed_at git:7924f0a71a5bccdf16798f83fee6d89fb233b579
+    method command
+    watches [
+        "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        "JPXL/crates/jpxl-encode-policy/src/request.rs"
+    ]
+    derived_from [ @jpegxl-rs.observation.one-frequency-curve-fits-all-squares-2026-08-12 ]
+    verified_by [
+        @jpegxl-rs.evidence.phase6-2b-neutral-byte-identical-2026-08-12,
+        @jpegxl-rs.evidence.phase6-2b-penalty-moves-cover-2026-08-12,
+        @jpegxl-rs.evidence.phase6-2b-quality-negative-2026-08-12
+    ]
+    source {
+        kind internal
+        role evidence
+        path "JPXL/docs/experiments/2026-08-12-large-transform-penalty-screen.md"
+        use """
+            Method, the constant derivation, the 14-cell matched-rate table and the byte-confound quantification.
+            """
+    }
+}
+
 record jpegxl-rs.observation.vardct-extra-channels-blending/1 : observation {
     title "Extra channels in VarDCT frames and F.8 blending"
     state verified
