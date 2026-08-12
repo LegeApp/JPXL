@@ -271,6 +271,16 @@ pub enum CoverFrequencyWeight {
     Flat,
     /// Weight by the Mannos-Sakrison CSF at 60 pixels per degree.
     Csf,
+    /// Weight by the standard's own DCT8x8 dequantization matrix, read as a
+    /// curve in normalised radial frequency and resampled onto each transform's
+    /// grid ([`crate::csf::quant_donor_weights`]).
+    ///
+    /// Phase 6.5's candidate. Scored against the Phase 6.2 measurement it sits
+    /// at median 1.41x, against the CSF's 2.06x and a 1.18x ceiling for a curve
+    /// fitted directly to butteraugli -- so it captures most of the available
+    /// improvement while being derived from the standard rather than from the
+    /// metric, which is what keeps this project's perceptual model its own.
+    QuantDonor,
 }
 
 /// One encode request.

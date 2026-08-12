@@ -926,6 +926,16 @@ impl HfQuantizers {
                     (side, crate::csf::square_weights(side, t.block_dims().0))
                 })
                 .collect(),
+            CoverFrequencyWeight::QuantDonor => SQUARE_TRANSFORMS
+                .iter()
+                .map(|t| {
+                    let side = t.coeff_cols();
+                    (
+                        side,
+                        crate::csf::quant_donor_weights(side, t.block_dims().0),
+                    )
+                })
+                .collect(),
         };
         Ok(Self {
             by_key,
@@ -2973,65 +2983,73 @@ mod tests {
             "an explicitly flat request must be byte-identical to the default"
         );
 
-        let mut csf = hierarchical_request();
-        csf.cover_frequency_weight = CoverFrequencyWeight::Csf;
-        let weighted = encode_srgb8_vardct(256, 256, &rgb, &csf).expect("enc");
-        assert_ne!(
-            baseline, weighted,
-            "the CSF weight must actually reach the objective; if this passes \
-             trivially the weight is not being applied"
-        );
+        for mode in [CoverFrequencyWeight::Csf, CoverFrequencyWeight::QuantDonor] {
+            let mut weighted_req = hierarchical_request();
+            weighted_req.cover_frequency_weight = mode;
+            let weighted = encode_srgb8_vardct(256, 256, &rgb, &weighted_req).expect("enc");
+            assert_ne!(
+                baseline, weighted,
+                "{mode:?} must actually reach the objective; if this passes \
+                 trivially the weight is not being applied"
+            );
+        }
     }
 
     #[test]
-    fn the_csf_weight_matches_a_direct_recomputation_of_the_weighted_term() {
-        // Proves the scorer applies the same per-cell table `csf::square_weights`
-        // publishes, on each transform's own grid, rather than some other
-        // ordering or a single shared table.
-        for transform in SQUARE_TRANSFORMS {
-            let side = transform.coeff_cols();
-            let llf = transform.block_dims().0;
-            let quants = HfQuantizers::new_with_scales(
-                45_000,
-                HfMul::new(1).expect("legal"),
-                &[HfMul::new(1).expect("legal")],
-                NEUTRAL_QM_SCALE,
-                NEUTRAL_QM_SCALE,
-                CoverSizePenalty::Neutral,
+    fn the_weight_tables_match_a_direct_recomputation_of_the_weighted_term() {
+        // Proves the scorer applies the same per-cell table `csf` publishes, on
+        // each transform's own grid, rather than some other ordering, a single
+        // shared table, or the wrong candidate curve.
+        for (mode, build) in [
+            (
                 CoverFrequencyWeight::Csf,
-            )
-            .expect("quantizers");
-            let table = quants.frequency_weights(transform);
-            let expected = crate::csf::square_weights(side, llf);
-            assert_eq!(
-                table.len(),
-                expected.len(),
-                "{transform:?} weight table length"
-            );
-            for (cell, (got, want)) in table.iter().zip(&expected).enumerate() {
+                crate::csf::square_weights as fn(usize, usize) -> Vec<f32>,
+            ),
+            (
+                CoverFrequencyWeight::QuantDonor,
+                crate::csf::quant_donor_weights as fn(usize, usize) -> Vec<f32>,
+            ),
+        ] {
+            for transform in SQUARE_TRANSFORMS {
+                let side = transform.coeff_cols();
+                let llf = transform.block_dims().0;
+                let quants = HfQuantizers::new_with_scales(
+                    45_000,
+                    HfMul::new(1).expect("legal"),
+                    &[HfMul::new(1).expect("legal")],
+                    NEUTRAL_QM_SCALE,
+                    NEUTRAL_QM_SCALE,
+                    CoverSizePenalty::Neutral,
+                    mode,
+                )
+                .expect("quantizers");
+                let table = quants.frequency_weights(transform);
+                let expected = build(side, llf);
+                assert_eq!(table.len(), expected.len(), "{mode:?} {transform:?} length");
+                for (cell, (got, want)) in table.iter().zip(&expected).enumerate() {
+                    assert!(
+                        (got - want).abs() < 1e-6,
+                        "{mode:?} {transform:?} cell {cell}: scorer {got} != published {want}"
+                    );
+                }
+                // The mean-1 property is what keeps `lambda` calibrated, so
+                // assert it on the table the objective actually reads.
+                let mut sum = 0.0f64;
+                let mut count = 0usize;
+                for cell in 0..side * side {
+                    if cell / side < llf && cell % side < llf {
+                        continue;
+                    }
+                    sum += f64::from(table[cell]);
+                    count += 1;
+                }
+                #[allow(clippy::cast_precision_loss, reason = "counts are small")]
+                let mean = sum / count as f64;
                 assert!(
-                    (got - want).abs() < 1e-6,
-                    "{transform:?} cell {cell}: scorer weight {got} != csf weight {want}"
+                    (mean - 1.0).abs() < 1e-5,
+                    "{mode:?} {transform:?} weight mean {mean} would decalibrate lambda"
                 );
             }
-            // The mean-1 property is what keeps `lambda` calibrated, so assert
-            // it here too rather than only in the csf module's own tests: this
-            // is the table the objective actually reads.
-            let mut sum = 0.0f64;
-            let mut count = 0usize;
-            for cell in 0..side * side {
-                if cell / side < llf && cell % side < llf {
-                    continue;
-                }
-                sum += f64::from(table[cell]);
-                count += 1;
-            }
-            #[allow(clippy::cast_precision_loss, reason = "counts are small")]
-            let mean = sum / count as f64;
-            assert!(
-                (mean - 1.0).abs() < 1e-5,
-                "{transform:?} weight mean {mean} would decalibrate lambda"
-            );
         }
 
         // And the flat policy must publish no table at all.

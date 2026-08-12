@@ -2217,6 +2217,69 @@ record jpegxl-rs.work.arch-phase6-4-chroma-controlled-operating-point/1 : work {
     part_of [ @jpegxl-rs.track.encoder-optimization ]
 }
 
+record jpegxl-rs.work.arch-phase6-5-quant-donor-weight/1 : work {
+    title "Phase 6.5: a frequency weight donated by the standard's own DCT8x8 matrix"
+    state active
+    scope [
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/csf.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/request.rs",
+        path "test-set/**"
+    ]
+    intent """
+        Phase 6.3 showed frequency weighting is the live lever in block_cost_bounded and that a Mannos-Sakrison detection CSF is the wrong curve. Replace the curve.
+
+        OPTION 1 IS CLOSED, and closing it explains 6.3. The canonical DCT-domain per-coefficient models -- Ahumada-Peterson (1992), Peterson-Ahumada-Watson (1993), Watson's DCTune (1993), Nill (1985) -- are all detection-threshold models: band-pass with a low-frequency dip and a high-frequency rolloff HARDER than Mannos-Sakrison, not softer. AP92 predicts about 0.037 of peak sensitivity at Nyquist where the measurement says about 1.05, roughly 28x off against Mannos-Sakrison's 3.1x. Adopting them would be strictly worse than what 6.3 already rejected. Georgeson and Sullivan (1975) supply the reason: above threshold, perceived contrast becomes largely independent of spatial frequency (contrast constancy), so a detection CSF is the wrong regime for judging quantization error in real content, where low-frequency error is highly visible.
+
+        OPTION 2, CORRECTED. Its original wording presumed the encoder's quantization geometry is a frequency model. It is not: the I.2.5 default step shapes disagree 3.34x across sizes in normalised frequency, against the measured perceptual curve's 1.15x -- the matrices are per-size tuned. The fix is to take ONE size's matrix as a donor curve in normalised frequency and resample it onto every transform's own grid. Scored against the target that gives median 1.41x, against the CSF's 2.06x and a 1.18x ceiling for a curve fitted directly to butteraugli. DCT8x8 is the donor: it wins outright over DCT16x16 (1.90x), DCT32x32 (2.62x) and the geometric mean of all three (2.34x), and it is the operating point HfQuantizers::lambda is calibrated at.
+
+        Option 3 is not taken: the remaining 1.41x to 1.18x gap does not justify making the perceptual model libjxl-derived.
+
+        Implementation reuses the Phase 6.3 plumbing unchanged -- one new weight constructor in csf.rs, one variant on CoverFrequencyWeight, one match arm, one CLI value. Flat stays the byte-identical default.
+
+        TWO GATING CORRECTIONS carried from planning. Phase 6.3's 1.35x worst-bin tolerance was unachievable by its entire model class: the best smooth two-parameter shape FITTED to the target cannot beat 1.72x worst-bin, so that gate was never a fair test. And worst-bin is dominated by the two artifact bins (f below 0.1 and above 0.9), so median is the primary statistic here and worst-interior the secondary.
+
+        HONEST EXPECTATION, pre-registered. Over f > 0.6 on DCT8x8 the CSF charges 0.41x what the target says and the donor charges 0.65x, so the donor removes roughly 40% of what caused 6.3's 2 bpp collapse, not all of it. Expect the high-rate arm to improve markedly without necessarily clearing Contract B. The falsifiable claim is that the 2 bpp arm improves markedly on 6.3's +13.10% mean while 1 bpp retains most of its 7/7 SSIMULACRA2 win; if 2 bpp does not improve, the rate split is not the curve's doing and the next round belongs on the quantizer, which is still nearest-reconstruction rather than RD.
+        """
+    acceptance {
+        check agreement-reproduced {
+            statement """
+                The implemented donor reproduces the planning analysis against the measured target: median ratio at or below 1.60x pooled over all three sizes and worst-interior at or below 2.20x. This gate catches an implementation that fails to reproduce the analysis; it cannot claim predictive success, because the donor already scored 1.41x/2.02x on archived data before any code was written.
+                """
+            method observation
+        }
+        check default-byte-identical {
+            statement """
+                Flat remains the default and an explicitly-flat request encodes byte-identically to it, so the shipped objective is untouched; the flat encode of test-set/20240501_110934 at 1 bpp still reproduces 97,539 bytes, SSIMULACRA2 62.5738 and butteraugli 5.0325.
+                """
+            method command
+        }
+        check donor-scorer-proof {
+            statement """
+                Tests prove the table the scorer reads equals csf::quant_donor_weights cell for cell on each transform's own grid, that it is mean-1 over the non-LLF cells so lambda stays calibrated, and that the donor curve falls monotonically over its support.
+                """
+            method command
+        }
+        check quality-screen {
+            statement """
+                Matched-rate Butteraugli and SSIMULACRA2 across 7 scenes at 0.5, 1, 2 and 4 bpp, reported split by rate, decide whether the donor weight is promoted under Contract B or recorded as an honest negative; the pre-registered prediction that the 2 bpp arm improves markedly on Phase 6.3's +13.10% mean is reported as confirmed or falsified.
+                """
+            method observation
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase6-3-frequency-weight-cover-objective ]
+    derived_from [
+        @jpegxl-rs.observation.frequency-is-the-live-lever-csf-is-the-wrong-curve-2026-08-12
+    ]
+    implements [
+        @jpegxl-rs.decision.encoder-architecture-phases,
+        @jpegxl-rs.policy.optimization-correctness-gates
+    ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+    resolves [ @jpegxl-rs.question.which-perceptual-weight-crosses-the-cleanroom-line ]
+}
+
 record jpegxl-rs.work.arch-s8-cover-lane-simd/1 : work {
     title "outside-advice.md §8 (S8), narrowed per Opus advisor review: bit-identical coefficient-lane SIMD for cover scoring"
     state completed

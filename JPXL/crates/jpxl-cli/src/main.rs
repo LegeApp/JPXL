@@ -76,8 +76,10 @@ Lossy options (8-bit RGB only; either one selects the VarDCT path):
                                   6.2's large-transform correction); research
                                   control
     --cover-freq-weight <mode>    Cover objective's per-cell frequency weight:
-                                  flat (default) or csf (Mannos-Sakrison at 60
-                                  ppd); research control
+                                  flat (default), csf (Mannos-Sakrison at 60
+                                  ppd, rejected by Phase 6.3), or quant-donor
+                                  (the standard's own DCT8x8 matrix as a curve);
+                                  research control
 
     There is no `--distance`. cjxl's -d targets butteraugli; JPXL has no
     perceptual model, so its rate loop hits a *size*, not a visual quality.
@@ -445,14 +447,15 @@ fn cmd_encode(args: &[String]) -> u8 {
             }
             "--cover-freq-weight" => {
                 let Some(value) = rest.next() else {
-                    fail("`--cover-freq-weight` needs one of: flat, csf");
+                    fail("`--cover-freq-weight` needs one of: flat, csf, quant-donor");
                     return EXIT_ERROR;
                 };
                 cover_frequency_weight = Some(match value.as_str() {
                     "flat" => jpxl_encode_policy::CoverFrequencyWeight::Flat,
                     "csf" => jpxl_encode_policy::CoverFrequencyWeight::Csf,
+                    "quant-donor" => jpxl_encode_policy::CoverFrequencyWeight::QuantDonor,
                     _ => {
-                        fail("`--cover-freq-weight` needs one of: flat, csf");
+                        fail("`--cover-freq-weight` needs one of: flat, csf, quant-donor");
                         return EXIT_ERROR;
                     }
                 });

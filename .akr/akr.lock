@@ -5,7 +5,7 @@ build {
     tool "akr 0.3.1"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:a2288b66d12510b4657962f562ffc6e1c55e21ae3d5b1c67a0236bf5356641c2"
+    source_graph "sha256:97b5877b25bc7da17805928f314d57bfafdd3f3641e8c43742d95fe9cd6ad2d2"
 }
 
 source ".akr/project.akr" {
@@ -64,8 +64,8 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:3d4ca09e74f16c080fbca4ce95186f3f83c7f2f22e472a905f875c4d198f72dc"
-    records 67
+    hash "sha256:c37e92588151bb0bd5abfb3b750a1b964b0179bcdfa37fc29c19f94944a6bc50"
+    records 68
 }
 
 resolution @jpegxl-rs.decision.encoder-architecture-phases/1 {
@@ -2060,6 +2060,42 @@ resolution @jpegxl-rs.work.arch-phase6-4-chroma-controlled-operating-point/1 {
     hash "sha256:49975e17bd10998d72b08fccfe98fdea9bdf68ef56e4404dd68e94e1e2d75f23"
 }
 
+resolution @jpegxl-rs.work.arch-phase6-5-quant-donor-weight/1 {
+    slot depends_on
+    to @jpegxl-rs.work.arch-phase6-3-frequency-weight-cover-objective/1
+    hash "sha256:a9658a1e2b6d39f78b3369544883c98e42c067cd15a311288ffbd6ca66c7133e"
+}
+
+resolution @jpegxl-rs.work.arch-phase6-5-quant-donor-weight/1 {
+    slot derived_from
+    to @jpegxl-rs.observation.frequency-is-the-live-lever-csf-is-the-wrong-curve-2026-08-12/1
+    hash "sha256:02aee9bdb419d55337f3b5daaaf2827914574c1e35713e37fad3b177475e0cee"
+}
+
+resolution @jpegxl-rs.work.arch-phase6-5-quant-donor-weight/1 {
+    slot implements
+    to @jpegxl-rs.decision.encoder-architecture-phases/1
+    hash "sha256:bebc6ba8560b5b033c8661d3025f45375dcd7f485639aba3dcc1338c845dcfa4"
+}
+
+resolution @jpegxl-rs.work.arch-phase6-5-quant-donor-weight/1 {
+    slot implements
+    to @jpegxl-rs.policy.optimization-correctness-gates/1
+    hash "sha256:2d55841ae9cef36d25aa5be36434795cda6df34a3609490f1d8ede3c919b3cd5"
+}
+
+resolution @jpegxl-rs.work.arch-phase6-5-quant-donor-weight/1 {
+    slot part_of
+    to @jpegxl-rs.track.encoder-optimization/1
+    hash "sha256:49975e17bd10998d72b08fccfe98fdea9bdf68ef56e4404dd68e94e1e2d75f23"
+}
+
+resolution @jpegxl-rs.work.arch-phase6-5-quant-donor-weight/1 {
+    slot resolves
+    to @jpegxl-rs.question.which-perceptual-weight-crosses-the-cleanroom-line/1
+    hash "sha256:d0000396cdbfc9983edff1b52820191a7bb655e7df941e9de8e4eef56734e628"
+}
+
 resolution @jpegxl-rs.work.arch-s8-cover-lane-simd/1 {
     slot implements
     to @jpegxl-rs.decision.encoder-architecture-phases/1
@@ -3808,6 +3844,11 @@ seal @jpegxl-rs.work.arch-phase6-3-frequency-weight-cover-objective/1 {
 seal @jpegxl-rs.work.arch-phase6-3-quantizer-normalised-y-distortion/1 {
     state superseded
     hash "sha256:6c04b2afb0c28d594eb1912e6b7314fe40ddbdfc8afea81822e2e5550a0d7a20"
+}
+
+seal @jpegxl-rs.work.arch-phase6-5-quant-donor-weight/1 {
+    state active
+    hash "sha256:f895684e00b257fd7381b349355459f4870e38fcc4e47ca12f3ecb81455f0563"
 }
 
 seal @jpegxl-rs.work.arch-s8-cover-lane-simd/1 {
