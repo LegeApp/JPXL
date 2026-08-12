@@ -208,17 +208,29 @@ pub fn check_supported(plan: &EmissionPlan) -> Result<()> {
     // section writers; validate() is the gate for density, bsize, and the
     // num_hf_presets ≤ num_groups bound.
     for group in &plan.spatial.lf_groups {
-        // The square vocabulary is what has decoder-parity evidence today; the
-        // walk and the writer are transform-generic, so widening this list is
-        // an evidence question, not a code change elsewhere.
+        // Squares always; same-8x8 specials after Phase 5O wire/oracle
+        // evidence (Hornuss, DCT2x2, DCT4x4, DCT8x4/4x8, AFV0-3). Larger
+        // rectangular and 64+ families stay refused until they have the same
+        // parity evidence.
         if group.blocks.iter().any(|b| {
             !matches!(
                 b.transform,
-                TransformType::Dct8x8 | TransformType::Dct16x16 | TransformType::Dct32x32
+                TransformType::Dct8x8
+                    | TransformType::Dct16x16
+                    | TransformType::Dct32x32
+                    | TransformType::Hornuss
+                    | TransformType::Dct2x2
+                    | TransformType::Dct4x4
+                    | TransformType::Dct8x4
+                    | TransformType::Dct4x8
+                    | TransformType::Afv0
+                    | TransformType::Afv1
+                    | TransformType::Afv2
+                    | TransformType::Afv3
             )
         }) {
             return Err(EncodeError::unsupported(
-                "a transform outside the square DCT vocabulary (DCT8x8, DCT16x16, DCT32x32)",
+                "a transform outside the square DCT and same-8x8 special vocabulary",
                 "I.1",
             ));
         }
@@ -1513,12 +1525,28 @@ mod tests {
     }
 
     #[test]
-    fn a_non_dct8x8_transform_is_refused() {
+    fn a_same_footprint_special_transform_is_accepted() {
+        // Phase 5O/5P: Hornuss and friends have decoder-parity evidence; the
+        // writer must not refuse them at the evidence gate.
         let mut plan = tiny_plan();
         if let Some(group) = plan.spatial_mut().lf_groups.first_mut()
             && let Some(block) = group.blocks.first_mut()
         {
-            block.transform = TransformType::Dct4x4;
+            block.transform = TransformType::Hornuss;
+        }
+        assert!(
+            check_supported(&plan).is_ok(),
+            "same-8x8 specials are in the supported vocabulary"
+        );
+    }
+
+    #[test]
+    fn an_unsupported_large_transform_is_refused() {
+        let mut plan = tiny_plan();
+        if let Some(group) = plan.spatial_mut().lf_groups.first_mut()
+            && let Some(block) = group.blocks.first_mut()
+        {
+            block.transform = TransformType::Dct64x64;
         }
         assert!(matches!(
             check_supported(&plan),

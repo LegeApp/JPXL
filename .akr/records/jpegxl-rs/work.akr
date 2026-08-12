@@ -1781,7 +1781,7 @@ record jpegxl-rs.work.arch-phase5o-special8-transform-screen/1 : work {
 
 record jpegxl-rs.work.arch-phase5p-special8-exact-distortion-screen/1 : work {
     title "Phase 5P: screen special transforms with exact sample-domain distortion"
-    state proposed
+    state active
     scope [
         path "JPXL/crates/jpxl-cli/src/main.rs",
         path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
@@ -1821,12 +1821,12 @@ record jpegxl-rs.work.arch-phase5p-special8-exact-distortion-screen/1 : work {
             method command
         }
     }
-    depends_on [ @jpegxl-rs.work.arch-phase5o-special8-transform-screen/1 ]
+    depends_on [ @jpegxl-rs.work.arch-phase5o-special8-transform-screen ]
     implements [
-        @jpegxl-rs.decision.encoder-architecture-phases/1,
-        @jpegxl-rs.policy.optimization-correctness-gates/1
+        @jpegxl-rs.decision.encoder-architecture-phases,
+        @jpegxl-rs.policy.optimization-correctness-gates
     ]
-    part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
 }
 
 record jpegxl-rs.work.arch-phase6-0-distortion-currency/1 : work {

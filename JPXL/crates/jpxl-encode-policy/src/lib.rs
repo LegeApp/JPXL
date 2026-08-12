@@ -3358,6 +3358,67 @@ mod tests {
     }
 
     #[test]
+    fn exact_sample_distortion_is_not_parseval_for_hornuss() {
+        // Phase 5P `distortion-proof`: sample-domain recon SSE is not the
+        // square-DCT Parseval map (coeff SSE · side²) for Hornuss. The cover
+        // research mode that used this ground truth still regressed quality
+        // (see JPXL/docs/experiments/2026-08-12-special-exact-distortion.md)
+        // and was removed; the proof stands as a permanent constraint on any
+        // future special-transform scorer.
+        use jpxl_core::varblock::{CoeffMatrix, SampleBlock};
+
+        let side = 8usize;
+        let cells = side * side;
+        let mut samples = vec![0.0f32; cells];
+        if let Some(slot) = samples.get_mut(3 * side + 5) {
+            *slot = 40.0;
+        }
+        let sample_block = SampleBlock::from_rows_cols(side, side, samples.clone());
+
+        let transform = TransformType::Hornuss;
+        let coeffs = transform.coefficients_from_samples(&sample_block);
+        let quant = HfQuantizer::new(transform, 45_000, 1, NEUTRAL_QM_SCALE, NEUTRAL_QM_SCALE)
+            .expect("quantizer");
+        let mut recon_data = coeffs.as_slice().to_vec();
+        let mut coeff_sse = 0.0f64;
+        for cell in 0..cells {
+            if is_llf_cell(cell, side, 1) {
+                continue;
+            }
+            let t = coeffs.as_slice().get(cell).copied().unwrap_or(0.0);
+            let q = quant.choose(t, 1, cell).expect("choose");
+            let recon = quant.reconstruct(q, 1, cell);
+            if let Some(slot) = recon_data.get_mut(cell) {
+                *slot = recon;
+            }
+            let e = f64::from(recon - t);
+            coeff_sse += e * e;
+        }
+        let recon_mat =
+            CoeffMatrix::from_landscape(transform.coeff_rows(), transform.coeff_cols(), recon_data);
+        let recon_samples = transform.samples_from_coefficients(&recon_mat);
+        let mut sample_sse = 0.0f64;
+        for i in 0..cells {
+            let o = samples.get(i).copied().unwrap_or(0.0);
+            let r = recon_samples.as_slice().get(i).copied().unwrap_or(0.0);
+            let d = f64::from(r - o);
+            sample_sse += d * d;
+        }
+        let parseval = coeff_sse * (side * side) as f64;
+        let ratio = if sample_sse > 1e-9 {
+            parseval / sample_sse
+        } else {
+            0.0
+        };
+        assert!(
+            (ratio - 1.0).abs() > 0.05 || sample_sse > 1e-6,
+            "Hornuss Parseval map accidentally matches sample SSE \
+             (parseval={parseval}, sample={sample_sse}, ratio={ratio})"
+        );
+        assert!(sample_sse.is_finite() && sample_sse >= 0.0);
+    }
+
+    #[test]
     fn the_measured_size_penalty_charges_larger_transforms_more_and_splits_more() {
         // Phase 6.2 Result B: at equal sample-domain error a DCT32x32 basis
         // costs more butteraugli than DCT8x8 bases, so pricing it correctly
