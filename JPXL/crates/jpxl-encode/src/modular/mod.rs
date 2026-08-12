@@ -672,11 +672,21 @@ const RESIDUAL_LZ77_MIN_LENGTH: u32 = 3;
 /// ANS `log_alphabet_size ≤ 8` ⇒ tokens fit in `0..255`. Length triggers start
 /// at `min_symbol`, so that value must stay ≤ 224 to leave room for copies.
 const RESIDUAL_LZ77_MAX_MIN_SYMBOL: u32 = 224;
-/// Lookback bound for the greedy finder (not the full 1 Mi window).
+/// Residual LZ77 lookback (symbols). Not the full Table C.1 1 Mi window.
 ///
-/// Full-window search is O(n²) and makes multi-group planning unusable; 256 is
-/// enough for long zero runs and short repeated residual patterns.
+/// Phase 4D measured `max(256, dist_multiplier)` so a one-row-up match is
+/// always in window: on the photo corpus it was **size-identical** to 256
+/// and ~10× slower under linear search (12 MP: 135 s vs 14 s). Hash-chain
+/// recovered most of that (17 s) but still paid wall time for zero density.
+/// Production stays at 256; vertical-row expansion is an honest negative
+/// until a content class or effort tier proves a size win worth the cost.
 const RESIDUAL_LZ77_LOOKBACK: usize = 256;
+
+/// Effective residual LZ77 lookback (currently independent of row stride).
+#[must_use]
+fn residual_lz77_lookback(_dist_multiplier: u32) -> usize {
+    RESIDUAL_LZ77_LOOKBACK
+}
 
 /// One channel's samples in raster order, as fed to H.3.
 pub type Plane = Vec<i32>;
@@ -2030,48 +2040,113 @@ enum LzEvent {
 /// Greedy longest-match LZ77 over a residual value sequence.
 ///
 /// Distance is 1-based in the residual window; `raw_distance` is the C.3.3 wire
-/// value for `dist_multiplier`. Search is limited to
-/// [`RESIDUAL_LZ77_LOOKBACK`] prior symbols.
+/// value for `dist_multiplier`. Search lookback is [`residual_lz77_lookback`]
+/// (256 symbols in production; see that helper for the Phase 4D measurement).
+///
+/// Match finding uses a 3-symbol hash chain over the lookback window (Phase 4D).
+/// Ties keep the nearest (smallest distance) match, matching the pre-4D reverse
+/// linear scan.
 fn greedy_lz77_events(
     events: &[(usize, u32)],
     min_length: u32,
     max_length: u32,
     dist_multiplier: u32,
 ) -> Vec<LzEvent> {
+    let lookback = residual_lz77_lookback(dist_multiplier);
+    greedy_lz77_events_lookback(events, min_length, max_length, dist_multiplier, lookback)
+}
+
+/// Same as [`greedy_lz77_events`] with an explicit lookback (tests / measurement).
+fn greedy_lz77_events_lookback(
+    events: &[(usize, u32)],
+    min_length: u32,
+    max_length: u32,
+    dist_multiplier: u32,
+    lookback: usize,
+) -> Vec<LzEvent> {
     let n = events.len();
     let mut out = Vec::with_capacity(n);
     let min_len = min_length as usize;
     let max_len = max_length as usize;
+    // Hash chain: head[bucket] = most recent position with that 3-value hash,
+    // prev[pos] = previous position in the same bucket (or NONE).
+    const NONE: u32 = u32::MAX;
+    const BUCKETS: usize = 4096;
+    let mut head = [NONE; BUCKETS];
+    let mut prev = vec![NONE; n];
     let mut i = 0usize;
     while i < n {
         let mut best_len = 0usize;
         let mut best_dist = 0usize; // 1-based
-        let search_start = i.saturating_sub(RESIDUAL_LZ77_LOOKBACK);
-        for start in (search_start..i).rev() {
-            let dist = i - start;
-            if best_len == max_len {
-                break;
+        let search_start = i.saturating_sub(lookback);
+
+        if min_len >= 3 && i + 2 < n {
+            // Walk the chain of positions that share the same first three
+            // residual values; extend each candidate. Only distances inside
+            // the lookback window are accepted.
+            let h = residual_lz77_hash3(events, i);
+            let mut pos = head[h];
+            while pos != NONE {
+                let start = pos as usize;
+                if start < search_start {
+                    break;
+                }
+                let dist = i - start;
+                // Same first three by construction of the hash chain (verify
+                // in case of collision).
+                if events.get(start).map(|e| e.1) == events.get(i).map(|e| e.1)
+                    && events.get(start + 1).map(|e| e.1) == events.get(i + 1).map(|e| e.1)
+                    && events.get(start + 2).map(|e| e.1) == events.get(i + 2).map(|e| e.1)
+                {
+                    let mut len = 3usize;
+                    while len < max_len
+                        && i + len < n
+                        && events.get(start + len).map(|e| e.1) == events.get(i + len).map(|e| e.1)
+                    {
+                        len += 1;
+                    }
+                    // Strictly longer wins; equal length keeps nearer match
+                    // (chain walks newest → oldest).
+                    if len >= min_len && len > best_len {
+                        best_len = len;
+                        best_dist = dist;
+                        if best_len == max_len {
+                            break;
+                        }
+                    }
+                }
+                pos = prev[start];
             }
-            if events.get(start).map(|e| e.1) != events.get(i).map(|e| e.1) {
-                continue;
-            }
-            let mut len = 1usize;
-            while len < max_len
-                && i + len < n
-                && events.get(start + len).map(|e| e.1) == events.get(i + len).map(|e| e.1)
-            {
-                len += 1;
-            }
-            if len >= min_len && len > best_len {
-                best_len = len;
-                best_dist = dist;
+        } else {
+            // Tail / short min_length: linear reverse scan (rare).
+            for start in (search_start..i).rev() {
+                let dist = i - start;
+                if best_len == max_len {
+                    break;
+                }
+                if events.get(start).map(|e| e.1) != events.get(i).map(|e| e.1) {
+                    continue;
+                }
+                let mut len = 1usize;
+                while len < max_len
+                    && i + len < n
+                    && events.get(start + len).map(|e| e.1) == events.get(i + len).map(|e| e.1)
+                {
+                    len += 1;
+                }
+                if len >= min_len && len > best_len {
+                    best_len = len;
+                    best_dist = dist;
+                }
             }
         }
+
         if best_len >= min_len {
             let ctx = events.get(i).map_or(0, |e| e.0);
             let Ok(raw_distance) = encode_raw_distance(best_dist as u64, dist_multiplier) else {
                 let (ctx, value) = events.get(i).copied().unwrap_or((0, 0));
                 out.push(LzEvent::Lit { ctx, value });
+                insert_lz77_chain(events, i, &mut head, &mut prev);
                 i += 1;
                 continue;
             };
@@ -2080,14 +2155,49 @@ fn greedy_lz77_events(
                 length: u32::try_from(best_len).unwrap_or(max_length),
                 raw_distance,
             });
+            // Insert every position covered by the copy so later matches can
+            // land inside the expanded history (decoder expands the same way).
+            for k in 0..best_len {
+                insert_lz77_chain(events, i + k, &mut head, &mut prev);
+            }
             i += best_len;
         } else {
             let (ctx, value) = events.get(i).copied().unwrap_or((0, 0));
             out.push(LzEvent::Lit { ctx, value });
+            insert_lz77_chain(events, i, &mut head, &mut prev);
             i += 1;
         }
     }
     out
+}
+
+/// 3-symbol residual hash for the LZ77 chain (bucketed).
+fn residual_lz77_hash3(events: &[(usize, u32)], i: usize) -> usize {
+    let a = events.get(i).map_or(0, |e| e.1);
+    let b = events.get(i + 1).map_or(0, |e| e.1);
+    let c = events.get(i + 2).map_or(0, |e| e.1);
+    let mut h = a
+        .wrapping_mul(0x9e37_79b9)
+        .wrapping_add(b.wrapping_mul(0x85eb_ca6b))
+        .wrapping_add(c.wrapping_mul(0xc2b2_ae35));
+    h ^= h >> 16;
+    (h as usize) & 4095
+}
+
+fn insert_lz77_chain(
+    events: &[(usize, u32)],
+    pos: usize,
+    head: &mut [u32; 4096],
+    prev: &mut [u32],
+) {
+    if pos + 2 >= events.len() {
+        return;
+    }
+    let h = residual_lz77_hash3(events, pos);
+    if let Some(slot) = prev.get_mut(pos) {
+        *slot = head[h];
+    }
+    head[h] = pos as u32;
 }
 
 fn seed_empty_contexts(census: &mut TokenCensus, num_contexts: usize, force_all: bool) {
@@ -2811,6 +2921,156 @@ mod tests {
             }
         }
         assert_eq!(expanded, vec![0u32; 40]);
+    }
+
+    #[test]
+    fn residual_lz77_lookback_stays_at_256() {
+        // Honest-negative: row-sized expansion was measured and rejected.
+        assert_eq!(residual_lz77_lookback(0), 256);
+        assert_eq!(residual_lz77_lookback(128), 256);
+        assert_eq!(residual_lz77_lookback(512), 256);
+        assert_eq!(residual_lz77_lookback(1024), 256);
+    }
+
+    #[test]
+    fn greedy_lz77_can_use_explicit_lookback_for_vertical_matches() {
+        // Production lookback is 256, but the lookback-parameterized finder
+        // must still be able to take a vertical match when the window is
+        // widened (keeps the measurement path honest for a later revisit).
+        let width = 400usize;
+        let mut events = Vec::with_capacity(width * 2);
+        for x in 0..width {
+            let mut h = x as u32;
+            h ^= h >> 16;
+            h = h.wrapping_mul(0x7feb_352d);
+            h ^= h >> 15;
+            events.push((0usize, h | 1));
+        }
+        for x in 0..width {
+            events.push(events[x]);
+        }
+        let coded = greedy_lz77_events_lookback(&events, 3, 200, width as u32, width);
+        let has_vertical = coded.iter().any(|e| match *e {
+            LzEvent::Copy {
+                length,
+                raw_distance,
+                ..
+            } => {
+                let distance = u64::from(raw_distance).saturating_sub(119);
+                distance == width as u64 && length >= 3
+            }
+            LzEvent::Lit { .. } => false,
+        });
+        assert!(
+            has_vertical,
+            "explicit lookback=width must find vertical copy; events={}",
+            coded.len()
+        );
+        let small = greedy_lz77_events_lookback(&events, 3, 200, width as u32, 256);
+        let small_vertical = small.iter().any(|e| match *e {
+            LzEvent::Copy { raw_distance, .. } => {
+                u64::from(raw_distance).saturating_sub(119) == width as u64
+            }
+            LzEvent::Lit { .. } => false,
+        });
+        assert!(
+            !small_vertical,
+            "lookback 256 must not reach distance {width}"
+        );
+    }
+
+    #[test]
+    fn hash_chain_lz77_matches_linear_scan_on_patterns() {
+        // Build a mixed residual stream and prove the production hash-chain
+        // finder agrees with a pure reverse linear scan at the same lookback.
+        let mut events = Vec::new();
+        for _ in 0..8 {
+            for v in 0..64u32 {
+                events.push((0usize, v));
+            }
+        }
+        for _ in 0..100 {
+            events.push((0usize, 7));
+        }
+        let width = 64u32;
+        let lookback = residual_lz77_lookback(width);
+        let chain = greedy_lz77_events_lookback(&events, 3, 34, width, lookback);
+        let linear = greedy_lz77_events_linear(&events, 3, 34, width, lookback);
+        assert_eq!(
+            format_lz_events(&chain),
+            format_lz_events(&linear),
+            "hash-chain must match reverse linear scan"
+        );
+    }
+
+    /// Pre-4D reverse linear scan (reference for hash-chain equivalence).
+    fn greedy_lz77_events_linear(
+        events: &[(usize, u32)],
+        min_length: u32,
+        max_length: u32,
+        dist_multiplier: u32,
+        lookback: usize,
+    ) -> Vec<LzEvent> {
+        let n = events.len();
+        let mut out = Vec::with_capacity(n);
+        let min_len = min_length as usize;
+        let max_len = max_length as usize;
+        let mut i = 0usize;
+        while i < n {
+            let mut best_len = 0usize;
+            let mut best_dist = 0usize;
+            let search_start = i.saturating_sub(lookback);
+            for start in (search_start..i).rev() {
+                if best_len == max_len {
+                    break;
+                }
+                if events.get(start).map(|e| e.1) != events.get(i).map(|e| e.1) {
+                    continue;
+                }
+                let mut len = 1usize;
+                while len < max_len
+                    && i + len < n
+                    && events.get(start + len).map(|e| e.1) == events.get(i + len).map(|e| e.1)
+                {
+                    len += 1;
+                }
+                if len >= min_len && len > best_len {
+                    best_len = len;
+                    best_dist = i - start;
+                }
+            }
+            if best_len >= min_len {
+                let ctx = events.get(i).map_or(0, |e| e.0);
+                if let Ok(raw_distance) = encode_raw_distance(best_dist as u64, dist_multiplier) {
+                    out.push(LzEvent::Copy {
+                        ctx,
+                        length: u32::try_from(best_len).unwrap_or(max_length),
+                        raw_distance,
+                    });
+                    i += best_len;
+                    continue;
+                }
+            }
+            let (ctx, value) = events.get(i).copied().unwrap_or((0, 0));
+            out.push(LzEvent::Lit { ctx, value });
+            i += 1;
+        }
+        out
+    }
+
+    fn format_lz_events(events: &[LzEvent]) -> String {
+        events
+            .iter()
+            .map(|e| match *e {
+                LzEvent::Lit { ctx, value } => format!("L{ctx}:{value}"),
+                LzEvent::Copy {
+                    ctx,
+                    length,
+                    raw_distance,
+                } => format!("C{ctx}:{length}@{raw_distance}"),
+            })
+            .collect::<Vec<_>>()
+            .join(",")
     }
 
     #[test]

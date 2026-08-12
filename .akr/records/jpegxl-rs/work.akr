@@ -587,6 +587,81 @@ record jpegxl-rs.work.arch-phase4c-global-ma-tree/1 : work {
     part_of [ @jpegxl-rs.track.encoder-optimization ]
 }
 
+record jpegxl-rs.work.arch-phase4d-lz77-search-align/1 : work {
+    title "Phase 4D: align Exact-tier LZ77 pricing with emission; measure lookback"
+    state active
+    scope [
+        path "JPXL/crates/jpxl-encode/src/lossless.rs",
+        path "JPXL/crates/jpxl-encode/src/modular/mod.rs",
+        path "JPXL/crates/jpxl-encode/tests/**"
+    ]
+    intent """
+        Close the modular residual LZ77 search/emission mismatch and finish the Phase 4
+        optional LZ77 tail.
+
+        Known gaps (from Phase 4A incidental finding and the original 4D scope):
+
+        1. Search alignment (density): plan_for Exact-tier finalist pricing constructs
+           ModularSource with allow_lz77=false, while final emission always uses true
+           (lib.rs encode_codestream_with_plan). Ranking can miss modes that only win
+           once residual LZ77 is priced (palette index runs are the documented case).
+           Cheap-tier ranking stays LZ77-free (Shannon residual estimate; Exact re-prices
+           finalists). Flip Exact finalists to allow_lz77=true so ranking matches the
+           emit path.
+
+        2. Lookback (speed/density, optional after measurement): greedy_lz77_events uses
+           a 256-entry linear reverse scan (RESIDUAL_LZ77_LOOKBACK). Measure whether a
+           hash-chain (same lookback, same greedy longest-match rule) is byte-identical
+           and faster; separately measure whether a larger lookback shrinks streams under
+           the optimization correctness gates (equal-or-better size if match set changes).
+
+        Not on the wall-time hot path for plan_for cheap scans (phase4-order-correction);
+        primary acceptance is density/ranking honesty and pixel identity, with speed as
+        a secondary observation.
+
+        Order: measure mismatch and lookback impact first; promote only what wins or is
+        neutral on size with dual-oracle decode.
+        """
+    acceptance {
+        check pixel-identity {
+            statement """
+                Lossless streams round-trip exact samples via jpxl-decode; djxl when
+                available on PATH also matches source samples.
+                """
+            method command
+        }
+        check policy-decision {
+            statement """
+                Production default either promotes the aligned Exact-tier LZ77 pricing
+                (and any lookback change that won measurement) or records an honest
+                negative; remaining deferred pieces named.
+                """
+            method observation
+        }
+        check search-lz77-aligned {
+            statement """
+                Exact-tier plan_for finalist pricing uses allow_lz77=true so residual
+                stream costs match emission's LZ77 gate; documented with a fixture where
+                misaligned search previously under-priced a non-LZ77 path or left size
+                on the table.
+                """
+            method command
+        }
+        check size-non-regress {
+            statement """
+                Default and full-search modular encodes are no larger than pre-4D on the
+                0.8/4/12MP photo corpus (and synthetic control fixtures); equal-or-smaller
+                is the bar when lookback or ranking changes match sets.
+                """
+            method command
+        }
+    }
+    after [ @jpegxl-rs.work.arch-phase4c-global-ma-tree ]
+    depends_on [ @jpegxl-rs.work.arch-phase4c-global-ma-tree ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+    supported_by [ @jpegxl-rs.assessment.phase4-order-correction ]
+}
+
 record jpegxl-rs.work.arch-phase4e-modular-effort-ramp/1 : work {
     title "Phase 4E: lossless modular effort ramp, then reoriented to a lean default (the search above e1 is chaff)"
     state completed

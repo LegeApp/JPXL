@@ -701,6 +701,11 @@ fn plan_by_full_search(
     // run (effort 1 drops both; effort 2 keeps only palette), because the
     // exact re-price is then pure overhead — the emitted tree is `best_tree`
     // regardless of this number.
+    //
+    // Phase 4D: Exact finalists use allow_lz77=true so ranking sees the same
+    // residual LZ77 gate as final emission (`encode_codestream_with_plan`).
+    // Cheap-tier trials stay LZ77-free via `total_cost_shared` (Shannon residual
+    // estimate only).
     if budget.try_palette || budget.try_squeeze {
         let ma_source = modular::ModularSource::direct_shared(
             width,
@@ -708,7 +713,7 @@ fn plan_by_full_search(
             &shared_score,
             false,
             best_tree.clone(),
-            false,
+            true,
         );
         best_cost = total_cost_source(&ma_source, group_size_shift, PriceTier::Exact)?;
     }
@@ -724,7 +729,7 @@ fn plan_by_full_search(
     {
         let tree = MaTree::single_leaf(Predictor::Zero);
         let cost = total_cost_source(
-            &modular::ModularSource::from_palette(fwd.clone(), tree.clone(), false),
+            &modular::ModularSource::from_palette(fwd.clone(), tree.clone(), true),
             group_size_shift,
             PriceTier::Exact,
         )?;
@@ -748,7 +753,7 @@ fn plan_by_full_search(
             score_planes,
             false, // RCT already in score_planes samples
             tree.clone(),
-            false,
+            true,
         )?;
         let source = if use_rct {
             let mut s = source;
@@ -1283,21 +1288,53 @@ mod tests {
     }
 
     #[test]
+    fn exact_finalist_pricing_sees_residual_lz77() {
+        // Phase 4D: Exact-tier sources must use allow_lz77=true so ranking
+        // matches emission. On a multi-value repeating residual pattern the
+        // LZ77 stream is strictly shorter than plain ANS (constant zeros are
+        // near-free under plain ANS and do not adopt LZ77). Pricing with
+        // allow_lz77=false would over-estimate that finalist.
+        use jpxl_bitstream::BitWriter;
+        let width = 32u32;
+        let height = 40u32;
+        // Zero predictor ⇒ residual == sample. Period-32 values repeated for
+        // 40 rows match residual_lz77_beats_plain_on_a_repeating_multi_value_pattern.
+        let plane: Plane = (0..height)
+            .flat_map(|_| (0..width).map(|x| x as i32))
+            .collect();
+        let tree = MaTree::single_leaf(Predictor::Zero);
+        let with = modular::ModularSource::direct(
+            width,
+            height,
+            &[plane.clone()],
+            false,
+            tree.clone(),
+            true,
+        );
+        let without = modular::ModularSource::direct(width, height, &[plane], false, tree, false);
+        let mut w_lz = BitWriter::counting();
+        modular::write_residual_payload_full(&mut w_lz, &with).expect("lz");
+        let mut w_plain = BitWriter::counting();
+        modular::write_residual_payload_full(&mut w_plain, &without).expect("plain");
+        assert!(
+            w_lz.bit_len() < w_plain.bit_len(),
+            "allow_lz77=true must price a repeating residual cheaper than plain: {} vs {}",
+            w_lz.bit_len(),
+            w_plain.bit_len()
+        );
+    }
+
+    #[test]
     fn plan_for_adopts_palette_on_scattered_few_colours() {
         // Few unique levels with NO exploitable structure between
         // neighbours -> every predictor loses, including Phase 4A's
         // Weighted, AND the index sequence has no runs an LZ77 pass could
-        // exploit either (the search's cost model deliberately excludes
-        // LZ77 -- see `ModularSource::from_palette`'s `allow_lz77: false`
-        // in `plan_for` vs `true` in the real final emission, a known,
-        // pre-existing, Phase-4D-scoped gap; a weaker scatter than a full
-        // avalanche hash left enough residual periodicity for LZ77 to make
-        // the real emission cheaper than the search predicted, which made
-        // an earlier version of this fixture flaky once Weighted became a
-        // candidate strong enough to expose the gap). A murmur3-style
-        // finalizer avalanches (x, y) well enough that neither prediction
-        // nor LZ77 can find structure, so exact-price palette should still
-        // win cleanly.
+        // exploit either. Phase 4D prices Exact finalists with allow_lz77
+        // (matching emission); a weaker scatter than a full avalanche hash
+        // left enough residual periodicity for LZ77 to distort ranking in
+        // older fixtures. A murmur3-style finalizer avalanches (x, y) well
+        // enough that neither prediction nor LZ77 can find structure, so
+        // exact-price palette should still win cleanly.
         let width = 48u32;
         let height = 48u32;
         let levels = [10i32, 80, 160, 240];
