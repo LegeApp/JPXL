@@ -170,6 +170,112 @@ record jpegxl-rs.observation.distortion-currency-misprices-frequency-2026-08-12/
     }
 }
 
+record jpegxl-rs.observation.donor-weight-wins-at-low-rate-and-fades-2026-08-12/1 : observation {
+    title "The standard's own DCT8x8 matrix donates the best frequency weight yet: a large low-rate win fading to a no-op by 4 bpp, which points at the quantizer"
+    state superseded
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/src/csf.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/request.rs"
+    ]
+    statement """
+        OPTION 1 IS CLOSED, AND CLOSING IT EXPLAINS PHASE 6.3. The canonical DCT-domain per-coefficient models -- Ahumada & Peterson (1992), Peterson, Ahumada & Watson (1993), Watson's DCTune (1993), Nill (1985) -- are all detection-threshold models: band-pass with a low-frequency dip and a high-frequency rolloff HARDER than Mannos-Sakrison. AP92 predicts about 0.037 of peak sensitivity at Nyquist where measurement says about 1.05, roughly 28x off against Mannos-Sakrison's 3.1x, so adopting any of them would be strictly worse than what 6.3 already rejected. Georgeson & Sullivan (1975) supply the reason: above threshold, perceived contrast becomes largely independent of spatial frequency (contrast constancy), so a detection CSF -- which describes seeing a grating on a blank field -- is the wrong regime for judging quantization error in real content, where low-frequency error is highly visible. That is why the measured curve has no low-frequency dip.
+
+        THE CANDIDATE. The I.2.5 default dequantization matrices are a distortion allocation rather than a detection threshold. Scored against the measured target, 1/step^2 from the DCT8x8 matrix gives median 1.41x, against the CSF's 2.06x and a 1.18x ceiling for a curve fitted directly to butteraugli -- so it captures most of the available improvement without fitting to the metric, and option 3 was not pursued. But using each size's own matrix does NOT work: that is the 1/step^2 weighting Phase 6.2 already falsified, because the matrices are per-size tuned and their step shapes disagree 3.34x across sizes against the measured curve's 1.15x. Reading ONE size's matrix as a curve in normalised radial frequency and resampling it onto every transform's grid repairs that by construction. Which size donates was settled by measurement: DCT8x8 1.43x, DCT16x16 1.90x, DCT32x32 2.62x, geometric mean of all three 2.34x -- averaging is worse than DCT8x8 alone because the steeper 16/32 curves drag it off target.
+
+        TWO GATING CORRECTIONS, both needed to read Phase 6.3 fairly. Its 1.35x worst-bin tolerance was unachievable by its entire model class: the best smooth two-parameter shape FITTED to the target cannot beat 1.72x worst-bin, so that gate measured only that a smooth curve cannot reproduce two artifact bins. And worst-bin is dominated by f below 0.1 and above 0.9, so median is the primary statistic and worst-interior the secondary.
+
+        AGREEMENT GATE PASSES. Scored against the shipped tables (dumped by tests/dump_weights.rs, not restated in Python): median 1.41x against a pre-registered 1.60x limit, worst-interior 2.02x against 2.20x. Recorded explicitly as an implementation check and NOT a predictive success, since the donor already scored 1.41x/2.02x on archived data before any code was written. Worst-overall 4.03x is the documented flat-extrapolation limit -- the DCT8x8 donor spans only f in [0.088, 0.875], so larger transforms' corner cells clamp rather than continuing to fall.
+
+        SCREEN: PREDICTION CONFIRMED, CONTRACT B STILL FAILS. Across 28 exactly-matched-rate cells, pooled butteraugli is better in 17 of 28 (mean -0.17%) and SSIMULACRA2 in 18 of 28 (mean +1.37) -- the first weight on this track to be net-positive on both. The pre-registered prediction holds: the 2 bpp arm halved from Phase 6.3's +13.10% mean to +6.74%, exactly as the improvement in high-frequency pricing (CSF 0.41x of target, donor 0.65x) predicted. But 11 of 28 cells regress on butteraugli, so promotion fails and production stays Flat.
+
+        READING THE 2 BPP MEAN HONESTLY. Its two regressors, s2/2 (+30.7%) and s5/2 (+24.7%), both sit at already-excellent absolute quality (butteraugli 1.6885 and 1.1264, so +0.52 and +0.28 absolute), and the 2 bpp MEDIAN is -0.03% -- the mean is an outlier effect, not a broad regression. That is a caveat in the donor's favour and must not be used to wave the failure away: a +30.7% relative regression on a scene the encoder was handling well is still a real regression.
+
+        THE RATE STRUCTURE IS THE FINDING. The donor is a large win at 0.5 bpp (SSIMULACRA2 better on every scene by +3.45 to +5.97, butteraugli 5 of 7 with a best of -12.3%), a clear win at 1 bpp (SSIMULACRA2 7 of 7), neutral at 2 bpp, and very nearly a no-op at 4 bpp (most cells within 0.1% butteraugli). That gradient is mechanistically consistent: the weight matters most where the fewest coefficients survive quantization, because that is where the cover decision changes what is kept; at 4 bpp almost nothing is zeroed, so pricing barely changes what is emitted.
+
+        WHERE THIS POINTS. Three phases now agree: 6.2b re-priced the transform-size axis (null), 6.3 re-priced frequency (rate-split), 6.5 re-priced frequency better (fades to nothing as rate rises). All three are bounded by HfQuantizer::choose picking the nearest reconstruction level rather than an RD-optimal one, so cover and CfL are the only decisions any weight can move. The next round belongs on the quantizer.
+
+        A rate-conditioned policy is the obvious next screen and the obvious trap: the donor is strongly positive below 1 bpp and inert above 2, so switching on rate would likely pass a corpus gate -- but 'helps at low rate' is a description, not a mechanism, and Phase 5 is full of content-dependent switches that did not survive. If screened, the mechanism (how many coefficients survive quantization) should be measured directly rather than proxied by the rate request.
+
+        One unexploited finding: Ahumada-Peterson's oblique-effect term r + (1-r)cos^2(theta), r = 0.7, correlates with the Phase 6.2 data at +0.475 radius-controlled over 1322 cells -- diagonals ARE less sensitive -- but the effect is not constant, running 1.11-1.39 at f = 0.10-0.25 (diagonals more sensitive) and 0.49-0.68 at f = 0.55-0.70. AP's constant r is wrong in both directions and the literature does not supply a frequency-dependent form. Deliberately kept out of this screen so the donor's contribution stayed isolated.
+
+        Full tables, the model comparison and the donor-choice matrix: JPXL/docs/experiments/2026-08-12-quant-donor-frequency-weight.md. Raw rows, driver and checker: .agent/scratch/phase6-5-quant-donor-2026-08-12/.
+        """
+    observed_at git:286ad71af4f3f732adadcb7776d918a7b3d8f08b
+    method command
+    watches [
+        "JPXL/crates/jpxl-encode-policy/src/csf.rs",
+        "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        "JPXL/crates/jpxl-encode-policy/src/request.rs"
+    ]
+    derived_from [
+        @jpegxl-rs.observation.frequency-is-the-live-lever-csf-is-the-wrong-curve-2026-08-12
+    ]
+    verified_by [
+        @jpegxl-rs.evidence.phase6-5-agreement-pass-2026-08-12,
+        @jpegxl-rs.evidence.phase6-5-donor-implementation-2026-08-12,
+        @jpegxl-rs.evidence.phase6-5-quality-screen-2026-08-12
+    ]
+    source {
+        kind internal
+        role evidence
+        path "JPXL/docs/experiments/2026-08-12-quant-donor-frequency-weight.md"
+        use """
+            The literature closure, the model and donor comparison matrices, both gates and the 28-cell rate-split screen.
+            """
+    }
+}
+
+record jpegxl-rs.observation.donor-weight-wins-at-low-rate-and-fades-2026-08-12/2 : observation {
+    title "The standard's own DCT8x8 matrix donates the best frequency weight yet: a large low-rate win fading to a no-op by 4 bpp, which points at the quantizer"
+    state verified
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/src/csf.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/request.rs"
+    ]
+    statement """
+        OPTION 1 IS CLOSED, AND CLOSING IT EXPLAINS PHASE 6.3. The canonical DCT-domain per-coefficient models -- Ahumada & Peterson (1992), Peterson, Ahumada & Watson (1993), Watson's DCTune (1993), Nill (1985) -- are all detection-threshold models: band-pass with a low-frequency dip and a high-frequency rolloff HARDER than Mannos-Sakrison. AP92 predicts about 0.037 of peak sensitivity at Nyquist where measurement says about 1.05, roughly 28x off against Mannos-Sakrison's 3.1x, so adopting any of them would be strictly worse than what 6.3 already rejected. Georgeson & Sullivan (1975) supply the reason: above threshold, perceived contrast becomes largely independent of spatial frequency (contrast constancy), so a detection CSF -- which describes seeing a grating on a blank field -- is the wrong regime for judging quantization error in real content, where low-frequency error is highly visible. That is why the measured curve has no low-frequency dip.
+
+        THE CANDIDATE. The I.2.5 default dequantization matrices are a distortion allocation rather than a detection threshold. Scored against the measured target, 1/step^2 from the DCT8x8 matrix gives median 1.41x, against the CSF's 2.06x and a 1.18x ceiling for a curve fitted directly to butteraugli -- so it captures most of the available improvement without fitting to the metric, and option 3 was not pursued. But using each size's own matrix does NOT work: that is the 1/step^2 weighting Phase 6.2 already falsified, because the matrices are per-size tuned and their step shapes disagree 3.34x across sizes against the measured curve's 1.15x. Reading ONE size's matrix as a curve in normalised radial frequency and resampling it onto every transform's grid repairs that by construction. Which size donates was settled by measurement: DCT8x8 1.43x, DCT16x16 1.90x, DCT32x32 2.62x, geometric mean of all three 2.34x -- averaging is worse than DCT8x8 alone because the steeper 16/32 curves drag it off target.
+
+        TWO GATING CORRECTIONS, both needed to read Phase 6.3 fairly. Its 1.35x worst-bin tolerance was unachievable by its entire model class: the best smooth two-parameter shape FITTED to the target cannot beat 1.72x worst-bin, so that gate measured only that a smooth curve cannot reproduce two artifact bins. And worst-bin is dominated by f below 0.1 and above 0.9, so median is the primary statistic and worst-interior the secondary.
+
+        AGREEMENT GATE PASSES. Scored against the shipped tables (dumped by tests/dump_weights.rs, not restated in Python): median 1.41x against a pre-registered 1.60x limit, worst-interior 2.02x against 2.20x. Recorded explicitly as an implementation check and NOT a predictive success, since the donor already scored 1.41x/2.02x on archived data before any code was written. Worst-overall 4.03x is the documented flat-extrapolation limit -- the DCT8x8 donor spans only f in [0.088, 0.875], so larger transforms' corner cells clamp rather than continuing to fall.
+
+        SCREEN: PREDICTION CONFIRMED, CONTRACT B STILL FAILS. Across 28 exactly-matched-rate cells, pooled butteraugli is better in 17 of 28 (mean -0.17%) and SSIMULACRA2 in 18 of 28 (mean +1.37) -- the first weight on this track to be net-positive on both. The pre-registered prediction holds: the 2 bpp arm halved from Phase 6.3's +13.10% mean to +6.74%, exactly as the improvement in high-frequency pricing (CSF 0.41x of target, donor 0.65x) predicted. But 11 of 28 cells regress on butteraugli, so promotion fails and production stays Flat.
+
+        READING THE 2 BPP MEAN HONESTLY. Its two regressors, s2/2 (+30.7%) and s5/2 (+24.7%), both sit at already-excellent absolute quality (butteraugli 1.6885 and 1.1264, so +0.52 and +0.28 absolute), and the 2 bpp MEDIAN is -0.03% -- the mean is an outlier effect, not a broad regression. That is a caveat in the donor's favour and must not be used to wave the failure away: a +30.7% relative regression on a scene the encoder was handling well is still a real regression.
+
+        THE RATE STRUCTURE IS THE FINDING. The donor is a large win at 0.5 bpp (SSIMULACRA2 better on every scene by +3.45 to +5.97, butteraugli 5 of 7 with a best of -12.3%), a clear win at 1 bpp (SSIMULACRA2 7 of 7), neutral at 2 bpp, and very nearly a no-op at 4 bpp (most cells within 0.1% butteraugli). That gradient is mechanistically consistent: the weight matters most where the fewest coefficients survive quantization, because that is where the cover decision changes what is kept; at 4 bpp almost nothing is zeroed, so pricing barely changes what is emitted.
+
+        WHERE THIS POINTS. Three phases now agree: 6.2b re-priced the transform-size axis (null), 6.3 re-priced frequency (rate-split), 6.5 re-priced frequency better (fades to nothing as rate rises). All three are bounded by HfQuantizer::choose picking the nearest reconstruction level rather than an RD-optimal one, so cover and CfL are the only decisions any weight can move. The next round belongs on the quantizer.
+
+        A rate-conditioned policy is the obvious next screen and the obvious trap: the donor is strongly positive below 1 bpp and inert above 2, so switching on rate would likely pass a corpus gate -- but 'helps at low rate' is a description, not a mechanism, and Phase 5 is full of content-dependent switches that did not survive. If screened, the mechanism (how many coefficients survive quantization) should be measured directly rather than proxied by the rate request.
+
+        One unexploited finding: Ahumada-Peterson's oblique-effect term r + (1-r)cos^2(theta), r = 0.7, correlates with the Phase 6.2 data at +0.475 radius-controlled over 1322 cells -- diagonals ARE less sensitive -- but the effect is not constant, running 1.11-1.39 at f = 0.10-0.25 (diagonals more sensitive) and 0.49-0.68 at f = 0.55-0.70. AP's constant r is wrong in both directions and the literature does not supply a frequency-dependent form. Deliberately kept out of this screen so the donor's contribution stayed isolated.
+
+        Full tables, the model comparison and the donor-choice matrix: JPXL/docs/experiments/2026-08-12-quant-donor-frequency-weight.md. Raw rows, driver and checker: .agent/scratch/phase6-5-quant-donor-2026-08-12/.
+        """
+    observed_at git:286ad71af4f3f732adadcb7776d918a7b3d8f08b
+    method command
+    watches [
+        "JPXL/crates/jpxl-encode-policy/src/csf.rs",
+        "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        "JPXL/crates/jpxl-encode-policy/src/request.rs"
+    ]
+    derived_from [
+        @jpegxl-rs.observation.frequency-is-the-live-lever-csf-is-the-wrong-curve-2026-08-12
+    ]
+    resolves [ @jpegxl-rs.question.which-perceptual-weight-crosses-the-cleanroom-line ]
+    supersedes [ @jpegxl-rs.observation.donor-weight-wins-at-low-rate-and-fades-2026-08-12/1 ]
+    verified_by [
+        @jpegxl-rs.evidence.phase6-5-agreement-pass-2026-08-12,
+        @jpegxl-rs.evidence.phase6-5-donor-implementation-2026-08-12,
+        @jpegxl-rs.evidence.phase6-5-quality-screen-2026-08-12
+    ]
+}
+
 record jpegxl-rs.observation.epf-flip-points/1 : observation {
     title "J.4 EPF has four flip points"
     state verified

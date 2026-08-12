@@ -1584,6 +1584,42 @@ record jpegxl-rs.evidence.phase6-3-scorer-recomputation-2026-08-12/1 : evidence 
         """
 }
 
+record jpegxl-rs.evidence.phase6-5-agreement-pass-2026-08-12/1 : evidence {
+    title "Phase 6.5 agreement gate passes at median 1.41x, worst-interior 2.02x"
+    state verified
+    result pass
+    method observation
+    observed_at git:286ad71af4f3f732adadcb7776d918a7b3d8f08b
+    artifact ".agent/scratch/phase6-5-quant-donor-2026-08-12/agreement.txt"
+    summary """
+        Scored against the shipped weight tables (dumped by tests/dump_weights.rs rather than restated in Python) the donor gives median ratio 1.41x against a pre-registered 1.60x limit and worst-interior 2.02x against 2.20x: PASS, reproducing the planning analysis exactly. Recorded explicitly as an implementation check and NOT a predictive success, because the donor already scored 1.41x/2.02x on archived data before any code was written. Worst-overall 4.03x is reported ungated and is the documented flat-extrapolation limit: the DCT8x8 donor spans only f in [0.088, 0.875], so DCT16x16 and DCT32x32 cells above 0.875 clamp instead of continuing to fall
+        """
+}
+
+record jpegxl-rs.evidence.phase6-5-donor-implementation-2026-08-12/1 : evidence {
+    title "Phase 6.5 donor implemented, flat still bit-identical, tables match their published source"
+    state verified
+    result pass
+    method command
+    observed_at git:286ad71af4f3f732adadcb7776d918a7b3d8f08b
+    command "cargo test --workspace"
+    summary """
+        Flat remains the default and encodes byte-identically to an explicitly-flat request while both weighted modes provably change the stream; the_weight_tables_match_a_direct_recomputation_of_the_weighted_term checks Csf and QuantDonor against their published tables cell for cell on each transform's own grid and asserts each is mean-1 over the non-LLF cells so lambda stays calibrated; csf module tests pin the donor curve as sorted, falling by more than half across its support, and spanning exactly f in [0.088, 0.875]; the flat encode of test-set/20240501_110934 at 1 bpp still reproduces 97,539 bytes, SSIMULACRA2 62.5738 and butteraugli 5.0325; full workspace suite green and cargo fmt clean
+        """
+}
+
+record jpegxl-rs.evidence.phase6-5-quality-screen-2026-08-12/1 : evidence {
+    title "Phase 6.5 screen: prediction confirmed, best result on the track, Contract B still not cleared"
+    state verified
+    result pass
+    method observation
+    observed_at git:286ad71af4f3f732adadcb7776d918a7b3d8f08b
+    artifact "JPXL/docs/experiments/2026-08-12-quant-donor-frequency-weight.md"
+    summary """
+        28 exactly-matched-rate cells (7 test-set photographs at 0.5/1/2/4 bpp, donor encoded to the flat arm's achieved byte count, both decoded with the pinned djxl). Pooled: butteraugli better in 17 of 28, mean -0.17%; SSIMULACRA2 better in 18 of 28, mean +1.37. By rate: 0.5 bpp butteraugli 5/7 better (mean -4.89%, best -12.3%) with SSIMULACRA2 better on all 7 (mean +4.85); 1 bpp butteraugli 4/7 (mean -1.86%) with SSIMULACRA2 7/7 (mean +0.70); 2 bpp mean +6.74% but median -0.03%, the mean carried by two outliers at already-excellent absolute quality (s2/2 +30.7% on butteraugli 1.6885, s5/2 +24.7% on 1.1264); 4 bpp effectively a no-op (mean -0.69%, most cells within 0.1%). The pre-registered prediction is CONFIRMED: the 2 bpp arm halved from Phase 6.3's +13.10% mean to +6.74%, as the high-frequency pricing improvement from 0.41x to 0.65x of target predicted. Contract B still fails (11 of 28 cells regress on butteraugli), so production remains CoverFrequencyWeight::Flat
+        """
+}
+
 record jpegxl-rs.evidence.retire-handoff-durable-facts-2026-08-11/1 : evidence {
     title "HANDOFF permanent facts are represented in AKR"
     state verified

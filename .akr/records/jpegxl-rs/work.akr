@@ -2219,7 +2219,7 @@ record jpegxl-rs.work.arch-phase6-4-chroma-controlled-operating-point/1 : work {
 
 record jpegxl-rs.work.arch-phase6-5-quant-donor-weight/1 : work {
     title "Phase 6.5: a frequency weight donated by the standard's own DCT8x8 matrix"
-    state active
+    state completed
     scope [
         path "JPXL/crates/jpxl-cli/src/main.rs",
         path "JPXL/crates/jpxl-encode-policy/src/csf.rs",
@@ -2248,24 +2248,28 @@ record jpegxl-rs.work.arch-phase6-5-quant-donor-weight/1 : work {
                 The implemented donor reproduces the planning analysis against the measured target: median ratio at or below 1.60x pooled over all three sizes and worst-interior at or below 2.20x. This gate catches an implementation that fails to reproduce the analysis; it cannot claim predictive success, because the donor already scored 1.41x/2.02x on archived data before any code was written.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.phase6-5-agreement-pass-2026-08-12/1 ]
         }
         check default-byte-identical {
             statement """
                 Flat remains the default and an explicitly-flat request encodes byte-identically to it, so the shipped objective is untouched; the flat encode of test-set/20240501_110934 at 1 bpp still reproduces 97,539 bytes, SSIMULACRA2 62.5738 and butteraugli 5.0325.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase6-5-donor-implementation-2026-08-12/1 ]
         }
         check donor-scorer-proof {
             statement """
                 Tests prove the table the scorer reads equals csf::quant_donor_weights cell for cell on each transform's own grid, that it is mean-1 over the non-LLF cells so lambda stays calibrated, and that the donor curve falls monotonically over its support.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase6-5-donor-implementation-2026-08-12/1 ]
         }
         check quality-screen {
             statement """
                 Matched-rate Butteraugli and SSIMULACRA2 across 7 scenes at 0.5, 1, 2 and 4 bpp, reported split by rate, decide whether the donor weight is promoted under Contract B or recorded as an honest negative; the pre-registered prediction that the 2 bpp arm improves markedly on Phase 6.3's +13.10% mean is reported as confirmed or falsified.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.phase6-5-quality-screen-2026-08-12/1 ]
         }
     }
     depends_on [ @jpegxl-rs.work.arch-phase6-3-frequency-weight-cover-objective ]

@@ -3,7 +3,7 @@ project jpegxl-rs
 
 record jpegxl-rs.question.which-perceptual-weight-crosses-the-cleanroom-line/1 : question {
     title "Where does the frequency weight's shape come from, now that a detection CSF is ruled out?"
-    state open
+    state superseded
     scope [ path "JPXL/crates/jpxl-encode-policy/src/csf.rs" ]
     question """
         Phase 6.3 established that frequency weighting drives the cover objective (butteraugli moves -16.4% to +32.4%, SSIMULACRA2 up to +4.37, against transform size's near-null) and that a Mannos-Sakrison detection CSF is the wrong curve, failing its pre-registered agreement check at 3.14x worst-bin ratio and r = 0.408. Measurement and screen agree on what the right curve looks like: far flatter at high frequency than a detection CSF, with no low-frequency dip.
@@ -25,4 +25,42 @@ record jpegxl-rs.question.which-perceptual-weight-crosses-the-cleanroom-line/1 :
         @jpegxl-rs.observation.frequency-is-the-live-lever-csf-is-the-wrong-curve-2026-08-12
     ]
     part_of [ @jpegxl-rs.track.encoder-optimization ]
+}
+
+record jpegxl-rs.question.which-perceptual-weight-crosses-the-cleanroom-line/2 : question {
+    title "Where does the frequency weight's shape come from, now that a detection CSF is ruled out?"
+    state resolved
+    scope [ path "JPXL/crates/jpxl-encode-policy/src/csf.rs" ]
+    question """
+        Phase 6.3 established that frequency weighting drives the cover objective (butteraugli moves -16.4% to +32.4%, SSIMULACRA2 up to +4.37, against transform size's near-null) and that a Mannos-Sakrison detection CSF is the wrong curve, failing its pre-registered agreement check at 3.14x worst-bin ratio and r = 0.408. Measurement and screen agree on what the right curve looks like: far flatter at high frequency than a detection CSF, with no low-frequency dip.
+
+        The obvious next step -- give the weight the measured shape -- crosses the line the workspace manifest draws around the butteraugli dependency: a table fitted to that metric's response makes this project's perceptual model a derivative of libjxl's rather than its own, with licence and provenance consequences. AGENTS.md section 2 makes that a decision to record before it is taken, not an implementation detail.
+
+        Three options, in the preference order Phase 6.3 recorded:
+
+        1. A distortion-visibility model from open literature rather than a detection CSF. Same clean-room standing as Phase 6.3, and the screen has now characterised what it must look like, so the search is well-posed rather than open-ended. Keeps the perceptual model this project's own.
+
+        2. A two-parameter analytic shape -- low-frequency plateau plus a gentle rolloff -- whose parameters are set from the encoder's own quantization geometry (the I.2.5 default matrices, whose per-size step ratios Phase 6.2 already measured) rather than from butteraugli, then checked against the Phase 6.2 measurement the same way Phase 6.3 checked Mannos-Sakrison.
+
+        3. Fit the measured curve, explicitly recorded as a decision that the perceptual model becomes libjxl-derived.
+
+        A fourth possibility the rate split raises: the 1 bpp arm is already a uniform SSIMULACRA2 win and a 5-of-7 butteraugli win, and the 2 bpp arm is where it fails. That is evidence the correct weight interacts with which coefficients survive quantization -- something no static table can capture, and a pointer at HfQuantizer::choose, which is still nearest-reconstruction rather than RD-optimal. The next round may belong on the quantizer rather than on a better table.
+        """
+    resolution """
+        Resolved by Phase 6.5 without crossing the line.
+
+        Option 1 is closed. The canonical DCT-domain per-coefficient models -- Ahumada & Peterson (1992), Peterson, Ahumada & Watson (1993), Watson's DCTune (1993), Nill (1985) -- are all detection-threshold models: band-pass with a low-frequency dip and a high-frequency rolloff HARDER than Mannos-Sakrison. AP92 predicts about 0.037 of peak sensitivity at Nyquist where measurement says about 1.05, roughly 28x off against Mannos-Sakrison's 3.1x, so adopting any of them would be strictly worse than what Phase 6.3 rejected. Georgeson & Sullivan (1975) explain why: above threshold, perceived contrast becomes largely independent of spatial frequency (contrast constancy), so a detection CSF -- which describes seeing a grating on a blank field -- is the wrong regime for judging quantization error in real content, where low-frequency error is highly visible.
+
+        Option 2 supplies the answer, in corrected form. The shape comes from the standard's own I.2.5 DCT8x8 matrix, read as a curve in normalised radial frequency and resampled onto every transform's grid -- NOT from each size's own matrix, which is the 1/step^2 weighting Phase 6.2 falsified, because the matrices are per-size tuned and disagree 3.34x across sizes. It scores median 1.41x against the measured target, against the CSF's 2.06x and the 1.18x ceiling of a curve fitted directly to butteraugli.
+
+        Option 3 is declined. The remaining 1.41x-to-1.18x margin does not justify making the perceptual model libjxl-derived. The model stays this project's own, sourced from the standard.
+
+        The fourth possibility this record raised -- that the right weight interacts with which coefficients survive quantization -- is now supported rather than speculative: Phase 6.5's donor is a large win at 0.5 bpp, clear at 1 bpp, neutral at 2 and a no-op at 4 bpp. Carried forward in jpegxl-rs.observation.donor-weight-wins-at-low-rate-and-fades-2026-08-12, whose conclusion is that the next round belongs on HfQuantizer::choose, still nearest-reconstruction rather than RD-optimal.
+        """
+    blocks [ @jpegxl-rs.work.arch-phase6-4-chroma-controlled-operating-point ]
+    derived_from [
+        @jpegxl-rs.observation.frequency-is-the-live-lever-csf-is-the-wrong-curve-2026-08-12
+    ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+    supersedes [ @jpegxl-rs.question.which-perceptual-weight-crosses-the-cleanroom-line/1 ]
 }
