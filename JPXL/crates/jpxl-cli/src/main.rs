@@ -56,6 +56,21 @@ Encode options:
 Lossy options (8-bit RGB only; either one selects the VarDCT path):
     --bpp <f>                     Target bits per pixel
     --target-bytes <n>            Target output size in bytes
+    --aq-mode <mode>              Per-block HF allocation: off (target-rate
+                                  default), masking, or uniform; research control
+    --aq-strength <f>             Activity-field strength; research control
+    --aq-clamp <f>                Activity-field clamp; research control
+    --aq-chroma <f>               Activity-field chroma weight; research control
+    --quant-lf <n>                Hold the LF quantizer at n and disable the
+                                  secondary LF fill; research control
+    --x-qm-scale <0..7>           X-channel QM exponent (default 2); research
+                                  chroma-allocation control
+    --b-qm-scale <0..7>           B-channel QM exponent (default 2); research
+                                  chroma-allocation control
+    --epf-iters <0..3>            Decoder EPF iteration count (target-rate
+                                  default 1); research control
+    --epf-sharpness <mode>        EPF sharpness plane: zero (fixed default) or
+                                  uniform7 (target-rate default); research control
 
     There is no `--distance`. cjxl's -d targets butteraugli; JPXL has no
     perceptual model, so its rate loop hits a *size*, not a visual quality.
@@ -292,7 +307,13 @@ fn cmd_boxes(args: &[String]) -> u8 {
 fn cmd_encode(args: &[String]) -> u8 {
     let mut options = jpxl_encode::EncodeOptions::default();
     let mut rate_target: Option<jpxl_encode_policy::RateTarget> = None;
+    let mut aq_mode: Option<jpxl_encode_policy::AqMode> = None;
     let mut aq_tuning = jpxl_encode_policy::AqTuning::default();
+    let mut fixed_quant_lf: Option<u32> = None;
+    let mut x_qm_scale: Option<u8> = None;
+    let mut b_qm_scale: Option<u8> = None;
+    let mut epf_iters: Option<u8> = None;
+    let mut epf_sharpness: Option<jpxl_encode_policy::EpfSharpnessMode> = None;
     let mut positional: Vec<&String> = Vec::new();
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
@@ -312,9 +333,25 @@ fn cmd_encode(args: &[String]) -> u8 {
             // Perceptual bit-allocation sweep knobs (lossy only). These shape
             // the adaptive-quantization field: how hard it reacts to activity,
             // how far it may swing, and how much chroma counts. They exist to
-            // be measured against `jpxl compare`'s perceptual metrics, because
-            // the shipped values came from the 8-bit x265 literature and have
-            // never been validated on this codec's output.
+            // be measured against `jpxl compare`'s perceptual metrics. Phase 4J
+            // found the single-pass masking field harmful. Phase 5G promoted
+            // Off for target-rate requests after a twelve-cell corpus gate;
+            // the explicit modes remain useful research controls.
+            "--aq-mode" => {
+                let Some(value) = rest.next() else {
+                    fail("`--aq-mode` needs one of: off, masking, uniform");
+                    return EXIT_ERROR;
+                };
+                aq_mode = Some(match value.as_str() {
+                    "off" => jpxl_encode_policy::AqMode::Off,
+                    "masking" => jpxl_encode_policy::AqMode::Masking,
+                    "uniform" => jpxl_encode_policy::AqMode::Uniform,
+                    _ => {
+                        fail("`--aq-mode` needs one of: off, masking, uniform");
+                        return EXIT_ERROR;
+                    }
+                });
+            }
             "--aq-strength" => {
                 let Some(v) = rest.next().and_then(|v| v.parse::<f32>().ok()) else {
                     fail("`--aq-strength` needs a number (octaves per octave of activity)");
@@ -335,6 +372,53 @@ fn cmd_encode(args: &[String]) -> u8 {
                     return EXIT_ERROR;
                 };
                 aq_tuning.chroma_weight = v;
+            }
+            "--quant-lf" => {
+                let Some(value) = rest.next().and_then(|v| v.parse::<u32>().ok()) else {
+                    fail("`--quant-lf` needs a positive representable integer");
+                    return EXIT_ERROR;
+                };
+                fixed_quant_lf = Some(value);
+            }
+            "--x-qm-scale" | "--b-qm-scale" => {
+                let Some(value) = rest.next().and_then(|v| v.parse::<u8>().ok()) else {
+                    fail(&format!("`{arg}` needs an integer in 0..=7"));
+                    return EXIT_ERROR;
+                };
+                if value > 7 {
+                    fail(&format!("`{arg}` needs an integer in 0..=7"));
+                    return EXIT_ERROR;
+                }
+                if arg == "--x-qm-scale" {
+                    x_qm_scale = Some(value);
+                } else {
+                    b_qm_scale = Some(value);
+                }
+            }
+            "--epf-iters" => {
+                let Some(value) = rest.next().and_then(|v| v.parse::<u8>().ok()) else {
+                    fail("`--epf-iters` needs an integer in 0..=3");
+                    return EXIT_ERROR;
+                };
+                if value > 3 {
+                    fail("`--epf-iters` needs an integer in 0..=3");
+                    return EXIT_ERROR;
+                }
+                epf_iters = Some(value);
+            }
+            "--epf-sharpness" => {
+                let Some(value) = rest.next() else {
+                    fail("`--epf-sharpness` needs one of: zero, uniform7");
+                    return EXIT_ERROR;
+                };
+                epf_sharpness = Some(match value.as_str() {
+                    "zero" => jpxl_encode_policy::EpfSharpnessMode::Zero,
+                    "uniform7" => jpxl_encode_policy::EpfSharpnessMode::Uniform7,
+                    _ => {
+                        fail("`--epf-sharpness` needs one of: zero, uniform7");
+                        return EXIT_ERROR;
+                    }
+                });
             }
             "--target-bytes" => {
                 let Some(v) = rest.next().and_then(|v| v.parse::<u64>().ok()) else {
@@ -413,17 +497,31 @@ fn cmd_encode(args: &[String]) -> u8 {
     // lossless modular encoder it has always been.
     let mut lossy: Option<LossyReport> = None;
     let encoded = match rate_target {
-        Some(target) => match encode_lossy_to_target(&image, target, aq_tuning) {
-            Ok(report) => {
-                let bytes = report.codestream.clone();
-                lossy = Some(report);
-                bytes
+        Some(target) => {
+            match encode_lossy_to_target(
+                &image,
+                target,
+                LossyOverrides {
+                    aq_mode,
+                    aq_tuning,
+                    fixed_quant_lf,
+                    x_qm_scale,
+                    b_qm_scale,
+                    epf_iters,
+                    epf_sharpness,
+                },
+            ) {
+                Ok(report) => {
+                    let bytes = report.codestream.clone();
+                    lossy = Some(report);
+                    bytes
+                }
+                Err(err) => {
+                    fail(&format!("{input}: {err}"));
+                    return EXIT_ERROR;
+                }
             }
-            Err(err) => {
-                fail(&format!("{input}: {err}"));
-                return EXIT_ERROR;
-            }
-        },
+        }
         None => match jpxl_encode::encode(&image, &options) {
             Ok(encoded) => encoded,
             Err(err) => {
@@ -953,10 +1051,9 @@ fn bench_vardct_rate(
     iters: usize,
     resources: jpxl_encode::EncodeResources,
 ) -> Result<BenchReport, String> {
-    let mut request = jpxl_encode_policy::EncodeRequest::defaults();
-    request.resources = resources;
     let target = jpxl_encode_policy::RateTarget::BitsPerPixel(bpp);
-    request.target = Some(target);
+    let mut request = jpxl_encode_policy::EncodeRequest::for_target(target);
+    request.resources = resources;
     let warm = jpxl_encode_policy::encode_srgb8_to_target(width, height, rgb, &request, target)
         .map_err(|e| e.to_string())?;
     let warm_len = warm.codestream.len();
@@ -1088,10 +1185,21 @@ struct LossyReport {
     full_prices: u32,
 }
 
+/// Research controls that override the production target-rate policy.
+struct LossyOverrides {
+    aq_mode: Option<jpxl_encode_policy::AqMode>,
+    aq_tuning: jpxl_encode_policy::AqTuning,
+    fixed_quant_lf: Option<u32>,
+    x_qm_scale: Option<u8>,
+    b_qm_scale: Option<u8>,
+    epf_iters: Option<u8>,
+    epf_sharpness: Option<jpxl_encode_policy::EpfSharpnessMode>,
+}
+
 fn encode_lossy_to_target(
     image: &jpxl_encode::Image,
     target: jpxl_encode_policy::RateTarget,
-    aq_tuning: jpxl_encode_policy::AqTuning,
+    overrides: LossyOverrides,
 ) -> Result<LossyReport, String> {
     if image.num_channels() != 3 || image.bits_per_sample() != 8 {
         return Err(format!(
@@ -1114,7 +1222,35 @@ fn encode_lossy_to_target(
         }
     }
     let mut request = jpxl_encode_policy::EncodeRequest::for_target(target);
-    request.budget.aq_tuning = aq_tuning;
+    if let Some(mode) = overrides.aq_mode {
+        request.budget.aq_mode = mode;
+    }
+    request.budget.aq_tuning = overrides.aq_tuning;
+    if let Some(value) = overrides.fixed_quant_lf {
+        request.quant_lf = jpxl_encode::vardct::ids::QuantLf::new(value)
+            .map_err(|_| format!("quant_lf {value} is outside the wire range"))?;
+        request.budget.rate.lf_fill_probes = 0;
+    }
+    if let Some(value) = overrides.x_qm_scale {
+        request.x_qm_scale = jpxl_encode::vardct::ids::QmScale::new(value)
+            .map_err(|_| format!("x_qm_scale {value} is outside the wire range"))?;
+    }
+    if let Some(value) = overrides.b_qm_scale {
+        request.b_qm_scale = jpxl_encode::vardct::ids::QmScale::new(value)
+            .map_err(|_| format!("b_qm_scale {value} is outside the wire range"))?;
+    }
+    if let Some(iters) = overrides.epf_iters {
+        request.restoration.epf_iters = iters;
+        if iters == 0 && overrides.epf_sharpness.is_none() {
+            // `--epf-iters 0` is the ergonomic spelling of restoration off.
+            // Do not retain the target policy's otherwise inert sharpness
+            // plane and its wire cost unless the caller explicitly asks for it.
+            request.epf_sharpness = jpxl_encode_policy::EpfSharpnessMode::Zero;
+        }
+    }
+    if let Some(sharpness) = overrides.epf_sharpness {
+        request.epf_sharpness = sharpness;
+    }
     jpxl_encode_policy::encode_srgb8_to_target(
         image.width(),
         image.height(),

@@ -14,9 +14,9 @@
 //! scaled by a strength and clamped. Two directions exist and they are honest
 //! opposites:
 //!
-//! * [`AqMode::Masking`] — busy atoms coarser, flat atoms finer. Texture
-//!   masks quantization noise and flat regions band; this optimizes perceived
-//!   quality and is the production direction.
+//! * [`AqMode::Masking`] — busy atoms coarser, flat atoms finer. Texture can
+//!   mask quantization noise and flat regions can band, but corpus measurements
+//!   found this single-pass activity signal worse than a neutral field.
 //! * [`AqMode::Uniform`] — busy atoms finer, flat atoms coarser. Busy atoms
 //!   carry the largest reconstruction error at a uniform quantizer, so
 //!   spending there equalizes error across the frame; this is the direction
@@ -51,14 +51,13 @@ use crate::analysis::AnalysisAtlas;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AqMode {
     /// No field: every varblock at the request's `HfMul`, byte-identical to
-    /// a constant-mul encode. Opt out when measuring an un-AQ baseline.
+    /// a constant-mul encode. Phase 5G promoted this for target-rate requests
+    /// after it won Butteraugli on all twelve representative corpus cells.
     Off,
     /// Perceptual masking: busy coarser, flat finer.
     ///
-    /// Production default since the M8 leftover wave: the entropy model now
-    /// prices DctSelect/mul rows, Hierarchical cover is already the default
-    /// cover, and flat content still collapses to a neutral field (byte-
-    /// identical to [`AqMode::Off`]) so the switch costs nothing on flat.
+    /// Historical fixed-quantizer/type default. Target-rate requests select
+    /// [`AqMode::Off`] explicitly after the Phase 5G corpus gate.
     #[default]
     Masking,
     /// Error equalization: busy finer, flat coarser.
@@ -88,12 +87,9 @@ const VARIANCE_TO_8BIT: f32 = 255.0 * 255.0;
 /// The three constants that shape the perceptual field, as data.
 ///
 /// [`AQ_STRENGTH`], [`AQ_CLAMP`] and [`CHROMA_AQ_WEIGHT`] came from the
-/// 8-bit x265-family literature and have never been validated against a
-/// perceptual metric *on this codec's output* — until recently the repository
-/// had no perceptual metric to validate them with. They are the frame's
-/// perceptual bit-allocation policy, which is where a butteraugli-tuned
-/// encoder's advantage lives, so they need to be swept and chosen from
-/// evidence rather than inherited.
+/// 8-bit x265-family literature. Phase 4J swept them against Butteraugli and
+/// SSIMULACRA2; every non-zero tuning lost to a neutral field on the measured
+/// photo, so these values now describe only the non-default masking control.
 ///
 /// [`Self::default()`] is exactly the historical constants, so an untouched
 /// request encodes byte-for-byte as before.

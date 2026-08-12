@@ -24,7 +24,9 @@ use jpxl_core::geometry::LfBlockPos;
 use jpxl_core::varblock::TransformType;
 use jpxl_encode::section::SectionStore;
 use jpxl_encode::vardct::geometry::BlockGrid;
-use jpxl_encode::vardct::ids::{ClusterId, GlobalScale, HfMul, LfGroupId, PresetId, QuantLf};
+use jpxl_encode::vardct::ids::{
+    ClusterId, GlobalScale, HfMul, LfGroupId, PresetId, QmScale, QuantLf,
+};
 use jpxl_encode::vardct::plan::{
     CflGrid, EmissionPlan, EntropyModelPlan, EntropyPlan, FrameDecision, HfBlockContextPlan,
     HfPassEntropyPlan, HistogramPlan, HybridUintPlan, LfDecision, LfGroupPlan, LfQuantPlanes,
@@ -121,6 +123,8 @@ fn legal_plan(width: u32, height: u32, shift: u32) -> EmissionPlan {
             quantizer: QuantizerDecision {
                 global_scale: GlobalScale::new(4096).unwrap(),
                 quant_lf: QuantLf::new(16).unwrap(),
+                x_qm_scale: QmScale::NEUTRAL,
+                b_qm_scale: QmScale::NEUTRAL,
             },
             lf: LfDecision::default(),
             restoration: RestorationDecision::default(),

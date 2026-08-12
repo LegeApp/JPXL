@@ -33,6 +33,9 @@ pub const MAX_EXTRA_PRECISION: u8 = 3;
 /// Largest `Sharpness` sample: J.4.3's sigma lookup has eight entries.
 pub const MAX_SHARPNESS: u8 = 7;
 
+/// Largest F.2 `x_qm_scale` / `b_qm_scale` exponent (`u(3)`).
+pub const MAX_QM_SCALE: u8 = 7;
+
 macro_rules! plain_id {
     ($(#[$meta:meta])* $name:ident, $repr:ty) => {
         $(#[$meta])*
@@ -130,6 +133,43 @@ impl CflFactor {
     #[must_use]
     pub const fn get(self) -> i32 {
         self.0
+    }
+}
+
+/// F.2/I.5.3's X or B quantization-matrix scale exponent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct QmScale(u8);
+
+impl QmScale {
+    /// The neutral exponent: `pow(0.8, 2 - 2) == 1`.
+    pub const NEUTRAL: Self = Self(2);
+
+    /// Checks and wraps the three-bit exponent.
+    ///
+    /// # Errors
+    ///
+    /// [`PlanError::OutOfRange`] if `value` exceeds the `u(3)` field.
+    pub fn new(value: u8) -> PlanResult<Self> {
+        if value > MAX_QM_SCALE {
+            return Err(PlanError::out_of_range(
+                "qm_scale",
+                "F.2/I.5.3",
+                i64::from(value),
+            ));
+        }
+        Ok(Self(value))
+    }
+
+    /// The exponent widened for quantizer and bit-writer arithmetic.
+    #[must_use]
+    pub const fn get(self) -> u32 {
+        self.0 as u32
+    }
+}
+
+impl Default for QmScale {
+    fn default() -> Self {
+        Self::NEUTRAL
     }
 }
 
@@ -244,5 +284,19 @@ mod tests {
             HfMul::new(MAX_HF_MUL).expect("legal").stored_mul(),
             i32::MAX - 1
         );
+    }
+
+    #[test]
+    fn qm_scale_accepts_exactly_the_three_bit_range() {
+        assert_eq!(QmScale::default(), QmScale::NEUTRAL);
+        assert_eq!(QmScale::new(0).expect("legal").get(), 0);
+        assert_eq!(QmScale::new(7).expect("legal").get(), 7);
+        assert!(matches!(
+            QmScale::new(8),
+            Err(PlanError::OutOfRange {
+                what: "qm_scale",
+                ..
+            })
+        ));
     }
 }

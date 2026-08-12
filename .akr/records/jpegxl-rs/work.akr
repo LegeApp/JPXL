@@ -926,6 +926,909 @@ record jpegxl-rs.work.arch-phase4m-fast-full-handoff/1 : work {
     part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
 }
 
+record jpegxl-rs.work.arch-phase5a-aq-policy-gate/1 : work {
+    title "Phase 5A: replace one-pass AQ guesswork with a corpus-gated perceptual policy"
+    state completed
+    scope [
+        path ".agent/scratch/**",
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/field.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/request.rs",
+        path "test-set/**"
+    ]
+    intent """
+        Start Phase 5 perceptual parity by broadening the verified AQ-off result across representative test-set photographs at matched bitrate, exposing the already-implemented Off/Masking/Uniform policies as explicit research controls, and only changing the production default when Butteraugli evidence demonstrates a corpus-level win without a material regression. Retuning the existing single-pass activity constants is out of scope because Phase 4J showed every nonzero tuning clustering behind AQ-off; measured multi-pass signals remain the next candidate if neither static direction clears the gate.
+        """
+    note """
+        Speed is diagnostic only for this quality-first phase. libjxl remains a black-box rate/distortion oracle; no source inspection.
+        """
+    acceptance {
+        check corpus-butteraugli {
+            statement """
+                At least three representative test-set photographs are encoded at matched target rates and decoded, with bytes, Butteraugli distance, and SSIMULACRA2 recorded for each AQ policy.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.phase5a-aq-policy-gate-2026-08-11 ]
+        }
+        check correctness {
+            statement """
+                The selected implementation passes targeted policy/CLI tests and both the in-project decoder and djxl oracle on the measured corpus.
+                """
+            method command
+            verified_by [ @jpegxl-rs.evidence.phase5-scoped-tests-2026-08-11 ]
+        }
+        check default-gate {
+            statement """
+                Any production-default change is supported by aggregate and per-image Butteraugli results and no material per-image regression; otherwise the current default is left unchanged and the negative result is recorded.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.phase5a-aq-policy-gate-2026-08-11 ]
+        }
+        check mode-control {
+            statement """
+                The CLI can select Off, Masking, and Uniform AQ for lossy research encodes while the untouched request remains byte-identical to the current default.
+                """
+            method command
+            command "cd JPXL && cargo test -p jpxl-cli"
+            verified_by [ @jpegxl-rs.evidence.phase5-scoped-tests-2026-08-11 ]
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase4j-aq-tuning-measurable ]
+    implements [
+        @jpegxl-rs.decision.encoder-architecture-phases,
+        @jpegxl-rs.policy.clean-room-boundary,
+        @jpegxl-rs.policy.research-out-of-core
+    ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+}
+
+record jpegxl-rs.work.arch-phase5b-restoration-screen/1 : work {
+    title "Phase 5B: screen decoder restoration as a Butteraugli lever"
+    state completed
+    scope [
+        path ".agent/scratch/**",
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/request.rs",
+        path "JPXL/crates/jpxl-encode/src/vardct/gaborish.rs",
+        path "JPXL/crates/jpxl-encode/src/vardct/headers.rs",
+        path "test-set/**"
+    ]
+    intent """
+        Expose the already-implemented, standards-derived Gaborish decision as a research-only lossy CLI control, then compare Off versus Gaborish at matched target rate using the Phase 5A AQ winner and symmetric djxl decoding. Keep it only if Butteraugli improves without a material per-image regression. EPF remains separately scoped because the encoder has no inverse/preconditioning model for it.
+        """
+    note """
+        This is a quality screen, not restoration architecture completion. libjxl is used only as a black-box decoder and quality oracle.
+        """
+    acceptance {
+        check butteraugli-screen {
+            statement """
+                At least two distinct test-set photographs are encoded at matched target rate with Gaborish off and on, decoded through the same djxl oracle, and compared with Butteraugli and SSIMULACRA2.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.phase5b-gaborish-negative-2026-08-11 ]
+        }
+        check gaborish-control {
+            statement """
+                The CLI can enable Gaborish on lossy research encodes while untouched requests remain restoration-off.
+                """
+            method command
+            command "cd JPXL && cargo test -p jpxl-encode-policy -p jpxl-cli"
+            verified_by [ @jpegxl-rs.evidence.phase5-scoped-tests-2026-08-11 ]
+        }
+        check promotion-gate {
+            statement """
+                Gaborish is promoted only if the multi-image Butteraugli screen improves without a material per-image regression; otherwise the negative result is recorded and the production default remains off.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.phase5b-gaborish-negative-2026-08-11 ]
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase5a-aq-policy-gate ]
+    implements [
+        @jpegxl-rs.decision.encoder-architecture-phases,
+        @jpegxl-rs.policy.clean-room-boundary
+    ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+}
+
+record jpegxl-rs.work.arch-phase5c-lf-hf-balance-screen/1 : work {
+    title "Phase 5C: screen LF/HF balance at matched rate"
+    state superseded
+    scope [
+        path ".agent/scratch/**",
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/rate.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/request.rs",
+        path "test-set/**"
+    ]
+    intent """
+        Expose a fixed quant_lf research control that disables the secondary LF byte-fill search, then sweep representable LF/HF balances at matched target rate using AQ Off and symmetric djxl decoding. The production rate loop currently maximises feasible bytes rather than perceptual quality, so this screen tests whether its fixed/default LF allocation is a major Butteraugli lever before building any perceptual finalist selector.
+        """
+    note """
+        The control is retained only if it supports reproducible quality calibration; the production default changes only on a multi-image Butteraugli gate.
+        """
+    acceptance {
+        check fixed-lf-control {
+            statement """
+                A lossy research encode can set quant_lf while disabling LF-fill probes, and an untouched request retains the existing rate-search behavior.
+                """
+            method command
+            command "cd JPXL && cargo test -p jpxl-encode-policy -p jpxl-cli"
+        }
+        check matched-rate-sweep {
+            statement """
+                At least two distinct test-set photographs are swept across coarse, default, and fine LF settings at matched target rate, decoded through djxl, and scored with Butteraugli and SSIMULACRA2.
+                """
+            method observation
+        }
+        check promotion-gate {
+            statement """
+                Any production LF/HF policy change is supported by a multi-image Butteraugli win without a material per-image regression; otherwise the negative or image-dependent result is recorded.
+                """
+            method observation
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase5a-aq-policy-gate ]
+    implements [
+        @jpegxl-rs.decision.encoder-architecture-phases,
+        @jpegxl-rs.policy.clean-room-boundary
+    ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+}
+
+record jpegxl-rs.work.arch-phase5c-lf-hf-balance-screen/2 : work {
+    title "Phase 5C: screen LF/HF balance at matched rate"
+    state completed
+    scope [
+        path ".agent/scratch/**",
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/rate.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/request.rs",
+        path "JPXL/crates/jpxl-encode-policy/tests/rate_loop.rs",
+        path "test-set/**"
+    ]
+    intent """
+        Expose a fixed quant_lf research control that disables the secondary LF byte-fill search, then sweep representable LF/HF balances at matched target rate using AQ Off and symmetric djxl decoding. The production rate loop currently maximises feasible bytes rather than perceptual quality, so this screen tests whether its fixed/default LF allocation is a major Butteraugli lever before building any perceptual finalist selector.
+        """
+    note """
+        The control is retained only if it supports reproducible quality calibration; the production default changes only on a multi-image Butteraugli gate.
+        """
+    acceptance {
+        check fixed-lf-control {
+            statement """
+                A lossy research encode can set quant_lf while disabling LF-fill probes, and an untouched request retains the existing rate-search behavior.
+                """
+            method command
+            command "cd JPXL && cargo test -p jpxl-encode-policy -p jpxl-cli"
+            verified_by [ @jpegxl-rs.evidence.phase5-scoped-tests-2026-08-11 ]
+        }
+        check matched-rate-sweep {
+            statement """
+                At least two distinct test-set photographs are swept across coarse, default, and fine LF settings at matched target rate, decoded through djxl, and scored with Butteraugli and SSIMULACRA2.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.phase5c-lf-hf-balance-2026-08-11 ]
+        }
+        check promotion-gate {
+            statement """
+                Any production LF/HF policy change is supported by a multi-image Butteraugli win without a material per-image regression; otherwise the negative or image-dependent result is recorded.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.phase5c-lf-hf-balance-2026-08-11 ]
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase5a-aq-policy-gate ]
+    implements [
+        @jpegxl-rs.decision.encoder-architecture-phases,
+        @jpegxl-rs.policy.clean-room-boundary
+    ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+    supersedes [ @jpegxl-rs.work.arch-phase5c-lf-hf-balance-screen/1 ]
+}
+
+record jpegxl-rs.work.arch-phase5d-cover-quality-screen/1 : work {
+    title "Phase 5D: screen transform-cover decisions for perceptual regret"
+    state completed
+    scope [
+        path ".agent/scratch/**",
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/block.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/regret.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/request.rs",
+        path "test-set/**"
+    ]
+    intent """
+        Expose the two existing VarDCT cover policies as a research control and compare fixed DCT8x8 against the hierarchical DCT8/16/32 cover at matched target rate, using the Phase 5A/5C defaults and symmetric djxl decoding. This is the cheapest counterfactual test of whether the current coefficient-SSE cover objective makes Butteraugli-wrong transform decisions before building rectangular or special-transform support.
+        """
+    note """
+        If fixed DCT8x8 does not reveal meaningful perceptual regret, prune the brute-force alternative and retain the regret harness for more targeted counterfactuals.
+        """
+    acceptance {
+        check cover-control {
+            statement """
+                The CLI can select fixed DCT8x8 or hierarchical cover for lossy research while untouched requests remain hierarchical.
+                """
+            method command
+            command "cd JPXL && cargo test -p jpxl-encode-policy -p jpxl-cli"
+            verified_by [ @jpegxl-rs.evidence.phase5-scoped-tests-2026-08-11 ]
+        }
+        check decision {
+            statement """
+                The fixed-cover counterfactual is either retained as evidence of perceptual cover regret or pruned as an honest negative; no production change is made from an image-dependent or regressive result.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.phase5d-fixed-cover-negative-2026-08-11 ]
+        }
+        check matched-rate-screen {
+            statement """
+                At least two distinct test-set photographs are encoded with both cover policies at matched target rate, decoded through djxl, and scored with Butteraugli and SSIMULACRA2.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.phase5d-fixed-cover-negative-2026-08-11 ]
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase5c-lf-hf-balance-screen ]
+    implements [
+        @jpegxl-rs.decision.encoder-architecture-phases,
+        @jpegxl-rs.policy.clean-room-boundary
+    ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+}
+
+record jpegxl-rs.work.arch-phase5e-epf-screen/1 : work {
+    title "Phase 5E: screen EPF signalling before inverse modelling"
+    state completed
+    scope [
+        path ".agent/scratch/**",
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/crates/jpxl-decode/src/vardct/render.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/request.rs",
+        path "JPXL/crates/jpxl-encode/src/vardct/headers.rs",
+        path "test-set/**"
+    ]
+    intent """
+        Temporarily expose epf_iters 0..3 as a research control and screen decoder EPF on top of the Phase 5A/5C policy using symmetric djxl decoding. The encoder has no EPF inverse or sharpness planner, so a positive screen only justifies modelling work; it does not justify a default change. A negative screen prunes unmodelled EPF and removes the temporary control.
+        """
+    note """
+        The existing restoration-off policy rationale predates the decoder's current filter support and must be revised separately before any production restoration change.
+        """
+    acceptance {
+        check epf-control {
+            statement """
+                The temporary CLI accepts only epf_iters 0..3 and untouched requests remain at zero.
+                """
+            method command
+            command "cd JPXL && cargo test -p jpxl-encode-policy -p jpxl-cli"
+            verified_by [ @jpegxl-rs.evidence.phase5-scoped-tests-2026-08-11 ]
+        }
+        check scope-decision {
+            statement """
+                The result either justifies separately-scoped encoder-side EPF inversion/sharpness planning or records an honest negative and removes the temporary control; unmodelled EPF is never promoted directly.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.phase5e-epf-signalling-noop-2026-08-11 ]
+        }
+        check screen {
+            statement """
+                At least two distinct test-set photographs are screened with EPF off and one or more nonzero iteration counts at matched target rate, decoded through djxl, and scored perceptually.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.phase5e-epf-signalling-noop-2026-08-11 ]
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase5c-lf-hf-balance-screen ]
+    implements [
+        @jpegxl-rs.decision.encoder-architecture-phases,
+        @jpegxl-rs.policy.clean-room-boundary
+    ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+}
+
+record jpegxl-rs.work.arch-phase5f-aqoff-oracle-compat/1 : work {
+    title "Phase 5F: resolve AQ-Off HfMul oracle compatibility"
+    state superseded
+    scope [
+        path ".agent/scratch/**",
+        path "JPXL/crates/jpxl-decode/src/vardct/**",
+        path "JPXL/crates/jpxl-encode-policy/src/field.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/rate.rs",
+        path "JPXL/crates/jpxl-encode-policy/tests/vardct_oracle.rs"
+    ]
+    intent """
+        Minimise the AQ-Off/HfMul stream that djxl and jpxl-decode render consistently but jxl-oxide renders catastrophically differently; settle the standard semantics from the Part 1 LaTeX and concrete wire traces, then either correct JPXL if the candidate is nonconforming or document/report the external decoder defect with a standards-backed compatibility policy. Do not weaken or skip the existing oracle test merely to promote the measured quality win. Once all required oracles agree, re-run the three-photo AQ-Off plus quant_lf-8 gate and only then reconsider production defaults.
+        """
+    note """
+        Current safe production policy remains Masking, quant_lf 16, LF fill enabled. The quality candidate remains accessible through --aq-mode off --quant-lf 8.
+        """
+    acceptance {
+        check minimal-reproducer {
+            statement """
+                A minimal standards-cited HfMul/AQ-Off stream reproduces or eliminates the jxl-oxide disagreement while djxl and jpxl-decode outputs are captured.
+                """
+            method observation
+        }
+        check oracle-gate {
+            statement """
+                The existing VarDCT oracle suite passes without skipping or loosening the jxl-oxide assertions.
+                """
+            method command
+            command "cd JPXL && cargo test -p jpxl-encode-policy --test vardct_oracle"
+        }
+        check quality-regate {
+            statement """
+                If AQ Off becomes promotable, its three-photo matched-rate Butteraugli gate and default-control fingerprints are re-run on the resolved code.
+                """
+            method observation
+        }
+        check root-cause {
+            statement """
+                The disagreement is attributed to a concrete wire or rendering rule using Part 1 and bit-position evidence, not implementation source from libjxl.
+                """
+            method observation
+        }
+    }
+    depends_on [
+        @jpegxl-rs.work.arch-phase5a-aq-policy-gate,
+        @jpegxl-rs.work.arch-phase5c-lf-hf-balance-screen
+    ]
+    implements [
+        @jpegxl-rs.decision.encoder-architecture-phases,
+        @jpegxl-rs.policy.clean-room-boundary,
+        @jpegxl-rs.policy.optimization-correctness-gates
+    ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+}
+
+record jpegxl-rs.work.arch-phase5f-aqoff-oracle-compat/2 : work {
+    title "Phase 5F: minimise the pre-existing rate/HfMul jxl-oxide incompatibility"
+    state completed
+    scope [
+        path ".agent/scratch/**",
+        path "JPXL/crates/jpxl-decode/src/vardct/**",
+        path "JPXL/crates/jpxl-encode-policy/src/field.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/rate.rs",
+        path "JPXL/crates/jpxl-encode-policy/tests/vardct_oracle.rs"
+    ]
+    intent """
+        Minimise the pre-existing HfMul/rate-target stream that djxl and jpxl-decode render consistently but jxl-oxide renders catastrophically differently; settle the standard semantics from the Part 1 LaTeX and concrete wire traces, then either correct JPXL if nonconforming or document/report the external decoder defect with a standards-backed compatibility policy. Do not weaken or skip the existing oracle test. Once the baseline incompatibility is understood, re-run the broader AQ-Off plus quant_lf-8 gate and reconsider production defaults from libjxl-valid, cross-oracle-aware evidence.
+        """
+    note """
+        Current production behavior remains Masking, quant_lf 16, LF fill enabled. The measured quality candidate remains accessible through --aq-mode off --quant-lf 8. The jxl-oxide failure reproduces with both baseline and candidate policies.
+        """
+    acceptance {
+        check minimal-reproducer {
+            statement """
+                A minimal standards-cited HfMul/AQ-Off stream reproduces or eliminates the jxl-oxide disagreement while djxl and jpxl-decode outputs are captured.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.phase5f-lfquant-boundary-2026-08-11 ]
+        }
+        check oracle-gate {
+            statement """
+                The existing VarDCT oracle suite passes without skipping or loosening the jxl-oxide assertions.
+                """
+            method command
+            command "cd JPXL && cargo test -p jpxl-encode-policy --test vardct_oracle"
+            verified_by [ @jpegxl-rs.evidence.phase5f-oracle-gate-2026-08-11 ]
+        }
+        check quality-regate {
+            statement """
+                If AQ Off becomes promotable, its three-photo matched-rate Butteraugli gate and default-control fingerprints are re-run on the resolved code.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.phase5f-quality-regate-2026-08-11 ]
+        }
+        check root-cause {
+            statement """
+                The disagreement is attributed to a concrete wire or rendering rule using Part 1 and bit-position evidence, not implementation source from libjxl.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.phase5f-lfquant-boundary-2026-08-11 ]
+        }
+    }
+    depends_on [
+        @jpegxl-rs.work.arch-phase5a-aq-policy-gate,
+        @jpegxl-rs.work.arch-phase5c-lf-hf-balance-screen
+    ]
+    implements [
+        @jpegxl-rs.decision.encoder-architecture-phases,
+        @jpegxl-rs.policy.clean-room-boundary,
+        @jpegxl-rs.policy.optimization-correctness-gates
+    ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+    supersedes [ @jpegxl-rs.work.arch-phase5f-aqoff-oracle-compat/1 ]
+}
+
+record jpegxl-rs.work.arch-phase5g-aqoff-broader-corpus-gate/1 : work {
+    title "Phase 5G: gate AQ Off plus quant_lf 8 on the representative corpus"
+    state completed
+    scope [
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/field.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/request.rs",
+        path "test-set/**"
+    ]
+    intent """
+        Measure the Phase 5A/5C AQ-Off plus quant_lf-8 candidate against the historical Masking/quant_lf-16 policy on four distinct 0.8 MP photographs and two distinct 4 MP photographs at 1 and 2 bpp. Decode every stream through the same pinned djxl and score measured Butteraugli plus SSIMULACRA2. Use byte-identical controls and exact achieved sizes; if rates differ materially, re-run finalists at a common target byte count. Add equal-rate cjxl e7 anchors only for the settled finalist. Promote, revise, or reject the default from the corpus evidence, not from one scene.
+        """
+    acceptance {
+        check corpus-matrix {
+            statement """
+                All six distinct scenes are measured at 1 and 2 bpp for Masking/quant_lf16 and AQ-Off/quant_lf8 with symmetric djxl decoding and exact sizes.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.phase5g-corpus-matrix-2026-08-11/1 ]
+        }
+        check default-decision {
+            statement """
+                The production AQ/LF policy is promoted, revised, or explicitly retained from the corpus and oracle evidence.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.phase5g-target-default-2026-08-11/1 ]
+        }
+        check oracle-anchor {
+            statement """
+                The settled finalist has measured equal-rate cjxl e7 Butteraugli anchors on the representative scenes, with requested distance never substituted for measured distance.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.phase5g-cjxl-equal-rate-anchors-2026-08-11/1 ]
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase5f-aqoff-oracle-compat/2 ]
+    implements [
+        @jpegxl-rs.decision.encoder-architecture-phases/1,
+        @jpegxl-rs.policy.clean-room-boundary/1,
+        @jpegxl-rs.policy.optimization-correctness-gates/1
+    ]
+    part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+}
+
+record jpegxl-rs.work.arch-phase5h-quant-lf-tail-gate/1 : work {
+    title "Phase 5H: test the quant_lf tail before structural AQ work"
+    state completed
+    scope [
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/request.rs",
+        path "test-set/**"
+    ]
+    intent """
+        Screen quant_lf 4 against the promoted quant_lf 8 target-rate policy on the same six-scene, one/two-bpp matrix, with a small quant_lf 2 direction check. Use the same pinned djxl and perceptual CLI. Reject another global constant if per-scene Butteraugli direction is mixed; use the result to scope content-adaptive LF/HF planning rather than retuning blindly.
+        """
+    acceptance {
+        check global-decision {
+            statement """
+                The production quant_lf default is retained or revised from the per-scene Butteraugli and SSIMULACRA2 evidence.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.phase5h-quant-lf-tail-2026-08-11/1 ]
+        }
+        check tail-screen {
+            statement """
+                quant_lf 4 is measured on six scenes at one and two bpp, and quant_lf 2 is direction-checked on two scenes.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.phase5h-quant-lf-tail-2026-08-11/1 ]
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase5g-aqoff-broader-corpus-gate/1 ]
+    implements [
+        @jpegxl-rs.decision.encoder-architecture-phases/1,
+        @jpegxl-rs.policy.optimization-correctness-gates/1
+    ]
+    part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+}
+
+record jpegxl-rs.work.arch-phase5i-active-epf-screen/1 : work {
+    title "Phase 5I: activate EPF sharpness before judging restoration"
+    state completed
+    scope [
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/request.rs",
+        path "JPXL/crates/jpxl-encode-policy/tests/vardct_oracle.rs",
+        path "test-set/**"
+    ]
+    intent """
+        Add a research-only target-rate control for EPF iteration count and a uniform Sharpness=7 grid, leaving production restoration off. First prove the decoded stream actually changes and independent decoders accept it. Then screen EPF step 1 at matched achieved rate on the dense-detail and flat/edge 0.8 MP scenes. Broaden to the six-scene matrix only if the two-scene screen has no material Butteraugli regression; otherwise remove or retain only the minimal research control according to the evidence.
+        """
+    acceptance {
+        check activation-proof {
+            statement """
+                A nonzero Sharpness=7 grid is emitted with epf_iters=1, decoder output differs from EPF off on textured input, and the stream passes the independent-decoder gate.
+                """
+            method command
+            verified_by [ @jpegxl-rs.evidence.phase5i-active-epf-activation-2026-08-11/1 ]
+        }
+        check policy-decision {
+            statement """
+                EPF is broadened, pruned, or retained research-only from the preregistered screen; production behavior changes only after a broader no-regression corpus gate.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.phase5i-active-epf-promotion-2026-08-11/1 ]
+        }
+        check quality-screen {
+            statement """
+                EPF step 1 with uniform Sharpness=7 is compared against restoration off at matched achieved rate on at least the dense-detail and flat/edge small scenes using symmetric djxl and Butteraugli.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.phase5i-active-epf-quality-2026-08-11/1 ]
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase5h-quant-lf-tail-gate/1 ]
+    implements [
+        @jpegxl-rs.decision.encoder-architecture-phases/1,
+        @jpegxl-rs.policy.optimization-correctness-gates/1
+    ]
+    part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+}
+
+record jpegxl-rs.work.arch-phase5j-two-pass-error-aq-screen/1 : work {
+    title "Phase 5J: screen two-pass reconstruction-error AQ"
+    state completed
+    scope [
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/field.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/request.rs",
+        path "JPXL/crates/jpxl-encode-policy/tests/rate_loop.rs",
+        path "JPXL/crates/jpxl-encode-policy/tests/vardct_oracle.rs",
+        path "test-set/**"
+    ]
+    intent """
+        Add a research-only, deterministic two-pass AQ mode. Freeze transform cover and CfL from the ordinary plan; perform a uniform-HfMul analysis quantization, reconstruct each selected varblock through the encoder's normative transform/quantization path, spread measured HF reconstruction error to 8x8 atoms, and derive a bounded log-domain HfMul field for the final quantization. Screen two representative 0.8 MP scenes at one and two bpp against the Phase 5I target policy. Broaden only if Butteraugli has no material regression and at least one meaningful win; keep production AqMode::Off unless the full corpus promotion contract passes.
+        """
+    acceptance {
+        check implementation-proof {
+            statement """
+                Targeted tests prove the two-pass mode is deterministic, bounded, neutral on uniform input, and changes the field on textured input.
+                """
+            method command
+            verified_by [
+                @jpegxl-rs.evidence.phase5j-two-pass-error-implementation-2026-08-11/1
+            ]
+        }
+        check oracle-proof {
+            statement """
+                djxl and jxl-oxide both decode a stream emitted with two-pass reconstruction-error AQ within the existing decoder-agreement bound.
+                """
+            method command
+            verified_by [ @jpegxl-rs.evidence.phase5j-two-pass-error-oracle-2026-08-11/1 ]
+        }
+        check quality-screen {
+            statement """
+                Matched-rate Butteraugli and SSIMULACRA2 results on the representative screen determine whether to broaden, revise, or reject the two-pass signal.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.phase5j-two-pass-error-quality-2026-08-11/1 ]
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase5i-active-epf-screen/1 ]
+    implements [
+        @jpegxl-rs.decision.encoder-architecture-phases/1,
+        @jpegxl-rs.policy.optimization-correctness-gates/1
+    ]
+    part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+}
+
+record jpegxl-rs.work.arch-phase5k-active-epf-depth-screen/1 : work {
+    title "Phase 5K: screen active EPF depth"
+    state superseded
+    scope [
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/request.rs",
+        path "JPXL/crates/jpxl-encode-policy/tests/vardct_oracle.rs",
+        path "test-set/**"
+    ]
+    intent """
+        Screen active EPF iteration counts 2 and 3 with the already-promoted uniform Sharpness 7 plane against the one-step Phase 5I baseline. Use the same djxl decode and perceptual scorer on the two representative 0.8 MP scenes at one and two bpp, then broaden only if Butteraugli improves without a material SSIMULACRA2 regression. Keep one step as production default unless a six-scene gate passes.
+        """
+    acceptance {
+        check policy-decision {
+            statement """
+                The selected depth is either promoted through the full corpus contract or explicitly rejected/retained as research-only.
+                """
+            method observation
+        }
+        check quality-screen {
+            statement """
+                Matched-rate Butteraugli and SSIMULACRA2 results on two representative scenes select one EPF depth for broader testing or retain the one-step default.
+                """
+            method observation
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase5j-two-pass-error-aq-screen/1 ]
+    implements [
+        @jpegxl-rs.decision.encoder-architecture-phases/1,
+        @jpegxl-rs.policy.optimization-correctness-gates/1
+    ]
+    part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+}
+
+record jpegxl-rs.work.arch-phase5k-active-epf-depth-screen/2 : work {
+    title "Phase 5K: screen active EPF depth"
+    state completed
+    scope [
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/request.rs",
+        path "JPXL/crates/jpxl-encode-policy/tests/vardct_oracle.rs",
+        path "test-set/**"
+    ]
+    intent """
+        Screen active EPF iteration counts 2 and 3 with the Phase 5I uniform Sharpness 7 plane against the one-step baseline. The six-scene depth-3 matrix is mixed, so expose intermediate legal uniform sharpness values as research controls and test whether weaker sigma retains the Butteraugli gains without the observed content-dependent regressions. Keep one step plus Sharpness 7 as production default unless a six-scene gate passes.
+        """
+    acceptance {
+        check policy-decision {
+            statement """
+                The selected depth is either promoted through the full corpus contract or explicitly rejected/retained as research-only.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.phase5k-active-epf-depth-policy-2026-08-11/1 ]
+        }
+        check quality-screen {
+            statement """
+                Matched-rate Butteraugli and SSIMULACRA2 results on two representative scenes select one EPF depth for broader testing or retain the one-step default.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.phase5k-active-epf-depth-quality-2026-08-11/1 ]
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase5j-two-pass-error-aq-screen/1 ]
+    implements [
+        @jpegxl-rs.decision.encoder-architecture-phases/1,
+        @jpegxl-rs.policy.optimization-correctness-gates/1
+    ]
+    part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+    supersedes [ @jpegxl-rs.work.arch-phase5k-active-epf-depth-screen/1 ]
+}
+
+record jpegxl-rs.work.arch-phase5l-chroma-qm-allocation-screen/1 : work {
+    title "Phase 5L: screen chroma quantization-scale allocation"
+    state completed
+    scope [
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/request.rs",
+        path "JPXL/crates/jpxl-encode-policy/tests/vardct_oracle.rs",
+        path "JPXL/crates/jpxl-encode/src/vardct/ids.rs",
+        path "JPXL/crates/jpxl-encode/src/vardct/plan.rs",
+        path "JPXL/crates/jpxl-encode/src/vardct/write.rs",
+        path "JPXL/crates/jpxl-encode/tests/vardct_plan.rs",
+        path "test-set/**"
+    ]
+    intent """
+        Expose F.2/I.5.3 X/B quantization-scale exponents as checked typed research controls, preserving the neutral value 2 by default. Screen coarser chroma allocations at matched total rate on two representative scenes and both rates, since the rate loop can trade their saved chroma bits back into luma. Broaden only if Butteraugli improves without a material SSIMULACRA2 regression; remove the controls if the direction fails.
+        """
+    acceptance {
+        check policy-decision {
+            statement """
+                The neutral default remains byte-identical unless a full six-scene promotion gate passes.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.phase5l-chroma-qm-policy-2026-08-11/1 ]
+        }
+        check quality-screen {
+            statement """
+                Matched-rate perceptual results select a chroma allocation for broader testing or reject the control.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.phase5l-chroma-qm-quality-2026-08-11/1 ]
+        }
+        check wire-proof {
+            statement """
+                Tests prove legal X/B QM scales are signalled, used by quantization, rejected outside the u3 range, and accepted by djxl and jxl-oxide.
+                """
+            method command
+            verified_by [ @jpegxl-rs.evidence.phase5l-chroma-qm-wire-2026-08-11/1 ]
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase5k-active-epf-depth-screen/2 ]
+    implements [
+        @jpegxl-rs.decision.encoder-architecture-phases/1,
+        @jpegxl-rs.policy.optimization-correctness-gates/1
+    ]
+    part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+}
+
+record jpegxl-rs.work.arch-phase5m-spatial-epf-sharpness-screen/1 : work {
+    title "Phase 5M: screen spatial EPF sharpness from source activity"
+    state completed
+    scope [
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/request.rs",
+        path "JPXL/crates/jpxl-encode-policy/tests/vardct_oracle.rs",
+        path "test-set/**"
+    ]
+    intent """
+        Add two research-only EPF sharpness policies that split the per-8x8 Sharpness control image at the frame median of source luma variance: Sharpness 7 on the low-activity half and 0 on the high-activity half, plus the inverse polarity as falsification. Screen both with EPF3 on small1 (a Phase 5K winner) and small3 plus mid2 (Phase 5K regressors) at one and two bpp, using symmetric djxl decode and exact measured Butteraugli/SSIMULACRA2. Broaden only if one direction retains the winner and removes both regressors without material SSIM loss; otherwise remove the temporary policies and retain EPF1 Uniform7 production.
+        """
+    acceptance {
+        check policy-decision {
+            statement """
+                The EPF1 Uniform7 production default remains byte-identical unless a full six-scene promotion gate passes.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.phase5m-spatial-epf-policy-2026-08-11/1 ]
+        }
+        check quality-screen {
+            statement """
+                Matched-rate Butteraugli and SSIMULACRA2 on small1, small3, and mid2 at one and two bpp select one spatial policy for broader testing or reject both.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.phase5m-spatial-epf-quality-2026-08-11/1 ]
+        }
+        check spatial-proof {
+            statement """
+                Unit and oracle tests prove each research policy emits both legal 0 and 7 sharpness levels in source-activity-dependent spatial positions and remains accepted by djxl and jxl-oxide.
+                """
+            method command
+            verified_by [ @jpegxl-rs.evidence.phase5m-spatial-epf-wire-2026-08-11/1 ]
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase5l-chroma-qm-allocation-screen/1 ]
+    implements [
+        @jpegxl-rs.decision.encoder-architecture-phases/1,
+        @jpegxl-rs.policy.optimization-correctness-gates/1
+    ]
+    part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+}
+
+record jpegxl-rs.work.arch-phase5n-fine-aq-lattice-screen/1 : work {
+    title "Phase 5N: screen a fine per-block AQ lattice"
+    state completed
+    scope [
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/field.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/request.rs",
+        path "JPXL/crates/jpxl-encode-policy/tests/rate_loop.rs",
+        path "JPXL/crates/jpxl-encode-policy/tests/vardct_oracle.rs",
+        path "test-set/**"
+    ]
+    intent """
+        Test whether the existing single-pass AQ signal failed because the wire factorization snapped every atom to a half-octave lattice around HfMul 2. Add temporary fine-lattice Masking and Uniform research modes that preserve the same frame quantizer product with an HfMul baseline of 8, map raw log adjustments to integer HfMul without half-octave snapping, and prebuild the exact reachable integer multiplier range. Screen both directions on small1 and small2 at one and two bpp against the Phase 5I production policy. Broaden only if one direction has no Butteraugli regression and no material SSIMULACRA2 loss; otherwise remove the temporary modes.
+        """
+    acceptance {
+        check lattice-proof {
+            statement """
+                Tests prove the fine factorization preserves the baseline HF and LF quantizer products, produces more than the coarse lattice's values, stays deterministic and target-safe, and is accepted by djxl and jxl-oxide.
+                """
+            method command
+            verified_by [ @jpegxl-rs.evidence.phase5n-fine-aq-structure-2026-08-11/1 ]
+        }
+        check policy-decision {
+            statement """
+                The AQ-Off production default remains byte-identical unless a full six-scene promotion gate passes.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.phase5n-fine-aq-policy-2026-08-11/1 ]
+        }
+        check quality-screen {
+            statement """
+                Matched-rate Butteraugli and SSIMULACRA2 on small1 and small2 at one and two bpp select one fine AQ direction for broader testing or reject both.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.phase5n-fine-aq-quality-2026-08-11/1 ]
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase5m-spatial-epf-sharpness-screen/1 ]
+    implements [
+        @jpegxl-rs.decision.encoder-architecture-phases/1,
+        @jpegxl-rs.policy.optimization-correctness-gates/1
+    ]
+    part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+}
+
+record jpegxl-rs.work.arch-phase5o-special8-transform-screen/1 : work {
+    title "Phase 5O: screen same-footprint special VarDCT transforms"
+    state completed
+    scope [
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/regret.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/request.rs",
+        path "JPXL/crates/jpxl-encode-policy/tests/rate_loop.rs",
+        path "JPXL/crates/jpxl-encode-policy/tests/vardct_oracle.rs",
+        path "JPXL/crates/jpxl-encode/src/vardct/write.rs",
+        path "test-set/**"
+    ]
+    intent """
+        Add a temporary research cover mode that keeps the existing hierarchical square quadtree but, at every 8x8 leaf, prices all same-footprint special transforms already supported by the clean-room forward core and wire writer. Use the existing reconstruction-aware R+D proxy and exact final rate loop. Prove non-DCT8 wire selection, target safety, and external decode, then screen small1 and small2 at one and two bpp against Phase 5I production byte caps. Broaden only if Butteraugli direction is uniformly non-regressing without material SSIMULACRA2 loss; otherwise remove the temporary mode.
+        """
+    acceptance {
+        check policy-decision {
+            statement """
+                The candidate is broadened only on a uniformly safe direction; otherwise its temporary source and CLI surface are removed and the production fingerprint is restored.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.phase5o-special8-cleanup-2026-08-11/1 ]
+        }
+        check quality-screen {
+            statement """
+                Small1 and small2 at one and two bpp are scored with symmetric djxl decode at Phase 5I byte caps.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.phase5o-special8-quality-2026-08-11/1 ]
+        }
+        check rate-oracle {
+            statement """
+                The research mode obeys the exact byte target and a stream carrying a special transform decodes in djxl and jxl-oxide.
+                """
+            method command
+            verified_by [ @jpegxl-rs.evidence.phase5o-special8-wire-rate-2026-08-11/1 ]
+        }
+        check selection-proof {
+            statement """
+                A synthetic fixture selects at least one same-footprint special transform and preserves a legal validated plan.
+                """
+            method command
+            verified_by [ @jpegxl-rs.evidence.phase5o-special8-wire-rate-2026-08-11/1 ]
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase5n-fine-aq-lattice-screen/1 ]
+    implements [
+        @jpegxl-rs.decision.encoder-architecture-phases/1,
+        @jpegxl-rs.policy.optimization-correctness-gates/1
+    ]
+    part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+}
+
+record jpegxl-rs.work.arch-phase5p-special8-exact-distortion-screen/1 : work {
+    title "Phase 5P: screen special transforms with exact sample-domain distortion"
+    state proposed
+    scope [
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/regret.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/request.rs",
+        path "JPXL/crates/jpxl-encode-policy/tests/rate_loop.rs",
+        path "JPXL/crates/jpxl-encode-policy/tests/vardct_oracle.rs",
+        path "JPXL/crates/jpxl-encode/src/vardct/write.rs",
+        path "test-set/**"
+    ]
+    intent """
+        Re-open the Phase 5O same-8x8-footprint transform experiment behind a research-only mode, but score each special candidate with exact inverse-transform reconstruction error in sample space rather than the square-DCT coefficient-SSE side-squared approximation. Keep exact local residual-bit terms and a bounded DctSelect transition proxy, prove wire/rate/oracle behavior, then screen the Phase 5O regressors and strongest winners before a full six-scene gate. Remove the temporary mode if exact distortion does not eliminate Butteraugli regressions.
+        """
+    acceptance {
+        check distortion-proof {
+            statement """
+                Tests compare the exact sample-domain scorer to direct inverse-reconstruction SSE and show at least one special transform is not silently treated as a square-DCT Parseval case.
+                """
+            method command
+        }
+        check policy-decision {
+            statement """
+                Production changes only if the full matrix has no Butteraugli regression under an explicit Contract B; otherwise the research mode is removed and production fingerprint restored.
+                """
+            method observation
+        }
+        check quality-screen {
+            statement """
+                Pre-registered Phase 5O regressors and winners are scored symmetrically at production byte caps; a full matrix is run only if direction is non-regressing.
+                """
+            method observation
+        }
+        check rate-oracle {
+            statement """
+                An active exact-distortion special-transform stream stays under target and decodes consistently in djxl and jxl-oxide.
+                """
+            method command
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase5o-special8-transform-screen/1 ]
+    implements [
+        @jpegxl-rs.decision.encoder-architecture-phases/1,
+        @jpegxl-rs.policy.optimization-correctness-gates/1
+    ]
+    part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+}
+
 record jpegxl-rs.work.arch-s8-cover-lane-simd/1 : work {
     title "outside-advice.md §8 (S8), narrowed per Opus advisor review: bit-identical coefficient-lane SIMD for cover scoring"
     state completed

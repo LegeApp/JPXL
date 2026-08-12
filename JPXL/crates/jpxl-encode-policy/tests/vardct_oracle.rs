@@ -43,8 +43,8 @@ use jpxl_conformance::{Image as PnmImage, OracleKind, OutputFormat, oracle};
 use jpxl_core::limits::Limits;
 use jpxl_decode::decode::decode;
 use jpxl_encode_policy::{
-    EncodeRequest, PreparedFrame, RateTarget, encode_srgb8_to_target, encode_srgb8_vardct,
-    plan_frame,
+    EncodeRequest, EpfSharpnessMode, PreparedFrame, RateTarget, encode_srgb8_to_target,
+    encode_srgb8_vardct, plan_frame,
 };
 
 /// A distinct directory per test, so parallel runs cannot collide.
@@ -418,6 +418,112 @@ fn both_oracles_decode_a_rate_targeted_stream() {
                 "{tag}: {kind:?} and jpxl-decode disagree by {peak} (RMSE {rmse:.3})"
             );
         }
+    }
+}
+
+#[test]
+fn both_oracles_decode_an_active_epf_stream() {
+    let (width, height) = (64u32, 64u32);
+    let source = test_image(width, height, false);
+    let mut request = EncodeRequest::defaults();
+    request.restoration.epf_iters = 1;
+    request.epf_sharpness = EpfSharpnessMode::Uniform7;
+    let codestream = encode_srgb8_vardct(width, height, &source, &request).expect("encodes");
+
+    let dir = scratch("active-epf");
+    let jxl = dir.join("active-epf.jxl");
+    std::fs::write(&jxl, &codestream).expect("write");
+    let ours = ours(&codestream);
+
+    for kind in [OracleKind::Djxl, OracleKind::JxlOxide] {
+        let Some(oracle) = oracle::find(kind) else {
+            println!("skipping {kind:?}: not installed");
+            continue;
+        };
+        let (out, format) = match kind {
+            OracleKind::Djxl => (dir.join("active-epf.ppm"), OutputFormat::Ppm),
+            _ => (dir.join("active-epf.npy"), OutputFormat::Npy),
+        };
+        match oracle.decode(&jxl, &out, format) {
+            Ok(()) => {}
+            Err(err) if err.is_unavailable() => {
+                println!("skipping {kind:?}: {err}");
+                continue;
+            }
+            Err(err) => panic!("{kind:?} refused an active-EPF stream: {err}"),
+        }
+        let bytes = std::fs::read(&out).expect("read oracle output");
+        let samples: Vec<u8> = match kind {
+            OracleKind::Djxl => PnmImage::from_ppm(&bytes)
+                .expect("ppm")
+                .samples
+                .iter()
+                .map(|&v| u8::try_from(v.min(255)).unwrap_or(0))
+                .collect(),
+            _ => read_npy_f32(&bytes)
+                .expect("npy")
+                .iter()
+                .map(|&v| u8::try_from((v.clamp(0.0, 1.0) * 255.0).round() as i32).unwrap_or(255))
+                .collect(),
+        };
+        let (peak, rmse) = error(&samples, &ours);
+        assert!(
+            peak <= MAX_PEAK_BETWEEN_DECODERS,
+            "{kind:?} and jpxl-decode disagree by {peak} (RMSE {rmse:.3}) on active EPF"
+        );
+    }
+}
+
+#[test]
+fn both_oracles_decode_non_neutral_chroma_qm_scales() {
+    let (width, height) = (64u32, 64u32);
+    let source = test_image(width, height, false);
+    let mut request = EncodeRequest::defaults();
+    request.x_qm_scale = jpxl_encode::vardct::ids::QmScale::new(0).expect("legal");
+    request.b_qm_scale = jpxl_encode::vardct::ids::QmScale::new(1).expect("legal");
+    let codestream = encode_srgb8_vardct(width, height, &source, &request).expect("encodes");
+
+    let dir = scratch("chroma-qm-scales");
+    let jxl = dir.join("chroma-qm-scales.jxl");
+    std::fs::write(&jxl, &codestream).expect("write");
+    let ours = ours(&codestream);
+
+    for kind in [OracleKind::Djxl, OracleKind::JxlOxide] {
+        let Some(oracle) = oracle::find(kind) else {
+            println!("skipping {kind:?}: not installed");
+            continue;
+        };
+        let (out, format) = match kind {
+            OracleKind::Djxl => (dir.join("chroma-qm-scales.ppm"), OutputFormat::Ppm),
+            _ => (dir.join("chroma-qm-scales.npy"), OutputFormat::Npy),
+        };
+        match oracle.decode(&jxl, &out, format) {
+            Ok(()) => {}
+            Err(err) if err.is_unavailable() => {
+                println!("skipping {kind:?}: {err}");
+                continue;
+            }
+            Err(err) => panic!("{kind:?} refused non-neutral chroma QM scales: {err}"),
+        }
+        let bytes = std::fs::read(&out).expect("read oracle output");
+        let samples: Vec<u8> = match kind {
+            OracleKind::Djxl => PnmImage::from_ppm(&bytes)
+                .expect("ppm")
+                .samples
+                .iter()
+                .map(|&v| u8::try_from(v.min(255)).unwrap_or(0))
+                .collect(),
+            _ => read_npy_f32(&bytes)
+                .expect("npy")
+                .iter()
+                .map(|&v| u8::try_from((v.clamp(0.0, 1.0) * 255.0).round() as i32).unwrap_or(255))
+                .collect(),
+        };
+        let (peak, rmse) = error(&samples, &ours);
+        assert!(
+            peak <= MAX_PEAK_BETWEEN_DECODERS,
+            "{kind:?} and jpxl-decode disagree by {peak} (RMSE {rmse:.3}) on chroma QM scales"
+        );
     }
 }
 

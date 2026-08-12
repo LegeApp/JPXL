@@ -294,8 +294,8 @@ fn a_request_carrying_a_target_routes_through_the_loop() {
     let request = EncodeRequest::for_target(target);
 
     let through_request = encode_srgb8_vardct(width, height, &source, &request).expect("reachable");
-    let direct = encode_srgb8_to_target(width, height, &source, &EncodeRequest::defaults(), target)
-        .expect("reachable");
+    let direct =
+        encode_srgb8_to_target(width, height, &source, &request, target).expect("reachable");
     assert_eq!(through_request, direct.codestream);
     assert!(through_request.len() as u64 <= 900);
 
@@ -491,14 +491,8 @@ fn rate_probe_multiplicity_is_down() {
     let mut request = EncodeRequest::defaults();
     // Force the precondition path so the counter is meaningful.
     request.restoration.gaborish = true;
-    let outcome = encode_srgb8_to_target(
-        width,
-        height,
-        &source,
-        &request,
-        RateTarget::Bytes(900),
-    )
-    .expect("reachable");
+    let outcome = encode_srgb8_to_target(width, height, &source, &request, RateTarget::Bytes(900))
+        .expect("reachable");
 
     let stats = outcome.stats;
     assert_eq!(
@@ -569,13 +563,11 @@ fn the_trace_describes_the_search_that_actually_happened() {
         .max()
         .expect("something fit under Full refinement");
     assert_eq!(outcome.achieved(), best);
-    assert!(
-        outcome.trace.iter().any(|s| {
-            s.phase == rate::RatePhase::Final
-                && s.quantizer == outcome.chosen
-                && s.bytes == outcome.achieved()
-        })
-    );
+    assert!(outcome.trace.iter().any(|s| {
+        s.phase == rate::RatePhase::Final
+            && s.quantizer == outcome.chosen
+            && s.bytes == outcome.achieved()
+    }));
 }
 
 #[test]
@@ -586,7 +578,11 @@ fn dump_opt_v2_stats() {
     let mut request = EncodeRequest::defaults();
     request.restoration.gaborish = true;
     let outcome = encode_srgb8_to_target(
-        width, height, &source, &request, RateTarget::BitsPerPixel(1.0),
+        width,
+        height,
+        &source,
+        &request,
+        RateTarget::BitsPerPixel(1.0),
     )
     .expect("reachable");
     eprintln!("OPTV2_STATS {:?}", outcome.stats);

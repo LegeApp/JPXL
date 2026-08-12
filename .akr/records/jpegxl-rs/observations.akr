@@ -364,6 +364,65 @@ record jpegxl-rs.observation.libjxl-headsup-modular-2026-08-10/1 : observation {
     author "GitHub Uploader"
 }
 
+record jpegxl-rs.observation.lossy-harness-decoder-asymmetry-2026-08-11/1 : observation {
+    title "Historical lossy quality tables used asymmetric decoders"
+    state superseded
+    scope [
+        path ".agent/scratch/effort-ramp-2026-08-10/headsup-lossy-perceptual-baseline.txt",
+        path ".agent/scratch/effort-ramp-2026-08-10/headsup-lossy.ps1"
+    ]
+    statement """
+        The 2026-08-10 lossy head-to-head script decoded JPXL streams with jpxl decode but cjxl streams with djxl. Current same-stream checks show those decoder outputs are not pixel-identical, so the historical 39-53% equal-Butteraugli gap is direction-setting only and cannot be promoted as a fair encoder baseline. Every cross-codec quality comparison must decode both encoders through the same pinned djxl binary, then measure the decoded PPM; cjxl's requested -d must not be treated as the measured Butteraugli score. The within-JPXL AQ ranking survives symmetric djxl decoding.
+        """
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    method command
+    watches [
+        "JPXL/crates/jpxl-decode/**",
+        "JPXL/crates/jpxl-conformance/src/metrics.rs",
+        ".agent/scratch/effort-ramp-2026-08-10/headsup-lossy.ps1"
+    ]
+    derived_from [ @jpegxl-rs.observation.lossy-perceptual-baseline-2026-08-10 ]
+    verified_by [ @jpegxl-rs.evidence.phase5a-aq-policy-gate-2026-08-11 ]
+}
+
+record jpegxl-rs.observation.lossy-harness-decoder-asymmetry-2026-08-11/2 : observation {
+    title "Historical lossy quality tables used asymmetric decoders"
+    state superseded
+    scope [ path "JPXL/crates/jpxl-cli/src/main.rs" ]
+    statement """
+        The 2026-08-10 lossy head-to-head script decoded JPXL streams with jpxl decode but cjxl streams with djxl. Current same-stream checks show those decoder outputs are not pixel-identical, so the historical 39-53% equal-Butteraugli gap is direction-setting only and cannot be promoted as a fair encoder baseline. Every cross-codec quality comparison must decode both encoders through the same pinned djxl binary, then measure the decoded PPM; cjxl's requested -d must not be treated as the measured Butteraugli score. The within-JPXL AQ ranking survives symmetric djxl decoding.
+        """
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    method command
+    watches [
+        "JPXL/crates/jpxl-decode/**",
+        "JPXL/crates/jpxl-conformance/src/metrics.rs",
+        ".agent/scratch/effort-ramp-2026-08-10/headsup-lossy.ps1"
+    ]
+    derived_from [ @jpegxl-rs.observation.lossy-perceptual-baseline-2026-08-10 ]
+    supersedes [ @jpegxl-rs.observation.lossy-harness-decoder-asymmetry-2026-08-11/1 ]
+    verified_by [ @jpegxl-rs.evidence.phase5a-aq-policy-gate-2026-08-11 ]
+}
+
+record jpegxl-rs.observation.lossy-harness-decoder-asymmetry-2026-08-11/3 : observation {
+    title "Historical lossy quality tables used asymmetric decoders"
+    state verified
+    scope [ path "JPXL/crates/jpxl-cli/src/main.rs" ]
+    statement """
+        The 2026-08-10 lossy head-to-head script decoded JPXL streams with jpxl decode but cjxl streams with djxl. Current same-stream checks show those decoder outputs are not pixel-identical, so the historical 39-53% equal-Butteraugli gap is direction-setting only and cannot be promoted as a fair encoder baseline. Every cross-codec quality comparison must decode both encoders through the same pinned djxl binary, then measure the decoded PPM; cjxl's requested -d must not be treated as the measured Butteraugli score. The within-JPXL AQ ranking survives symmetric djxl decoding.
+        """
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    method command
+    watches [
+        "JPXL/crates/jpxl-decode/**",
+        "JPXL/crates/jpxl-conformance/src/metrics.rs",
+        "JPXL/crates/jpxl-cli/src/main.rs"
+    ]
+    derived_from [ @jpegxl-rs.observation.lossy-perceptual-baseline-2026-08-10 ]
+    supersedes [ @jpegxl-rs.observation.lossy-harness-decoder-asymmetry-2026-08-11/2 ]
+    verified_by [ @jpegxl-rs.evidence.phase5a-aq-policy-gate-2026-08-11 ]
+}
+
 record jpegxl-rs.observation.lossy-perceptual-baseline-2026-08-10/1 : observation {
     title "Lossy RD on three metrics: 12-20% behind cjxl on SSIMULACRA2 but 39-53% on butteraugli, localising the deficit to perceptual bit allocation"
     state verified
@@ -621,6 +680,601 @@ record jpegxl-rs.observation.phase4m-lf-fill-direction-2026-08-11/1 : observatio
             Raw before/after diagnostic runs and trace interpretation.
             """
     }
+}
+
+record jpegxl-rs.observation.phase5-aqoff-jxloxide-incompatibility-2026-08-11/1 : observation {
+    title "AQ-Off HfMul candidates agree in djxl/self but fail in jxl-oxide"
+    state superseded
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/src/field.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/rate.rs",
+        path "JPXL/crates/jpxl-encode-policy/tests/vardct_oracle.rs"
+    ]
+    statement """
+        Promoting AQ Off causes two existing external-oracle tests to fail on HfMul/rate-target streams: jxl-oxide returns images differing from jpxl-decode by peak 255 and RMSE 115-126. The exact same streams are accepted by djxl, whose decoded output agrees with jpxl-decode at RMSE about 0.49. This localises the blocker to a jxl-oxide interoperability edge rather than a libjxl rejection, but the repository's intentional multi-oracle gate means the perceptual winner cannot be promoted by silently exempting jxl-oxide. Production defaults were reverted to Masking/quant_lf16/LF-fill-on; Off and fixed quant_lf remain opt-in research controls.
+        """
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    method command
+    watches [
+        "JPXL/crates/jpxl-encode-policy/src/field.rs",
+        "JPXL/crates/jpxl-encode-policy/src/rate.rs",
+        "JPXL/crates/jpxl-encode-policy/tests/vardct_oracle.rs",
+        "JPXL/crates/jpxl-decode/src/vardct/**"
+    ]
+    derived_from [ @jpegxl-rs.observation.phase5-quality-policy-screen-2026-08-11 ]
+    verified_by [
+        @jpegxl-rs.evidence.phase5-candidate-djxl-self-agree-2026-08-11,
+        @jpegxl-rs.evidence.phase5-candidate-jxloxide-gate-2026-08-11
+    ]
+}
+
+record jpegxl-rs.observation.phase5-aqoff-jxloxide-incompatibility-2026-08-11/2 : observation {
+    title "Rate/HfMul streams agree in djxl/self but fail in jxl-oxide before and after Phase 5"
+    state superseded
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/src/field.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/rate.rs",
+        path "JPXL/crates/jpxl-encode-policy/tests/vardct_oracle.rs"
+    ]
+    statement """
+        Two existing external-oracle tests fail on HfMul/rate-target streams in the current environment: jxl-oxide returns images differing from jpxl-decode by peak 255 and RMSE roughly 94-126, while djxl accepts the same streams and agrees with jpxl-decode at RMSE about 0.49. Crucially, restoring the exact pre-Phase-5 production behavior (Masking, quant_lf16, LF fill enabled) reproduces both failures, so the incompatibility predates and is not caused by the AQ-Off/quant_lf8 candidate. The finding still blocks a clean full-suite gate, but it is not evidence against the candidate's libjxl validity. Production defaults remain unchanged for this handoff because the candidate has not yet been re-gated across the broader corpus and optional-oracle state after minimisation.
+        """
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    method command
+    watches [
+        "JPXL/crates/jpxl-encode-policy/src/field.rs",
+        "JPXL/crates/jpxl-encode-policy/src/rate.rs",
+        "JPXL/crates/jpxl-encode-policy/tests/vardct_oracle.rs",
+        "JPXL/crates/jpxl-decode/src/vardct/**"
+    ]
+    derived_from [ @jpegxl-rs.observation.phase5-quality-policy-screen-2026-08-11 ]
+    supersedes [ @jpegxl-rs.observation.phase5-aqoff-jxloxide-incompatibility-2026-08-11/1 ]
+    verified_by [
+        @jpegxl-rs.evidence.phase5-baseline-jxloxide-gate-2026-08-11,
+        @jpegxl-rs.evidence.phase5-candidate-djxl-self-agree-2026-08-11,
+        @jpegxl-rs.evidence.phase5-candidate-jxloxide-gate-2026-08-11
+    ]
+}
+
+record jpegxl-rs.observation.phase5-aqoff-jxloxide-incompatibility-2026-08-11/3 : observation {
+    title "jxl-oxide 0.12.6 narrows LfQuant at the signed-16-bit boundary"
+    state verified
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/src/rate.rs",
+        path "JPXL/crates/jpxl-encode-policy/tests/vardct_oracle.rs"
+    ]
+    statement """
+        The two failures originally attributed to HfMul are caused by optional LF fill producing otherwise-valid signed-32-bit G.2.2 LfQuant samples that jxl-oxide 0.12.6 narrows at the signed-16-bit boundary. A fixed-input black-box sweep agrees through quant_lf 78 (LF peak 32669, decoder peak 1) and fails at quant_lf 79 (LF peak 33088, decoder peak 255/RMSE 71.28); fixed HfMul values 1 through 65 remain decoder-consistent. Part 1 D.3 permits 32-bit Modular samples when modular_16bit_buffers is false, G.2.2 carries LfQuant through Modular, and djxl plus jpxl-decode agree, so this is an external-decoder defect rather than a JPXL wire error. The fixed-quantizer API retains the standard's full signed-32-bit range. Target-rate LF fill now declines only candidates whose planned LfQuant exceeds signed 16-bit, preserving compatibility without weakening the oracle gate. All 10 VarDCT oracle tests pass afterward.
+        """
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    method command
+    watches [
+        "JPXL/crates/jpxl-encode-policy/src/rate.rs",
+        "JPXL/crates/jpxl-encode-policy/tests/vardct_oracle.rs",
+        "JPXL/crates/jpxl-decode/src/vardct/**"
+    ]
+    derived_from [ @jpegxl-rs.observation.phase5-quality-policy-screen-2026-08-11/3 ]
+    supersedes [ @jpegxl-rs.observation.phase5-aqoff-jxloxide-incompatibility-2026-08-11/2 ]
+    verified_by [
+        @jpegxl-rs.evidence.phase5-candidate-djxl-self-agree-2026-08-11,
+        @jpegxl-rs.evidence.phase5f-lfquant-boundary-2026-08-11,
+        @jpegxl-rs.evidence.phase5f-oracle-gate-2026-08-11
+    ]
+}
+
+record jpegxl-rs.observation.phase5-quality-policy-screen-2026-08-11/1 : observation {
+    title "AQ Off plus quant_lf 8 is the first corpus-gated VarDCT perceptual policy"
+    state superseded
+    scope [
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/field.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/request.rs"
+    ]
+    statement """
+        A matched-target, symmetric-djxl screen on three unique test-set photographs establishes two production policy changes. First, the single-pass activity field is disabled by default: AQ Off lowers Butteraugli versus Masking by 10.2%, 31.6%, and 31.8% on the three scenes, while Uniform remains far behind Off on the 4.3 MP screen. Second, the rate-target policy uses quant_lf 8 with secondary LF fill disabled: versus 16, it improves both Butteraugli and SSIMULACRA2 on all three scenes, with Butteraugli changes of -7.3%, -3.8%, and -0.2%. Together, the two changes reduce Butteraugli versus the old policy by 16.8% on the dense-detail 1 bpp scene and about 34% on the flat/edge 2 bpp scene. This is real progress but does not establish the 20%-of-cjxl goal: the corrected equal-rate small-photo anchor remains much farther away. Negative screens prune Gaborish, forced DCT8 cover, and EPF iteration signalling without filter planning. Raw commands, hashes, tables, and default-control fingerprints are in .agent/scratch/phase5-aq-broaden-QyUSZ8/summary.md. Measurements were made on a dirty worktree based at 25213f6 and remain diagnostic until committed and re-run.
+        """
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    method command
+    watches [
+        "JPXL/crates/jpxl-encode-policy/src/field.rs",
+        "JPXL/crates/jpxl-encode-policy/src/request.rs",
+        "JPXL/crates/jpxl-cli/src/main.rs"
+    ]
+    derived_from [ @jpegxl-rs.observation.aq-field-is-a-net-perceptual-loss-2026-08-10 ]
+    verified_by [
+        @jpegxl-rs.evidence.phase5a-aq-policy-gate-2026-08-11,
+        @jpegxl-rs.evidence.phase5b-gaborish-negative-2026-08-11,
+        @jpegxl-rs.evidence.phase5c-lf-hf-balance-2026-08-11,
+        @jpegxl-rs.evidence.phase5d-fixed-cover-negative-2026-08-11,
+        @jpegxl-rs.evidence.phase5e-epf-signalling-noop-2026-08-11
+    ]
+}
+
+record jpegxl-rs.observation.phase5-quality-policy-screen-2026-08-11/2 : observation {
+    title "AQ Off plus quant_lf 8 wins perceptually but is blocked on jxl-oxide compatibility"
+    state superseded
+    scope [
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/field.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/request.rs"
+    ]
+    statement """
+        A matched-target, symmetric-djxl screen on three unique test-set photographs establishes a strong candidate policy but not a safe production default. AQ Off lowers Butteraugli versus Masking by 10.2%, 31.6%, and 31.8% on the three scenes; with AQ Off, quant_lf 8 improves both Butteraugli and SSIMULACRA2 versus 16 on all three scenes (-7.3%, -3.8%, and -0.2% Butteraugli). Together they reduce Butteraugli versus the old policy by 16.8% on the dense-detail 1 bpp scene and about 34% on the flat/edge 2 bpp scene. However, promoting AQ Off exposed catastrophic jxl-oxide disagreement in the full oracle suite on rate-target/HfMul streams, even though djxl and jpxl-decode agree within RMSE 0.49 on those same streams. quant_lf 8 with the cross-oracle-safe Masking field regresses Butteraugli on both screened small images. Therefore production remains Masking, quant_lf 16, LF fill enabled; Off and fixed quant_lf remain explicit research controls until the jxl-oxide incompatibility is resolved without weakening the oracle contract. Negative screens also prune Gaborish, forced DCT8 cover, and EPF iteration signalling without filter planning. Raw commands and tables are in .agent/scratch/phase5-aq-broaden-QyUSZ8/summary.md. Measurements were made on a dirty worktree based at 25213f6.
+        """
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    method command
+    watches [
+        "JPXL/crates/jpxl-encode-policy/src/field.rs",
+        "JPXL/crates/jpxl-encode-policy/src/request.rs",
+        "JPXL/crates/jpxl-cli/src/main.rs",
+        "JPXL/crates/jpxl-encode-policy/tests/vardct_oracle.rs"
+    ]
+    derived_from [ @jpegxl-rs.observation.aq-field-is-a-net-perceptual-loss-2026-08-10 ]
+    supersedes [ @jpegxl-rs.observation.phase5-quality-policy-screen-2026-08-11/1 ]
+    verified_by [
+        @jpegxl-rs.evidence.phase5a-aq-policy-gate-2026-08-11,
+        @jpegxl-rs.evidence.phase5b-gaborish-negative-2026-08-11,
+        @jpegxl-rs.evidence.phase5c-lf-hf-balance-2026-08-11,
+        @jpegxl-rs.evidence.phase5d-fixed-cover-negative-2026-08-11,
+        @jpegxl-rs.evidence.phase5e-epf-signalling-noop-2026-08-11
+    ]
+}
+
+record jpegxl-rs.observation.phase5-quality-policy-screen-2026-08-11/3 : observation {
+    title "AQ Off plus quant_lf 8 is a strong libjxl-valid quality candidate, not yet the default"
+    state superseded
+    scope [
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/field.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/request.rs"
+    ]
+    statement """
+        A matched-target, symmetric-djxl screen on three unique test-set photographs establishes a strong candidate policy but not yet a production default. AQ Off lowers Butteraugli versus Masking by 10.2%, 31.6%, and 31.8% on the three scenes; with AQ Off, quant_lf 8 improves both Butteraugli and SSIMULACRA2 versus 16 on all three scenes (-7.3%, -3.8%, and -0.2% Butteraugli). Together they reduce Butteraugli versus the old policy by 16.8% on the dense-detail 1 bpp scene and about 34% on the flat/edge 2 bpp scene. djxl accepts the candidate streams and agrees with jpxl-decode closely. The full suite is red on two jxl-oxide rate/HfMul comparisons, but the exact pre-Phase-5 production policy reproduces those failures, proving they are pre-existing rather than candidate regressions. Production remains Masking, quant_lf16, LF fill enabled for this handoff because only three scenes have been gated and the optional-oracle baseline needs minimisation; Off and fixed quant_lf remain explicit research controls. Negative screens prune Gaborish, forced DCT8 cover, and EPF iteration signalling without filter planning. Raw commands and tables are in .agent/scratch/phase5-aq-broaden-QyUSZ8/summary.md.
+        """
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    method command
+    watches [
+        "JPXL/crates/jpxl-encode-policy/src/field.rs",
+        "JPXL/crates/jpxl-encode-policy/src/request.rs",
+        "JPXL/crates/jpxl-cli/src/main.rs",
+        "JPXL/crates/jpxl-encode-policy/tests/vardct_oracle.rs"
+    ]
+    derived_from [ @jpegxl-rs.observation.aq-field-is-a-net-perceptual-loss-2026-08-10 ]
+    supersedes [ @jpegxl-rs.observation.phase5-quality-policy-screen-2026-08-11/2 ]
+    verified_by [
+        @jpegxl-rs.evidence.phase5-baseline-jxloxide-gate-2026-08-11,
+        @jpegxl-rs.evidence.phase5a-aq-policy-gate-2026-08-11,
+        @jpegxl-rs.evidence.phase5b-gaborish-negative-2026-08-11,
+        @jpegxl-rs.evidence.phase5c-lf-hf-balance-2026-08-11,
+        @jpegxl-rs.evidence.phase5d-fixed-cover-negative-2026-08-11,
+        @jpegxl-rs.evidence.phase5e-epf-signalling-noop-2026-08-11
+    ]
+}
+
+record jpegxl-rs.observation.phase5-quality-policy-screen-2026-08-11/4 : observation {
+    title "AQ Off plus quant_lf 8 is cross-oracle valid and awaits the broader corpus gate"
+    state superseded
+    scope [
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/field.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/request.rs"
+    ]
+    statement """
+        A matched-target, symmetric-djxl screen on three unique test-set photographs establishes a strong candidate policy but not yet a production default. AQ Off lowers Butteraugli versus Masking by 10.2%, 31.6%, and 31.8%; with AQ Off, quant_lf 8 improves both Butteraugli and SSIMULACRA2 versus 16 on all three scenes (-7.3%, -3.8%, and -0.2% Butteraugli). Together they reduce Butteraugli versus the old policy by 16.8% on the dense-detail 1 bpp scene and about 34% on the flat/edge 2 bpp scene. Phase 5F proved the optional-oracle failures were a jxl-oxide 0.12.6 signed-16-bit LfQuant narrowing defect in secondary LF fill, not a candidate defect. The compatibility guard restores the full 10-test external-oracle gate, and regenerated Off/quant_lf8 streams are byte-identical on all three scenes. Production remains Masking, quant_lf16, LF fill enabled because the representative broader corpus gate is still incomplete; Off and fixed quant_lf remain explicit research controls. Negative screens prune Gaborish, forced DCT8 cover, and EPF iteration signalling without filter planning. Raw commands and tables are in .agent/scratch/phase5-aq-broaden-QyUSZ8/summary.md and .agent/scratch/phase5f-lfquant-compat-2026-08-11.md.
+        """
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    method command
+    watches [
+        "JPXL/crates/jpxl-encode-policy/src/field.rs",
+        "JPXL/crates/jpxl-encode-policy/src/request.rs",
+        "JPXL/crates/jpxl-cli/src/main.rs",
+        "JPXL/crates/jpxl-encode-policy/tests/vardct_oracle.rs"
+    ]
+    derived_from [ @jpegxl-rs.observation.aq-field-is-a-net-perceptual-loss-2026-08-10/2 ]
+    supersedes [ @jpegxl-rs.observation.phase5-quality-policy-screen-2026-08-11/3 ]
+    verified_by [
+        @jpegxl-rs.evidence.phase5a-aq-policy-gate-2026-08-11,
+        @jpegxl-rs.evidence.phase5b-gaborish-negative-2026-08-11,
+        @jpegxl-rs.evidence.phase5c-lf-hf-balance-2026-08-11,
+        @jpegxl-rs.evidence.phase5d-fixed-cover-negative-2026-08-11,
+        @jpegxl-rs.evidence.phase5e-epf-signalling-noop-2026-08-11,
+        @jpegxl-rs.evidence.phase5f-oracle-gate-2026-08-11,
+        @jpegxl-rs.evidence.phase5f-quality-regate-2026-08-11
+    ]
+}
+
+record jpegxl-rs.observation.phase5-quality-policy-screen-2026-08-11/5 : observation {
+    title "AQ Off plus quant_lf 8 is the target-rate default but remains outside the cjxl goal"
+    state superseded
+    scope [
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/field.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/request.rs",
+        path "JPXL/crates/jpxl-encode-policy/tests/rate_loop.rs",
+        path "test-set/**"
+    ]
+    statement """
+        The Phase 5G broader gate measured the historical Masking/quant_lf16/LF-fill policy against AQ Off/quant_lf8/no-LF-fill on six distinct photographs at one and two bpp, decoding every stream through the same pinned djxl. The candidate reduces Butteraugli distance by 7.6% to 34.2% in all twelve cells and improves RMSE in all twelve. SSIMULACRA2 improves in ten cells but regresses by 0.3665 and 4.3685 on two 1-bpp scenes. The target-rate constructor and CLI therefore promote the candidate under the revised bounded Contract B; fixed-quantizer defaults remain unchanged. Request tests pass 4/4, rate-loop integration passes 11/11 with one ignored diagnostic, the independent-decoder suite passes 10/10, and the untouched CLI output is byte-identical to the measured candidate. Equal-rate cjxl effort-7 anchors show JPXL still has 26.6% to 85.9% higher Butteraugli distance, so this is a meaningful default improvement rather than completion of the within-20% goal. The mid2/2 cjxl anchor belongs to the initial 841754-byte candidate, not the later 795208-byte matched-policy rerun. Negative screens continue to prune Gaborish signalling alone, forced DCT8 cover, and EPF iteration signalling without filter planning. Raw commands and tables are in .agent/scratch/phase5-aq-broaden-QyUSZ8/summary.md, .agent/scratch/phase5f-lfquant-compat-2026-08-11.md, and .agent/scratch/phase5g-corpus-summary-2026-08-11.md.
+        """
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    method command
+    watches [
+        "JPXL/crates/jpxl-encode-policy/src/field.rs",
+        "JPXL/crates/jpxl-encode-policy/src/request.rs",
+        "JPXL/crates/jpxl-cli/src/main.rs",
+        "JPXL/crates/jpxl-encode-policy/tests/rate_loop.rs",
+        "JPXL/crates/jpxl-encode-policy/tests/vardct_oracle.rs"
+    ]
+    derived_from [ @jpegxl-rs.observation.aq-field-is-a-net-perceptual-loss-2026-08-10/2 ]
+    supersedes [ @jpegxl-rs.observation.phase5-quality-policy-screen-2026-08-11/4 ]
+    verified_by [
+        @jpegxl-rs.evidence.phase5a-aq-policy-gate-2026-08-11,
+        @jpegxl-rs.evidence.phase5b-gaborish-negative-2026-08-11,
+        @jpegxl-rs.evidence.phase5c-lf-hf-balance-2026-08-11,
+        @jpegxl-rs.evidence.phase5d-fixed-cover-negative-2026-08-11,
+        @jpegxl-rs.evidence.phase5e-epf-signalling-noop-2026-08-11,
+        @jpegxl-rs.evidence.phase5f-oracle-gate-2026-08-11,
+        @jpegxl-rs.evidence.phase5f-quality-regate-2026-08-11,
+        @jpegxl-rs.evidence.phase5g-cjxl-equal-rate-anchors-2026-08-11,
+        @jpegxl-rs.evidence.phase5g-corpus-matrix-2026-08-11,
+        @jpegxl-rs.evidence.phase5g-target-default-2026-08-11
+    ]
+}
+
+record jpegxl-rs.observation.phase5-quality-policy-screen-2026-08-11/6 : observation {
+    title "Active EPF improves all twelve cells, but only two meet the cjxl goal"
+    state superseded
+    scope [
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/field.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/request.rs",
+        path "JPXL/crates/jpxl-encode-policy/tests/rate_loop.rs",
+        path "JPXL/crates/jpxl-encode-policy/tests/vardct_oracle.rs",
+        path "test-set/**"
+    ]
+    statement """
+        Phase 5G promoted AQ Off, quant_lf 8, and no LF-fill for target-rate requests after six-scene matched-rate testing improved Butteraugli in all twelve cells by 7.6% to 34.2%. Phase 5H then tested quant_lf 4 across the same matrix: it split six wins and six losses; quant_lf 2 improved Butteraugli in a two-scene direction screen but caused material low-rate SSIM loss, so quant_lf 8 remains the global default and the mixed result points toward content-adaptive LF/HF allocation. Phase 5I corrected the prior no-op EPF screen by emitting uniform Sharpness 7 with one EPF step. Independent activation tests proved decoded pixels change and both djxl and jxl-oxide accept the stream. At matched achieved rate, active EPF improved Butteraugli by 0.7% to 11.4%, RMSE, and BA pnorm3 in every one of the twelve representative cells; SSIM improved in eleven and regressed only 0.0351 in the remaining cell. Target-rate defaults now include active EPF, while fixed-quantizer defaults remain restoration-off. The untouched CLI output is byte-identical to the screened candidate. Against the existing equal-rate cjxl effort-7 anchors, the active policy is within 20% Butteraugli on two of twelve cells and remains 23.8% to 78.1% worse on the other ten, so the user goal is not complete. Raw commands and tables are in .agent/scratch/phase5g-corpus-summary-2026-08-11.md, .agent/scratch/phase5h-quantlf-tail-2026-08-11.md, and .agent/scratch/phase5i-active-epf-2026-08-11.md.
+        """
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    method command
+    watches [
+        "JPXL/crates/jpxl-encode-policy/src/field.rs",
+        "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        "JPXL/crates/jpxl-encode-policy/src/request.rs",
+        "JPXL/crates/jpxl-cli/src/main.rs",
+        "JPXL/crates/jpxl-encode-policy/tests/rate_loop.rs",
+        "JPXL/crates/jpxl-encode-policy/tests/vardct_oracle.rs"
+    ]
+    derived_from [ @jpegxl-rs.observation.aq-field-is-a-net-perceptual-loss-2026-08-10/2 ]
+    supersedes [ @jpegxl-rs.observation.phase5-quality-policy-screen-2026-08-11/5 ]
+    verified_by [
+        @jpegxl-rs.evidence.phase5a-aq-policy-gate-2026-08-11,
+        @jpegxl-rs.evidence.phase5b-gaborish-negative-2026-08-11,
+        @jpegxl-rs.evidence.phase5c-lf-hf-balance-2026-08-11,
+        @jpegxl-rs.evidence.phase5d-fixed-cover-negative-2026-08-11,
+        @jpegxl-rs.evidence.phase5e-epf-signalling-noop-2026-08-11,
+        @jpegxl-rs.evidence.phase5f-oracle-gate-2026-08-11,
+        @jpegxl-rs.evidence.phase5f-quality-regate-2026-08-11,
+        @jpegxl-rs.evidence.phase5g-cjxl-equal-rate-anchors-2026-08-11,
+        @jpegxl-rs.evidence.phase5g-corpus-matrix-2026-08-11,
+        @jpegxl-rs.evidence.phase5g-target-default-2026-08-11,
+        @jpegxl-rs.evidence.phase5h-quant-lf-tail-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5i-active-epf-activation-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5i-active-epf-promotion-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5i-active-epf-quality-2026-08-11/1
+    ]
+}
+
+record jpegxl-rs.observation.phase5-quality-policy-screen-2026-08-11/7 : observation {
+    title "One active EPF step remains best globally; structural candidates are content-dependent"
+    state superseded
+    scope [
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/field.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/request.rs",
+        path "JPXL/crates/jpxl-encode-policy/tests/rate_loop.rs",
+        path "JPXL/crates/jpxl-encode-policy/tests/vardct_oracle.rs",
+        path "test-set/**"
+    ]
+    statement """
+        Phase 5G promoted AQ Off, quant_lf 8, and no LF-fill after improving Butteraugli in all twelve six-scene cells by 7.6% to 34.2%. Phase 5H showed lower global quant_lf is content-dependent. Phase 5I promoted one active EPF step with uniform Sharpness 7 after it improved Butteraugli, RMSE, and Butteraugli pnorm3 in all twelve cells; the target-rate default remains byte-identical to that screened candidate. Phase 5J tested a structurally different two-pass HF reconstruction-error AQ field. At exact byte caps it regressed both 1-bpp direction cells; its lone 6.2% Butteraugli win lost 0.7443 SSIMULACRA2, so the temporary mode was removed. Phase 5K tested deeper active EPF. Three steps improved Butteraugli in nine of twelve cells but regressed three by up to 7.2% and lost up to 6.03 SSIMULACRA2; uniform Sharpness 3 and 5 did not remove the inconsistency, so those temporary controls were removed and one step remains production. Against the existing equal-rate cjxl effort-7 anchors, the production policy is still within 20% Butteraugli on only two of twelve cells and remains 23.8% to 78.1% worse on the other ten. The durable direction is now content/spatially adaptive restoration or LF/HF planning, not another frame-wide constant. Raw tables are in .agent/scratch/phase5g-corpus-summary-2026-08-11.md, .agent/scratch/phase5h-quantlf-tail-2026-08-11.md, .agent/scratch/phase5i-active-epf-2026-08-11.md, .agent/scratch/phase5j-two-pass-error-2026-08-11.md, and .agent/scratch/phase5k-active-epf-depth-2026-08-11.md.
+        """
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    method command
+    watches [
+        "JPXL/crates/jpxl-encode-policy/src/field.rs",
+        "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        "JPXL/crates/jpxl-encode-policy/src/request.rs",
+        "JPXL/crates/jpxl-cli/src/main.rs",
+        "JPXL/crates/jpxl-encode-policy/tests/rate_loop.rs",
+        "JPXL/crates/jpxl-encode-policy/tests/vardct_oracle.rs"
+    ]
+    derived_from [ @jpegxl-rs.observation.aq-field-is-a-net-perceptual-loss-2026-08-10/2 ]
+    supersedes [ @jpegxl-rs.observation.phase5-quality-policy-screen-2026-08-11/6 ]
+    verified_by [
+        @jpegxl-rs.evidence.phase5a-aq-policy-gate-2026-08-11,
+        @jpegxl-rs.evidence.phase5b-gaborish-negative-2026-08-11,
+        @jpegxl-rs.evidence.phase5c-lf-hf-balance-2026-08-11,
+        @jpegxl-rs.evidence.phase5d-fixed-cover-negative-2026-08-11,
+        @jpegxl-rs.evidence.phase5e-epf-signalling-noop-2026-08-11,
+        @jpegxl-rs.evidence.phase5f-oracle-gate-2026-08-11,
+        @jpegxl-rs.evidence.phase5f-quality-regate-2026-08-11,
+        @jpegxl-rs.evidence.phase5g-cjxl-equal-rate-anchors-2026-08-11,
+        @jpegxl-rs.evidence.phase5g-corpus-matrix-2026-08-11,
+        @jpegxl-rs.evidence.phase5g-target-default-2026-08-11,
+        @jpegxl-rs.evidence.phase5h-quant-lf-tail-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5i-active-epf-activation-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5i-active-epf-promotion-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5i-active-epf-quality-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5j-two-pass-error-implementation-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5j-two-pass-error-oracle-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5j-two-pass-error-quality-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5k-active-epf-depth-policy-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5k-active-epf-depth-quality-2026-08-11/1
+    ]
+}
+
+record jpegxl-rs.observation.phase5-quality-policy-screen-2026-08-11/8 : observation {
+    title "One active EPF step remains best globally; chroma QM is also content-dependent"
+    state superseded
+    scope [
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/field.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/rate.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/request.rs",
+        path "JPXL/crates/jpxl-encode-policy/tests/rate_loop.rs",
+        path "JPXL/crates/jpxl-encode-policy/tests/vardct_oracle.rs",
+        path "JPXL/crates/jpxl-encode/src/vardct/ids.rs",
+        path "JPXL/crates/jpxl-encode/src/vardct/plan.rs",
+        path "JPXL/crates/jpxl-encode/src/vardct/write.rs",
+        path "JPXL/crates/jpxl-encode/tests/vardct_plan.rs",
+        path "test-set/**"
+    ]
+    statement """
+        Phase 5G promoted AQ Off, quant_lf 8, and no LF-fill after improving Butteraugli in all twelve six-scene cells by 7.6% to 34.2%. Phase 5H showed lower global quant_lf is content-dependent. Phase 5I promoted one active EPF step with uniform Sharpness 7 after it improved Butteraugli, RMSE, and Butteraugli pnorm3 in all twelve cells; the target-rate default remains byte-identical to that screened candidate. Phase 5J tested a structurally different two-pass HF reconstruction-error AQ field. At exact byte caps it regressed both 1-bpp direction cells; its lone 6.2% Butteraugli win lost 0.7443 SSIMULACRA2, so the temporary mode was removed. Phase 5K tested deeper active EPF. Three steps improved Butteraugli in nine of twelve cells but regressed three by up to 7.2% and lost up to 6.03 SSIMULACRA2; uniform Sharpness 3 and 5 did not remove the inconsistency, so those temporary controls were removed and one step remains production. Phase 5L added checked X/B chroma quant-matrix scale signalling and screened global alternatives. X0/B0 improved Butteraugli in eight of twelve cells, regressed three, tied one, and systematically lost SSIMULACRA2; asymmetric probes were also inconsistent, so production remains the neutral X2/B2 default. Against the existing equal-rate cjxl effort-7 anchors, the production policy is still within 20% Butteraugli on only two of twelve cells and remains 23.8% to 78.1% worse on the other ten. The durable direction is content/spatially adaptive restoration, LF/HF planning, or content-aware quant matrices, not another frame-wide constant. Raw tables are in .agent/scratch/phase5g-corpus-summary-2026-08-11.md, .agent/scratch/phase5h-quantlf-tail-2026-08-11.md, .agent/scratch/phase5i-active-epf-2026-08-11.md, .agent/scratch/phase5j-two-pass-error-2026-08-11.md, .agent/scratch/phase5k-active-epf-depth-2026-08-11.md, and .agent/scratch/phase5l-chroma-qm-2026-08-11.md.
+        """
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    method command
+    watches [
+        "JPXL/crates/jpxl-encode-policy/src/field.rs",
+        "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        "JPXL/crates/jpxl-encode-policy/src/rate.rs",
+        "JPXL/crates/jpxl-encode-policy/src/request.rs",
+        "JPXL/crates/jpxl-cli/src/main.rs",
+        "JPXL/crates/jpxl-encode-policy/tests/rate_loop.rs",
+        "JPXL/crates/jpxl-encode-policy/tests/vardct_oracle.rs",
+        "JPXL/crates/jpxl-encode/src/vardct/ids.rs",
+        "JPXL/crates/jpxl-encode/src/vardct/plan.rs",
+        "JPXL/crates/jpxl-encode/src/vardct/write.rs",
+        "JPXL/crates/jpxl-encode/tests/vardct_plan.rs"
+    ]
+    derived_from [ @jpegxl-rs.observation.aq-field-is-a-net-perceptual-loss-2026-08-10/2 ]
+    supersedes [ @jpegxl-rs.observation.phase5-quality-policy-screen-2026-08-11/7 ]
+    verified_by [
+        @jpegxl-rs.evidence.phase5a-aq-policy-gate-2026-08-11,
+        @jpegxl-rs.evidence.phase5b-gaborish-negative-2026-08-11,
+        @jpegxl-rs.evidence.phase5c-lf-hf-balance-2026-08-11,
+        @jpegxl-rs.evidence.phase5d-fixed-cover-negative-2026-08-11,
+        @jpegxl-rs.evidence.phase5e-epf-signalling-noop-2026-08-11,
+        @jpegxl-rs.evidence.phase5f-oracle-gate-2026-08-11,
+        @jpegxl-rs.evidence.phase5f-quality-regate-2026-08-11,
+        @jpegxl-rs.evidence.phase5g-cjxl-equal-rate-anchors-2026-08-11,
+        @jpegxl-rs.evidence.phase5g-corpus-matrix-2026-08-11,
+        @jpegxl-rs.evidence.phase5g-target-default-2026-08-11,
+        @jpegxl-rs.evidence.phase5h-quant-lf-tail-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5i-active-epf-activation-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5i-active-epf-promotion-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5i-active-epf-quality-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5j-two-pass-error-implementation-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5j-two-pass-error-oracle-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5j-two-pass-error-quality-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5k-active-epf-depth-policy-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5k-active-epf-depth-quality-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5l-chroma-qm-policy-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5l-chroma-qm-quality-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5l-chroma-qm-wire-2026-08-11/1
+    ]
+}
+
+record jpegxl-rs.observation.phase5-quality-policy-screen-2026-08-11/9 : observation {
+    title "One active EPF step remains best; single-pass source activity is insufficient"
+    state superseded
+    scope [
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/field.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/rate.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/request.rs",
+        path "JPXL/crates/jpxl-encode-policy/tests/rate_loop.rs",
+        path "JPXL/crates/jpxl-encode-policy/tests/vardct_oracle.rs",
+        path "JPXL/crates/jpxl-encode/src/vardct/ids.rs",
+        path "JPXL/crates/jpxl-encode/src/vardct/plan.rs",
+        path "JPXL/crates/jpxl-encode/src/vardct/write.rs",
+        path "JPXL/crates/jpxl-encode/tests/vardct_plan.rs",
+        path "test-set/**"
+    ]
+    statement """
+        Phase 5G promoted AQ Off, quant_lf 8, and no LF-fill after improving Butteraugli in all twelve six-scene cells by 7.6% to 34.2%. Phase 5H showed lower global quant_lf is content-dependent. Phase 5I promoted one active EPF step with uniform Sharpness 7 after it improved Butteraugli, RMSE, and Butteraugli pnorm3 in all twelve cells; the target-rate default remains byte-identical to that screened candidate. Phase 5J tested a structurally different two-pass HF reconstruction-error AQ field. At exact byte caps it regressed both 1-bpp direction cells; its lone 6.2% Butteraugli win lost 0.7443 SSIMULACRA2, so the temporary mode was removed. Phase 5K tested deeper active EPF. Three steps improved Butteraugli in nine of twelve cells but regressed three by up to 7.2% and lost up to 6.03 SSIMULACRA2; uniform Sharpness 3 and 5 did not remove the inconsistency, so those temporary controls were removed and one step remains production. Phase 5L added checked X/B chroma quant-matrix scale signalling and screened global alternatives. X0/B0 improved Butteraugli in eight of twelve cells, regressed three, tied one, and systematically lost SSIMULACRA2; asymmetric probes were also inconsistent, so production remains neutral X2/B2. Phase 5M tested a spatial EPF3 Sharpness 0/7 split at median source-luma variance in both polarities on a known winner and two regressors. Eleven of twelve polarity cells regressed Butteraugli and every cell regressed SSIMULACRA2, so the temporary modes were removed. Against the existing equal-rate cjxl effort-7 anchors, production is still within 20% Butteraugli on only two of twelve cells and remains 23.8% to 78.1% worse on the other ten. Another single-pass activity map is not a durable direction; future spatial restoration or LF/HF/QM planning needs a reconstruction-domain or perceptual signal. Raw tables are in .agent/scratch/phase5g-corpus-summary-2026-08-11.md, .agent/scratch/phase5h-quantlf-tail-2026-08-11.md, .agent/scratch/phase5i-active-epf-2026-08-11.md, .agent/scratch/phase5j-two-pass-error-2026-08-11.md, .agent/scratch/phase5k-active-epf-depth-2026-08-11.md, .agent/scratch/phase5l-chroma-qm-2026-08-11.md, and .agent/scratch/phase5m-spatial-epf-2026-08-11.md.
+        """
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    method command
+    watches [
+        "JPXL/crates/jpxl-encode-policy/src/field.rs",
+        "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        "JPXL/crates/jpxl-encode-policy/src/rate.rs",
+        "JPXL/crates/jpxl-encode-policy/src/request.rs",
+        "JPXL/crates/jpxl-cli/src/main.rs",
+        "JPXL/crates/jpxl-encode-policy/tests/rate_loop.rs",
+        "JPXL/crates/jpxl-encode-policy/tests/vardct_oracle.rs",
+        "JPXL/crates/jpxl-encode/src/vardct/ids.rs",
+        "JPXL/crates/jpxl-encode/src/vardct/plan.rs",
+        "JPXL/crates/jpxl-encode/src/vardct/write.rs",
+        "JPXL/crates/jpxl-encode/tests/vardct_plan.rs"
+    ]
+    derived_from [ @jpegxl-rs.observation.aq-field-is-a-net-perceptual-loss-2026-08-10/2 ]
+    supersedes [ @jpegxl-rs.observation.phase5-quality-policy-screen-2026-08-11/8 ]
+    verified_by [
+        @jpegxl-rs.evidence.phase5a-aq-policy-gate-2026-08-11,
+        @jpegxl-rs.evidence.phase5b-gaborish-negative-2026-08-11,
+        @jpegxl-rs.evidence.phase5c-lf-hf-balance-2026-08-11,
+        @jpegxl-rs.evidence.phase5d-fixed-cover-negative-2026-08-11,
+        @jpegxl-rs.evidence.phase5e-epf-signalling-noop-2026-08-11,
+        @jpegxl-rs.evidence.phase5f-oracle-gate-2026-08-11,
+        @jpegxl-rs.evidence.phase5f-quality-regate-2026-08-11,
+        @jpegxl-rs.evidence.phase5g-cjxl-equal-rate-anchors-2026-08-11,
+        @jpegxl-rs.evidence.phase5g-corpus-matrix-2026-08-11,
+        @jpegxl-rs.evidence.phase5g-target-default-2026-08-11,
+        @jpegxl-rs.evidence.phase5h-quant-lf-tail-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5i-active-epf-activation-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5i-active-epf-promotion-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5i-active-epf-quality-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5j-two-pass-error-implementation-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5j-two-pass-error-oracle-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5j-two-pass-error-quality-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5k-active-epf-depth-policy-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5k-active-epf-depth-quality-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5l-chroma-qm-policy-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5l-chroma-qm-quality-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5l-chroma-qm-wire-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5m-spatial-epf-policy-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5m-spatial-epf-quality-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5m-spatial-epf-wire-2026-08-11/1
+    ]
+}
+
+record jpegxl-rs.observation.phase5-quality-policy-screen-2026-08-11/10 : observation {
+    title "One active EPF step remains best; finer source-activity AQ is also harmful"
+    state superseded
+    scope [
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/field.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/rate.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/request.rs",
+        path "JPXL/crates/jpxl-encode-policy/tests/rate_loop.rs",
+        path "JPXL/crates/jpxl-encode-policy/tests/vardct_oracle.rs",
+        path "JPXL/crates/jpxl-encode/src/vardct/ids.rs",
+        path "JPXL/crates/jpxl-encode/src/vardct/plan.rs",
+        path "JPXL/crates/jpxl-encode/src/vardct/write.rs",
+        path "JPXL/crates/jpxl-encode/tests/vardct_plan.rs",
+        path "test-set/**"
+    ]
+    statement """
+        Phase 5G promoted AQ Off, quant_lf 8, and no LF-fill after improving Butteraugli in all twelve six-scene cells by 7.6% to 34.2%. Phase 5H showed lower global quant_lf is content-dependent. Phase 5I promoted one active EPF step with uniform Sharpness 7 after it improved Butteraugli, RMSE, and Butteraugli pnorm3 in all twelve cells; the target-rate default remains byte-identical to that screened candidate. Phase 5J tested a structurally different two-pass HF reconstruction-error AQ field. At exact byte caps it regressed both 1-bpp direction cells; its lone 6.2% Butteraugli win lost 0.7443 SSIMULACRA2, so the temporary mode was removed. Phase 5K tested deeper active EPF. Three steps improved Butteraugli in nine of twelve cells but regressed three by up to 7.2% and lost up to 6.03 SSIMULACRA2; uniform Sharpness 3 and 5 did not remove the inconsistency, so those temporary controls were removed and one step remains production. Phase 5L added checked X/B chroma quant-matrix scale signalling and screened global alternatives. X0/B0 improved Butteraugli in eight of twelve cells, regressed three, tied one, and systematically lost SSIMULACRA2; asymmetric probes were also inconsistent, so production remains neutral X2/B2. Phase 5M tested a spatial EPF3 Sharpness 0/7 split at median source-luma variance in both polarities on a known winner and two regressors. Eleven of twelve polarity cells regressed Butteraugli and every cell regressed SSIMULACRA2, so the temporary modes were removed. Phase 5N tested whether the source-activity AQ signal was being erased by its half-octave multiplier lattice. A factor-eight fine integer-HfMul representation passed structural, rate, and external-decoder gates, but both polarities regressed Butteraugli in all eight small1/small2 one- and two-bpp cells; seven also regressed SSIMULACRA2. The temporary modes were removed and the production stream hash restored. Against the existing equal-rate cjxl effort-7 anchors, production is still within 20% Butteraugli on only two of twelve cells and remains 23.8% to 78.1% worse on the other ten. Another source-domain activity map or finer quantizer lattice is not a durable direction; future spatial restoration or LF/HF/QM planning needs a reconstruction-domain or perceptual signal. Raw tables are in .agent/scratch/phase5g-corpus-summary-2026-08-11.md, .agent/scratch/phase5h-quantlf-tail-2026-08-11.md, .agent/scratch/phase5i-active-epf-2026-08-11.md, .agent/scratch/phase5j-two-pass-error-2026-08-11.md, .agent/scratch/phase5k-active-epf-depth-2026-08-11.md, .agent/scratch/phase5l-chroma-qm-2026-08-11.md, .agent/scratch/phase5m-spatial-epf-2026-08-11.md, and .agent/scratch/phase5n-fine-aq-2026-08-11.md.
+        """
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    method command
+    watches [
+        "JPXL/crates/jpxl-encode-policy/src/field.rs",
+        "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        "JPXL/crates/jpxl-encode-policy/src/rate.rs",
+        "JPXL/crates/jpxl-encode-policy/src/request.rs",
+        "JPXL/crates/jpxl-cli/src/main.rs",
+        "JPXL/crates/jpxl-encode-policy/tests/rate_loop.rs",
+        "JPXL/crates/jpxl-encode-policy/tests/vardct_oracle.rs",
+        "JPXL/crates/jpxl-encode/src/vardct/ids.rs",
+        "JPXL/crates/jpxl-encode/src/vardct/plan.rs",
+        "JPXL/crates/jpxl-encode/src/vardct/write.rs",
+        "JPXL/crates/jpxl-encode/tests/vardct_plan.rs"
+    ]
+    derived_from [ @jpegxl-rs.observation.aq-field-is-a-net-perceptual-loss-2026-08-10/2 ]
+    supersedes [ @jpegxl-rs.observation.phase5-quality-policy-screen-2026-08-11/9 ]
+    verified_by [
+        @jpegxl-rs.evidence.phase5a-aq-policy-gate-2026-08-11,
+        @jpegxl-rs.evidence.phase5b-gaborish-negative-2026-08-11,
+        @jpegxl-rs.evidence.phase5c-lf-hf-balance-2026-08-11,
+        @jpegxl-rs.evidence.phase5d-fixed-cover-negative-2026-08-11,
+        @jpegxl-rs.evidence.phase5e-epf-signalling-noop-2026-08-11,
+        @jpegxl-rs.evidence.phase5f-oracle-gate-2026-08-11,
+        @jpegxl-rs.evidence.phase5f-quality-regate-2026-08-11,
+        @jpegxl-rs.evidence.phase5g-cjxl-equal-rate-anchors-2026-08-11,
+        @jpegxl-rs.evidence.phase5g-corpus-matrix-2026-08-11,
+        @jpegxl-rs.evidence.phase5g-target-default-2026-08-11,
+        @jpegxl-rs.evidence.phase5h-quant-lf-tail-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5i-active-epf-activation-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5i-active-epf-promotion-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5i-active-epf-quality-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5j-two-pass-error-implementation-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5j-two-pass-error-oracle-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5j-two-pass-error-quality-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5k-active-epf-depth-policy-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5k-active-epf-depth-quality-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5l-chroma-qm-policy-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5l-chroma-qm-quality-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5l-chroma-qm-wire-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5m-spatial-epf-policy-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5m-spatial-epf-quality-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5m-spatial-epf-wire-2026-08-11/1
+    ]
+}
+
+record jpegxl-rs.observation.phase5-quality-policy-screen-2026-08-11/11 : observation {
+    title "Active EPF remains production; special transforms need a better selector"
+    state verified
+    scope [
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/field.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/rate.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/request.rs",
+        path "JPXL/crates/jpxl-encode-policy/tests/rate_loop.rs",
+        path "JPXL/crates/jpxl-encode-policy/tests/vardct_oracle.rs",
+        path "JPXL/crates/jpxl-encode/src/vardct/ids.rs",
+        path "JPXL/crates/jpxl-encode/src/vardct/plan.rs",
+        path "JPXL/crates/jpxl-encode/src/vardct/write.rs",
+        path "JPXL/crates/jpxl-encode/tests/vardct_plan.rs",
+        path "test-set/**"
+    ]
+    statement """
+        Phase 5G promoted AQ Off, quant_lf 8, and no LF-fill after improving Butteraugli in all twelve six-scene cells by 7.6% to 34.2%. Phase 5H showed lower global quant_lf is content-dependent. Phase 5I promoted one active EPF step with uniform Sharpness 7 after it improved Butteraugli, RMSE, and Butteraugli pnorm3 in all twelve cells; the target-rate default remains byte-identical to that screened candidate. Phase 5J tested two-pass HF reconstruction-error AQ and removed it after mixed results. Phase 5K tested deeper EPF and removed it after three Butteraugli regressions and broad SSIMULACRA2 loss. Phase 5L retained checked X/B quant-matrix scale signalling but kept neutral X2/B2 after global alternatives were inconsistent. Phase 5M rejected median-source-variance spatial EPF after eleven of twelve polarity cells regressed Butteraugli and all regressed SSIMULACRA2. Phase 5N rejected a finer integer-HfMul AQ representation after both polarities regressed Butteraugli in all eight direction cells. Phase 5O proved that the existing clean-room core and generic writer can emit the same-footprint Hornuss, DCT2x2, DCT4x4, DCT8x4/DCT4x8, and AFV families. Optimistic local selection improved Butteraugli in eight of twelve cells by up to 15.0%, but regressed four by up to 6.2% and reduced the number of within-20% cjxl anchors from two to one. A realistic global DctSelect transition charge preserved a high-rate gain but did not remove two discriminating low-rate regressions. All temporary Phase 5O surfaces were removed at the requested stopping point and the production fingerprint restored. Production remains within 20% of equal-rate cjxl effort-7 on only small3/1 and mid2/2; the other ten anchors remain 23.8% to 78.1% worse. The most promising measured continuation is special-transform selection with a reconstruction/perceptual or exact map-cost signal, not another global activity threshold or scalar penalty. Raw tables are in .agent/scratch/phase5g-corpus-summary-2026-08-11.md through .agent/scratch/phase5o-special8-2026-08-11.md.
+        """
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    method command
+    watches [
+        "JPXL/crates/jpxl-encode-policy/src/field.rs",
+        "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        "JPXL/crates/jpxl-encode-policy/src/rate.rs",
+        "JPXL/crates/jpxl-encode-policy/src/request.rs",
+        "JPXL/crates/jpxl-cli/src/main.rs",
+        "JPXL/crates/jpxl-encode-policy/tests/rate_loop.rs",
+        "JPXL/crates/jpxl-encode-policy/tests/vardct_oracle.rs",
+        "JPXL/crates/jpxl-encode/src/vardct/ids.rs",
+        "JPXL/crates/jpxl-encode/src/vardct/plan.rs",
+        "JPXL/crates/jpxl-encode/src/vardct/write.rs",
+        "JPXL/crates/jpxl-encode/tests/vardct_plan.rs"
+    ]
+    derived_from [ @jpegxl-rs.observation.aq-field-is-a-net-perceptual-loss-2026-08-10/2 ]
+    supersedes [ @jpegxl-rs.observation.phase5-quality-policy-screen-2026-08-11/10 ]
+    verified_by [
+        @jpegxl-rs.evidence.phase5a-aq-policy-gate-2026-08-11,
+        @jpegxl-rs.evidence.phase5b-gaborish-negative-2026-08-11,
+        @jpegxl-rs.evidence.phase5c-lf-hf-balance-2026-08-11,
+        @jpegxl-rs.evidence.phase5d-fixed-cover-negative-2026-08-11,
+        @jpegxl-rs.evidence.phase5e-epf-signalling-noop-2026-08-11,
+        @jpegxl-rs.evidence.phase5f-oracle-gate-2026-08-11,
+        @jpegxl-rs.evidence.phase5f-quality-regate-2026-08-11,
+        @jpegxl-rs.evidence.phase5g-cjxl-equal-rate-anchors-2026-08-11,
+        @jpegxl-rs.evidence.phase5g-corpus-matrix-2026-08-11,
+        @jpegxl-rs.evidence.phase5g-target-default-2026-08-11,
+        @jpegxl-rs.evidence.phase5h-quant-lf-tail-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5i-active-epf-activation-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5i-active-epf-promotion-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5i-active-epf-quality-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5j-two-pass-error-implementation-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5j-two-pass-error-oracle-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5j-two-pass-error-quality-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5k-active-epf-depth-policy-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5k-active-epf-depth-quality-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5l-chroma-qm-policy-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5l-chroma-qm-quality-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5l-chroma-qm-wire-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5m-spatial-epf-policy-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5m-spatial-epf-quality-2026-08-11/1,
+        @jpegxl-rs.evidence.phase5m-spatial-epf-wire-2026-08-11/1
+    ]
 }
 
 record jpegxl-rs.observation.preopt-encode-baseline-2026-08-06/1 : observation {

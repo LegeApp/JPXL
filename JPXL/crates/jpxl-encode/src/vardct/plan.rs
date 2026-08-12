@@ -124,6 +124,10 @@ pub struct QuantizerDecision {
     pub global_scale: GlobalScale,
     /// The LF-plane step.
     pub quant_lf: QuantLf,
+    /// I.5.3's X-channel quantization-matrix exponent.
+    pub x_qm_scale: crate::vardct::ids::QmScale,
+    /// I.5.3's B-channel quantization-matrix exponent.
+    pub b_qm_scale: crate::vardct::ids::QmScale,
 }
 
 /// I.2.3's `LfChannelCorrelation` bundle: the LF arm of chroma-from-luma.

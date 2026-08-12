@@ -150,7 +150,7 @@ record jpegxl-rs.decision.opt-p-wide-rayon-deps/1 : decision {
 }
 
 record jpegxl-rs.decision.optimization-determinism-contract/1 : decision {
-    title "Default Contract A: bit-identical streams for structural optimization"
+    title "Contract A for structural optimization; bounded Contract B for quality policy"
     state proposed
     scope [
         path "JPXL/crates/jpxl-bitstream/**",
@@ -158,37 +158,17 @@ record jpegxl-rs.decision.optimization-determinism-contract/1 : decision {
         path "JPXL/crates/jpxl-encode/**",
         path "JPXL/crates/jpxl-entropy/**"
     ]
-    topic optimization-determinism
     decision """
-        Default to Contract A for optimization changes: same source and options produce
-        identical codestream bytes across thread counts, scheduling, and scalar versus
-        optimized integer/bitstream paths. Structural refactors (BitWriter bulk path,
-        plan Arc-sharing, coefficient arenas, scratch reuse, Rayon section encoding,
-        integer SIMD) must prove byte-identical output. Contract B (decode-valid and
-        metric-equivalent streams that may differ in bytes) is allowed only for float
-        transform or RD-search changes that deliberately alter cover or quant decisions,
-        and only after an explicit revise of this decision naming the metric bounds.
+        Default to Contract A for optimization changes: same source and options produce identical codestream bytes across thread counts, scheduling, and scalar versus optimized integer/bitstream paths. Structural refactors (BitWriter bulk path, plan Arc-sharing, coefficient arenas, scratch reuse, Rayon section encoding, integer SIMD) must prove byte-identical output. Contract B permits deliberate quality-policy changes after a recorded corpus gate. Phase 5G's target-rate AQ/quant_lf gate required matched achieved rate, no Butteraugli regression in 12 representative cells, at least 7.5% observed Butteraugli improvement in every cell, RMSE improvement in every cell, and disclosed SSIMULACRA2 regression bounded to 4.5 points. Phase 5I's active-EPF gate separately requires matched achieved rate, no Butteraugli regression in 12 cells, at least 0.6% observed Butteraugli improvement in every cell, RMSE and Butteraugli-pnorm3 improvement in every cell, and any SSIMULACRA2 regression disclosed and bounded to 0.05 points. Future Contract B changes require another explicit revision naming their bounds.
         """
     context """
-        VarDCT RD ties are sensitive to tiny float differences. wide and hand SIMD can
-        change NaN patterns and wrapping. The project already requires software-defined
-        float conversion without fast-math for the reference pair.
+        VarDCT RD ties are sensitive to tiny float differences. Wide and hand SIMD can change NaN patterns and wrapping. The project already requires software-defined float conversion without fast-math for the reference pair. Phase 5G deliberately changed target-rate quantization policy. Phase 5I deliberately activates decoder restoration by signalling one EPF step and a uniform Sharpness 7 grid; this changes reconstructed pixels without changing coefficient decisions.
         """
     consequences """
-        Every structural PR needs scalar-vs-optimized and 1-vs-N-thread byte equality
-        tests where applicable. Float kernel work may not claim Contract A without proof.
+        Every structural PR needs scalar-vs-optimized and 1-vs-N-thread byte equality tests where applicable. Float kernel and RD-search work may not claim Contract A without proof. Phase 5 target-rate quality policies may be promoted only while their recorded corpus evidence satisfies the separately stated Butteraugli, RMSE, achieved-rate, pnorm3, and SSIMULACRA2 bounds. The observed SSIMULACRA2 tradeoffs remain explicit guardrails for later work.
         """
     implements [ @jpegxl-rs.constraint.correctness-before-speed ]
     supported_by [ @jpegxl-rs.assessment.encoder-static-optimization ]
-    source {
-        kind legacy
-        path "JPXL/optimization-plan.akr"
-        excerpt """
-            Contract A: bit-identical codestreams across thread counts, scheduling,
-            supported SIMD paths. Contract B: semantically and metrically equivalent
-            codestreams. Determinism must be decided before SIMD and Rayon.
-            """
-    }
 }
 
 record jpegxl-rs.decision.optimization-ordering/1 : decision {

@@ -275,9 +275,7 @@ impl RateProbeStats {
     /// still "finalist-only Full", not a full-price loop.
     #[must_use]
     pub fn full_confined_to_refinement(self) -> bool {
-        self.full_prices > 0
-            && self.fast_prices > 0
-            && self.full_prices <= 20
+        self.full_prices > 0 && self.fast_prices > 0 && self.full_prices <= 20
     }
 
     /// Whether the forward pyramid was reused across probes.
@@ -778,6 +776,28 @@ impl<'a> PreparedSearch<'a> {
     }
 }
 
+/// Whether every G.2.2 `LfQuant` sample fits the legacy signed-16-bit range.
+///
+/// D.3 permits signed 32-bit Modular samples when
+/// `modular_16bit_buffers == false`, and the fixed-quantizer API deliberately
+/// retains that full range. The target-rate policy is more conservative:
+/// jxl-oxide 0.12.6 wraps `LfQuant` as soon as a sample crosses 32767 even
+/// though the header requests 32-bit buffers. LF fill is optional refinement,
+/// so it does not adopt a candidate that would lose independent-decoder
+/// compatibility merely to spend a small target undershoot.
+fn lf_quant_fits_legacy_16bit(plan: &ValidatedEmissionPlan) -> bool {
+    plan.plan()
+        .quantized
+        .lf_groups
+        .iter()
+        .flat_map(|group| (0..3).flat_map(|channel| group.lf.plane(channel).unwrap_or(&[])))
+        .all(|&sample| lf_sample_fits_legacy_16bit(sample))
+}
+
+const fn lf_sample_fits_legacy_16bit(sample: i32) -> bool {
+    sample >= i16::MIN as i32 && sample <= i16::MAX as i32
+}
+
 /// Runs the rate loop over a real frame and returns the chosen codestream.
 ///
 /// Two entropy pricing modes share the price budget:
@@ -883,11 +903,14 @@ pub fn search_frame(
                 let Ok(plan) = prepared.plan(quantizer, EntropySearch::Fast) else {
                     continue;
                 };
+                tried += 1;
+                if !lf_quant_fits_legacy_16bit(&plan) {
+                    continue;
+                }
                 let Ok(sizing) = price_codestream(&plan) else {
                     continue;
                 };
                 prepared.stats.fast_prices = prepared.stats.fast_prices.saturating_add(1);
-                tried += 1;
                 let bytes = sizing.total;
                 let feasible = bytes <= target_bytes;
                 search.trace.push(RateStep {
@@ -896,9 +919,7 @@ pub fn search_frame(
                     bytes,
                     feasible,
                 });
-                let better = kept
-                    .as_ref()
-                    .is_none_or(|(_, _, prev)| bytes > prev.total);
+                let better = kept.as_ref().is_none_or(|(_, _, prev)| bytes > prev.total);
                 if feasible && better {
                     kept = Some((rung, lf, sizing));
                 }
@@ -1008,6 +1029,14 @@ mod tests {
             vec![24, 32, 48, 64, 96, 128, 192, 256, 512, 1024]
         );
         assert!(candidates.iter().all(|&value| value > base.get()));
+    }
+
+    #[test]
+    fn legacy_lf_compatibility_range_is_exactly_signed_16_bit() {
+        assert!(lf_sample_fits_legacy_16bit(-32_768));
+        assert!(lf_sample_fits_legacy_16bit(32_767));
+        assert!(!lf_sample_fits_legacy_16bit(-32_769));
+        assert!(!lf_sample_fits_legacy_16bit(32_768));
     }
 
     #[test]

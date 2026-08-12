@@ -81,7 +81,9 @@ use jpxl_core::forward::{
 };
 use jpxl_core::geometry::LfBlockPos;
 use jpxl_core::varblock::TransformType;
-use jpxl_encode::vardct::headers::{NEUTRAL_QM_SCALE, VARDCT_GROUP_SIZE_SHIFT};
+#[cfg(test)]
+use jpxl_encode::vardct::headers::NEUTRAL_QM_SCALE;
+use jpxl_encode::vardct::headers::VARDCT_GROUP_SIZE_SHIFT;
 use jpxl_encode::vardct::ids::{
     CflFactor, ClusterId, GlobalScale, HfMul, LfGroupId, PresetId, QuantLf,
 };
@@ -111,7 +113,8 @@ pub use rate::{
     search_frame,
 };
 pub use request::{
-    CoverMode, EncodeRequest, RateSearchBudget, RateTarget, RateTolerance, SearchBudget,
+    CoverMode, EncodeRequest, EpfSharpnessMode, RateSearchBudget, RateTarget, RateTolerance,
+    SearchBudget,
 };
 pub use source::PreparedFrame;
 // Re-export so callers can set [`EncodeRequest::restoration`] without a
@@ -320,7 +323,13 @@ fn plan_at_with_cfl(
         aq.quant_lf.get(),
         LfDecision::vardct_neutral().extra_precision,
     );
-    let hf_quants = HfQuantizers::new(aq.global_scale.get(), aq.baseline, &aq.muls())?;
+    let hf_quants = HfQuantizers::new_with_scales(
+        aq.global_scale.get(),
+        aq.baseline,
+        &aq.muls(),
+        request.x_qm_scale.get(),
+        request.b_qm_scale.get(),
+    )?;
 
     // The cover is selected before chroma-from-luma is estimated: the estimate
     // regresses over the coefficients of the *selected* transforms, so the
@@ -364,17 +373,15 @@ fn plan_at_with_cfl(
                         }
                         varblocks
                     }
-                    CoverMode::Hierarchical => {
-                        select_blocks(
-                            transform_frame,
-                            &hf_quants,
-                            blocks,
-                            (rect.x0, rect.y0),
-                            &aq,
-                            cache,
-                            &mut fwd_scratch,
-                        )?
-                    }
+                    CoverMode::Hierarchical => select_blocks(
+                        transform_frame,
+                        &hf_quants,
+                        blocks,
+                        (rect.x0, rect.y0),
+                        &aq,
+                        cache,
+                        &mut fwd_scratch,
+                    )?,
                 };
                 ensure_forwards_cached(
                     transform_frame,
@@ -436,11 +443,18 @@ fn plan_at_with_cfl(
             })
         })?;
 
+        let sharpness = match request.epf_sharpness {
+            EpfSharpnessMode::Zero => SharpnessGrid::zeros(blocks),
+            EpfSharpnessMode::Uniform7 => {
+                let len = usize::try_from(blocks.area()).unwrap_or(0);
+                SharpnessGrid::new(blocks, vec![7; len])?
+            }
+        };
         lf_groups.push(LfGroupPlan {
             id,
             blocks: varblocks.into_boxed_slice(),
             cfl: group_cfl.clone(),
-            sharpness: SharpnessGrid::zeros(blocks),
+            sharpness,
         });
         quantized.push(QuantizedLfGroup {
             id,
@@ -456,6 +470,8 @@ fn plan_at_with_cfl(
         quantizer: QuantizerDecision {
             global_scale: aq.global_scale,
             quant_lf: aq.quant_lf,
+            x_qm_scale: request.x_qm_scale,
+            b_qm_scale: request.b_qm_scale,
         },
         lf,
         restoration: request.restoration,
@@ -498,8 +514,10 @@ fn plan_at_with_cfl(
     // when the writer's exact price is strictly smaller. Flat / constant-mul
     // content proposes Default and skips the second walk.
     let mut best = with_default;
-    let candidate_bc =
-        entropy::propose_block_context(best.plan().spatial.as_ref(), best.plan().quantized.as_ref());
+    let candidate_bc = entropy::propose_block_context(
+        best.plan().spatial.as_ref(),
+        best.plan().quantized.as_ref(),
+    );
     if !matches!(candidate_bc, HfBlockContextPlan::Default) {
         let mut custom_walk = provisional.clone();
         custom_walk.entropy = entropy_plan(&geometry, placeholder_histograms(), candidate_bc)?;
@@ -537,11 +555,9 @@ fn plan_at_with_cfl(
             // Histograms stay the provisional six; train_entropy_with_orders
             // rebuilds them from the multi-offset census.
         }
-        if let Ok(with_presets) =
-            diagnostics::time_stage(diagnostics::StageTimer::Entropy, || {
-                train_entropy_with_orders(multi, &geometry, EntropySearch::Full)
-            })
-        {
+        if let Ok(with_presets) = diagnostics::time_stage(diagnostics::StageTimer::Entropy, || {
+            train_entropy_with_orders(multi, &geometry, EntropySearch::Full)
+        }) {
             let best_size = jpxl_encode::vardct::price_codestream(&best)?.total;
             let multi_size = jpxl_encode::vardct::price_codestream(&with_presets)?.total;
             if multi_size < best_size {
@@ -617,10 +633,8 @@ fn train_entropy_with_orders(
         return Ok(natural);
     }
 
-    let orders = entropy::candidate_orders(
-        provisional.spatial.as_ref(),
-        provisional.quantized.as_ref(),
-    )?;
+    let orders =
+        entropy::candidate_orders(provisional.spatial.as_ref(), provisional.quantized.as_ref())?;
     if orders.overrides().is_empty() {
         return Ok(natural);
     }
@@ -839,19 +853,30 @@ impl HfQuantizers {
     /// Builds every `(transform, HfMul)` quantizer a frame can ask for: the
     /// square vocabulary crossed with `muls` (the adaptive-quantization
     /// lattice around `baseline`, or just `[baseline]` with the field off).
+    #[cfg(test)]
     fn new(global_scale: u32, baseline: HfMul, muls: &[HfMul]) -> Result<Self> {
+        Self::new_with_scales(
+            global_scale,
+            baseline,
+            muls,
+            NEUTRAL_QM_SCALE,
+            NEUTRAL_QM_SCALE,
+        )
+    }
+
+    fn new_with_scales(
+        global_scale: u32,
+        baseline: HfMul,
+        muls: &[HfMul],
+        x_qm_scale: u32,
+        b_qm_scale: u32,
+    ) -> Result<Self> {
         let mut by_key = Vec::with_capacity(SQUARE_TRANSFORMS.len() * muls.len());
         for transform in SQUARE_TRANSFORMS {
             for &mul in muls {
                 by_key.push((
                     (transform, mul.get()),
-                    HfQuantizer::new(
-                        transform,
-                        global_scale,
-                        mul.get(),
-                        NEUTRAL_QM_SCALE,
-                        NEUTRAL_QM_SCALE,
-                    )?,
+                    HfQuantizer::new(transform, global_scale, mul.get(), x_qm_scale, b_qm_scale)?,
                 ));
             }
         }
@@ -916,14 +941,7 @@ pub(crate) fn prepare_gaborish_frame(frame: &PreparedFrame) -> Result<PreparedFr
         width,
         height,
     );
-    PreparedFrame::from_xyb(
-        frame.width(),
-        frame.height(),
-        x,
-        y,
-        b,
-        frame.is_grayscale(),
-    )
+    PreparedFrame::from_xyb(frame.width(), frame.height(), x, y, b, frame.is_grayscale())
 }
 
 /// Reusable per-varblock forward-transform buffers, sized for the largest
@@ -1027,11 +1045,9 @@ impl CandidateForwardCache {
             self.entries.insert(key, fwd);
             self.misses = self.misses.saturating_add(1);
         }
-        self.entries
-            .get(&key)
-            .ok_or(PolicyError::Unsupported {
-                what: "a missing forward-cache entry after insert",
-            })
+        self.entries.get(&key).ok_or(PolicyError::Unsupported {
+            what: "a missing forward-cache entry after insert",
+        })
     }
 
     /// Read-only lookup: `None` if `(transform, px, py)` was never inserted.
@@ -1293,7 +1309,14 @@ fn quantize_square_varblock(
     let y_coeff = coeffs.get(1).ok_or(PolicyError::Unsupported {
         what: "the Y coefficient channel",
     })?;
-    lf_samples_of(y_coeff, transform, n, side, scratch, &mut qscratch.lf_scratch)?;
+    lf_samples_of(
+        y_coeff,
+        transform,
+        n,
+        side,
+        scratch,
+        &mut qscratch.lf_scratch,
+    )?;
     for idx in 0..n * n {
         let q = lf_quant.quantize(qscratch.lf_scratch.get(idx).copied().unwrap_or(0.0), 1)?;
         set_lf(
@@ -1851,8 +1874,8 @@ fn quantize_group(
     let mut arena_cap = 0usize;
     for vb in varblocks {
         let side = vb.transform.sample_cols();
-        arena_cap = arena_cap
-            .saturating_add(side.saturating_mul(side).saturating_mul(NUM_CHANNELS));
+        arena_cap =
+            arena_cap.saturating_add(side.saturating_mul(side).saturating_mul(NUM_CHANNELS));
     }
     let mut arena = vec![0i32; arena_cap];
     let mut starts: Vec<[usize; NUM_CHANNELS]> = Vec::with_capacity(varblocks.len());
@@ -2304,9 +2327,8 @@ fn tile_region(
     let single = match square_transform(size) {
         Some(transform) if fits => {
             let hf_mul = aq.mul_for_footprint(x0 / 8 + bx, y0 / 8 + by, size, size);
-            let fixed = PER_VARBLOCK_BITS
-                + NON_DCT8X8_SIGNAL_BITS
-                + mul_signal_bits(hf_mul, aq.baseline);
+            let fixed =
+                PER_VARBLOCK_BITS + NON_DCT8X8_SIGNAL_BITS + mul_signal_bits(hf_mul, aq.baseline);
             // Fixed metadata alone can already lose to the split.
             if fixed >= split_cost {
                 return Ok((split_cost, split_blocks));
@@ -3402,6 +3424,36 @@ mod tests {
         // Self-decode must succeed with filters applied (J.3).
         let image = decode(&on_bytes, &Limits::default()).expect("decodes with gaborish");
         assert_eq!((image.width, image.height), (64, 64));
+    }
+
+    #[test]
+    fn uniform7_sharpness_activates_epf_on_textured_input() {
+        let rgb = synthetic_rgb(64, 64, false);
+        let frame = PreparedFrame::from_srgb8(64, 64, &rgb).expect("frame");
+
+        let off = plan_frame(&frame, &EncodeRequest::defaults()).expect("off");
+        let off_bytes = jpxl_encode::vardct::write_codestream(&off).expect("writes");
+
+        let mut request = EncodeRequest::defaults();
+        request.restoration.epf_iters = 1;
+        request.epf_sharpness = EpfSharpnessMode::Uniform7;
+        let on = plan_frame(&frame, &request).expect("on");
+        assert_eq!(on.plan().spatial.restoration.epf_iters, 1);
+        assert!(on.plan().spatial.lf_groups.iter().all(|group| {
+            group
+                .sharpness
+                .values()
+                .iter()
+                .all(|&sharpness| sharpness == 7)
+        }));
+
+        let on_bytes = jpxl_encode::vardct::write_codestream(&on).expect("writes");
+        assert_ne!(off_bytes, on_bytes, "EPF metadata must change the stream");
+        assert_ne!(
+            decoded_rgb(&off_bytes),
+            decoded_rgb(&on_bytes),
+            "Sharpness 7 with one EPF step must change textured reconstruction"
+        );
     }
 
     #[test]

@@ -125,6 +125,18 @@ record jpegxl-rs.papercut.knowledge-propose-says-observation-requires/1 : paperc
     created_at 2026-08-11
 }
 
+record jpegxl-rs.papercut.knowledge-start-withheld-a-6440-token/1 : papercut {
+    title "knowledge.start withheld a ~6440-token orientation bundle despite a…"
+    state verified
+    statement """
+        knowledge.start withheld a ~6440-token orientation bundle despite a requested 18000-token budget because of an internal 2000-token hard limit; discovering the governing goal therefore requires a separate search/context round trip.
+        """
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    about "akr"
+    author "gpt-5.6-sol"
+    created_at 2026-08-11
+}
+
 record jpegxl-rs.papercut.opt-f-multiplicity-counters-are-still-only/1 : papercut {
     title "Opt-F multiplicity counters are still only listed in PERFORMANCE.md —…"
     state verified

@@ -51,9 +51,7 @@ use crate::entropy::pack_signed;
 use crate::error::{EncodeError, Result};
 use crate::section::SectionStore;
 use crate::vardct::geometry::VardctGeometry;
-use crate::vardct::headers::{
-    NEUTRAL_QM_SCALE, VARDCT_GROUP_SIZE_SHIFT, write_frame_header, write_image_headers,
-};
+use crate::vardct::headers::{VARDCT_GROUP_SIZE_SHIFT, write_frame_header, write_image_headers};
 use crate::vardct::ids::{ClusterId, LfGroupId, PreContextId};
 use crate::vardct::modular_out::{OutChannel, write_modular_stream};
 use crate::vardct::plan::{
@@ -330,8 +328,8 @@ fn emit_codestream_mode(
 
     write_frame_header(
         &mut w,
-        NEUTRAL_QM_SCALE,
-        NEUTRAL_QM_SCALE,
+        inner.spatial.quantizer.x_qm_scale.get(),
+        inner.spatial.quantizer.b_qm_scale.get(),
         inner.spatial.restoration,
     )?;
     let frame_header_bits = w.bit_len() - image_headers * 8;
@@ -1218,7 +1216,7 @@ fn build_entropy_tables(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vardct::ids::{GlobalScale, HfMul, QuantLf};
+    use crate::vardct::ids::{GlobalScale, HfMul, QmScale, QuantLf};
     use crate::vardct::plan::{
         CflGrid, EntropyModelPlan, EntropyPlan, FrameDecision, HfPassEntropyPlan, HistogramPlan,
         HybridUintPlan, LfGroupPlan, LfQuantPlanes, OrderSet, QuantizedFrameIr, QuantizedLfGroup,
@@ -1250,6 +1248,8 @@ mod tests {
                 quantizer: QuantizerDecision {
                     global_scale: GlobalScale::new(4096).expect("legal"),
                     quant_lf: QuantLf::new(16).expect("legal"),
+                    x_qm_scale: QmScale::NEUTRAL,
+                    b_qm_scale: QmScale::NEUTRAL,
                 },
                 lf: LfDecision::vardct_neutral(),
                 restoration: RestorationDecision::default(),

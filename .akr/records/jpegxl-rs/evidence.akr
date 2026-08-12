@@ -913,6 +913,461 @@ record jpegxl-rs.evidence.phase4m-real-content-gate-2026-08-11/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase5-baseline-jxloxide-gate-2026-08-11/1 : evidence {
+    title "Pre-Phase-5 production defaults reproduce the jxl-oxide failures"
+    state verified
+    result fail
+    method command
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    command "cd JPXL && cargo test -p jpxl-encode-policy --test vardct_oracle"
+    artifact ".agent/scratch/phase5-aq-broaden-QyUSZ8/summary.md"
+    summary """
+        After restoring the original Masking/quant_lf16/LF-fill production behavior, the same two oracle tests still fail against jxl-oxide (peak 255; RMSE 94.077/125.731), proving the incompatibility predates the AQ-Off/quant_lf8 candidate rather than being introduced by it.
+        """
+}
+
+record jpegxl-rs.evidence.phase5-candidate-djxl-self-agree-2026-08-11/1 : evidence {
+    title "djxl and jpxl-decode agree on the jxl-oxide-failing candidates"
+    state verified
+    result pass
+    method command
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    command "JPXL/target/debug/jpxl decode candidate.jxl self.ppm && libjxl/build/tools/djxl candidate.jxl djxl.ppm --num_threads=0 --quiet && JPXL/target/release/jpxl compare djxl.ppm self.ppm"
+    artifact ".agent/scratch/phase5-aq-broaden-QyUSZ8/summary.md"
+    summary """
+        For the exact HfMul and generous rate-target streams that jxl-oxide rendered catastrophically differently, djxl and jpxl-decode agree at RMSE 0.490043 / 0.489771 with peak-error-class output; the candidate streams are accepted by libjxl.
+        """
+}
+
+record jpegxl-rs.evidence.phase5-candidate-jxloxide-gate-2026-08-11/1 : evidence {
+    title "AQ-Off candidate fails the jxl-oxide oracle gate"
+    state verified
+    result fail
+    method command
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    command "cd JPXL && cargo test --workspace"
+    artifact ".agent/scratch/phase5-aq-broaden-QyUSZ8/summary.md"
+    summary """
+        With the candidate AQ-Off/quant_lf-8 defaults on a dirty worktree based at 25213f6, the full workspace suite reached jpxl-encode-policy/tests/vardct_oracle.rs and failed both_oracles_decode_a_rate_targeted_stream plus both_oracles_decode_a_stream_from_the_hf_mul_segment: jxl-oxide differed from jpxl-decode by peak 255 and RMSE 114.952/125.827.
+        """
+}
+
+record jpegxl-rs.evidence.phase5-scoped-tests-2026-08-11/1 : evidence {
+    title "Phase 5 scoped tests pass"
+    state verified
+    result pass
+    method command
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    command "cd JPXL && cargo test -p jpxl-encode-policy --lib && cargo test -p jpxl-encode-policy --test rate_loop a_request_carrying_a_target_routes_through_the_loop && cargo test -p jpxl-cli"
+    summary """
+        On the dirty worktree based at 25213f6, 74 jpxl-encode-policy library tests passed, the updated target-routing regression passed, and jpxl-cli built and tested successfully.
+        """
+}
+
+record jpegxl-rs.evidence.phase5a-aq-policy-gate-2026-08-11/1 : evidence {
+    title "AQ Off wins the three-photo matched-rate gate"
+    state verified
+    result pass
+    method observation
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    artifact ".agent/scratch/phase5-aq-broaden-QyUSZ8/summary.md"
+    summary """
+        On a dirty worktree based at 25213f6, symmetric djxl decoding shows AQ Off lowering Butteraugli versus Masking on all three unique test-set photos by 10.2%, 31.6%, and 31.8%; Uniform remains far behind Off on the screened 4.3 MP scene, and untouched/default control encodes are byte-identical to the explicit selected mode.
+        """
+}
+
+record jpegxl-rs.evidence.phase5b-gaborish-negative-2026-08-11/1 : evidence {
+    title "Gaborish screen is an honest negative"
+    state verified
+    result pass
+    method observation
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    artifact ".agent/scratch/phase5-aq-broaden-QyUSZ8/summary.md"
+    summary """
+        With AQ Off at matched target rate, Gaborish worsens Butteraugli by 10.1% on the dense-detail photo and is noise-level neutral on the flat/edge photo while SSIMULACRA2 declines; the temporary CLI control was removed and restoration remains Off.
+        """
+}
+
+record jpegxl-rs.evidence.phase5c-lf-hf-balance-2026-08-11/1 : evidence {
+    title "quant_lf 8 improves all three screened photographs"
+    state verified
+    result pass
+    method observation
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    artifact ".agent/scratch/phase5-aq-broaden-QyUSZ8/summary.md"
+    summary """
+        At matched target rate with AQ Off and LF fill disabled, quant_lf 8 improves both Butteraugli and SSIMULACRA2 versus 16 on three unique test-set photos; Butteraugli changes are -7.3%, -3.8%, and -0.2%, and the post-change untouched request is byte-identical to explicit quant_lf 8.
+        """
+}
+
+record jpegxl-rs.evidence.phase5d-fixed-cover-negative-2026-08-11/1 : evidence {
+    title "Forced DCT8 cover loses to hierarchical cover"
+    state verified
+    result pass
+    method observation
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    artifact ".agent/scratch/phase5-aq-broaden-QyUSZ8/summary.md"
+    summary """
+        The matched-rate fixed-DCT8 counterfactual worsens Butteraugli and SSIMULACRA2 on both screened test-set photos, so the temporary control was removed and the current hierarchical DCT8/16/32 cover remains the production choice.
+        """
+}
+
+record jpegxl-rs.evidence.phase5e-epf-signalling-noop-2026-08-11/1 : evidence {
+    title "EPF iteration signalling is a pixel no-op without filter planning"
+    state verified
+    result pass
+    method observation
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    artifact ".agent/scratch/phase5-aq-broaden-QyUSZ8/summary.md"
+    summary """
+        At epf_iters 1 and 2, two test-set streams grew by one byte but djxl output and perceptual scores were pixel-identical to EPF Off; the temporary control was removed and unmodelled EPF is pruned until sharpness/sigma planning is scoped.
+        """
+}
+
+record jpegxl-rs.evidence.phase5f-lfquant-boundary-2026-08-11/1 : evidence {
+    title "jxl-oxide failure begins exactly above signed-16-bit LfQuant"
+    state verified
+    result pass
+    method observation
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    artifact ".agent/scratch/phase5f-lfquant-compat-2026-08-11.md"
+    summary """
+        With all other controls fixed, quant_lf 78 produced LF peak 32669 and decoder agreement at peak 1, while quant_lf 79 produced LF peak 33088 and jxl-oxide disagreement at peak 255/RMSE 71.28; fixed HfMul 1..65 remained decoder-consistent.
+        """
+}
+
+record jpegxl-rs.evidence.phase5f-oracle-gate-2026-08-11/1 : evidence {
+    title "VarDCT external-oracle suite passes after LF-fill compatibility guard"
+    state verified
+    result pass
+    method command
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    command "cd JPXL && JPXL_ORACLE_BIN=/mnt/Samsung980_1TB/Rust-projects/jpegXL-rs/libjxl/build/tools cargo test -p jpxl-encode-policy --test vardct_oracle"
+    summary """
+        All 10 VarDCT oracle tests passed with pinned djxl and installed jxl-oxide, including rate-targeted and HfMul-segment streams.
+        """
+}
+
+record jpegxl-rs.evidence.phase5f-policy-tests-2026-08-11/1 : evidence {
+    title "Encoder policy unit suite passes with LF compatibility boundary test"
+    state verified
+    result pass
+    method command
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    command "cd JPXL && cargo test -p jpxl-encode-policy --lib"
+    summary """
+        All 74 jpxl-encode-policy library tests passed, including the new exact signed-16-bit boundary test.
+        """
+}
+
+record jpegxl-rs.evidence.phase5f-quality-regate-2026-08-11/1 : evidence {
+    title "AQ-Off plus quant_lf 8 candidate is byte-identical after compatibility fix"
+    state verified
+    result pass
+    method observation
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    artifact ".agent/scratch/phase5f-lfquant-compat-2026-08-11.md"
+    summary """
+        The three Phase 5A/5C candidate streams regenerated byte-identically at 97537, 195816 and 1072481 bytes; untouched and explicit Masking also match, and Off/quant_lf8 control hashes remain pinned.
+        """
+}
+
+record jpegxl-rs.evidence.phase5g-cjxl-equal-rate-anchors-2026-08-11/1 : evidence {
+    title "Phase 5G cjxl effort-7 equal-rate anchors"
+    state verified
+    result pass
+    method observation
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    artifact ".agent/scratch/phase5g-corpus-summary-2026-08-11.md"
+    summary """
+        Measured cjxl effort-7 anchors decoded through the same djxl show the JPXL candidate remains 26.6% to 85.9% above cjxl Butteraugli distance; mid2/2's anchor applies to the initial 841754-byte candidate rather than the later 795208-byte matched-policy rerun.
+        """
+}
+
+record jpegxl-rs.evidence.phase5g-corpus-matrix-2026-08-11/1 : evidence {
+    title "Phase 5G six-scene target-rate corpus matrix"
+    state verified
+    result pass
+    method observation
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    artifact ".agent/scratch/phase5g-corpus-summary-2026-08-11.md"
+    summary """
+        Same-djxl matched-rate scoring found AQ Off plus quant_lf 8 reduced Butteraugli distance by 7.6% to 34.2% in all 12 scene/rate cells; RMSE improved in all cells, while SSIMULACRA2 regressed in 2 of 12 by at most 4.3685.
+        """
+}
+
+record jpegxl-rs.evidence.phase5g-target-default-2026-08-11/1 : evidence {
+    title "Phase 5G target-rate default promotion verification"
+    state verified
+    result pass
+    method command
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    command "cargo test -p jpxl-encode-policy --lib request::tests && cargo test -p jpxl-encode-policy --test rate_loop && JPXL_ORACLE_BIN=../libjxl/build/tools cargo test -p jpxl-encode-policy --test vardct_oracle; release CLI default and explicit Off/quant_lf=8 fingerprints compared with cmp"
+    artifact ".agent/scratch/phase5g-corpus-summary-2026-08-11.md"
+    summary """
+        Target-rate constructor and CLI now select AQ Off, quant_lf 8, and no LF fill; request tests passed 4/4, rate-loop tests 11/11 with 1 ignored, independent-decoder tests 10/10, and untouched versus explicit candidate streams were byte-identical at 97537 bytes (SHA-256 1dba812c5e39aa2d3b9a25394f8c4adff79113c99296e2caffb79aacc1a4f935).
+        """
+}
+
+record jpegxl-rs.evidence.phase5h-quant-lf-tail-2026-08-11/1 : evidence {
+    title "Phase 5H quant_lf tail screen"
+    state verified
+    result pass
+    method observation
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    artifact ".agent/scratch/phase5h-quantlf-tail-2026-08-11.md"
+    summary """
+        On the six-scene one/two-bpp matrix, quant_lf 4 improved Butteraugli in six cells and regressed six, including both 4 MP scenes; a quant_lf 2 two-scene probe improved Butteraugli but materially regressed low-rate SSIMULACRA2. The global target-rate default remains quant_lf 8, and the mixed direction points to content-adaptive LF/HF planning.
+        """
+}
+
+record jpegxl-rs.evidence.phase5i-active-epf-activation-2026-08-11/1 : evidence {
+    title "Active EPF changes pixels and both independent decoders accept it"
+    state verified
+    result pass
+    method command
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    command "cargo test -p jpxl-encode-policy --lib uniform7_sharpness_activates_epf_on_textured_input; PATH=/mnt/Samsung980_1TB/Rust-projects/jpegXL-rs/libjxl/build/tools:$PATH cargo test -p jpxl-encode-policy --test vardct_oracle both_oracles_decode_an_active_epf_stream -- --nocapture"
+    summary """
+        The activation unit test proved decoded pixels change with one EPF step and uniform Sharpness 7; djxl and jxl-oxide both decoded the active-EPF stream within the decoder-agreement bound.
+        """
+}
+
+record jpegxl-rs.evidence.phase5i-active-epf-promotion-2026-08-11/1 : evidence {
+    title "Target defaults reproduce the screened active EPF candidate"
+    state verified
+    result pass
+    method command
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    command "cargo test -p jpxl-encode-policy --test rate_loop -- --nocapture; cargo build --release -p jpxl-cli --features perceptual; jpxl encode small_0p8MP.ppm default.jxl --bpp 1; cmp default.jxl /tmp/phase5i-active-epf/small1-1-epf1s7.jxl"
+    summary """
+        All 11 active rate-loop tests passed. Untouched target-rate CLI output was byte-identical to the screened active-EPF candidate (97,539 bytes, sha256 470ef5f172a54b7ef2822b5e0e07db1640fa9de8a940b9c175a05a9a6bc996b2); explicit restoration-off reproduced the Phase 5G stream.
+        """
+}
+
+record jpegxl-rs.evidence.phase5i-active-epf-quality-2026-08-11/1 : evidence {
+    title "Active EPF improves Butteraugli in all twelve representative cells"
+    state verified
+    result pass
+    method observation
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    artifact ".agent/scratch/phase5i-active-epf-2026-08-11.md"
+    summary """
+        At matched achieved rate across six scenes and 1/2 bpp, EPF step 1 plus uniform Sharpness 7 improved Butteraugli by 0.7% to 11.4% in all 12 cells, improved RMSE and BA pnorm3 in all 12, and kept the only SSIM regression to 0.0351.
+        """
+}
+
+record jpegxl-rs.evidence.phase5j-two-pass-error-implementation-2026-08-11/1 : evidence {
+    title "Temporary two-pass error AQ implementation met its mechanism invariants"
+    state verified
+    result pass
+    method command
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    command "cargo test -p jpxl-encode-policy --lib reconstruction_error_field_is_neutral_for_equal_errors_and_finer_for_a_spike; cargo test -p jpxl-encode-policy --lib two_pass_error_aq_is_neutral_on_flat_input_and_deterministic_on_texture"
+    summary """
+        Before the rejected research branch was removed, targeted tests proved the bounded error field was neutral for equal errors, assigned a finer multiplier to a high-error atom, collapsed on flat input, activated on textured input at a representable strength, and encoded deterministically.
+        """
+}
+
+record jpegxl-rs.evidence.phase5j-two-pass-error-oracle-2026-08-11/1 : evidence {
+    title "Independent decoders accepted the temporary two-pass AQ stream"
+    state verified
+    result pass
+    method command
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    command "PATH=/mnt/Samsung980_1TB/Rust-projects/jpegXL-rs/libjxl/build/tools:$PATH cargo test -p jpxl-encode-policy --test vardct_oracle both_oracles_decode_a_two_pass_error_aq_stream -- --nocapture"
+    summary """
+        Before removal, djxl and jxl-oxide both decoded the active two-pass reconstruction-error AQ stream within the existing peak-error decoder-agreement bound.
+        """
+}
+
+record jpegxl-rs.evidence.phase5j-two-pass-error-quality-2026-08-11/1 : evidence {
+    title "Exact-rate screen rejects the two-pass reconstruction-error AQ signal"
+    state verified
+    result pass
+    method observation
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    artifact ".agent/scratch/phase5j-two-pass-error-2026-08-11.md"
+    summary """
+        Across two representative scenes at one and two bpp, the strength sweep either snapped neutral or traded inconsistent Butteraugli wins for regressions. Exact-byte-cap reruns regressed both 1-bpp cells; the lone 6.2% BA win lost 0.7443 SSIMULACRA2, and the other 2-bpp scene regressed. The temporary mode was removed.
+        """
+}
+
+record jpegxl-rs.evidence.phase5k-active-epf-depth-policy-2026-08-11/1 : evidence {
+    title "One active EPF step remains the target-rate default"
+    state verified
+    result pass
+    method command
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    command "cargo test -p jpxl-encode-policy --lib request::tests; cargo test -p jpxl-encode-policy --lib uniform7_sharpness_activates_epf_on_textured_input; cargo build --release -p jpxl-cli --features perceptual; jpxl encode small_0p8MP.ppm default.jxl --bpp 1; cmp default.jxl /tmp/phase5i-active-epf/small1-1-epf1s7.jxl"
+    summary """
+        After removing temporary deeper-sharpness controls, request tests and the EPF activation test passed; untouched CLI output remained byte-identical to the promoted Phase 5I stream (97,539 bytes, sha256 470ef5f172a54b7ef2822b5e0e07db1640fa9de8a940b9c175a05a9a6bc996b2).
+        """
+}
+
+record jpegxl-rs.evidence.phase5k-active-epf-depth-quality-2026-08-11/1 : evidence {
+    title "Deeper active EPF is content-dependent and fails the global gate"
+    state verified
+    result pass
+    method observation
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    artifact ".agent/scratch/phase5k-active-epf-depth-2026-08-11.md"
+    summary """
+        EPF3 with uniform Sharpness 7 improved Butteraugli in 9/12 six-scene cells but regressed three cells by up to 7.2% and lost as much as 6.03 SSIMULACRA2. Intermediate uniform Sharpness 3/5 did not remove the inconsistent regressions.
+        """
+}
+
+record jpegxl-rs.evidence.phase5l-chroma-qm-policy-2026-08-11/1 : evidence {
+    title "Neutral QM scales remain byte-identical production defaults"
+    state verified
+    result pass
+    method command
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    command "cargo build --release -p jpxl-cli --features perceptual; jpxl encode small_0p8MP.ppm default.jxl --bpp 1; jpxl encode small_0p8MP.ppm explicit.jxl --bpp 1 --x-qm-scale 2 --b-qm-scale 2; cmp default.jxl explicit.jxl; cmp default.jxl /tmp/phase5i-active-epf/small1-1-epf1s7.jxl"
+    summary """
+        Untouched, explicit-neutral, and Phase 5I promoted streams were byte-identical at 97,539 bytes (sha256 470ef5f172a54b7ef2822b5e0e07db1640fa9de8a940b9c175a05a9a6bc996b2). Checked QM plumbing and CLI research controls are retained; production remains X=2/B=2.
+        """
+}
+
+record jpegxl-rs.evidence.phase5l-chroma-qm-quality-2026-08-11/1 : evidence {
+    title "Coarser chroma QM allocation is beneficial but not globally safe"
+    state verified
+    result pass
+    method observation
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    artifact ".agent/scratch/phase5l-chroma-qm-2026-08-11.md"
+    summary """
+        X=0/B=0 improved Butteraugli in 8/12 six-scene cells, regressed three, and was neutral in one; asymmetric channel probes were also inconsistent. SSIM regressions were systematic and reached about 1.49 points.
+        """
+}
+
+record jpegxl-rs.evidence.phase5l-chroma-qm-wire-2026-08-11/1 : evidence {
+    title "Checked chroma QM scales are wired through quantization and the frame header"
+    state verified
+    result pass
+    method command
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    command "cargo test -p jpxl-encode --lib; cargo test -p jpxl-encode --test vardct_plan; PATH=/mnt/Samsung980_1TB/Rust-projects/jpegXL-rs/libjxl/build/tools:$PATH cargo test -p jpxl-encode-policy --test vardct_oracle -- --nocapture"
+    summary """
+        QmScale accepts exactly 0..=7 with neutral 2. All 123 encoder library tests, 41 VarDCT plan tests, and 12 independent-decoder VarDCT tests passed, including a non-neutral X=0/B=1 stream decoded consistently by djxl and jxl-oxide.
+        """
+}
+
+record jpegxl-rs.evidence.phase5m-spatial-epf-policy-2026-08-11/1 : evidence {
+    title "Temporary activity-split modes were removed; the target-rate production stream remains 97,539 bytes with the Phase 5I SHA-256 470ef5f172a54b7ef2822b5e0e07db1640fa9de8a940b9c175a05a9a6bc996b2."
+    state verified
+    result pass
+    method command
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    command "target/release/jpxl encode /tmp/phase5m-spatial-epf/small1-ref.ppm /tmp/phase5m-production-control.jxl --bpp 1; sha256sum /tmp/phase5m-production-control.jxl"
+    artifact ".agent/scratch/phase5m-spatial-epf-2026-08-11.md"
+    summary """
+        Temporary activity-split modes were removed; the target-rate production stream remains 97,539 bytes with the Phase 5I SHA-256 470ef5f172a54b7ef2822b5e0e07db1640fa9de8a940b9c175a05a9a6bc996b2.
+        """
+}
+
+record jpegxl-rs.evidence.phase5m-spatial-epf-quality-2026-08-11/1 : evidence {
+    title "On small1, small3, and mid2 at one/two bpp, eleven of twelve spatial-polarity cells regressed Butteraugli and every cell regressed SSIMULACRA2; median source variance is rejected as the sharpness signal."
+    state verified
+    result pass
+    method observation
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    artifact ".agent/scratch/phase5m-spatial-epf-2026-08-11.md"
+    summary """
+        On small1, small3, and mid2 at one/two bpp, eleven of twelve spatial-polarity cells regressed Butteraugli and every cell regressed SSIMULACRA2; median source variance is rejected as the sharpness signal.
+        """
+}
+
+record jpegxl-rs.evidence.phase5m-spatial-epf-wire-2026-08-11/1 : evidence {
+    title "Before removal, the temporary median-variance policies emitted a real mixed 0/7 sharpness plane with inverse polarities; djxl and jxl-oxide accepted the active spatial EPF stream."
+    state verified
+    result pass
+    method command
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    command "cargo test -p jpxl-encode-policy activity_split_sharpness_is_spatial_and_the_polarities_are_inverse --lib; PATH=../libjxl/build/tools:$PATH cargo test -p jpxl-encode-policy --test vardct_oracle both_oracles_decode_an_active_epf_stream -- --nocapture"
+    artifact ".agent/scratch/phase5m-spatial-epf-2026-08-11.md"
+    summary """
+        Before removal, the temporary median-variance policies emitted a real mixed 0/7 sharpness plane with inverse polarities; djxl and jxl-oxide accepted the active spatial EPF stream.
+        """
+}
+
+record jpegxl-rs.evidence.phase5n-fine-aq-policy-2026-08-11/1 : evidence {
+    title "Phase 5N negative candidate cleanup"
+    state verified
+    result pass
+    method command
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    command "cd JPXL && cargo build --release -p jpxl-cli --features perceptual && target/release/jpxl encode ../.agent/scratch/realworld-bench-20260806T072202Z/small_0p8MP.ppm /tmp/phase5n-production.jxl --bpp 1 && sha256sum /tmp/phase5n-production.jxl && stat -c %s /tmp/phase5n-production.jxl"
+    artifact ".agent/scratch/phase5n-fine-aq-2026-08-11.md"
+    summary """
+        The rejected fine AQ source and CLI surface were removed; the retained production stream returned exactly to 97,539 bytes and SHA-256 470ef5f172a54b7ef2822b5e0e07db1640fa9de8a940b9c175a05a9a6bc996b2.
+        """
+}
+
+record jpegxl-rs.evidence.phase5n-fine-aq-quality-2026-08-11/1 : evidence {
+    title "Phase 5N fine AQ perceptual screen"
+    state verified
+    result pass
+    method command
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    command "bash .agent/scratch/phase5n-fine-aq-screen.sh"
+    artifact ".agent/scratch/phase5n-fine-aq-2026-08-11.md"
+    summary """
+        At Phase 5I production byte caps, both fine AQ polarities regressed Butteraugli in every small1/small2 one- and two-bpp cell; seven of eight also regressed SSIMULACRA2.
+        """
+}
+
+record jpegxl-rs.evidence.phase5n-fine-aq-structure-2026-08-11/1 : evidence {
+    title "Phase 5N fine AQ structural and rate gates"
+    state verified
+    result pass
+    method command
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    command "cd JPXL && cargo test -p jpxl-encode-policy fine_lattice_preserves_adjustments_the_half_octave_lattice_erases && cargo test -p jpxl-encode-policy fine_aq_factorization_preserves_lf_and_baseline_hf_products && cargo test -p jpxl-encode-policy --test rate_loop the_byte_target_contract_holds_with_adaptive_quantization_on -- --nocapture"
+    artifact ".agent/scratch/phase5n-fine-aq-2026-08-11.md"
+    summary """
+        The temporary factor-eight lattice preserved LF and baseline-HF products, emitted at least three multipliers, and passed all eight 4,000/9,000-byte rate-contract cases after confinement to global-scale rungs.
+        """
+}
+
+record jpegxl-rs.evidence.phase5o-special8-cleanup-2026-08-11/1 : evidence {
+    title "Phase 5O research rollback and production restoration"
+    state verified
+    result pass
+    method command
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    command "cd JPXL && cargo build --release -p jpxl-cli --features perceptual && target/release/jpxl encode ../.agent/scratch/realworld-bench-20260806T072202Z/small_0p8MP.ppm /tmp/phase5o-production.jxl --bpp 1 && sha256sum /tmp/phase5o-production.jxl && stat -c %s /tmp/phase5o-production.jxl && cargo test -p jpxl-encode a_non_dct8x8_transform_is_refused -- --nocapture"
+    artifact ".agent/scratch/phase5o-special8-2026-08-11.md"
+    summary """
+        All temporary special-transform policy, CLI, tests, and writer-gate changes were removed; production returned to 97,539 bytes and SHA-256 470ef5f172a54b7ef2822b5e0e07db1640fa9de8a940b9c175a05a9a6bc996b2.
+        """
+}
+
+record jpegxl-rs.evidence.phase5o-special8-quality-2026-08-11/1 : evidence {
+    title "Phase 5O special-transform perceptual matrix"
+    state verified
+    result pass
+    method observation
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    artifact ".agent/scratch/phase5o-special8-2026-08-11.md"
+    summary """
+        Zero-penalty same-footprint transform selection improved Butteraugli in 8/12 cells by up to 15.0% but regressed four by up to 6.2%; an eight-bit global transition charge retained low-rate regressions.
+        """
+}
+
+record jpegxl-rs.evidence.phase5o-special8-wire-rate-2026-08-11/1 : evidence {
+    title "Phase 5O special-transform wire and rate gates"
+    state verified
+    result pass
+    method command
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    command "JPXL_ORACLE_BIN=/mnt/Samsung980_1TB/Rust-projects/jpegXL-rs/libjxl/build/tools cargo test -p jpxl-encode-policy special8_cover_selects_a_same_footprint_transform && cargo test -p jpxl-encode-policy --test vardct_oracle both_oracles_decode_a_special8_transform_stream -- --nocapture && cargo test -p jpxl-encode-policy --test rate_loop the_byte_target_contract_holds_with_special8_transforms -- --nocapture"
+    artifact ".agent/scratch/phase5o-special8-2026-08-11.md"
+    summary """
+        Before rollback, the temporary chooser emitted same-footprint special transforms, stayed under a 9,000-byte target, and decoded consistently in djxl, jxl-oxide, and JPXL.
+        """
+}
+
 record jpegxl-rs.evidence.retire-handoff-durable-facts-2026-08-11/1 : evidence {
     title "HANDOFF permanent facts are represented in AKR"
     state verified

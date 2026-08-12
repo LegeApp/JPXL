@@ -5,7 +5,7 @@
 //! the encoder. Both are declared here at the stage boundary; no field of
 //! [`SearchBudget`] is ever read inside a kernel.
 
-use jpxl_encode::vardct::ids::{GlobalScale, HfMul, QuantLf};
+use jpxl_encode::vardct::ids::{GlobalScale, HfMul, QmScale, QuantLf};
 use jpxl_encode::vardct::plan::RestorationDecision;
 
 /// How the cover search explores.
@@ -170,14 +170,27 @@ pub struct SearchBudget {
     pub aq_mode: crate::field::AqMode,
     /// The perceptual constants that shape that field.
     ///
-    /// Defaults to the historical hardcoded values, so an untouched request
-    /// encodes exactly as before. Exposed because this is the frame's
-    /// perceptual bit-allocation policy — the thing a butteraugli-tuned
-    /// encoder gets right — and it needs to be swept against a perceptual
-    /// metric rather than inherited from the 8-bit literature.
+    /// Defaults to the historical hardcoded values for explicit Masking and
+    /// Uniform research requests. Off does not read them.
     pub aq_tuning: crate::field::AqTuning,
     /// What the rate loop may spend (milestone 4).
     pub rate: RateSearchBudget,
+}
+
+/// Research policy for G.2.4's per-block EPF sharpness plane.
+///
+/// This is separate from [`RestorationDecision`] because the latter is the
+/// decoder-visible J.1 header decision, while choosing the sharpness samples
+/// is encoder analysis. Production stays at [`Self::Zero`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum EpfSharpnessMode {
+    /// Emit the neutral all-zero sharpness plane; EPF sigma is zero.
+    #[default]
+    Zero,
+    /// Emit sharpness 7 for every 8x8 block, selecting the default LUT's
+    /// nonzero multiplier. Phase 5I promoted this for target-rate requests
+    /// after it improved Butteraugli in all twelve corpus/rate cells.
+    Uniform7,
 }
 
 /// One encode request.
@@ -199,6 +212,10 @@ pub struct EncodeRequest {
     /// With a [`target`](Self::target) set the rate loop owns this too: it is
     /// how the ladder continues past `global_scale`'s ceiling.
     pub hf_mul: HfMul,
+    /// F.2/I.5.3's X-channel quantization-matrix exponent.
+    pub x_qm_scale: QmScale,
+    /// F.2/I.5.3's B-channel quantization-matrix exponent.
+    pub b_qm_scale: QmScale,
     /// F.2's `group_size_shift`.
     pub group_size_shift: u32,
     /// The effort budget.
@@ -218,6 +235,12 @@ pub struct EncodeRequest {
     /// intended samples. `epf_iters > 0` is signalled on the wire but has no
     /// encoder-side inverse yet (deeper EPF is a later filter-planning item).
     pub restoration: RestorationDecision,
+    /// Encoder policy for G.2.4's EPF sharpness plane.
+    ///
+    /// The fixed-quantizer default is all zero. Target-rate requests use
+    /// [`EpfSharpnessMode::Uniform7`] after the Phase 5I corpus gate. The plane
+    /// has an effect only when [`RestorationDecision::epf_iters`] is nonzero.
+    pub epf_sharpness: EpfSharpnessMode,
     /// Coarse section-parallelism policy for emission (Opt-P).
     ///
     /// Default is [`jpxl_encode::EncodeResources::auto`]. Rate-loop intermediate
@@ -252,26 +275,38 @@ impl EncodeRequest {
             global_scale: GlobalScale::new(32_768).unwrap_or(GlobalScale::MIN),
             quant_lf: QuantLf::new(16).unwrap_or(QuantLf::MIN),
             hf_mul: HfMul::new(1).unwrap_or(HfMul::MIN),
+            x_qm_scale: QmScale::NEUTRAL,
+            b_qm_scale: QmScale::NEUTRAL,
             group_size_shift: 1,
             budget: SearchBudget::default(),
             target: None,
             tolerance: RateTolerance::default(),
             restoration: RestorationDecision::default(),
+            epf_sharpness: EpfSharpnessMode::default(),
             resources: jpxl_encode::EncodeResources::auto(),
         }
     }
 
-    /// [`Self::defaults`] with a size target, so the rate loop chooses the
+    /// The production target-rate policy, so the rate loop chooses the
     /// quantizer.
     ///
-    /// The scalars keep their default values and become the search's starting
-    /// point rather than its answer.
+    /// Phase 5G's six-scene, two-rate gate found AQ Off with `quant_lf = 8`
+    /// improved Butteraugli distance in all twelve cells at matched achieved
+    /// rate. LF fill stays disabled because it changes that distortion knob
+    /// after the primary rate ladder settles. Phase 5I then found one active
+    /// EPF step with uniform Sharpness 7 improved Butteraugli in all twelve
+    /// cells as well. [`Self::defaults`] remains the stable fixed-quantizer,
+    /// restoration-off request.
     #[must_use]
     pub fn for_target(target: RateTarget) -> Self {
-        Self {
-            target: Some(target),
-            ..Self::defaults()
-        }
+        let mut request = Self::defaults();
+        request.target = Some(target);
+        request.quant_lf = QuantLf::new(8).unwrap_or(QuantLf::MIN);
+        request.budget.aq_mode = crate::field::AqMode::Off;
+        request.budget.rate.lf_fill_probes = 0;
+        request.restoration.epf_iters = 1;
+        request.epf_sharpness = EpfSharpnessMode::Uniform7;
+        request
     }
 }
 
@@ -290,13 +325,28 @@ mod tests {
         assert_eq!(
             request.budget.aq_mode,
             crate::field::AqMode::Masking,
-            "production AQ default is Masking"
+            "production AQ default remains the historical Masking policy"
         );
         assert_eq!(request.target, None, "the default path has no rate loop");
+        assert_eq!(request.x_qm_scale, QmScale::NEUTRAL);
+        assert_eq!(request.b_qm_scale, QmScale::NEUTRAL);
         assert!(
             !request.restoration.gaborish && request.restoration.epf_iters == 0,
             "default path keeps filters off"
         );
+        assert_eq!(request.epf_sharpness, EpfSharpnessMode::Zero);
+    }
+
+    #[test]
+    fn target_request_uses_the_phase5_quality_policy() {
+        let target = RateTarget::Bytes(12_345);
+        let request = EncodeRequest::for_target(target);
+        assert_eq!(request.target, Some(target));
+        assert_eq!(request.quant_lf.get(), 8);
+        assert_eq!(request.budget.aq_mode, crate::field::AqMode::Off);
+        assert_eq!(request.budget.rate.lf_fill_probes, 0);
+        assert_eq!(request.restoration.epf_iters, 1);
+        assert_eq!(request.epf_sharpness, EpfSharpnessMode::Uniform7);
     }
 
     #[test]
