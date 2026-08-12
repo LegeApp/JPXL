@@ -589,7 +589,7 @@ record jpegxl-rs.work.arch-phase4c-global-ma-tree/1 : work {
 
 record jpegxl-rs.work.arch-phase4d-lz77-search-align/1 : work {
     title "Phase 4D: align Exact-tier LZ77 pricing with emission; measure lookback"
-    state active
+    state completed
     scope [
         path "JPXL/crates/jpxl-encode/src/lossless.rs",
         path "JPXL/crates/jpxl-encode/src/modular/mod.rs",
@@ -629,6 +629,7 @@ record jpegxl-rs.work.arch-phase4d-lz77-search-align/1 : work {
                 available on PATH also matches source samples.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase4d-pixel-identity-2026-08-12 ]
         }
         check policy-decision {
             statement """
@@ -637,6 +638,7 @@ record jpegxl-rs.work.arch-phase4d-lz77-search-align/1 : work {
                 negative; remaining deferred pieces named.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.phase4d-policy-decision-2026-08-12 ]
         }
         check search-lz77-aligned {
             statement """
@@ -646,6 +648,7 @@ record jpegxl-rs.work.arch-phase4d-lz77-search-align/1 : work {
                 on the table.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase4d-search-lz77-aligned-2026-08-12 ]
         }
         check size-non-regress {
             statement """
@@ -654,6 +657,7 @@ record jpegxl-rs.work.arch-phase4d-lz77-search-align/1 : work {
                 is the bar when lookback or ranking changes match sets.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase4d-size-non-regress-2026-08-12 ]
         }
     }
     after [ @jpegxl-rs.work.arch-phase4c-global-ma-tree ]

@@ -681,6 +681,54 @@ record jpegxl-rs.evidence.phase4c-policy-decision-2026-08-12/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase4d-pixel-identity-2026-08-12/1 : evidence {
+    title "Phase 4D: dual-oracle pixel identity after LZ77 path changes"
+    state verified
+    result pass
+    method command
+    observed_at git:286351a0367cd42e4ce03b21fecf3e58b808fdee
+    command "cargo test -p jpxl-encode --test roundtrip --test oracle --lib; djxl + jpxl compare"
+    summary """
+        jpxl-encode lib 128/128, roundtrip 12/12, oracle 4/4 (including djxl) green. small photo djxl decode rmse=0 vs source ppm. Hash-chain equivalence tests pass against reverse linear scan.
+        """
+}
+
+record jpegxl-rs.evidence.phase4d-policy-decision-2026-08-12/1 : evidence {
+    title "Phase 4D policy: Exact LZ77 on; lookback stays 256; row expansion honest negative"
+    state verified
+    result pass
+    method observation
+    observed_at git:286351a0367cd42e4ce03b21fecf3e58b808fdee
+    artifact "JPXL/docs/experiments/2026-08-12-lz77-search-align.md"
+    summary """
+        Promoted Exact-tier allow_lz77=true and 3-symbol hash-chain at lookback 256. Rejected max(256, dist_multiplier) lookback on photo corpus (no size win, large wall cost). Phase 4 modular sub-phases 4.0-4D closed.
+        """
+}
+
+record jpegxl-rs.evidence.phase4d-search-lz77-aligned-2026-08-12/1 : evidence {
+    title "Phase 4D: Exact finalist pricing uses allow_lz77 matching emission"
+    state verified
+    result pass
+    method command
+    observed_at git:286351a0367cd42e4ce03b21fecf3e58b808fdee
+    command "cargo test -p jpxl-encode --lib exact_finalist_pricing_sees_residual_lz77 lz77 -- --nocapture"
+    summary """
+        plan_for Exact finalists (MA/palette/squeeze) construct ModularSource with allow_lz77=true. Unit test exact_finalist_pricing_sees_residual_lz77 shows LZ77-aware residual stream is strictly shorter than plain on a repeating multi-value residual pattern. Cheap-tier total_cost_shared still uses allow_lz77=false.
+        """
+}
+
+record jpegxl-rs.evidence.phase4d-size-non-regress-2026-08-12/1 : evidence {
+    title "Phase 4D: photo corpus size non-regress (byte-identical fingerprints)"
+    state verified
+    result pass
+    method command
+    observed_at git:286351a0367cd42e4ce03b21fecf3e58b808fdee
+    command "jpxl encode corpus 0.8/4/12MP effort 1 and 0.8MP effort 7"
+    summary """
+        Post-4D release encode matches pre-4D fingerprints exactly: small 1075465 B sha256 c3c60cee..., mid 5157974 B sha256 5c49ab90..., large 9795599 B sha256 ca27799d..., effort7 small 1037868 B sha256 40f0da16.... Hash-chain at lookback 256; row-sized lookback expansion was size-identical and slower (honest negative).
+        """
+}
+
 record jpegxl-rs.evidence.phase4f-bytes-unchanged-2026-08-10/1 : evidence {
     title "At 08e67ef the corpus fingerprints are unchanged by the search elision. Default effort: small_0p8MP 1,075,465 B sha16 C3C60CEE4D0741D9 in 240 ms, mid_4MP 5,157,974 B sha16 5C49AB9020706F0D in 470 ms, large_12MP 9,795,599 B sha16 CA27799D3E7B441D in 1008 ms -- all three IDENTICAL to the pre-4E fingerprints, so 4F changed no byte at the default. Effort 7 likewise reproduces all three fingerprints (1207 / 5366 / 15646 ms), confirming the elision does not fire on the density anchor. Separately, jpxl bench modular --iters 3 at 12 MP reports the median falling from 1025.6 ms to 873.5 ms (-14.8%) with diag residual_scans 1 -> 0 and plane_clone_bytes 288,000,000 -> 144,000,000: the skipped work was the RCT scoring copy, the Arc wrap of every plane, and one strided residual scan."
     state verified
