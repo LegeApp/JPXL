@@ -123,6 +123,53 @@ record jpegxl-rs.observation.cropped-frames-orientation-kblack/1 : observation {
     }
 }
 
+record jpegxl-rs.observation.distortion-currency-misprices-frequency-2026-08-12/1 : observation {
+    title "The cover/CfL objective misprices Y-channel error by 2.65x across DCT8x8 frequency; the mispricing is in the ruler, not the lever"
+    state verified
+    scope [
+        path "JPXL/crates/jpxl-conformance/tests/perceptual_frequency.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs"
+    ]
+    statement """
+        block_cost_bounded prices every candidate as J = bits + lambda_c * side^2 * sum_cells (recon - target)^2: a flat sum of squared dequantized-coefficient errors with one scalar lambda per channel, calibrated once at the DCT8x8 operating point. Cell (0,1) and cell (7,7) are charged identically for the same error magnitude.
+
+        Phase 6.0 measured what that unit actually costs perceptually, with no encoder in the loop. For each XYB channel and each DCT8x8 cell, equal coefficient energy was injected into every whole 8x8 block of a real photograph with a deterministic per-block sign, converted back to 8-bit sRGB, and scored against the unperturbed round trip. Equal injected energy means the current objective charges every cell the same, so the measured spread is the missing weighting directly. Control: realized sample-domain SSE varied only 8.2% across cells (8-bit clipping) against a 165% perceptual spread, so the result is perception and not basis energy.
+
+        Y channel, 63 non-LLF cells, normalised so the flat objective is 1.00 everywhere: range 0.68 to 1.80, a 2.65x spread. Every one of the fifteen pairwise Pearson correlations between normalised maps -- across two photographs at 0.8 MP and 4 MP, over a 4x amplitude range -- is r >= 0.961, reaching r = 0.997 between the two images at amplitude 1.0. The shape is a band-pass contrast-sensitivity curve peaking at the lowest non-DC frequencies ((1,1) = 1.80, (1,0) = 1.79, (0,1) = 1.77), falling to about 0.70 mid-high, with a mild corner re-rise ((7,7) = 0.83). X has a similar shape but saturates (2.35x, r 0.488 to 0.871; its own standard deviation is about 0.0025, so amplitude 1.0 is far outside any real operating point). B is close to flat and unstable (1.56x, r -0.057 to 0.951): for B the current objective is approximately right and no weighting is justified.
+
+        This is a mechanism for the measured gap split -- 25-37% behind cjxl on PSNR, 12-20% on SSIMULACRA2, 39-53% on butteraugli. The encoder is closest on the metric its own objective is. It also explains the Phase 5J/5K/5L/5M/5N/5O pattern: six different levers, one unchanged scorer, scattered content-dependent results. No lever can compensate for a mispriced ruler.
+
+        What this does NOT establish, recorded because the temptation to skip to a weight table is the whole risk. (1) It does not show a re-weighted objective improves output, only that the current one is mispriced: HfQuantizer::choose picks the nearest reconstruction level rather than an RD-optimal one, so a weight changes cover and CfL selection and nothing else until quantization itself becomes RD-aware. (2) DCT8x8 only; the cover decision compares transforms of different sizes and each size has its own frequency grid, so applying this table to that comparison without a per-transform model would bias selection in a new direction rather than remove the existing bias. (3) Row and column 4 are a consistent local minimum with a partial re-rise at 5-7 -- a first-principles CSF has no such feature and butteraugli's multi-scale pyramid plausibly does, which is a direct argument against fitting the numbers literally. (4) Clean-room (AGENTS.md section 2): measuring a black-box metric's response is the same category as running cjxl/djxl as an oracle and reads no libjxl source, but the workspace manifest's own note on the butteraugli dependency applies exactly -- fitting an encoder weight table to this response would make the perceptual model a derivative of libjxl's, whereas deriving a first-principles contrast-sensitivity weight and then checking it against this measurement would not.
+
+        Suggested continuation, in dependency order. 6.1 (cheapest and most decision-relevant, should run before any weight is written): real quantization injects error proportional to each cell's quantization step, and the standard's default dequant matrices (F.3/I.5) are themselves perceptually shaped. Re-run injecting error proportional to HfQuantizer::step. If the response flattens, the matrices already carry the weighting and the objective's only mistake is measuring in dequantized rather than quantizer-normalised units -- a one-line fix with a large effect. If it does not flatten, the residual is the real target. 6.2: extend to DCT16x16 and DCT32x32 so the cover comparison can be re-priced coherently. 6.3: a first-principles CSF weight, checked against this table rather than fitted to it, behind a feature flag, screened on the six-scene matrix under the existing Contract B promotion rules.
+
+        Full tables, stability matrix and method: JPXL/docs/experiments/2026-08-12-distortion-currency-frequency-response.md. Raw output: .agent/scratch/phase6-0-frequency-response-2026-08-12/.
+        """
+    observed_at git:cddce2b966a06b03e8ec92c096b3e1695d69ed55
+    method command
+    watches [
+        "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        "JPXL/crates/jpxl-conformance/tests/perceptual_frequency.rs",
+        "JPXL/crates/jpxl-encode-policy/src/quantize.rs"
+    ]
+    derived_from [
+        @jpegxl-rs.observation.lossy-perceptual-baseline-2026-08-10,
+        @jpegxl-rs.observation.phase5-quality-policy-screen-2026-08-11
+    ]
+    verified_by [
+        @jpegxl-rs.evidence.phase6-0-frequency-harness-2026-08-12,
+        @jpegxl-rs.evidence.phase6-0-frequency-spread-2026-08-12
+    ]
+    source {
+        kind internal
+        role evidence
+        path "JPXL/docs/experiments/2026-08-12-distortion-currency-frequency-response.md"
+        use """
+            Method, preregistered gate, full per-cell weight tables and the cross-run stability matrix.
+            """
+    }
+}
+
 record jpegxl-rs.observation.epf-flip-points/1 : observation {
     title "J.4 EPF has four flip points"
     state verified

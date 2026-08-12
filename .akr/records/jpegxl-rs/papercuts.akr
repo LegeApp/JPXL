@@ -56,6 +56,17 @@ record jpegxl-rs.papercut.akr-view-active-work-current-state-etc-returned/1 : pa
     created_at 2026-08-06
 }
 
+record jpegxl-rs.papercut.cargo-fmt-all-check-fails-on-code-committed-at/1 : papercut {
+    title "`cargo fmt --all --check` fails on code committed at HEAD (25213f6):…"
+    state verified
+    statement """
+        `cargo fmt --all --check` fails on code committed at HEAD (25213f6): jpxl-core/src/{color,dct}.rs, jpxl-encode/src/{lib,resources}.rs, jpxl-encode/src/modular/squeeze.rs, jpxl-encode/src/vardct/gaborish.rs and two blocks in jpxl-bitstream/src/writer.rs all carry pre-existing formatting drift. That makes scripts/ci-akr.sh's third gate red independently of any working-tree change, and it means running `cargo fmt` during ordinary work silently rewrites six files nobody touched -- exactly the hazard AGENTS.md section 10 warns about, now with a standing trigger. Separately, AGENTS.md section 5's documented gate `cargo clippy --workspace --all-targets -- -D warnings` cannot pass by construction: the workspace sets unwrap_used, indexing_slicing and cast_possible_truncation to "warn" and there are 100+ live hits, so -D warnings turns the project's own deliberate lint policy into errors.
+        """
+    observed_at git:cddce2b966a06b03e8ec92c096b3e1695d69ed55
+    author "claude"
+    created_at 2026-08-12
+}
+
 record jpegxl-rs.papercut.fff-grep-transport-closed-while-locating-bench/1 : papercut {
     title "FFF grep transport closed while locating bench_vardct_rate; the indexed…"
     state verified
@@ -146,6 +157,18 @@ record jpegxl-rs.papercut.opt-f-multiplicity-counters-are-still-only/1 : papercu
     observed_at git:788a3b4ebce146cacbe3412b12de6f712da58304
     author "grok-4.5"
     created_at 2026-08-06
+}
+
+record jpegxl-rs.papercut.orienting-on-this-project-through-the-knowledge/1 : papercut {
+    title "Orienting on this project through the knowledge.* MCP tools failed at…"
+    state verified
+    statement """
+        Orienting on this project through the knowledge.* MCP tools failed at the first step: knowledge.start truncated at a 2000-token hard limit even with budget_tokens=1800 (estimated 3245, continuation null, no way to page), and knowledge.search truncated at 1000 tokens with 20 results. Both returned only a truncation notice with zero usable content, so the sanctioned fallback (AGENTS.md section 10) of reading .akr/records/**/*.akr and docs/generated/ directly was the only route to a project summary. A continuation token, or honouring budget_tokens above the hard limit, would make the tools usable on a ledger this size.
+        """
+    observed_at git:cddce2b966a06b03e8ec92c096b3e1695d69ed55
+    about "akr"
+    author "claude"
+    created_at 2026-08-12
 }
 
 record jpegxl-rs.papercut.while-repairing-phase-4l-evidence-chronology/1 : papercut {

@@ -1368,6 +1368,31 @@ record jpegxl-rs.evidence.phase5o-special8-wire-rate-2026-08-11/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase6-0-frequency-harness-2026-08-12/1 : evidence {
+    title "Phase 6.0 frequency-response harness ran clean on two photographs, control passed"
+    state verified
+    result pass
+    method command
+    observed_at git:cddce2b966a06b03e8ec92c096b3e1695d69ed55
+    command "JPXL_CALIB_REF=.agent/scratch/realworld-bench-20260806T072202Z/{small_0p8MP,mid_4MP}.ppm JPXL_CALIB_SIDE=512 JPXL_CALIB_AMPS=0.25,0.5,1.0 cargo test --release -p jpxl-conformance --features perceptual --test perceptual_frequency -- --ignored --nocapture"
+    artifact ".agent/scratch/phase6-0-frequency-response-2026-08-12/"
+    summary """
+        18 runs (2 photographs x 3 XYB channels x 3 amplitudes x 64 cells) completed; the harness asserted zero self-distance before each sweep, and the sample-domain SSE control varied 8.2% across cells against a 165% perceptual spread
+        """
+}
+
+record jpegxl-rs.evidence.phase6-0-frequency-spread-2026-08-12/1 : evidence {
+    title "Phase 6.0 gate decided per channel: Y structured, X marginal, B flat"
+    state verified
+    result pass
+    method observation
+    observed_at git:cddce2b966a06b03e8ec92c096b3e1695d69ed55
+    artifact "JPXL/docs/experiments/2026-08-12-distortion-currency-frequency-response.md"
+    summary """
+        Preregistered structured gate passes on Y (2.65x spread, every one of 15 cross-run Pearson r >= 0.961), marginally on X (2.35x, r 0.488-0.871, saturating), and fails on B (1.56x, r -0.057-0.951); write-up is the immutable experiment record
+        """
+}
+
 record jpegxl-rs.evidence.retire-handoff-durable-facts-2026-08-11/1 : evidence {
     title "HANDOFF permanent facts are represented in AKR"
     state verified

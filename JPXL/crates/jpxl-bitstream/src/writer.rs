@@ -435,7 +435,6 @@ mod tests {
     use crate::reader::BitReader;
 
     #[test]
-    #[test]
     fn counting_writer_matches_storing_bit_len() {
         let mut store = BitWriter::new();
         let mut count = BitWriter::counting();
@@ -455,6 +454,7 @@ mod tests {
         assert_eq!(store.bit_len(), count.bit_len());
     }
 
+    #[test]
     fn first_bit_is_lsb_of_first_byte() {
         let mut w = BitWriter::new();
         w.write_bits(1, 1).expect("one bit");
