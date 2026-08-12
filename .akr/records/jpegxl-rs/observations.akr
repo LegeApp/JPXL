@@ -1779,6 +1779,54 @@ record jpegxl-rs.observation.the-quantizer-is-the-lever-and-its-rate-proxy-is-th
     }
 }
 
+record jpegxl-rs.observation.the-rate-proxy-is-blind-to-most-symbols-and-the-lever-is-truncation-2026-08-12/1 : observation {
+    title "residual_bits prices only a fifth to a half of the emitted symbols, and the lever it misses is walk truncation, not magnitude"
+    state verified
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode/src/vardct/walk.rs"
+    ]
+    statement """
+        WHAT THE WALK CHARGES (18181-1 I.4, read from crates/jpxl-encode/src/vardct/walk.rs). Per varblock and channel: one non_zeros symbol in a neighbour-predicted context; then a coefficient token for EVERY order position from num_blocks up to and including the last nonzero, interior zeros included; then it stops, so positions after the last nonzero cost nothing.
+
+        residual_bits(q) charges 0 for a zero and bit_length(|q|) + 1 otherwise, so it is wrong three ways: interior zeros are free to it but cost real tokens; the non_zeros symbol is invisible; and truncation is invisible.
+
+        MEASURED, driving the real walk_frame rather than a reimplementation, on test-set/20240501_110934 at the promoted target-rate policy. Share of emitted symbols residual_bits prices: 21.7% at 0.5 bpp, 33.7% at 1 bpp, 50.9% at 2 bpp -- so it is blind to 78.3%, 66.3% and 49.1%. Zero-valued coefficient tokens, real symbols charged nothing, are 73.1% / 62.9% / 45.8% of all coefficient tokens. Totals emitted: 110,650 / 291,954 / 500,106 symbols.
+
+        THE LEVER IS TRUNCATION, NOT MAGNITUDE. Zeros sitting immediately before each block's last nonzero number 0.91 / 1.56 / 1.43 per varblock-channel. So zeroing one block's last nonzero frees its own token PLUS about 1.56 more at 1 bpp -- roughly 2.6 symbols -- while zeroing a coefficient in the middle of a dense run frees nothing at all. residual_bits credits a flat ~2 bits for both. That indifference is the whole Phase 7.0 failure in one sentence: given two coefficients of equal magnitude the proxy cannot prefer the one whose removal collapses a run, so it zeroed by magnitude alone and stripped texture uniformly, which is exactly what SSIMULACRA2 penalised in 24 of 28 cells.
+
+        THE BLINDNESS SCALES THE WAY THE DAMAGE DID. The invisible share is highest at low rate (78.3% at 0.5 bpp) and falls as rate rises (49.1% at 2 bpp), because sparse blocks are mostly zeros. Phase 6.5's donor weight helped most at low rate and faded to nothing by 4 bpp; Phase 7.0 did most of its damage where blocks are sparse. Both are consistent with rate structure mattering most where the proxy sees least.
+
+        WHAT THIS FORCES ON THE DESIGN. Because the last-nonzero position is a property of the whole block, a per-coefficient rule is structurally incapable of this selectivity WHATEVER its lambda -- Phase 7.0 could not have worked as constructed. Phase 7.1 must therefore be a block-level backward pass: quantize greedily, then walk back from the last nonzero deciding which trailing nonzeros to drop, pricing each drop at its true saving (its own token plus the interior zeros it exposes) against its true distortion. That is the classic last-position rate-distortion decision, and this measurement says it is the high-value piece rather than one option among several.
+
+        NOT ESTABLISHED. Token counts are exact here; token BITS are not -- each symbol's real cost depends on its ANS cluster and hybrid-uint configuration, which the census builds after the walk, so a count-based estimate remains a proxy and the record should keep saying so. The contexts also couple across blocks, since a block's non_zeros feeds the neighbour prediction grid for later blocks, and a within-block backward pass ignores that. One image, three rates, one policy: the proportions will move with content, the structural facts will not.
+
+        Full tables and method: JPXL/docs/experiments/2026-08-12-rate-proxy-gap.md. Raw output: .agent/scratch/phase7-1a-rate-proxy-gap-2026-08-12/.
+        """
+    observed_at git:31649d85636095103b2f97be8400784ea3b346ab
+    method command
+    watches [
+        "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        "JPXL/crates/jpxl-encode/src/vardct/walk.rs",
+        "JPXL/crates/jpxl-encode-policy/tests/rate_proxy_gap.rs"
+    ]
+    derived_from [
+        @jpegxl-rs.observation.the-quantizer-is-the-lever-and-its-rate-proxy-is-the-defect-2026-08-12
+    ]
+    verified_by [
+        @jpegxl-rs.evidence.phase7-1a-gap-measured-2026-08-12,
+        @jpegxl-rs.evidence.phase7-1a-lever-identified-2026-08-12
+    ]
+    source {
+        kind internal
+        role evidence
+        path "JPXL/docs/experiments/2026-08-12-rate-proxy-gap.md"
+        use """
+            The walk's charging model, the three-rate symbol classification and the truncation-lever arithmetic.
+            """
+    }
+}
+
 record jpegxl-rs.observation.transform-size-axis-is-not-the-deficit-2026-08-12/1 : observation {
     title "Correctly repricing the cover's transform-size axis does not improve quality: the extra splits cost more bits than the better size choice buys"
     state verified

@@ -1668,6 +1668,31 @@ record jpegxl-rs.evidence.phase7-0-rd-implementation-2026-08-12/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase7-1a-gap-measured-2026-08-12/1 : evidence {
+    title "residual_bits prices only 21.7-50.9% of the symbols the encoder emits"
+    state verified
+    result pass
+    method command
+    observed_at git:31649d85636095103b2f97be8400784ea3b346ab
+    command "JPXL_RATE_REF=<ref.ppm> JPXL_RATE_BPP=<0.5|1|2> cargo test -p jpxl-encode-policy --release --test rate_proxy_gap -- --ignored --nocapture"
+    artifact ".agent/scratch/phase7-1a-rate-proxy-gap-2026-08-12/measurements.txt"
+    summary """
+        Driving jpxl_encode::vardct::walk_frame (the writer's own walk, not a reimplementation) over test-set/20240501_110934 at the promoted target-rate policy: residual_bits prices 21.7% of emitted symbols at 0.5 bpp, 33.7% at 1 bpp and 50.9% at 2 bpp, so it is blind to 78.3%, 66.3% and 49.1% respectively. Zero-valued coefficient tokens -- real emitted symbols that it charges nothing for -- are 73.1%, 62.9% and 45.8% of all coefficient tokens. The truncation lever: zeros sitting immediately before each block's last nonzero number 0.91, 1.56 and 1.43 per varblock-channel, so zeroing one block's last nonzero frees its own token plus about 1.56 more at 1 bpp where residual_bits credits a flat ~2 bits regardless and credits the same for zeroing mid-run where nothing is freed
+        """
+}
+
+record jpegxl-rs.evidence.phase7-1a-lever-identified-2026-08-12/1 : evidence {
+    title "Phase 7.1a identifies walk truncation as the lever and forces a block-level design"
+    state verified
+    result pass
+    method observation
+    observed_at git:31649d85636095103b2f97be8400784ea3b346ab
+    artifact "JPXL/docs/experiments/2026-08-12-rate-proxy-gap.md"
+    summary """
+        The lever is walk truncation, not magnitude. I.4 emits a coefficient token for every order position up to the last nonzero and then stops, so zeroing the last nonzero frees its own token plus every interior zero back to the previous nonzero, while zeroing mid-run frees nothing. residual_bits is indifferent between those two decisions, which is why Phase 7.0 zeroed by magnitude alone and stripped texture uniformly. Because the last-nonzero position is a property of the whole block, a per-coefficient rule is structurally incapable of this selectivity whatever its lambda -- so the design must be a block-level backward pass over trailing nonzeros, pricing each drop at its true saving. The record also states what the measurement does not establish: token counts are exact but token bits are not, since each symbol's real cost depends on an ANS cluster the census builds after the walk, and a within-block pass ignores the neighbour-prediction coupling between blocks
+        """
+}
+
 record jpegxl-rs.evidence.retire-handoff-durable-facts-2026-08-11/1 : evidence {
     title "HANDOFF permanent facts are represented in AKR"
     state verified
