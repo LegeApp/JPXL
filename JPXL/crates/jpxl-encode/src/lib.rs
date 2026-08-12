@@ -470,19 +470,39 @@ pub fn encode_codestream_with_plan_resources(
 ///
 /// Independent LF-group and pass-group bodies may run on multiple workers;
 /// results are reduced in F.3.1 index order (Contract A).
+///
+/// Multi-section frames try Phase 4C's global MA tree (tree + residual D bundle
+/// once at G.1.3) and keep it only when the total section payload is no larger
+/// than the historical per-section local-tree emission.
 fn build_sections(
+    source: &ModularSource,
+    geometry: &Geometry,
+    resources: EncodeResources,
+) -> Result<SectionStore> {
+    if geometry.is_single_section() {
+        // F.3.1: one group and one pass means one section carrying everything.
+        let mut store = SectionStore::new();
+        store.push(modular::encode_lf_global(source, geometry)?);
+        return Ok(store);
+    }
+
+    let local = build_sections_local(source, geometry, resources)?;
+    let global = build_sections_global(source, geometry, resources)?;
+    if global.total_len() <= local.total_len() {
+        Ok(global)
+    } else {
+        Ok(local)
+    }
+}
+
+/// Pre-4C multi-section emission: every modular section carries its own tree.
+fn build_sections_local(
     source: &ModularSource,
     geometry: &Geometry,
     resources: EncodeResources,
 ) -> Result<SectionStore> {
     let mut store = SectionStore::new();
     store.push(modular::encode_lf_global(source, geometry)?);
-    if geometry.is_single_section() {
-        // F.3.1: one group and one pass means one section carrying everything.
-        return Ok(store);
-    }
-
-    // F.3.1 order: LfGlobal, LfGroup[…], HfGlobal, PassGroup[…].
     let n_lf = usize::try_from(geometry.num_lf_groups()).unwrap_or(0);
     let lf_workers = resources.workers_for(n_lf);
     let lf_bodies = resources::ordered_map(n_lf, lf_workers, |index| {
@@ -504,7 +524,6 @@ fn build_sections(
         store.push(body);
     }
     store.push_empty(); // HfGlobal — VarDCT-only (G.3)
-
     let n_pg = usize::try_from(geometry.num_groups()).unwrap_or(0);
     let pg_workers = resources.workers_for(n_pg);
     let pg_bodies = resources::ordered_map(n_pg, pg_workers, |index| {
@@ -520,6 +539,63 @@ fn build_sections(
                 height,
             },
             geometry,
+        )
+    })?;
+    for body in pg_bodies {
+        store.push(body);
+    }
+    Ok(store)
+}
+
+/// Phase 4C multi-section emission with G.1.3 global tree + shared residual D.
+fn build_sections_global(
+    source: &ModularSource,
+    geometry: &Geometry,
+    resources: EncodeResources,
+) -> Result<SectionStore> {
+    let model = modular::build_global_residual_model(source, geometry)?;
+    let mut store = SectionStore::new();
+    store.push(modular::encode_lf_global_with_global_tree(
+        source, geometry, &model,
+    )?);
+    let n_lf = usize::try_from(geometry.num_lf_groups()).unwrap_or(0);
+    let lf_workers = resources.workers_for(n_lf);
+    let lf_bodies = resources::ordered_map(n_lf, lf_workers, |index| {
+        let (x0, y0, width, height) = geometry
+            .lf_group_rect(u64::try_from(index).unwrap_or(u64::MAX))
+            .ok_or_else(|| EncodeError::unsupported("an LF group index past the grid", "G.2"))?;
+        modular::encode_lf_group_with_global_tree(
+            source,
+            Rect {
+                x0,
+                y0,
+                width,
+                height,
+            },
+            geometry,
+            &model,
+        )
+    })?;
+    for body in lf_bodies {
+        store.push(body);
+    }
+    store.push_empty(); // HfGlobal — VarDCT-only (G.3)
+    let n_pg = usize::try_from(geometry.num_groups()).unwrap_or(0);
+    let pg_workers = resources.workers_for(n_pg);
+    let pg_bodies = resources::ordered_map(n_pg, pg_workers, |index| {
+        let (x0, y0, width, height) = geometry
+            .group_rect(u64::try_from(index).unwrap_or(u64::MAX))
+            .ok_or_else(|| EncodeError::unsupported("a group index past the grid", "G.4"))?;
+        modular::encode_group_with_global_tree(
+            source,
+            Rect {
+                x0,
+                y0,
+                width,
+                height,
+            },
+            geometry,
+            &model,
         )
     })?;
     for body in pg_bodies {

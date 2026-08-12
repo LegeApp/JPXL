@@ -25,18 +25,18 @@
 //! | Field | Value | Clause |
 //! |---|---|---|
 //! | `LfChannelDequantization` | all-default | G.1.2 |
-//! | global MA tree | absent | G.1.3 |
-//! | `use_global_tree` | false, in every sub-bitstream | H.2 |
+//! | global MA tree | present on multi-section frames (Phase 4C) | G.1.3 |
+//! | `use_global_tree` | true on multi-section; false on single-section | H.2 |
 //! | `wp_params` | all-default | H.5.1 |
 //! | `nb_transforms` | 0, 1 `kRCT`, or 1 `kPalette` in `LfGlobal` | H.2 |
 //! | MA tree | learned under depth/leaf caps | H.4.2 |
-//! | residual entropy | ANS, trained hybrid-uint; LZ77 when cheaper | C.2 / C.3 |
+//! | residual entropy | ANS, trained hybrid-uint; LZ77 when cheaper (local);
+//!   multi-section global path: plain ANS, one shared D bundle | C.2 / C.3 |
 //!
 //! Policy (`lossless::plan_for`) picks transforms, predictors, and MA trees.
-//! Residuals use the Annex C ANS path and adopt LZ77 when strictly shorter.
-//!
-//! Every sub-bitstream carries its own tree and its own distribution bundle
-//! (`use_global_tree = false`).
+//! Residuals use the Annex C ANS path and adopt LZ77 when strictly shorter on
+//! the single-section path. Multi-section frames share one residual D bundle
+//! with the global tree (decoder `GLOBAL_TREE_SHARES_DISTRIBUTIONS`).
 //!
 //! # The residual
 //!
@@ -1042,12 +1042,29 @@ impl ModularSource {
 /// entropy bundle, and no samples at all — G.1.3 stops before the first
 /// channel larger than `group_dim`, which in that shape is channel zero.
 ///
+/// Shared residual D bundle for multi-section `use_global_tree` frames (Phase 4C).
+///
+/// Matches decoder `GLOBAL_TREE_SHARES_DISTRIBUTIONS`: histograms live next to
+/// the G.1.3 global MA tree; each modular section only restarts ANS and emits
+/// its own tokens. Residual LZ77, when selected, uses one shared Table C.1
+/// configuration; match finding stays per-section (no cross-section copies).
+pub struct GlobalResidualModel {
+    tables: EntropyTables,
+}
+
 /// # Errors
 ///
 /// [`EncodeError::SampleCountMismatch`] if a plane is the wrong length,
 /// [`EncodeError::ValueOutOfRange`] if a residual exceeds the code's range, or
 /// a bit writer error.
 pub fn encode_lf_global(source: &ModularSource, geometry: &Geometry) -> Result<Vec<u8>> {
+    // Single-section and callers that have not built a global model keep the
+    // historical local-tree emission (tree + residual bundle in this section).
+    encode_lf_global_local(source, geometry)
+}
+
+/// Local-tree `LfGlobal` (single-section frames and the pre-4C path).
+fn encode_lf_global_local(source: &ModularSource, geometry: &Geometry) -> Result<Vec<u8>> {
     source.validate()?;
     let mut w = BitWriter::new();
 
@@ -1055,10 +1072,10 @@ pub fn encode_lf_global(source: &ModularSource, geometry: &Geometry) -> Result<V
     // mode never uses the weights, but the bit is still there.
     w.write_bool(true); // all_default
 
-    // G.1.3: no global MA tree; every sub-bitstream carries its own.
+    // G.1.3: no global MA tree; this sub-bitstream carries its own.
     w.write_bool(false);
 
-    write_modular_header(&mut w, &source.transforms)?;
+    write_modular_header(&mut w, &source.transforms, false)?;
     write_ma_tree(&mut w, &source.tree)?;
 
     // G.1.3: residual-code meta + channels that fit in group_dim.
@@ -1073,15 +1090,64 @@ pub fn encode_lf_global(source: &ModularSource, geometry: &Geometry) -> Result<V
     Ok(w.into_bytes())
 }
 
+/// Multi-section `LfGlobal` with G.1.3 global MA tree + shared residual tables.
+///
+/// # Errors
+///
+/// As [`encode_lf_global`].
+pub fn encode_lf_global_with_global_tree(
+    source: &ModularSource,
+    geometry: &Geometry,
+    model: &GlobalResidualModel,
+) -> Result<Vec<u8>> {
+    source.validate()?;
+    let mut w = BitWriter::new();
+
+    w.write_bool(true); // LfChannelDequantization all_default
+    w.write_bool(true); // G.1.3 have global MA tree
+    write_ma_tree(&mut w, &source.tree)?;
+    model
+        .tables
+        .write_bundle(&mut w)
+        .map_err(|_| EncodeError::unsupported("global residual D bundle", "C.2.1"))?;
+
+    // GlobalModular sub-bitstream: tree comes from G.1.3.
+    write_modular_header(&mut w, &source.transforms, true)?;
+    let part = partition_channels(source, geometry.group_dim());
+    let events = if part.lf_global.is_empty() {
+        Vec::new()
+    } else {
+        collect_residuals_indices(source, &part.lf_global, None)?
+    };
+    let dist_mul = part
+        .lf_global
+        .iter()
+        .filter_map(|&i| source.channels.get(i).map(|c| c.width))
+        .max()
+        .unwrap_or(0);
+    write_residual_stream_with_tables_dist(&mut w, &model.tables, &events, dist_mul)?;
+
+    w.zero_pad_to_byte();
+    Ok(w.into_bytes())
+}
+
 /// Writes one LF-group modular section (18181-1 G.2.3).
 ///
 /// # Errors
 ///
 /// As [`encode_lf_global`].
 pub fn encode_lf_group(source: &ModularSource, rect: Rect, geometry: &Geometry) -> Result<Vec<u8>> {
+    encode_lf_group_local(source, rect, geometry)
+}
+
+fn encode_lf_group_local(
+    source: &ModularSource,
+    rect: Rect,
+    geometry: &Geometry,
+) -> Result<Vec<u8>> {
     source.validate()?;
     let mut w = BitWriter::new();
-    write_modular_header(&mut w, &[])?;
+    write_modular_header(&mut w, &[], false)?;
     write_ma_tree(&mut w, &source.tree)?;
     let part = partition_channels(source, geometry.group_dim());
     if part.lf_group.is_empty() {
@@ -1093,18 +1159,53 @@ pub fn encode_lf_group(source: &ModularSource, rect: Rect, geometry: &Geometry) 
     Ok(w.into_bytes())
 }
 
+/// LF-group section under a shared global tree (Phase 4C).
+///
+/// # Errors
+///
+/// As [`encode_lf_global`].
+pub fn encode_lf_group_with_global_tree(
+    source: &ModularSource,
+    rect: Rect,
+    geometry: &Geometry,
+    model: &GlobalResidualModel,
+) -> Result<Vec<u8>> {
+    source.validate()?;
+    let mut w = BitWriter::new();
+    write_modular_header(&mut w, &[], true)?;
+    let part = partition_channels(source, geometry.group_dim());
+    let events = if part.lf_group.is_empty() {
+        Vec::new()
+    } else {
+        collect_residuals_indices(source, &part.lf_group, Some(rect))?
+    };
+    let dist_mul = part
+        .lf_group
+        .iter()
+        .filter_map(|&i| source.channels.get(i).map(|c| c.width))
+        .max()
+        .unwrap_or(0);
+    write_residual_stream_with_tables_dist(&mut w, &model.tables, &events, dist_mul)?;
+    w.zero_pad_to_byte();
+    Ok(w.into_bytes())
+}
+
 /// Writes one pass-group section (18181-1 G.4.2).
 ///
 /// # Errors
 ///
 /// As [`encode_lf_global`].
 pub fn encode_group(source: &ModularSource, rect: Rect, geometry: &Geometry) -> Result<Vec<u8>> {
+    encode_group_local(source, rect, geometry)
+}
+
+fn encode_group_local(source: &ModularSource, rect: Rect, geometry: &Geometry) -> Result<Vec<u8>> {
     source.validate()?;
     let mut w = BitWriter::new();
 
     // A group sub-bitstream declares no transforms of its own: the channel
     // list it works on is the one LfGlobal already transformed.
-    write_modular_header(&mut w, &[])?;
+    write_modular_header(&mut w, &[], false)?;
     write_ma_tree(&mut w, &source.tree)?;
     let part = partition_channels(source, geometry.group_dim());
     if part.pass_group.is_empty() {
@@ -1117,9 +1218,293 @@ pub fn encode_group(source: &ModularSource, rect: Rect, geometry: &Geometry) -> 
     Ok(w.into_bytes())
 }
 
+/// Pass-group section under a shared global tree (Phase 4C).
+///
+/// # Errors
+///
+/// As [`encode_lf_global`].
+pub fn encode_group_with_global_tree(
+    source: &ModularSource,
+    rect: Rect,
+    geometry: &Geometry,
+    model: &GlobalResidualModel,
+) -> Result<Vec<u8>> {
+    source.validate()?;
+    let mut w = BitWriter::new();
+    write_modular_header(&mut w, &[], true)?;
+    let part = partition_channels(source, geometry.group_dim());
+    let events = if part.pass_group.is_empty() {
+        Vec::new()
+    } else {
+        collect_residuals_indices(source, &part.pass_group, Some(rect))?
+    };
+    let dist_mul = part
+        .pass_group
+        .iter()
+        .filter_map(|&i| source.channels.get(i).map(|c| c.width))
+        .max()
+        .unwrap_or(0);
+    write_residual_stream_with_tables_dist(&mut w, &model.tables, &events, dist_mul)?;
+    w.zero_pad_to_byte();
+    Ok(w.into_bytes())
+}
+
+/// Builds residual tables from every modular residual stream in the frame.
+///
+/// Used only on multi-section emission. Tries plain ANS and joint residual
+/// LZ77 (per-section matches, shared Table C.1); keeps the shorter model.
+///
+/// # Errors
+///
+/// Residual collection or entropy-table construction failures.
+pub fn build_global_residual_model(
+    source: &ModularSource,
+    geometry: &Geometry,
+) -> Result<GlobalResidualModel> {
+    source.validate()?;
+    let section_events = collect_all_section_residuals(source, geometry)?;
+    let num_contexts = source.tree.num_contexts().max(1);
+    let plain = tables_from_plain_events(num_contexts, &section_events)?;
+    let tables = if source.allow_lz77 {
+        match tables_from_lz77_events(num_contexts, &section_events) {
+            Ok(lz)
+                if residual_model_bits(&lz, &section_events, true)
+                    < residual_model_bits(&plain, &section_events, false) =>
+            {
+                lz
+            }
+            _ => plain,
+        }
+    } else {
+        plain
+    };
+    Ok(GlobalResidualModel { tables })
+}
+
+/// One residual stream's `(context, value)` sequence plus its distance multiplier.
+struct SectionResiduals {
+    events: Vec<(usize, u32)>,
+    dist_multiplier: u32,
+}
+
+fn collect_all_section_residuals(
+    source: &ModularSource,
+    geometry: &Geometry,
+) -> Result<Vec<SectionResiduals>> {
+    let part = partition_channels(source, geometry.group_dim());
+    let mut out = Vec::new();
+
+    let dist_mul = |indices: &[usize]| -> u32 {
+        indices
+            .iter()
+            .filter_map(|&i| source.channels.get(i).map(|c| c.width))
+            .max()
+            .unwrap_or(0)
+    };
+
+    if !part.lf_global.is_empty() {
+        out.push(SectionResiduals {
+            events: collect_residuals_indices(source, &part.lf_global, None)?,
+            dist_multiplier: dist_mul(&part.lf_global),
+        });
+    }
+
+    let n_lf = usize::try_from(geometry.num_lf_groups()).unwrap_or(0);
+    for index in 0..n_lf {
+        let (x0, y0, width, height) = geometry
+            .lf_group_rect(u64::try_from(index).unwrap_or(u64::MAX))
+            .ok_or_else(|| EncodeError::unsupported("an LF group index past the grid", "G.2"))?;
+        if part.lf_group.is_empty() {
+            continue;
+        }
+        out.push(SectionResiduals {
+            events: collect_residuals_indices(
+                source,
+                &part.lf_group,
+                Some(Rect {
+                    x0,
+                    y0,
+                    width,
+                    height,
+                }),
+            )?,
+            dist_multiplier: dist_mul(&part.lf_group),
+        });
+    }
+
+    let n_pg = usize::try_from(geometry.num_groups()).unwrap_or(0);
+    for index in 0..n_pg {
+        let (x0, y0, width, height) = geometry
+            .group_rect(u64::try_from(index).unwrap_or(u64::MAX))
+            .ok_or_else(|| EncodeError::unsupported("a group index past the grid", "G.4"))?;
+        if part.pass_group.is_empty() {
+            continue;
+        }
+        out.push(SectionResiduals {
+            events: collect_residuals_indices(
+                source,
+                &part.pass_group,
+                Some(Rect {
+                    x0,
+                    y0,
+                    width,
+                    height,
+                }),
+            )?,
+            dist_multiplier: dist_mul(&part.pass_group),
+        });
+    }
+
+    // Always at least one residual stream (possibly empty) so tables seed.
+    if out.is_empty() {
+        out.push(SectionResiduals {
+            events: Vec::new(),
+            dist_multiplier: 0,
+        });
+    }
+    Ok(out)
+}
+
+fn tables_from_plain_events(
+    num_contexts: usize,
+    sections: &[SectionResiduals],
+) -> Result<EntropyTables> {
+    let num_contexts = num_contexts.max(1);
+    let mut census = TokenCensus::new(num_contexts)?;
+    let mut any = false;
+    for sec in sections {
+        for &(ctx, value) in &sec.events {
+            census.record(ctx, value)?;
+            any = true;
+        }
+    }
+    seed_empty_contexts(&mut census, num_contexts, !any);
+    let config = best_hybrid_config(&census, num_contexts, None)?;
+    let plan = EncoderPlan::identity(num_contexts, CodingMode::Ans, config)?;
+    EntropyTables::build(&plan, &census)
+        .map_err(|_| EncodeError::unsupported("shared plain residual tables", "C.2.1"))
+}
+
+fn tables_from_lz77_events(
+    num_contexts: usize,
+    sections: &[SectionResiduals],
+) -> Result<EntropyTables> {
+    let num_contexts = num_contexts.max(1);
+    // Literal-only census first → min_symbol.
+    let mut lit_census = TokenCensus::new(num_contexts)?;
+    let mut any_lit = false;
+    for sec in sections {
+        for &(ctx, value) in &sec.events {
+            lit_census.record(ctx, value)?;
+            any_lit = true;
+        }
+    }
+    if !any_lit {
+        return Err(EncodeError::unsupported(
+            "LZ77 with no residual samples across sections",
+            "C.3.3",
+        ));
+    }
+    seed_empty_contexts(&mut lit_census, num_contexts, false);
+    let config = best_hybrid_config(&lit_census, num_contexts, None)?;
+    let max_lit_token = max_token_in_census(&lit_census, num_contexts, &config)?;
+    let min_symbol = choose_min_symbol(max_lit_token).ok_or_else(|| {
+        EncodeError::unsupported(
+            "residual tokens too large for ANS LZ77 min_symbol",
+            "Table C.1",
+        )
+    })?;
+    let max_length = RESIDUAL_LZ77_MIN_LENGTH + (255 - min_symbol);
+    let lz77 = residual_lz77_params(min_symbol)?;
+
+    let dist_ctx = num_contexts;
+    let num_dist = num_contexts + 1;
+    let mut census = TokenCensus::new(num_dist)?;
+    let mut any_copy = false;
+    for sec in sections {
+        if sec.events.is_empty() {
+            continue;
+        }
+        let coded = greedy_lz77_events(
+            &sec.events,
+            RESIDUAL_LZ77_MIN_LENGTH,
+            max_length,
+            sec.dist_multiplier,
+        );
+        for ev in &coded {
+            match *ev {
+                LzEvent::Lit { ctx, value } => census.record(ctx, value)?,
+                LzEvent::Copy {
+                    ctx,
+                    length,
+                    raw_distance,
+                } => {
+                    any_copy = true;
+                    census.record_copy(ctx, length, raw_distance, dist_ctx, &lz77)?;
+                }
+            }
+        }
+    }
+    if !any_copy {
+        return Err(EncodeError::unsupported(
+            "joint residual LZ77 found no copies",
+            "C.3.3",
+        ));
+    }
+    seed_empty_contexts(&mut census, num_dist, false);
+    let plan = EncoderPlan::identity_with_lz77(num_contexts, CodingMode::Ans, config, lz77)
+        .map_err(|_| EncodeError::unsupported("shared LZ77 residual tables", "Table C.1"))?;
+    EntropyTables::build(&plan, &census)
+        .map_err(|_| EncodeError::unsupported("shared LZ77 residual tables build", "C.2.1"))
+}
+
+fn residual_model_bits(
+    tables: &EntropyTables,
+    sections: &[SectionResiduals],
+    use_lz77: bool,
+) -> u64 {
+    let mut total = tables_bundle_bit_len(tables);
+    for sec in sections {
+        total = total.saturating_add(stream_bit_len(
+            tables,
+            &sec.events,
+            sec.dist_multiplier,
+            use_lz77,
+        ));
+    }
+    total
+}
+
+fn tables_bundle_bit_len(tables: &EntropyTables) -> u64 {
+    let mut w = BitWriter::counting();
+    if tables.write_bundle(&mut w).is_err() {
+        return u64::MAX / 4;
+    }
+    w.bit_len()
+}
+
+fn stream_bit_len(
+    tables: &EntropyTables,
+    events: &[(usize, u32)],
+    dist_multiplier: u32,
+    use_lz77: bool,
+) -> u64 {
+    let mut w = BitWriter::counting();
+    if write_residual_stream_with_tables_inner(&mut w, tables, events, dist_multiplier, use_lz77)
+        .is_err()
+    {
+        return u64::MAX / 4;
+    }
+    w.bit_len()
+}
+
 /// Writes Table H.1 and the transform list (H.2 / Table H.7).
-fn write_modular_header(w: &mut BitWriter, transforms: &[ModularTransform]) -> Result<()> {
-    w.write_bool(false); // use_global_tree
+fn write_modular_header(
+    w: &mut BitWriter,
+    transforms: &[ModularTransform],
+    use_global_tree: bool,
+) -> Result<()> {
+    w.write_bool(use_global_tree);
     w.write_bool(true); // WPHeader: default_wp
     let n = u32::try_from(transforms.len()).unwrap_or(0);
     w.write_u32(&NB_TRANSFORMS_SPEC, n)?;
@@ -1378,6 +1763,66 @@ pub fn write_residual_payload(w: &mut BitWriter, source: &ModularSource, rect: R
 /// `LfGlobal`).
 fn write_empty_residual_stream(w: &mut BitWriter, num_contexts: usize) -> Result<()> {
     write_ans_stream(w, num_contexts, &[], 0, false)
+}
+
+/// Residual stream only (ANS seed + tokens), reusing a shared D bundle.
+///
+/// Used after G.1.3 global residual tables when `use_global_tree` is true.
+fn write_residual_stream_with_tables_dist(
+    w: &mut BitWriter,
+    tables: &EntropyTables,
+    events: &[(usize, u32)],
+    dist_multiplier: u32,
+) -> Result<()> {
+    let use_lz77 = tables.lz77().is_some();
+    write_residual_stream_with_tables_inner(w, tables, events, dist_multiplier, use_lz77)
+}
+
+fn write_residual_stream_with_tables_inner(
+    w: &mut BitWriter,
+    tables: &EntropyTables,
+    events: &[(usize, u32)],
+    dist_multiplier: u32,
+    use_lz77: bool,
+) -> Result<()> {
+    let mut encoder = SymbolEncoder::new(tables);
+    if use_lz77 {
+        let lz77 = tables.lz77().ok_or_else(|| {
+            EncodeError::unsupported("LZ77 residual stream without Table C.1 params", "Table C.1")
+        })?;
+        let max_length = lz77
+            .min_length
+            .saturating_add(255u32.saturating_sub(lz77.min_symbol));
+        let coded = if events.is_empty() {
+            Vec::new()
+        } else {
+            greedy_lz77_events(events, lz77.min_length, max_length, dist_multiplier)
+        };
+        for ev in coded {
+            match ev {
+                LzEvent::Lit { ctx, value } => encoder.push_uint(ctx, value).map_err(|_| {
+                    EncodeError::unsupported("LZ77 literal under shared tables", "C.3.3")
+                })?,
+                LzEvent::Copy {
+                    ctx,
+                    length,
+                    raw_distance,
+                } => encoder.push_copy(ctx, length, raw_distance).map_err(|_| {
+                    EncodeError::unsupported("LZ77 copy under shared tables", "C.3.3")
+                })?,
+            }
+        }
+    } else {
+        for &(ctx, value) in events {
+            encoder.push_uint(ctx, value).map_err(|_| {
+                EncodeError::unsupported("residual token under shared tables", "C.3.3")
+            })?;
+        }
+    }
+    encoder.write_stream(w).map_err(|_| {
+        EncodeError::unsupported("residual ANS stream under shared tables", "C.3.2")
+    })?;
+    Ok(())
 }
 
 /// Builds ANS tables from `(context, value)` events and writes bundle + payload.

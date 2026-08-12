@@ -527,6 +527,62 @@ record jpegxl-rs.work.arch-phase4b-sampled-gather-scoped/1 : work {
     ]
 }
 
+record jpegxl-rs.work.arch-phase4c-global-ma-tree/1 : work {
+    title "Phase 4C: emit one global MA tree (use_global_tree) instead of re-paying per section"
+    state active
+    scope [
+        path "JPXL/crates/jpxl-encode/src/lib.rs",
+        path "JPXL/crates/jpxl-encode/src/lossless.rs",
+        path "JPXL/crates/jpxl-encode/src/modular/mod.rs",
+        path "JPXL/crates/jpxl-encode/tests/**"
+    ]
+    intent """
+        Wire use_global_tree so the frame MA tree (and residual D bundle) is paid once at G.1.3 and multi-section modular streams reuse it, instead of write_ma_tree + full ANS tables in every LfGlobal/LfGroup/PassGroup section.
+
+        plan_for already builds one tree per frame. Emission still hardcodes use_global_tree=false and G.1.3 have_global_tree=false (modular/mod.rs). Decoder already supports GlobalTree with GLOBAL_TREE_SHARES_DISTRIBUTIONS=true (shared residual histograms, per-section ANS restart).
+
+        Primary win: multi-group tree/table re-pay, not deeper search. Defer histogram clustering (4C.2) unless measurement shows residual tables dominate re-pay after tree reuse.
+
+        Gates: pixel-identity lossless roundtrip (jpxl-decode + djxl); multi-group size strictly smaller on at least one fixture; single-section non-regress or safe; promote default for multi-section if size wins.
+        """
+    acceptance {
+        check multi-group-size {
+            statement """
+                At least one multi-group fixture is strictly smaller with global tree than with per-section trees; no multi-group fixture grows.
+                """
+            method command
+        }
+        check pixel-identity {
+            statement """
+                Multi-group and single-group modular streams round-trip exact pixels through jpxl-decode; multi-group also through djxl when available.
+                """
+            method command
+        }
+        check policy-decision {
+            statement """
+                Global tree is either default for multi-section modular emission or an explicit research flag with production default unchanged; decision recorded with size evidence.
+                """
+            method observation
+        }
+        check single-section-safe {
+            statement """
+                Single-section modular encode still decodes; size is not worse than pre-4C beyond a documented slack (prefer identical or smaller).
+                """
+            method command
+        }
+    }
+    depends_on [
+        @jpegxl-rs.work.arch-phase4a-weighted-predictor-scoped,
+        @jpegxl-rs.work.arch-phase4b-sampled-gather-scoped
+    ]
+    derived_from [ @jpegxl-rs.assessment.phase4-density-gap-is-vs-e7-only ]
+    implements [
+        @jpegxl-rs.decision.encoder-architecture-phases,
+        @jpegxl-rs.policy.optimization-correctness-gates
+    ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+}
+
 record jpegxl-rs.work.arch-phase4e-modular-effort-ramp/1 : work {
     title "Phase 4E: lossless modular effort ramp, then reoriented to a lean default (the search above e1 is chaff)"
     state completed

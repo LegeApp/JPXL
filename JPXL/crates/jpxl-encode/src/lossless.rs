@@ -888,13 +888,11 @@ fn total_cost_source(
 ) -> Result<u64> {
     let residual = residual_stream_cost_source(source, group_size_shift, tier)?;
     let tree_bits = modular::ma_tree_bit_cost(&source.tree)?;
-    let geometry = crate::frame::Geometry::new(source.width, source.height, group_size_shift)?;
-    let sections = if geometry.is_single_section() {
-        1u64
-    } else {
-        geometry.num_groups()
-    };
-    Ok(residual.saturating_add(tree_bits.saturating_mul(sections)))
+    // Phase 4C: multi-section emission pays the MA tree once at G.1.3; the
+    // single-section path also pays it once. Search must not charge tree ×
+    // group count or it over-prices every multi-group frame.
+    let _ = crate::frame::Geometry::new(source.width, source.height, group_size_shift)?;
+    Ok(residual.saturating_add(tree_bits))
 }
 
 /// Residual-section bit cost under the chosen tier.
