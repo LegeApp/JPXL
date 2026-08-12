@@ -75,10 +75,13 @@ Lossy options (8-bit RGB only; either one selects the VarDCT path):
                                   scale: neutral (default) or measured (Phase
                                   6.2's large-transform correction); research
                                   control
-    --quantizer-choice <mode>     HF quantizer rule: nearest (default),
-                                  rate-distortion (Phase 7.0, rejected) or
-                                  trailing-truncation (Phase 7.1); research
-                                  control
+    --quantizer-choice <mode>     HF quantizer rule: nearest (fixed-quantizer
+                                  default), rate-distortion (Phase 7.0,
+                                  rejected), or trailing-truncation (Phase
+                                  7.1; target-rate default after Phase 7.2)
+    --lambda-scale <f>            Multiplier on the cover/quantizer Lagrange
+                                  weight lambda. Fixed-quantizer default 1.0;
+                                  target-rate default 4.0 after Phase 7.2.
     --cover-freq-weight <mode>    Cover objective's per-cell frequency weight:
                                   flat (default), csf (Mannos-Sakrison at 60
                                   ppd, rejected by Phase 6.3), or quant-donor
@@ -330,6 +333,7 @@ fn cmd_encode(args: &[String]) -> u8 {
     let mut cover_size_penalty: Option<jpxl_encode_policy::CoverSizePenalty> = None;
     let mut cover_frequency_weight: Option<jpxl_encode_policy::CoverFrequencyWeight> = None;
     let mut quantizer_choice: Option<jpxl_encode_policy::QuantizerChoiceMode> = None;
+    let mut lambda_scale: Option<f32> = None;
     let mut positional: Vec<&String> = Vec::new();
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
@@ -488,6 +492,17 @@ fn cmd_encode(args: &[String]) -> u8 {
                     }
                 });
             }
+            "--lambda-scale" => {
+                let Some(v) = rest.next().and_then(|v| v.parse::<f32>().ok()) else {
+                    fail("`--lambda-scale` needs a positive finite multiplier");
+                    return EXIT_ERROR;
+                };
+                if !(v.is_finite() && v > 0.0) {
+                    fail("`--lambda-scale` needs a positive finite multiplier");
+                    return EXIT_ERROR;
+                }
+                lambda_scale = Some(v);
+            }
             "--target-bytes" => {
                 let Some(v) = rest.next().and_then(|v| v.parse::<u64>().ok()) else {
                     fail("`--target-bytes` needs a positive byte count");
@@ -580,6 +595,7 @@ fn cmd_encode(args: &[String]) -> u8 {
                     cover_size_penalty,
                     cover_frequency_weight,
                     quantizer_choice,
+                    lambda_scale,
                 },
             ) {
                 Ok(report) => {
@@ -1268,6 +1284,7 @@ struct LossyOverrides {
     cover_size_penalty: Option<jpxl_encode_policy::CoverSizePenalty>,
     cover_frequency_weight: Option<jpxl_encode_policy::CoverFrequencyWeight>,
     quantizer_choice: Option<jpxl_encode_policy::QuantizerChoiceMode>,
+    lambda_scale: Option<f32>,
 }
 
 fn encode_lossy_to_target(
@@ -1333,6 +1350,9 @@ fn encode_lossy_to_target(
     }
     if let Some(mode) = overrides.quantizer_choice {
         request.quantizer_choice = mode;
+    }
+    if let Some(scale) = overrides.lambda_scale {
+        request.lambda_scale = scale;
     }
     jpxl_encode_policy::encode_srgb8_to_target(
         image.width(),

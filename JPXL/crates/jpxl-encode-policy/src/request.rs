@@ -318,6 +318,10 @@ pub enum QuantizerChoiceMode {
     /// previous nonzero, while zeroing mid-run frees nothing. The pass only
     /// ever removes from the end, so it cannot strip texture uniformly the way
     /// a magnitude rule does.
+    ///
+    /// Promoted on the target-rate path by Phase 7.2 at [`EncodeRequest::lambda_scale`]
+    /// `4.0` (SSIMULACRA2 better in 24 of 28 cells, butteraugli in 23 of 28).
+    /// Unit-scale trailing truncation remains a research-only regression.
     TrailingTruncation,
 }
 
@@ -380,6 +384,20 @@ pub struct EncodeRequest {
     /// Research policy for how the HF quantizer picks an integer. Production
     /// stays at [`QuantizerChoiceMode::Nearest`], which is bit-identical.
     pub quantizer_choice: QuantizerChoiceMode,
+    /// Multiplier on the cover/quantizer Lagrange weight `lambda`.
+    ///
+    /// `lambda` itself is derived from a uniform-quantizer argument
+    /// (`16 / mean(s²)` over non-LLF DCT8x8 cells) and has never been
+    /// calibrated against a perceptual metric. Phase 7.2 sweeps this control
+    /// under [`QuantizerChoiceMode::TrailingTruncation`] to ask whether any
+    /// exchange rate keeps SSIMULACRA2 non-regressing while butteraugli
+    /// retains its gain.
+    ///
+    /// Production fixed-quantizer path stays at `1.0` (bit-identical). The
+    /// target-rate policy uses `4.0` after Phase 7.2's screen. Values must be
+    /// finite and positive; non-positive values are treated as `1.0` so a
+    /// malformed research flag cannot zero the objective.
+    pub lambda_scale: f32,
     /// Coarse section-parallelism policy for emission (Opt-P).
     ///
     /// Default is [`jpxl_encode::EncodeResources::auto`]. Rate-loop intermediate
@@ -425,6 +443,7 @@ impl EncodeRequest {
             cover_size_penalty: CoverSizePenalty::default(),
             cover_frequency_weight: CoverFrequencyWeight::default(),
             quantizer_choice: QuantizerChoiceMode::default(),
+            lambda_scale: 1.0,
             resources: jpxl_encode::EncodeResources::auto(),
         }
     }
@@ -449,6 +468,11 @@ impl EncodeRequest {
         request.restoration.epf_iters = 1;
         request.epf_sharpness = EpfSharpnessMode::Uniform7;
         request.cover_frequency_weight = CoverFrequencyWeight::QuantDonor;
+        // Phase 7.2: trailing truncation at lambda×4 is the first rate-aware
+        // quantizer setting that improves SSIMULACRA2 while keeping butteraugli
+        // gain (24/28 and 23/28 pooled; 7/7 both on the clean 1 bpp row).
+        request.quantizer_choice = QuantizerChoiceMode::TrailingTruncation;
+        request.lambda_scale = 4.0;
         request
     }
 }
@@ -474,15 +498,31 @@ mod tests {
             CoverFrequencyWeight::QuantDonor,
             "the target-rate policy carries the promoted weight"
         );
-        // The other two research controls stay neutral: 6.2b's size penalty was
-        // an honest negative and 7.0's quantizer rule regressed SSIMULACRA2.
+        // 6.2b's size penalty stays neutral (honest negative). Phase 7.2
+        // promoted trailing truncation at lambda×4 after the unit-scale arms
+        // of 7.0/7.1 regressed SSIMULACRA2.
         assert_eq!(
             EncodeRequest::for_target(RateTarget::BitsPerPixel(1.0)).cover_size_penalty,
             CoverSizePenalty::Neutral
         );
         assert_eq!(
             EncodeRequest::for_target(RateTarget::BitsPerPixel(1.0)).quantizer_choice,
-            QuantizerChoiceMode::Nearest
+            QuantizerChoiceMode::TrailingTruncation,
+            "target-rate policy carries the Phase 7.2 promoted quantizer rule"
+        );
+        assert!(
+            (EncodeRequest::for_target(RateTarget::BitsPerPixel(1.0)).lambda_scale - 4.0).abs()
+                < f32::EPSILON,
+            "target-rate policy carries the Phase 7.2 calibrated lambda scale"
+        );
+        assert_eq!(
+            EncodeRequest::defaults().quantizer_choice,
+            QuantizerChoiceMode::Nearest,
+            "fixed-quantizer defaults must stay nearest"
+        );
+        assert!(
+            (EncodeRequest::defaults().lambda_scale - 1.0).abs() < f32::EPSILON,
+            "fixed-quantizer defaults must stay at unit lambda"
         );
     }
 

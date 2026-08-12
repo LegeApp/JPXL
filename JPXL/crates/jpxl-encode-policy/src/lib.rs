@@ -333,6 +333,7 @@ fn plan_at_with_cfl(
         request.cover_size_penalty,
         request.cover_frequency_weight,
         request.quantizer_choice,
+        request.lambda_scale,
     )?;
 
     // The cover is selected before chroma-from-luma is estimated: the estimate
@@ -880,6 +881,7 @@ impl HfQuantizers {
             CoverSizePenalty::Neutral,
             CoverFrequencyWeight::Flat,
             QuantizerChoiceMode::Nearest,
+            1.0,
         )
     }
 
@@ -892,6 +894,7 @@ impl HfQuantizers {
         size_penalty: CoverSizePenalty,
         frequency_weight: CoverFrequencyWeight,
         quantizer_choice: QuantizerChoiceMode,
+        lambda_scale: f32,
     ) -> Result<Self> {
         let mut by_key = Vec::with_capacity(SQUARE_TRANSFORMS.len() * muls.len());
         for transform in SQUARE_TRANSFORMS {
@@ -909,6 +912,13 @@ impl HfQuantizers {
                 what: "a baseline DCT8x8 quantizer",
             })?
             .1;
+        // Phase 7.2: a non-positive or non-finite research flag must not zero
+        // the objective; fall back to the calibrated unit scale.
+        let scale = if lambda_scale.is_finite() && lambda_scale > 0.0 {
+            f64::from(lambda_scale)
+        } else {
+            1.0
+        };
         let mut lambda = [0.0f64; NUM_CHANNELS];
         for (channel, slot) in lambda.iter_mut().enumerate() {
             let mut sum = 0.0f64;
@@ -922,7 +932,7 @@ impl HfQuantizers {
                 count += 1;
             }
             let mean = sum / f64::from(count.max(1));
-            *slot = if mean > 0.0 { 16.0 / mean } else { 0.0 };
+            *slot = if mean > 0.0 { scale * 16.0 / mean } else { 0.0 };
         }
         let frequency_weights = match frequency_weight {
             CoverFrequencyWeight::Flat => Vec::new(),
@@ -3100,6 +3110,7 @@ mod tests {
                     CoverSizePenalty::Neutral,
                     mode,
                     QuantizerChoiceMode::Nearest,
+                    1.0,
                 )
                 .expect("quantizers");
                 let table = quants.frequency_weights(transform);
@@ -3141,6 +3152,7 @@ mod tests {
             CoverSizePenalty::Neutral,
             CoverFrequencyWeight::Flat,
             QuantizerChoiceMode::Nearest,
+            1.0,
         )
         .expect("quantizers");
         for transform in SQUARE_TRANSFORMS {
@@ -3179,6 +3191,85 @@ mod tests {
     }
 
     #[test]
+    fn lambda_scale_defaults_to_one_and_scales_the_derived_weight() {
+        // Phase 7.2: the research multiplier must be a no-op at 1.0 so the
+        // shipped path stays bit-identical, and must actually move `lambda`
+        // when set — otherwise a sweep that reports "no operating point"
+        // would be measuring nothing.
+        assert!(
+            (EncodeRequest::defaults().lambda_scale - 1.0).abs() < f32::EPSILON,
+            "production default must be the unit scale"
+        );
+        assert!(
+            (EncodeRequest::for_target(RateTarget::BitsPerPixel(1.0)).lambda_scale - 4.0).abs()
+                < f32::EPSILON,
+            "target-rate policy carries the Phase 7.2 calibrated scale of 4.0"
+        );
+
+        let muls = [HfMul::new(1).expect("legal")];
+        let base = HfQuantizers::new_with_scales(
+            45_000,
+            muls[0],
+            &muls,
+            NEUTRAL_QM_SCALE,
+            NEUTRAL_QM_SCALE,
+            CoverSizePenalty::Neutral,
+            CoverFrequencyWeight::Flat,
+            QuantizerChoiceMode::Nearest,
+            1.0,
+        )
+        .expect("quantizers");
+        let doubled = HfQuantizers::new_with_scales(
+            45_000,
+            muls[0],
+            &muls,
+            NEUTRAL_QM_SCALE,
+            NEUTRAL_QM_SCALE,
+            CoverSizePenalty::Neutral,
+            CoverFrequencyWeight::Flat,
+            QuantizerChoiceMode::Nearest,
+            2.0,
+        )
+        .expect("quantizers");
+        for channel in 0..NUM_CHANNELS {
+            let a = base.lambda.get(channel).copied().unwrap_or(0.0);
+            let b = doubled.lambda.get(channel).copied().unwrap_or(0.0);
+            assert!(
+                a > 0.0 && (b - 2.0 * a).abs() < 1e-12 * a.max(1.0),
+                "channel {channel}: scale 2.0 must double lambda ({a} -> {b})"
+            );
+        }
+
+        // Unit scale is the production path: an explicit 1.0 must match the
+        // default request byte-for-byte. (A non-unit scale *does* move the
+        // cover under Nearest, because block_cost_bounded always multiplies
+        // by lambda — that is intentional for research, not a defect.)
+        let rgb = mixed_detail_rgb(256, 256);
+        let baseline = encode_srgb8_vardct(256, 256, &rgb, &hierarchical_request()).expect("enc");
+        let mut unit = hierarchical_request();
+        unit.lambda_scale = 1.0;
+        assert_eq!(
+            baseline,
+            encode_srgb8_vardct(256, 256, &rgb, &unit).expect("enc"),
+            "an explicit lambda_scale of 1.0 must be byte-identical to the default"
+        );
+
+        // Under TrailingTruncation the scale must reach the wire: a 4x weight
+        // changes which trailing drops pay, so the codestream cannot match
+        // the unit-scale truncation arm if the control is live.
+        let mut tr_unit = hierarchical_request();
+        tr_unit.quantizer_choice = QuantizerChoiceMode::TrailingTruncation;
+        tr_unit.lambda_scale = 1.0;
+        let mut tr_hot = tr_unit;
+        tr_hot.lambda_scale = 4.0;
+        assert_ne!(
+            encode_srgb8_vardct(256, 256, &rgb, &tr_unit).expect("enc"),
+            encode_srgb8_vardct(256, 256, &rgb, &tr_hot).expect("enc"),
+            "lambda_scale must reach the trailing-truncation path"
+        );
+    }
+
+    #[test]
     fn rate_distortion_choice_minimises_its_own_objective_and_widens_the_dead_zone() {
         // Two claims. First, that no candidate beats the one chosen on
         // `residual_bits + rd * error^2` — recomputed here from the public
@@ -3196,6 +3287,7 @@ mod tests {
             CoverSizePenalty::Neutral,
             CoverFrequencyWeight::Flat,
             QuantizerChoiceMode::Nearest,
+            1.0,
         )
         .expect("quantizers");
         let rd = HfQuantizers::new_with_scales(
@@ -3207,6 +3299,7 @@ mod tests {
             CoverSizePenalty::Neutral,
             CoverFrequencyWeight::Flat,
             QuantizerChoiceMode::RateDistortion,
+            1.0,
         )
         .expect("quantizers");
 

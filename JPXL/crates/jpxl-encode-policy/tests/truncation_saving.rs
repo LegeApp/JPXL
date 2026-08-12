@@ -37,6 +37,9 @@ fn walk_counts(rgb: &[u8], w: u32, h: u32, mode: QuantizerChoiceMode) -> (Counts
     let target = RateTarget::BitsPerPixel(1.0);
     let mut request = EncodeRequest::for_target(target);
     request.quantizer_choice = mode;
+    // Pin unit lambda so this measures the truncation pass itself, not Phase
+    // 7.2's calibrated scale (which also moves cover selection).
+    request.lambda_scale = 1.0;
     let report = jpxl_encode_policy::encode_srgb8_to_target(w, h, rgb, &request, target)
         .expect("a targeted encode");
     let geometry = report.plan.geometry().expect("geometry");
@@ -125,19 +128,35 @@ fn truncation_removes_only_trailing_nonzeros_and_shortens_the_walk() {
 }
 
 #[test]
-fn nearest_is_unchanged_by_the_pass_being_available() {
-    // The shipped path must be untouched by 7.1 existing.
+fn fixed_quantizer_defaults_stay_nearest_after_target_rate_promotion() {
+    // Phase 7.2 promoted trailing truncation on `for_target` only. The
+    // fixed-quantizer defaults path must stay nearest so Contract A
+    // fingerprints and non-rate encodes do not move.
     let (w, h) = (128u32, 128u32);
     let rgb = mixed_rgb(w, h);
     let target = RateTarget::BitsPerPixel(1.0);
-    let default = EncodeRequest::for_target(target);
-    let mut explicit = default;
-    explicit.quantizer_choice = QuantizerChoiceMode::Nearest;
-    let a = jpxl_encode_policy::encode_srgb8_to_target(w, h, &rgb, &default, target)
+    let promoted = EncodeRequest::for_target(target);
+    assert_eq!(
+        promoted.quantizer_choice,
+        QuantizerChoiceMode::TrailingTruncation,
+        "target-rate policy carries Phase 7.2's promoted rule"
+    );
+    let mut nearest = promoted;
+    nearest.quantizer_choice = QuantizerChoiceMode::Nearest;
+    nearest.lambda_scale = 1.0;
+    let a = jpxl_encode_policy::encode_srgb8_to_target(w, h, &rgb, &promoted, target)
         .expect("encode")
         .codestream;
-    let b = jpxl_encode_policy::encode_srgb8_to_target(w, h, &rgb, &explicit, target)
+    let b = jpxl_encode_policy::encode_srgb8_to_target(w, h, &rgb, &nearest, target)
         .expect("encode")
         .codestream;
-    assert_eq!(a, b, "the default target-rate policy must stay nearest");
+    assert_ne!(
+        a, b,
+        "the promoted target-rate path must differ from nearest; if equal the promotion is not live"
+    );
+    assert_eq!(
+        EncodeRequest::defaults().quantizer_choice,
+        QuantizerChoiceMode::Nearest,
+        "fixed-quantizer defaults must stay nearest"
+    );
 }

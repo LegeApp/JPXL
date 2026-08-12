@@ -2490,8 +2490,9 @@ record jpegxl-rs.work.arch-phase7-1a-rate-proxy-gap/1 : work {
 
 record jpegxl-rs.work.arch-phase7-2-lambda-calibration/1 : work {
     title "Phase 7.2: calibrate lambda, the one term never checked against a perceptual metric"
-    state proposed
+    state active
     scope [
+        path "JPXL/crates/jpxl-cli/src/main.rs",
         path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
         path "JPXL/crates/jpxl-encode-policy/src/request.rs",
         path "test-set/**"
