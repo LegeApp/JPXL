@@ -2051,7 +2051,7 @@ record jpegxl-rs.work.arch-phase6-2b-large-transform-penalty-screen/1 : work {
 
 record jpegxl-rs.work.arch-phase6-3-frequency-weight-cover-objective/1 : work {
     title "Phase 6.3: a first-principles frequency weight in the cover/CfL objective"
-    state active
+    state completed
     scope [
         path "JPXL/crates/jpxl-cli/src/main.rs",
         path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
@@ -2080,24 +2080,28 @@ record jpegxl-rs.work.arch-phase6-3-frequency-weight-cover-objective/1 : work {
                 The contrast-sensitivity curve is derived independently of the measurement and its agreement with Phase 6.2 Result A's measured curve is reported against a tolerance stated before the comparison, so the weight is checked rather than fitted.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.phase6-3-csf-agreement-fail-2026-08-12/1 ]
         }
         check default-byte-identical {
             statement """
                 With the flag off, the corpus fingerprints are byte-identical to the pre-6.3 encoder for the same requests, so the flat objective remains shipped behaviour until a gate passes.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase6-3-flat-byte-identical-2026-08-12/1 ]
         }
         check quality-screen {
             statement """
                 Matched-rate Butteraugli and SSIMULACRA2 across the screened scenes and both rates decide whether the re-priced objective is promoted under Contract B, or recorded as an honest negative that localises the deficit away from cover and CfL selection and redirects the track to the quantizer.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.phase6-3-quality-screen-2026-08-12/1 ]
         }
         check scorer-proof {
             statement """
                 Tests prove the weighted term matches a direct recomputation from the same reconstruction error, that the weight is evaluated on each transform's own normalised frequency grid, that it applies to Y alone, and that lambda is recalibrated into the new units rather than carried over.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase6-3-scorer-recomputation-2026-08-12/1 ]
         }
     }
     depends_on [ @jpegxl-rs.work.arch-phase6-2b-large-transform-penalty-screen ]

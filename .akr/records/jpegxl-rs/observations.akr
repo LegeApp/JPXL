@@ -206,6 +206,60 @@ record jpegxl-rs.observation.flip-point-fixtures/1 : observation {
     }
 }
 
+record jpegxl-rs.observation.frequency-is-the-live-lever-csf-is-the-wrong-curve-2026-08-12/1 : observation {
+    title "Frequency weighting drives the cover objective where transform size did not, but a detection CSF is the wrong curve and fails its pre-registered check"
+    state verified
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/src/csf.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/request.rs"
+    ]
+    statement """
+        Phase 6.3 gave block_cost_bounded's Y distortion term a per-cell weight from the Mannos-Sakrison contrast-sensitivity function at 60 pixels per degree -- the conventional one-pixel-per-arcminute viewing assumption -- as A(f)^2, normalised to mean 1 over the non-LLF cells so HfQuantizers::lambda stays calibrated and only the distribution across frequency moves. CoverFrequencyWeight::Flat builds no table and cell_weight returns exactly 1.0, so production is bit-identical; the flat encode of test-set/20240501_110934 at 1 bpp still reproduces the Phase 5O row exactly.
+
+        AGREEMENT CHECK -- FAIL, PRE-REGISTERED. Tolerance (worst bin ratio <= 1.35x, Pearson r >= 0.80), the 60 ppd assumption and the 2p = 0.8924 conversion were all fixed before any number was computed, and nothing was adjusted afterwards. Result: worst bin ratio 3.14x, r = +0.408. Two distinct disagreements. Mannos-Sakrison attenuates towards DC (bin 0 predicted 0.830) where the measurement makes the lowest non-LLF frequencies the most sensitive (1.915) -- the known divergence between a detection CSF, which describes seeing a grating on a blank field, and distortion visibility on a masked natural image where low-frequency error appears as banding. And it rolls off far too hard at high frequency: top bin predicted 0.335 against 1.050 measured, where the measured curve rises and the model still falls.
+
+        SCREEN -- PROMOTION GATE FAILS, BUT THE MECHANISM IS LIVE. Across 14 exactly-matched-rate cells the overall count is 7 better / 7 worse on butteraugli, which conceals the structure. Split by rate it is unambiguous. At 1 bpp butteraugli improves in 5 of 7 (mean -2.20%, median -3.90%, best -16.4%) and SSIMULACRA2 improves in ALL 7 (mean +1.22, best +4.37). At 2 bpp butteraugli regresses in 5 of 7 (mean +13.10%, median +14.60%, worst +32.4%) and SSIMULACRA2 in 6 of 7. Two 2-bpp cells undershoot the cap by about 4.2%, inflating that mean by roughly a point without changing its direction.
+
+        THE CONTRAST WITH PHASE 6.2b IS THE POINT. 6.2b repriced the transform-size axis correctly and butteraugli moved by a mean of +2.03% with everything inside plus or minus 14%. The frequency axis moves it from -16.4% to +32.4% and moves SSIMULACRA2 by up to +4.37. Frequency is a lever that actually drives this objective; transform size is not. That is the durable finding, and it survives the CSF being the wrong curve.
+
+        WHY THE RATE SPLIT, AND WHAT THE WEIGHT SHOULD BE. The agreement failure predicts the screen exactly. The CSF under-weights high frequency by up to 3.14x. At 1 bpp most high-frequency coefficients quantize to zero however they are priced, so that error is inert and what survives is the model's correct instinct that low-frequency structure matters most. At 2 bpp those coefficients are coded and visible, and pricing them at a third of their cost makes the objective discard them. Measurement and screen therefore agree on the same correction: the weight must be far flatter at high frequency than a detection CSF, with no low-frequency dip -- which is exactly the shape Phases 6.0 and 6.2 measured and this model failed to reproduce.
+
+        PRODUCTION UNCHANGED. Flat stays the default. Both research controls (CoverSizePenalty, CoverFrequencyWeight) are retained, production-neutral and bit-identical, because the next candidate weight plugs into the same point.
+
+        WHAT COMES NEXT IS A DECISION, NOT A TWEAK. The obvious move is a weight with the measured shape, and that crosses the line the workspace manifest draws: a table fitted to butteraugli's response makes this project's perceptual model a derivative of libjxl's. It must be recorded as a decision before it is taken. Preference order: (1) a distortion-visibility model from open literature rather than a detection CSF, which keeps the same clean-room standing this phase had and which the screen has now characterised; (2) a two-parameter analytic shape whose parameters come from the encoder's own quantization geometry rather than from butteraugli, then checked against the measurement; (3) fitting the measured curve, explicitly recorded with its licence and provenance consequences.
+
+        One further note for whoever picks this up: the 1 bpp result is already a uniform SSIMULACRA2 win and a 5-of-7 butteraugli win. A rate-dependent weight is not principled as stated, but the split is evidence that the correct weight interacts with which coefficients survive quantization -- an effect no static table can capture, and a hint that the quantizer, still nearest-reconstruction rather than RD, is where the remaining deficit lives.
+
+        Full tables, the agreement matrix and the rate split: JPXL/docs/experiments/2026-08-12-csf-frequency-weight.md. Raw rows, driver and checker: .agent/scratch/phase6-3-csf-weight-2026-08-12/.
+        """
+    observed_at git:7e2b03759e368199cd0856aa824ec80e10170a99
+    method command
+    watches [
+        "JPXL/crates/jpxl-encode-policy/src/csf.rs",
+        "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        "JPXL/crates/jpxl-encode-policy/src/request.rs"
+    ]
+    derived_from [
+        @jpegxl-rs.observation.one-frequency-curve-fits-all-squares-2026-08-12,
+        @jpegxl-rs.observation.transform-size-axis-is-not-the-deficit-2026-08-12
+    ]
+    verified_by [
+        @jpegxl-rs.evidence.phase6-3-csf-agreement-fail-2026-08-12,
+        @jpegxl-rs.evidence.phase6-3-flat-byte-identical-2026-08-12,
+        @jpegxl-rs.evidence.phase6-3-quality-screen-2026-08-12,
+        @jpegxl-rs.evidence.phase6-3-scorer-recomputation-2026-08-12
+    ]
+    source {
+        kind internal
+        role evidence
+        path "JPXL/docs/experiments/2026-08-12-csf-frequency-weight.md"
+        use """
+            The two pre-registered gates, the agreement matrix, the 14-cell screen and the rate split.
+            """
+    }
+}
+
 record jpegxl-rs.observation.h52-clamp/1 : observation {
     title "H.5.2 clamp guard is XOR; defect was in the sub-predictors"
     state verified

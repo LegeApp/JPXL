@@ -5,8 +5,7 @@ build {
     tool "akr 0.3.1"
     grammar "0.1"
     vocabulary "0.2"
-    commit git:600fe6a1e1af79b1d778056fc2a5960e9b0fecf8
-    source_graph "sha256:1b9232cced10411efb67deaec60b796f9c3d7bfb8e421a73918206a87fe0be24"
+    source_graph "sha256:a2288b66d12510b4657962f562ffc6e1c55e21ae3d5b1c67a0236bf5356641c2"
 }
 
 source ".akr/project.akr" {
@@ -30,8 +29,8 @@ source ".akr/records/jpegxl-rs/decisions.akr" {
 }
 
 source ".akr/records/jpegxl-rs/evidence.akr" {
-    hash "sha256:7c033910f104a94d3ea45401444510ce40621a13f993add4b25c0b6b41265b85"
-    records 136
+    hash "sha256:9a32c453f33d3920777edacb92df007eb602c40b5d40791cf0a35a57d24f0f91"
+    records 140
 }
 
 source ".akr/records/jpegxl-rs/milestones.akr" {
@@ -40,8 +39,8 @@ source ".akr/records/jpegxl-rs/milestones.akr" {
 }
 
 source ".akr/records/jpegxl-rs/observations.akr" {
-    hash "sha256:aaeba9a9618796268779319e71e809cee7086734a35bdfa185c0d542f9187619"
-    records 58
+    hash "sha256:c5da0e3ff4d1cce70625caa5440a790f5fe197ff3930a7aa1a311458fb05cf90"
+    records 59
 }
 
 source ".akr/records/jpegxl-rs/papercuts.akr" {
@@ -54,13 +53,18 @@ source ".akr/records/jpegxl-rs/policies.akr" {
     records 16
 }
 
+source ".akr/records/jpegxl-rs/questions.akr" {
+    hash "sha256:5156c6b5640be80aea2294451816d6707477d5305054eb0285faa16f83b14627"
+    records 1
+}
+
 source ".akr/records/jpegxl-rs/tracks.akr" {
     hash "sha256:9703b1af407f97906c61e43ac7d60d83d478925771d7fb4c7ca7687957756dc2"
     records 3
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:255e253df6832e85b6f910c9a45a67dcef488b37ed8a314e7429143b045ff416"
+    hash "sha256:3d4ca09e74f16c080fbca4ce95186f3f83c7f2f22e472a905f875c4d198f72dc"
     records 67
 }
 
@@ -488,6 +492,42 @@ resolution @jpegxl-rs.observation.distortion-currency-misprices-frequency-2026-0
     slot verified_by
     to @jpegxl-rs.evidence.phase6-0-frequency-spread-2026-08-12/1
     hash "sha256:5b690aa6ed7e24a5d01a9599b5091840508175a045548c8da5a321c123527eec"
+}
+
+resolution @jpegxl-rs.observation.frequency-is-the-live-lever-csf-is-the-wrong-curve-2026-08-12/1 {
+    slot derived_from
+    to @jpegxl-rs.observation.one-frequency-curve-fits-all-squares-2026-08-12/1
+    hash "sha256:d211a88682affea7390b52ce5976c21cbf6fa3f6319f1543bdebbbb01455ea7c"
+}
+
+resolution @jpegxl-rs.observation.frequency-is-the-live-lever-csf-is-the-wrong-curve-2026-08-12/1 {
+    slot derived_from
+    to @jpegxl-rs.observation.transform-size-axis-is-not-the-deficit-2026-08-12/1
+    hash "sha256:ddea896277f9661b8da8bc19f71b805528d66051170668086a3cb3a700d87b4c"
+}
+
+resolution @jpegxl-rs.observation.frequency-is-the-live-lever-csf-is-the-wrong-curve-2026-08-12/1 {
+    slot verified_by
+    to @jpegxl-rs.evidence.phase6-3-csf-agreement-fail-2026-08-12/1
+    hash "sha256:20ac629d7276e1f0aa4ebbd0617464c21307942e413baf670d4b04edb7c6c636"
+}
+
+resolution @jpegxl-rs.observation.frequency-is-the-live-lever-csf-is-the-wrong-curve-2026-08-12/1 {
+    slot verified_by
+    to @jpegxl-rs.evidence.phase6-3-flat-byte-identical-2026-08-12/1
+    hash "sha256:756c98291165c48d1b26afc47368220536e91dd417319f5d2cd50944e6297136"
+}
+
+resolution @jpegxl-rs.observation.frequency-is-the-live-lever-csf-is-the-wrong-curve-2026-08-12/1 {
+    slot verified_by
+    to @jpegxl-rs.evidence.phase6-3-quality-screen-2026-08-12/1
+    hash "sha256:022fd719ea49b69f1cff3b9e84c4f55d526252f868c3c57e12242cd91643285e"
+}
+
+resolution @jpegxl-rs.observation.frequency-is-the-live-lever-csf-is-the-wrong-curve-2026-08-12/1 {
+    slot verified_by
+    to @jpegxl-rs.evidence.phase6-3-scorer-recomputation-2026-08-12/1
+    hash "sha256:65e62cdc46be6783eff170f63d833e28280ab0e85d0711b84a5ba9cd14bc6802"
 }
 
 resolution @jpegxl-rs.observation.lossy-harness-decoder-asymmetry-2026-08-11/1 {
@@ -1228,6 +1268,24 @@ resolution @jpegxl-rs.observation.transform-size-axis-is-not-the-deficit-2026-08
     hash "sha256:ebf7533c437bc7e5e726e81f3c5ac652a3d88b2d853f82548d793c6ad779af33"
 }
 
+resolution @jpegxl-rs.question.which-perceptual-weight-crosses-the-cleanroom-line/1 {
+    slot blocks
+    to @jpegxl-rs.work.arch-phase6-4-chroma-controlled-operating-point/1
+    hash "sha256:ed5ad5ecf4b58a2864d6f5e669c964e497b6737f4c6c95eb3f287a2e4359a8a6"
+}
+
+resolution @jpegxl-rs.question.which-perceptual-weight-crosses-the-cleanroom-line/1 {
+    slot derived_from
+    to @jpegxl-rs.observation.frequency-is-the-live-lever-csf-is-the-wrong-curve-2026-08-12/1
+    hash "sha256:02aee9bdb419d55337f3b5daaaf2827914574c1e35713e37fad3b177475e0cee"
+}
+
+resolution @jpegxl-rs.question.which-perceptual-weight-crosses-the-cleanroom-line/1 {
+    slot part_of
+    to @jpegxl-rs.track.encoder-optimization/1
+    hash "sha256:49975e17bd10998d72b08fccfe98fdea9bdf68ef56e4404dd68e94e1e2d75f23"
+}
+
 resolution @jpegxl-rs.work.arch-phase0-instrumentation/1 {
     slot implements
     to @jpegxl-rs.decision.encoder-architecture-phases/1
@@ -1873,7 +1931,7 @@ resolution @jpegxl-rs.work.arch-phase6-2-per-transform-step-shapes/2 {
 resolution @jpegxl-rs.work.arch-phase6-2b-large-transform-penalty-screen/1 {
     slot blocks
     to @jpegxl-rs.work.arch-phase6-3-frequency-weight-cover-objective/1
-    hash "sha256:65a6a23cf95e6cf71d1fb1094b105c6e250f2ce108e1c72713856ec78a133ed7"
+    hash "sha256:a9658a1e2b6d39f78b3369544883c98e42c067cd15a311288ffbd6ca66c7133e"
 }
 
 resolution @jpegxl-rs.work.arch-phase6-2b-large-transform-penalty-screen/1 {
@@ -2942,6 +3000,26 @@ seal @jpegxl-rs.evidence.phase6-2b-quality-negative-2026-08-12/2 {
     hash "sha256:ebf7533c437bc7e5e726e81f3c5ac652a3d88b2d853f82548d793c6ad779af33"
 }
 
+seal @jpegxl-rs.evidence.phase6-3-csf-agreement-fail-2026-08-12/1 {
+    state verified
+    hash "sha256:20ac629d7276e1f0aa4ebbd0617464c21307942e413baf670d4b04edb7c6c636"
+}
+
+seal @jpegxl-rs.evidence.phase6-3-flat-byte-identical-2026-08-12/1 {
+    state verified
+    hash "sha256:756c98291165c48d1b26afc47368220536e91dd417319f5d2cd50944e6297136"
+}
+
+seal @jpegxl-rs.evidence.phase6-3-quality-screen-2026-08-12/1 {
+    state verified
+    hash "sha256:022fd719ea49b69f1cff3b9e84c4f55d526252f868c3c57e12242cd91643285e"
+}
+
+seal @jpegxl-rs.evidence.phase6-3-scorer-recomputation-2026-08-12/1 {
+    state verified
+    hash "sha256:65e62cdc46be6783eff170f63d833e28280ab0e85d0711b84a5ba9cd14bc6802"
+}
+
 seal @jpegxl-rs.evidence.retire-handoff-durable-facts-2026-08-11/1 {
     state verified
     hash "sha256:d5bdf84076bed194a4be6e7e9ea15569dbed84339827e224b936cd8feeb95a65"
@@ -3165,6 +3243,11 @@ seal @jpegxl-rs.observation.epf-flip-points/1 {
 seal @jpegxl-rs.observation.flip-point-fixtures/1 {
     state verified
     hash "sha256:b2164f137e5559f0d4567943068da091543a7fcb0265e824130cb7d413f76c49"
+}
+
+seal @jpegxl-rs.observation.frequency-is-the-live-lever-csf-is-the-wrong-curve-2026-08-12/1 {
+    state verified
+    hash "sha256:02aee9bdb419d55337f3b5daaaf2827914574c1e35713e37fad3b177475e0cee"
 }
 
 seal @jpegxl-rs.observation.h52-clamp/1 {
@@ -3502,6 +3585,11 @@ seal @jpegxl-rs.policy.sources-advice-completion/1 {
     hash "sha256:97f87d49cd309168aee499b2c8ec7532071af7a263f4f360d6a47507c8ce3d9c"
 }
 
+seal @jpegxl-rs.question.which-perceptual-weight-crosses-the-cleanroom-line/1 {
+    state open
+    hash "sha256:d0000396cdbfc9983edff1b52820191a7bb655e7df941e9de8e4eef56734e628"
+}
+
 seal @jpegxl-rs.work.arch-phase0-instrumentation/1 {
     state active
     hash "sha256:156c05d501906a814e3766c441d901349c9b1a606d368a9ec0e9310d09d97e34"
@@ -3713,8 +3801,8 @@ seal @jpegxl-rs.work.arch-phase6-2b-large-transform-penalty-screen/1 {
 }
 
 seal @jpegxl-rs.work.arch-phase6-3-frequency-weight-cover-objective/1 {
-    state active
-    hash "sha256:65a6a23cf95e6cf71d1fb1094b105c6e250f2ce108e1c72713856ec78a133ed7"
+    state completed
+    hash "sha256:a9658a1e2b6d39f78b3369544883c98e42c067cd15a311288ffbd6ca66c7133e"
 }
 
 seal @jpegxl-rs.work.arch-phase6-3-quantizer-normalised-y-distortion/1 {

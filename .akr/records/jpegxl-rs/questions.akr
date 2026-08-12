@@ -1,0 +1,28 @@
+akr 0.1
+project jpegxl-rs
+
+record jpegxl-rs.question.which-perceptual-weight-crosses-the-cleanroom-line/1 : question {
+    title "Where does the frequency weight's shape come from, now that a detection CSF is ruled out?"
+    state open
+    scope [ path "JPXL/crates/jpxl-encode-policy/src/csf.rs" ]
+    question """
+        Phase 6.3 established that frequency weighting drives the cover objective (butteraugli moves -16.4% to +32.4%, SSIMULACRA2 up to +4.37, against transform size's near-null) and that a Mannos-Sakrison detection CSF is the wrong curve, failing its pre-registered agreement check at 3.14x worst-bin ratio and r = 0.408. Measurement and screen agree on what the right curve looks like: far flatter at high frequency than a detection CSF, with no low-frequency dip.
+
+        The obvious next step -- give the weight the measured shape -- crosses the line the workspace manifest draws around the butteraugli dependency: a table fitted to that metric's response makes this project's perceptual model a derivative of libjxl's rather than its own, with licence and provenance consequences. AGENTS.md section 2 makes that a decision to record before it is taken, not an implementation detail.
+
+        Three options, in the preference order Phase 6.3 recorded:
+
+        1. A distortion-visibility model from open literature rather than a detection CSF. Same clean-room standing as Phase 6.3, and the screen has now characterised what it must look like, so the search is well-posed rather than open-ended. Keeps the perceptual model this project's own.
+
+        2. A two-parameter analytic shape -- low-frequency plateau plus a gentle rolloff -- whose parameters are set from the encoder's own quantization geometry (the I.2.5 default matrices, whose per-size step ratios Phase 6.2 already measured) rather than from butteraugli, then checked against the Phase 6.2 measurement the same way Phase 6.3 checked Mannos-Sakrison.
+
+        3. Fit the measured curve, explicitly recorded as a decision that the perceptual model becomes libjxl-derived.
+
+        A fourth possibility the rate split raises: the 1 bpp arm is already a uniform SSIMULACRA2 win and a 5-of-7 butteraugli win, and the 2 bpp arm is where it fails. That is evidence the correct weight interacts with which coefficients survive quantization -- something no static table can capture, and a pointer at HfQuantizer::choose, which is still nearest-reconstruction rather than RD-optimal. The next round may belong on the quantizer rather than on a better table.
+        """
+    blocks [ @jpegxl-rs.work.arch-phase6-4-chroma-controlled-operating-point ]
+    derived_from [
+        @jpegxl-rs.observation.frequency-is-the-live-lever-csf-is-the-wrong-curve-2026-08-12
+    ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+}

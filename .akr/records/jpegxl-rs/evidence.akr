@@ -1536,6 +1536,54 @@ record jpegxl-rs.evidence.phase6-2b-quality-negative-2026-08-12/2 : evidence {
     supersedes [ @jpegxl-rs.evidence.phase6-2b-quality-negative-2026-08-12/1 ]
 }
 
+record jpegxl-rs.evidence.phase6-3-csf-agreement-fail-2026-08-12/1 : evidence {
+    title "Phase 6.3 pre-registered agreement check: the CSF fails both criteria, in a diagnosed direction"
+    state verified
+    result pass
+    method observation
+    observed_at git:7e2b03759e368199cd0856aa824ec80e10170a99
+    artifact ".agent/scratch/phase6-3-csf-weight-2026-08-12/csf-vs-measured.txt"
+    summary """
+        The check ran against its pre-registered tolerance and the verdict is FAIL: worst bin ratio 3.14x against a 1.35x limit and Pearson r +0.408 against a 0.80 limit, with the tolerance, the 60 ppd viewing assumption and the 2p = 0.8924 conversion all fixed before any number was computed and no parameter adjusted afterwards. Two distinct disagreements: Mannos-Sakrison attenuates towards DC (bin 0 predicted 0.830) where the measurement makes the lowest non-LLF frequencies the most sensitive (1.915), the known detection-versus-distortion-visibility divergence; and it rolls off far too hard at high frequency (top bin predicted 0.335 against 1.050 measured, where the measured curve rises and the model still falls)
+        """
+}
+
+record jpegxl-rs.evidence.phase6-3-flat-byte-identical-2026-08-12/1 : evidence {
+    title "Phase 6.3 flat policy is bit-identical and the CSF arm provably reaches the scorer"
+    state verified
+    result pass
+    method command
+    observed_at git:7e2b03759e368199cd0856aa824ec80e10170a99
+    command "cargo test --workspace"
+    summary """
+        the_flat_frequency_weight_is_byte_identical_and_the_csf_weight_is_not asserts Flat is the Default, that an explicitly-flat request encodes byte-identically to the default, and that the CSF arm does change the stream so the weight provably reaches the objective; the flat encode of test-set/20240501_110934 at 1 bpp still reproduces the Phase 5O production row exactly (97,539 bytes, SSIMULACRA2 62.5738, butteraugli 5.0325); full workspace suite green
+        """
+}
+
+record jpegxl-rs.evidence.phase6-3-quality-screen-2026-08-12/1 : evidence {
+    title "Phase 6.3 screen: frequency weighting helps at 1 bpp and hurts at 2 bpp, exactly as the failed agreement check predicts"
+    state verified
+    result pass
+    method observation
+    observed_at git:7e2b03759e368199cd0856aa824ec80e10170a99
+    artifact "JPXL/docs/experiments/2026-08-12-csf-frequency-weight.md"
+    summary """
+        The screen ran and decided; the Contract B promotion gate fails but the result is a rate-split mis-calibration, not a null. Across 14 exactly-matched-rate cells the split is sharp: at 1 bpp butteraugli improves in 5 of 7 (mean -2.20%, best -16.4%) and SSIMULACRA2 improves in 7 of 7 (mean +1.22, best +4.37); at 2 bpp butteraugli regresses in 5 of 7 (mean +13.10%, worst +32.4%) and SSIMULACRA2 in 6 of 7. Two 2-bpp cells undershoot the cap by about 4.2%, inflating that mean by roughly a point without changing direction. Production remains CoverFrequencyWeight::Flat
+        """
+}
+
+record jpegxl-rs.evidence.phase6-3-scorer-recomputation-2026-08-12/1 : evidence {
+    title "The scorer applies the published CSF table per transform, mean-1, lambda left calibrated"
+    state verified
+    result pass
+    method command
+    observed_at git:7e2b03759e368199cd0856aa824ec80e10170a99
+    command "cargo test -p jpxl-encode-policy --lib the_csf_weight_matches_a_direct_recomputation_of_the_weighted_term"
+    summary """
+        For each of DCT8x8, DCT16x16 and DCT32x32 the table the scorer reads matches csf::square_weights cell for cell to 1e-6 on that transform's own grid, its mean over the non-LLF cells is 1 to 1e-5 (the property that leaves HfQuantizers::lambda calibrated, so the weight moves only the distribution across frequency and not the rate/distortion balance), and the flat policy publishes no table at all; csf module tests separately pin the model as band-pass with its peak in 5..12 cycles/degree and the weights as falling from the low band to the corner at every size
+        """
+}
+
 record jpegxl-rs.evidence.retire-handoff-durable-facts-2026-08-11/1 : evidence {
     title "HANDOFF permanent facts are represented in AKR"
     state verified
