@@ -1871,7 +1871,7 @@ record jpegxl-rs.work.arch-phase6-0-distortion-currency/1 : work {
 
 record jpegxl-rs.work.arch-phase6-1-quantizer-normalised-residual/1 : work {
     title "Phase 6.1: re-measure the frequency response per unit of quantizer-normalised error, not raw coefficient error"
-    state proposed
+    state completed
     scope [
         path "JPXL/crates/jpxl-conformance/tests/perceptual_frequency.rs",
         path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
@@ -1892,16 +1892,158 @@ record jpegxl-rs.work.arch-phase6-1-quantizer-normalised-residual/1 : work {
                 The result explicitly decides whether the standard's default dequant matrices already carry the frequency weighting, and either motivates the quantizer-normalised distortion change as a separately gated work item or redirects 6.2/6.3 onto the measured residual.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.phase6-1-flatten-decision-2026-08-12/1 ]
         }
         check residual-measured {
             statement """
                 The harness reports a per-cell perceptual response for step-proportional injected error on the same two photographs and amplitude ladder, with the sample-domain SSE control and the zero-self-distance assertion intact.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase6-1-step-proportional-harness-2026-08-12/1 ]
         }
     }
     depends_on [ @jpegxl-rs.work.arch-phase6-0-distortion-currency ]
     derived_from [ @jpegxl-rs.observation.distortion-currency-misprices-frequency-2026-08-12 ]
+    implements [
+        @jpegxl-rs.decision.encoder-architecture-phases,
+        @jpegxl-rs.policy.optimization-correctness-gates
+    ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+}
+
+record jpegxl-rs.work.arch-phase6-2-per-transform-step-shapes/1 : work {
+    title "Phase 6.2: per-transform step shapes, so a frequency weight can be applied across transform sizes"
+    state proposed
+    scope [ path "JPXL/crates/jpxl-conformance/tests/perceptual_frequency.rs" ]
+    intent """
+        Phases 6.0 and 6.1 measured DCT8x8 only. block_cost_bounded's whole job is comparing a large square transform against four sub-quadrants, so a weight defined only for 8x8 cannot be wired into it: applying an 8x8 table to a cross-size comparison would introduce a new bias rather than remove the existing one. This work item is the prerequisite that makes the Phase 6.3 encoder change safe, and it must complete before 6.3 lands.
+
+        Extend the harness to DCT16x16 and DCT32x32: generalise the injection loop off the hard-coded SIDE/CELLS constants to a transform's own coefficient grid, use the matching jpxl_core::dct inverse and the matching I.2.5 default dequant matrix, and run both the Phase 6.0 (equal coefficient error) and Phase 6.1 (step-proportional) sweeps for each size on the same corpus and amplitude ladder.
+
+        The question is not just each size's own shape but whether the three are consistent under a single frequency parameterisation. Report each size's normalised weight against normalised spatial frequency rather than raw cell index, so a 16x16 cell at half-Nyquist can be compared with the 8x8 cell at half-Nyquist. If the three collapse onto one curve, a single per-transform table derived from the standard's matrices is sound and 6.3 can proceed. If they do not, say so: a weight that is right for 8x8 and wrong for 32x32 would bias cover selection toward or against large transforms, which is exactly the decision this track is trying to fix.
+
+        Also report, per size, the sample-domain SSE control and the ratio of the size's own step shape, since the larger transforms have wider grids and may reach further outside the linear regime -- the same effect that made Phase 6.1's chroma numbers unusable.
+
+        Measurement only: no encoder change lands here.
+        """
+    acceptance {
+        check cross-size-consistency-decided {
+            statement """
+                The three sizes' normalised weights are reported against normalised spatial frequency and the record states explicitly whether they collapse onto one curve, and therefore whether a per-transform weight can be applied to cover selection without biasing the cross-size comparison.
+                """
+            method observation
+        }
+        check sizes-measured {
+            statement """
+                Both the equal-coefficient-error and step-proportional sweeps run for DCT8x8, DCT16x16 and DCT32x32 on the same corpus and amplitude ladder, each with its own inverse transform, its own I.2.5 default matrix, the zero-self-distance assertion and the sample-domain SSE control.
+                """
+            method command
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase6-1-quantizer-normalised-residual ]
+    derived_from [
+        @jpegxl-rs.observation.quantizer-normalised-distortion-is-the-lever-2026-08-12
+    ]
+    implements [
+        @jpegxl-rs.decision.encoder-architecture-phases,
+        @jpegxl-rs.policy.optimization-correctness-gates
+    ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+}
+
+record jpegxl-rs.work.arch-phase6-3-quantizer-normalised-y-distortion/1 : work {
+    title "Phase 6.3: land quantizer-normalised Y distortion in the cover/CfL objective, behind a flag"
+    state proposed
+    scope [
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/quantize.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/request.rs",
+        path "JPXL/crates/jpxl-encode-policy/tests/rate_loop.rs",
+        path "JPXL/crates/jpxl-encode-policy/tests/vardct_oracle.rs",
+        path "test-set/**"
+    ]
+    intent """
+        Change block_cost_bounded's distortion term from a flat sum of squared dequantized-coefficient errors to a quantizer-normalised one -- sum (delta_k / step_k)^2 rather than sum delta_k^2 -- for the Y channel only, behind a research feature flag with the flat objective as the byte-identical default until a corpus gate passes.
+
+        Phase 6.1 measured this as cutting Y frequency mispricing from 2.65x to 1.86x using nothing but the I.2.5 default matrices HfQuantizer already builds, at the cost of one precomputed per-cell multiply in the scoring loop and no change to the quantizer. The weight is first-principles rather than fitted to butteraugli, which keeps the perceptual model this project's own (AGENTS.md section 2).
+
+        X and B stay flat. Phase 6.1's chroma numbers were taken at amplitudes far outside any real operating point and are not a verdict; Phase 6.4 is the chroma measurement.
+
+        Blocked on Phase 6.2. The change alters how a large square transform is priced against four sub-quadrants, and a weight validated only for DCT8x8 would bias that comparison in a new direction. Do not land this before 6.2 reports whether the sizes share one frequency curve.
+
+        Required work: recalibrate HfQuantizers::lambda, whose current derivation (16 / mean(s^2) over the non-LLF DCT8x8 cells) assumes the distortion term is in sample-domain squared error -- normalising by step changes those units, and a stale lambda would silently reweight rate against distortion and confound the screen. Prove the flag off is byte-identical, prove the normalised scorer agrees with a direct recomputation on fixtures, then screen the six-scene matrix at matched rate under the existing Contract B rules.
+
+        Honest-negative acceptable and pre-registered as such: a better-priced ruler can still fail to move Butteraugli if the deficit does not live in cover and CfL selection -- HfQuantizer::choose remains nearest-reconstruction rather than RD, so those two decisions are all this can touch. That outcome would itself localise the deficit and is a plan-sanctioned result, not a failure to chase.
+        """
+    acceptance {
+        check default-byte-identical {
+            statement """
+                With the flag off, the corpus fingerprints are byte-identical to the pre-6.3 encoder for the same requests, so the flat objective remains the shipped behaviour until a gate passes.
+                """
+            method command
+        }
+        check quality-screen {
+            statement """
+                Matched-rate Butteraugli and SSIMULACRA2 across the six-scene matrix decide whether the re-priced objective is promoted under Contract B, or recorded as an honest negative that localises the deficit away from cover and CfL selection.
+                """
+            method observation
+        }
+        check scorer-proof {
+            statement """
+                Tests prove the quantizer-normalised term matches a direct recomputation from the same reconstruction error and steps, that it applies to Y alone, and that lambda is recalibrated into the new units rather than carried over.
+                """
+            method command
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase6-2-per-transform-step-shapes ]
+    derived_from [
+        @jpegxl-rs.observation.quantizer-normalised-distortion-is-the-lever-2026-08-12
+    ]
+    implements [
+        @jpegxl-rs.decision.encoder-architecture-phases,
+        @jpegxl-rs.policy.optimization-correctness-gates
+    ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+}
+
+record jpegxl-rs.work.arch-phase6-4-chroma-controlled-operating-point/1 : work {
+    title "Phase 6.4: measure chroma frequency response at a controlled operating point"
+    state proposed
+    scope [ path "JPXL/crates/jpxl-conformance/tests/perceptual_frequency.rs" ]
+    intent """
+        Phase 6.1's X and B results (2.35x to 6.76x, 1.56x to 11.60x) are not a verdict on chroma. The amplitude ladder scales one constant by the channel's standard deviation, which is sound for Phase 6.0's constant shape but not for a step shape spanning 8.23x (X) or 20.67x (B): the highest-frequency injections land far outside any operating point the encoder reaches, and butteraugli's max-norm aggregation saturates there. The measurement cannot currently distinguish a real chroma mispricing from metric saturation.
+
+        Replace the fixed amplitude ladder with a per-cell amplitude search that holds the *realized* butteraugli distance inside a target band -- the 1 to 3 range the corpus actually operates in -- and report the amplitude each cell needed. At a controlled operating point the comparable quantity is no longer the raw score but the injected energy required to reach a fixed perceptual cost, which inverts cleanly into a weight and does not saturate by construction.
+
+        Re-run both the equal-coefficient-error and step-proportional sweeps for X and B under that control, and re-run Y as well so the new methodology can be cross-checked against Y's already-stable result: if controlled-amplitude Y reproduces 6.0's 2.65x and 6.1's 1.86x, the method is validated and the chroma numbers can be believed.
+
+        Until this completes, quantizer normalisation stays off for X and B (Phase 6.3 is Y-only).
+        """
+    acceptance {
+        check chroma-decided {
+            statement """
+                X and B each get an explicit verdict on whether quantizer-normalised distortion should apply to them, or a stated reason why the question remains open.
+                """
+            method observation
+        }
+        check controlled-amplitude {
+            statement """
+                Each cell's amplitude is chosen so the realized butteraugli distance falls inside a stated target band, and the amplitude required is reported alongside the score so the weight is derived from injected energy at fixed perceptual cost rather than from a score that may have saturated.
+                """
+            method command
+        }
+        check method-cross-checked {
+            statement """
+                Y re-measured under the controlled-amplitude method is compared against Phase 6.0's 2.65x and Phase 6.1's 1.86x, and the record states whether the new method reproduces them and therefore whether the chroma numbers can be believed.
+                """
+            method observation
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase6-1-quantizer-normalised-residual ]
+    derived_from [
+        @jpegxl-rs.observation.quantizer-normalised-distortion-is-the-lever-2026-08-12
+    ]
     implements [
         @jpegxl-rs.decision.encoder-architecture-phases,
         @jpegxl-rs.policy.optimization-correctness-gates

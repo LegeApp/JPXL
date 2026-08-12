@@ -1450,6 +1450,55 @@ record jpegxl-rs.observation.preopt-flamegraphs-2026-08-06/2 : observation {
     }
 }
 
+record jpegxl-rs.observation.quantizer-normalised-distortion-is-the-lever-2026-08-12/1 : observation {
+    title "The standard's own quant matrices carry a third of the frequency weighting; measuring distortion in quantizer-normalised units cuts Y mispricing 2.65x to 1.86x"
+    state verified
+    scope [
+        path "JPXL/crates/jpxl-conformance/tests/perceptual_frequency.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/quantize.rs"
+    ]
+    statement """
+        Phase 6.0 injected equal coefficient error per DCT8x8 cell and measured a 2.65x Y-channel perceptual spread. Real quantization never injects equal coefficient error: it injects error proportional to each cell's step, and HfQuantizer builds that step as scale[channel] * matrix.at(x, y) from the I.2.5 default dequant matrices, which are themselves perceptually shaped. So 2.65x was an upper bound on the decision-relevant mispricing.
+
+        Phase 6.1 re-ran the identical sweep -- same crops, corpus, amplitude ladder, per-block signs, zero-self-distance assertion and sample-domain SSE control -- with the injected amplitude at each cell scaled by that cell's default DCT8x8 step, RMS-normalised over the 63 non-LLF cells so total injected energy matches 6.0 exactly and the two experiments sit at the same operating point. scale[channel] is constant across cells, so it cancels under that normalisation and the matrix is the step shape.
+
+        RESULT. Normalised butteraugli spread, mean map over 6 runs (2 photographs x 3 amplitudes), with the weakest pairwise stability of those runs: Y 2.65x (r 0.961) becomes 1.86x (r 0.843); X 2.35x becomes 6.76x; B 1.56x becomes 11.60x. Per-run and without averaging, every one of the six Y runs is flatter under step-proportional injection than its 6.0 counterpart (2.49/2.72/2.92/2.63/2.72/3.00 becomes 2.43/2.07/1.83/2.21/1.90/1.80). Y's step shape rises with frequency by 2.86x while 6.0's weight falls by 2.65x, so the matrices compensate in the right direction and remove about 36% of the log-domain mispricing.
+
+        WHAT THIS LICENSES. The current objective measures D_flat = sum_k delta_k^2 in dequantized coefficient units. The obvious first-principles alternative, using only data the encoder already builds, is quantizer-normalised distortion D_qn = sum_k (delta_k / step_k)^2. D_qn equals the true perceptual cost exactly when w0[k] * step_k^2 is constant, which is precisely what 6.1 measures, so the measured residual IS the mispricing that would remain after the switch. Switching cuts Y frequency mispricing from 2.65x to 1.86x for one precomputed per-cell multiply in the scoring loop and no change to the quantizer.
+
+        Three properties make this the cleanest lever measured on this track. (1) First-principles, not fitted: the weight comes from the standard's own matrices; butteraugli only checks the direction and size of the improvement rather than supplying numbers, which is the distinction the workspace manifest's clean-room note draws and the opposite of fitting a table to 6.0's response. (2) Unit correctness, not tuning: HfQuantizer::step's own doc says it exists so callers can price distortion in the same units choose quantizes in, and the scorer does not do that -- there is an argument for the change that needs no perceptual measurement at all, and 6.1 only prices it. (3) Sharp scope: Y only.
+
+        RESIDUAL SHAPE. The Y residual (mean over 6 runs, stdev 0.052) is a shallow bowl, not 6.0's monotone fall: the defaults slightly over-coarsen the extreme corner (1.33-1.36 along v=7 and u=7) and slightly under-coarsen the band at index 4 (0.73-0.80). The index-4 feature is the same one 6.0 flagged as probably belonging to butteraugli's multi-scale pyramid rather than to vision, so it is not a target.
+
+        CHROMA IS DEFERRED, NOT JUDGED. X and B fail the gate and the direction is probably real -- 6.0 showed B's response is nearly flat per unit coefficient error, so shaping injected error by a 20.67x step ratio must produce an uneven perceptual cost -- but the magnitudes are contaminated. At a 20.67x shape and amplitude 1.0x the channel standard deviation, the highest-frequency B injections are far outside any operating point the encoder reaches and butteraugli's max-norm saturates. The amplitude ladder was designed for a constant shape and does not control realized distortion when the shape spans an order of magnitude. Do not apply quantizer normalisation to chroma until a re-run chooses amplitude per cell to hold realized butteraugli in a fixed band.
+
+        WHAT IS STILL NOT ESTABLISHED, unchanged from 6.0. This moves cover and CfL selection only, because HfQuantizer::choose is nearest-reconstruction rather than RD. It is DCT8x8 only, and the cover decision's whole job is comparing transform sizes, so wiring an 8x8-only weight into block_cost_bounded would introduce a new bias rather than remove the old one -- Phase 6.2 blocks the encoder change. And a 1.86x residual remains: this is an improvement to the ruler, not a correct ruler.
+
+        Full tables, per-run ratios and method: JPXL/docs/experiments/2026-08-12-quantizer-normalised-distortion.md. Raw output: .agent/scratch/phase6-1-quantizer-normalised-2026-08-12/.
+        """
+    observed_at git:a015011c3d86727100e61f69d83d3a380b1d9888
+    method command
+    watches [
+        "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        "JPXL/crates/jpxl-encode-policy/src/quantize.rs",
+        "JPXL/crates/jpxl-conformance/tests/perceptual_frequency.rs"
+    ]
+    derived_from [ @jpegxl-rs.observation.distortion-currency-misprices-frequency-2026-08-12 ]
+    verified_by [
+        @jpegxl-rs.evidence.phase6-1-flatten-decision-2026-08-12,
+        @jpegxl-rs.evidence.phase6-1-step-proportional-harness-2026-08-12
+    ]
+    source {
+        kind internal
+        role evidence
+        path "JPXL/docs/experiments/2026-08-12-quantizer-normalised-distortion.md"
+        use """
+            Method, preregistered gate, per-run ratios, the Y residual table and the chroma-saturation argument.
+            """
+    }
+}
+
 record jpegxl-rs.observation.realworld-encode-vs-cjxl-2026-08-06/1 : observation {
     title "Real-world encode times: test-set vs cjxl (0.8/4/12 MP)"
     state verified

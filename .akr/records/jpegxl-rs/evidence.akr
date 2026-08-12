@@ -1393,6 +1393,31 @@ record jpegxl-rs.evidence.phase6-0-frequency-spread-2026-08-12/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase6-1-flatten-decision-2026-08-12/1 : evidence {
+    title "Phase 6.1 gate decided per channel: Y flattens to 1.86x, chroma unmeasurable at this operating point"
+    state verified
+    result pass
+    method observation
+    observed_at git:a015011c3d86727100e61f69d83d3a380b1d9888
+    artifact "JPXL/docs/experiments/2026-08-12-quantizer-normalised-distortion.md"
+    summary """
+        Y flattens from 2.65x to 1.86x (all six individual runs flatter than their Phase 6.0 counterparts, min pairwise r 0.843), so the I.2.5 defaults carry about 36% of the log-domain weighting and quantizer-normalised distortion becomes a motivated Y-only change; X (2.35x to 6.76x) and B (1.56x to 11.60x) fail the gate but at amplitudes far outside any real operating point, so chroma is deferred rather than judged
+        """
+}
+
+record jpegxl-rs.evidence.phase6-1-step-proportional-harness-2026-08-12/1 : evidence {
+    title "Phase 6.1 step-proportional harness ran clean on the same corpus at matched injected energy"
+    state verified
+    result pass
+    method command
+    observed_at git:a015011c3d86727100e61f69d83d3a380b1d9888
+    command "JPXL_CALIB_REF=.agent/scratch/realworld-bench-20260806T072202Z/{small_0p8MP,mid_4MP}.ppm JPXL_CALIB_SIDE=512 JPXL_CALIB_AMPS=0.25,0.5,1.0 cargo test --release -p jpxl-conformance --features perceptual --test perceptual_frequency -- --ignored --nocapture dct8x8_quantizer_normalised"
+    artifact ".agent/scratch/phase6-1-quantizer-normalised-2026-08-12/"
+    summary """
+        18 step-proportional runs (2 photographs x 3 XYB channels x 3 amplitudes x 64 cells) completed with the zero-self-distance assertion and sample-domain SSE control intact; RMS-normalised step shapes were X 8.23x, Y 2.86x, B 20.67x over the 63 non-LLF cells, so total injected energy matched Phase 6.0's constant-amplitude sweep
+        """
+}
+
 record jpegxl-rs.evidence.retire-handoff-durable-facts-2026-08-11/1 : evidence {
     title "HANDOFF permanent facts are represented in AKR"
     state verified
