@@ -1620,6 +1620,30 @@ record jpegxl-rs.evidence.phase6-5-quality-screen-2026-08-12/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase6-5b-promotion-equivalence-2026-08-12/1 : evidence {
+    title "The promoted default reproduces the screened donor arm exactly on all 7 scenes; new production fingerprint recorded"
+    state verified
+    result pass
+    method observation
+    observed_at git:48d5acd8d00a7caea8e814d6895bee2f75fdb0f2
+    artifact ".agent/scratch/phase6-5-quant-donor-2026-08-12/promotion-verify.txt"
+    summary """
+        Encoding each of the 7 corpus scenes with the promoted default at that scene's screened byte cap reproduces the Phase 6.5 donor arm EXACTLY on all 7 -- identical byte count and identical rmse, psnr, ssimulacra2, butteraugli and butteraugli_pnorm3. The promotion is therefore the screened configuration itself rather than something merely similar, which is a stronger confirmation than a fresh comparative run would give. The new target-rate production fingerprint for test-set/20240501_110934 at 1 bpp is 98,136 bytes, SSIMULACRA2 63.5625, butteraugli 4.8887 (rmse 8.063372, psnr 30.0005), superseding the 97,539 bytes / 62.5738 / 5.0325 baseline cited by Phases 6.2b, 6.3 and 6.5; note the new figure is measured at --bpp 1 independently rather than at a shared cap, so it sits 0.61% above the old byte count and is not itself a matched-rate comparison -- the matched evidence is the 28-cell screen
+        """
+}
+
+record jpegxl-rs.evidence.phase6-5b-promotion-scoped-2026-08-12/1 : evidence {
+    title "Phase 6.5b promotion is scoped to the target-rate policy only"
+    state verified
+    result pass
+    method command
+    observed_at git:48d5acd8d00a7caea8e814d6895bee2f75fdb0f2
+    command "cargo test --workspace"
+    summary """
+        the_donor_weight_is_promoted_for_target_rate_only asserts EncodeRequest::for_target carries CoverFrequencyWeight::QuantDonor while EncodeRequest::defaults stays Flat, so the Contract A fixed-quantizer fingerprints are untouched and only the target-rate path the screen actually measured changes; it also pins the two rejected controls (CoverSizePenalty::Neutral from the 6.2b honest negative, QuantizerChoiceMode::Nearest from 7.0's SSIMULACRA2 regression) as still neutral. Full workspace suite green and cargo fmt --all --check clean
+        """
+}
+
 record jpegxl-rs.evidence.phase7-0-quality-screen-2026-08-12/1 : evidence {
     title "Phase 7.0 screen: largest quality movement on the track, but butteraugli and SSIMULACRA2 split sharply"
     state verified

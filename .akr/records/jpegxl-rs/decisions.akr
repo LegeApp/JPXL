@@ -317,9 +317,8 @@ record jpegxl-rs.decision.retire-performance-md/1 : decision {
 
 record jpegxl-rs.decision.ssimulacra2-is-the-primary-promotion-metric/1 : decision {
     title "Optimize for SSIMULACRA2 first; butteraugli becomes a secondary axis to refine later"
-    state proposed
+    state active
     scope [ path "JPXL/crates/jpxl-encode-policy/**", path "test-set/**" ]
-    topic promotion-metric
     decision """
         SSIMULACRA2 is the primary metric for promoting a lossy encoder policy. Butteraugli is retained as a reported secondary axis and as the eventual refinement target, but it no longer holds a veto.
 
@@ -348,6 +347,10 @@ record jpegxl-rs.decision.ssimulacra2-is-the-primary-promotion-metric/1 : decisi
     derived_from [
         @jpegxl-rs.observation.donor-weight-wins-at-low-rate-and-fades-2026-08-12,
         @jpegxl-rs.observation.the-quantizer-is-the-lever-and-its-rate-proxy-is-the-defect-2026-08-12
+    ]
+    supported_by [
+        @jpegxl-rs.evidence.phase6-5-quality-screen-2026-08-12,
+        @jpegxl-rs.evidence.phase7-0-quality-screen-2026-08-12
     ]
 }
 

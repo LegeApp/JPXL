@@ -2286,7 +2286,7 @@ record jpegxl-rs.work.arch-phase6-5-quant-donor-weight/1 : work {
 
 record jpegxl-rs.work.arch-phase6-5b-promote-donor-weight/1 : work {
     title "Phase 6.5b: promote the quantizer-donated frequency weight to the target-rate default"
-    state active
+    state completed
     scope [
         path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
         path "JPXL/crates/jpxl-encode-policy/src/request.rs",
@@ -2309,18 +2309,21 @@ record jpegxl-rs.work.arch-phase6-5b-promote-donor-weight/1 : work {
                 A fresh run of the promoted default against the pre-promotion default reproduces Phase 6.5's screened direction on the corpus, confirming the promotion changed what was measured and nothing else.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.phase6-5b-promotion-equivalence-2026-08-12/1 ]
         }
         check new-fingerprint-recorded {
             statement """
                 The new target-rate production fingerprint for test-set/20240501_110934 at 1 bpp is measured and recorded, explicitly superseding the 97,539 bytes / SSIMULACRA2 62.5738 / butteraugli 5.0325 baseline that Phases 6.2b, 6.3 and 6.5 cite.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.phase6-5b-promotion-equivalence-2026-08-12/1 ]
         }
         check target-rate-promoted {
             statement """
                 EncodeRequest::for_target selects CoverFrequencyWeight::QuantDonor while EncodeRequest::defaults stays flat, so the fixed-quantizer path remains byte-identical and only the screened target-rate path changes.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase6-5b-promotion-scoped-2026-08-12/1 ]
         }
     }
     depends_on [ @jpegxl-rs.work.arch-phase6-5-quant-donor-weight ]

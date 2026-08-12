@@ -5,7 +5,7 @@ build {
     tool "akr 0.3.1"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:547b5473e8bd50bd90c16c936443a50a7424be430ec150bf00640bdf5c999e02"
+    source_graph "sha256:74028177bc6984a9aed89e829435a9cc19140c8b0b5fdf50012126f355cbc002"
 }
 
 source ".akr/project.akr" {
@@ -24,13 +24,13 @@ source ".akr/records/jpegxl-rs/constraints.akr" {
 }
 
 source ".akr/records/jpegxl-rs/decisions.akr" {
-    hash "sha256:d7895b6fd356467ac88c9549fd25955f710e0212d13163fe3f8d1296b14358a8"
+    hash "sha256:48d7bbe66977c131ad369e272a9f4df1c88871547ce4aa5ecb225ac089ee7530"
     records 14
 }
 
 source ".akr/records/jpegxl-rs/evidence.akr" {
-    hash "sha256:54af30cd8e307ee005daf7f86199e6d397c2fe9648ca6c2178b5bc820fe3b16f"
-    records 145
+    hash "sha256:d80f9029527f3400228e5cad3285179b5c8a3accf352eb31c99c54655d65da5f"
+    records 147
 }
 
 source ".akr/records/jpegxl-rs/milestones.akr" {
@@ -64,7 +64,7 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:e9bbb1bacc0ac0855acd33b821cf421e75d7757960391e2c71bbf678c4c09a76"
+    hash "sha256:bff901834558938834d265b165270734e65bcb816dae41c8e5658c876ca7ae3c"
     records 71
 }
 
@@ -156,6 +156,18 @@ resolution @jpegxl-rs.decision.ssimulacra2-is-the-primary-promotion-metric/1 {
     slot derived_from
     to @jpegxl-rs.observation.the-quantizer-is-the-lever-and-its-rate-proxy-is-the-defect-2026-08-12/1
     hash "sha256:5c90a8fbca6ea837c35102427a256dbcce4f55feb5ceeab9b121221d2e7fc6d4"
+}
+
+resolution @jpegxl-rs.decision.ssimulacra2-is-the-primary-promotion-metric/1 {
+    slot supported_by
+    to @jpegxl-rs.evidence.phase6-5-quality-screen-2026-08-12/1
+    hash "sha256:1650dfebc8ba4dbb5decf31c12d0261f88e38494bce34bfc55393de1ce33ffb9"
+}
+
+resolution @jpegxl-rs.decision.ssimulacra2-is-the-primary-promotion-metric/1 {
+    slot supported_by
+    to @jpegxl-rs.evidence.phase7-0-quality-screen-2026-08-12/1
+    hash "sha256:dec0a092cf947016dd6f0cb74de07e5ffd345211009c45b13c8fc6223576d3f0"
 }
 
 resolution @jpegxl-rs.milestone.durable-rulings/1 {
@@ -2219,7 +2231,7 @@ resolution @jpegxl-rs.work.arch-phase6-5b-promote-donor-weight/1 {
 resolution @jpegxl-rs.work.arch-phase6-5b-promote-donor-weight/1 {
     slot implements
     to @jpegxl-rs.decision.ssimulacra2-is-the-primary-promotion-metric/1
-    hash "sha256:f927e29edf301dbffa2cf948aeae5879f8b55b0cb3c9d5598348fce85177e001"
+    hash "sha256:9aa847d339b8d732eb49a5f6bbd48a6c4e41819fd3824400c8c4681d7b4f8549"
 }
 
 resolution @jpegxl-rs.work.arch-phase6-5b-promote-donor-weight/1 {
@@ -2631,6 +2643,11 @@ seal @jpegxl-rs.decision.encoder-architecture-phases/1 {
 seal @jpegxl-rs.decision.modular-lean-default/1 {
     state active
     hash "sha256:0b4e46003458674d0b4033eaec7a7fe16ac4c7d572c4b26eedb9da50a90cafc3"
+}
+
+seal @jpegxl-rs.decision.ssimulacra2-is-the-primary-promotion-metric/1 {
+    state active
+    hash "sha256:9aa847d339b8d732eb49a5f6bbd48a6c4e41819fd3824400c8c4681d7b4f8549"
 }
 
 seal @jpegxl-rs.evidence.experiments-captured/1 {
@@ -3261,6 +3278,16 @@ seal @jpegxl-rs.evidence.phase6-5-donor-implementation-2026-08-12/1 {
 seal @jpegxl-rs.evidence.phase6-5-quality-screen-2026-08-12/1 {
     state verified
     hash "sha256:1650dfebc8ba4dbb5decf31c12d0261f88e38494bce34bfc55393de1ce33ffb9"
+}
+
+seal @jpegxl-rs.evidence.phase6-5b-promotion-equivalence-2026-08-12/1 {
+    state verified
+    hash "sha256:6b70123d3708d610dbc8c687da1573cd94da4e647cb34eedfce8a82303059e08"
+}
+
+seal @jpegxl-rs.evidence.phase6-5b-promotion-scoped-2026-08-12/1 {
+    state verified
+    hash "sha256:7deb235b6f04ce8a75b96979ab28f007a45310f54067b477cb1ec1a6f37b2eda"
 }
 
 seal @jpegxl-rs.evidence.phase7-0-quality-screen-2026-08-12/1 {
@@ -4089,8 +4116,8 @@ seal @jpegxl-rs.work.arch-phase6-5-quant-donor-weight/1 {
 }
 
 seal @jpegxl-rs.work.arch-phase6-5b-promote-donor-weight/1 {
-    state active
-    hash "sha256:f0625ca4bf9c5dfb7e6f22afb7bd89b6d42ae636d2eabd3770aa21eadc35af1d"
+    state completed
+    hash "sha256:79448f153a95fee2eb732434ec34ad49705bbcc259551e86fa5b441ff28aa40f"
 }
 
 seal @jpegxl-rs.work.arch-phase7-0-rate-distortion-quantizer/1 {
