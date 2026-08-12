@@ -113,8 +113,8 @@ pub use rate::{
     search_frame,
 };
 pub use request::{
-    CoverMode, EncodeRequest, EpfSharpnessMode, RateSearchBudget, RateTarget, RateTolerance,
-    SearchBudget,
+    CoverMode, CoverSizePenalty, EncodeRequest, EpfSharpnessMode, RateSearchBudget, RateTarget,
+    RateTolerance, SearchBudget,
 };
 pub use source::PreparedFrame;
 // Re-export so callers can set [`EncodeRequest::restoration`] without a
@@ -329,6 +329,7 @@ fn plan_at_with_cfl(
         &aq.muls(),
         request.x_qm_scale.get(),
         request.b_qm_scale.get(),
+        request.cover_size_penalty,
     )?;
 
     // The cover is selected before chroma-from-luma is estimated: the estimate
@@ -847,6 +848,10 @@ struct HfQuantizers {
     /// sample-domain step `8 * s`, and [`block_cost`] scales each candidate's
     /// coefficient error by its own `side^2`.
     lambda: [f64; NUM_CHANNELS],
+    /// Phase 6.2's per-transform distortion scale, applied on top of
+    /// `side^2` in [`block_cost_bounded`]. `Neutral` is exactly `1.0`, so the
+    /// shipped objective is bit-identical.
+    size_penalty: CoverSizePenalty,
 }
 
 impl HfQuantizers {
@@ -861,6 +866,7 @@ impl HfQuantizers {
             muls,
             NEUTRAL_QM_SCALE,
             NEUTRAL_QM_SCALE,
+            CoverSizePenalty::Neutral,
         )
     }
 
@@ -870,6 +876,7 @@ impl HfQuantizers {
         muls: &[HfMul],
         x_qm_scale: u32,
         b_qm_scale: u32,
+        size_penalty: CoverSizePenalty,
     ) -> Result<Self> {
         let mut by_key = Vec::with_capacity(SQUARE_TRANSFORMS.len() * muls.len());
         for transform in SQUARE_TRANSFORMS {
@@ -906,7 +913,14 @@ impl HfQuantizers {
             by_key,
             baseline,
             lambda,
+            size_penalty,
         })
+    }
+
+    /// Phase 6.2's distortion multiplier for one transform, keyed by its
+    /// coefficient edge. Exactly `1.0` under the neutral production policy.
+    fn size_penalty(&self, transform: TransformType) -> f64 {
+        self.size_penalty.multiplier(transform.coeff_cols())
     }
 
     fn get(&self, transform: TransformType, mul: HfMul) -> Result<&HfQuantizer> {
@@ -2117,11 +2131,19 @@ fn block_cost_bounded(
     let hf_quant = hf_quants.get(transform, hf_mul)?;
     // One squared coefficient unit is `side^2` squared sample units (the
     // forward transforms are not Parseval; see [`HfQuantizers::lambda`]).
+    //
+    // Phase 6.2 measured that `side^2` alone does *not* make candidates of
+    // different sizes comparable: at equal sample-domain error a DCT32x32
+    // basis costs 4-21% more butteraugli than DCT8x8 bases, because error on a
+    // large support is spatially coherent where the same energy in sixteen
+    // independently-signed 8x8 patches is closer to maskable noise. The
+    // multiplier corrects for that; it is exactly 1.0 under the neutral
+    // production policy, so the shipped objective is unchanged bit for bit.
     #[allow(
         clippy::cast_precision_loss,
         reason = "side is at most 32; exact in f64"
     )]
-    let to_sample_domain = (side * side) as f64;
+    let to_sample_domain = (side * side) as f64 * hf_quants.size_penalty(transform);
     let cy = fwd.coeffs.get(1).map_or(&[][..], Vec::as_slice);
     let cx = fwd.coeffs.get(0).map_or(&[][..], Vec::as_slice);
     let cb = fwd.coeffs.get(2).map_or(&[][..], Vec::as_slice);
@@ -2835,6 +2857,97 @@ mod tests {
         let mut request = EncodeRequest::defaults();
         request.budget.cover_mode = CoverMode::Hierarchical;
         request
+    }
+
+    /// Counts varblocks by transform edge, so a cover can be compared to
+    /// another cover rather than only to its byte count.
+    fn cover_mix(plan: &jpxl_encode::vardct::ValidatedEmissionPlan) -> (usize, usize, usize) {
+        let mut counts = (0usize, 0usize, 0usize);
+        for block in plan
+            .plan()
+            .spatial
+            .lf_groups
+            .iter()
+            .flat_map(|g| g.blocks.iter())
+        {
+            match block.transform {
+                TransformType::Dct16x16 => counts.1 += 1,
+                TransformType::Dct32x32 => counts.2 += 1,
+                _ => counts.0 += 1,
+            }
+        }
+        counts
+    }
+
+    #[test]
+    fn the_neutral_size_penalty_is_exactly_one_and_byte_identical() {
+        // IEEE multiplication by one is exact, so this is a bit-identity claim
+        // and not a tolerance: the shipped objective must be untouched by the
+        // Phase 6.2 plumbing.
+        for edge in [8usize, 16, 32] {
+            assert_eq!(CoverSizePenalty::Neutral.multiplier(edge), 1.0);
+        }
+        assert_eq!(CoverSizePenalty::default(), CoverSizePenalty::Neutral);
+
+        let rgb = mixed_detail_rgb(256, 256);
+        let mut explicit = hierarchical_request();
+        explicit.cover_size_penalty = CoverSizePenalty::Neutral;
+        assert_eq!(
+            encode_srgb8_vardct(256, 256, &rgb, &hierarchical_request()).expect("encodes"),
+            encode_srgb8_vardct(256, 256, &rgb, &explicit).expect("encodes"),
+            "the default request and an explicitly neutral one must agree byte for byte"
+        );
+    }
+
+    #[test]
+    fn the_measured_size_penalty_charges_larger_transforms_more_and_splits_more() {
+        // Phase 6.2 Result B: at equal sample-domain error a DCT32x32 basis
+        // costs more butteraugli than DCT8x8 bases, so pricing it correctly
+        // must move the cover *away* from merging. The constants are strictly
+        // increasing in size, and the cover must respond in that direction.
+        assert!(
+            CoverSizePenalty::Measured.multiplier(8) < CoverSizePenalty::Measured.multiplier(16)
+                && CoverSizePenalty::Measured.multiplier(16)
+                    < CoverSizePenalty::Measured.multiplier(32),
+            "the measured penalty must be strictly increasing in transform size"
+        );
+
+        let rgb = mixed_detail_rgb(256, 256);
+        let frame = PreparedFrame::from_srgb8(256, 256, &rgb).expect("frame");
+        let atlas = AnalysisAtlas::analyze(&frame);
+
+        let neutral = hierarchical_request();
+        let mut measured = neutral;
+        measured.cover_size_penalty = CoverSizePenalty::Measured;
+
+        let plan_of = |request: &EncodeRequest| {
+            plan_at(
+                &frame,
+                &atlas,
+                request,
+                QuantizerChoice::from_request(request),
+            )
+            .expect("a legal plan")
+        };
+        let (n8, n16, n32) = cover_mix(&plan_of(&neutral));
+        let (m8, m16, m32) = cover_mix(&plan_of(&measured));
+        eprintln!(
+            "neutral 8x8={n8} 16x16={n16} 32x32={n32}; measured 8x8={m8} 16x16={m16} 32x32={m32}"
+        );
+
+        assert!(
+            n32 > 0 || n16 > 0,
+            "the smooth fixture must merge under the neutral objective, or this proves nothing"
+        );
+        assert!(
+            (m32, m16) != (n32, n16),
+            "the measured penalty must change the cover on a fixture that merges"
+        );
+        assert!(
+            m32 <= n32 && m8 >= n8,
+            "charging large transforms more must not produce *more* merging: \
+             neutral (8={n8}, 16={n16}, 32={n32}) vs measured (8={m8}, 16={m16}, 32={m32})"
+        );
     }
 
     /// Broad smooth gradients over most of the frame — the content larger

@@ -193,6 +193,62 @@ pub enum EpfSharpnessMode {
     Uniform7,
 }
 
+/// Research policy for the cover objective's per-transform distortion scale.
+///
+/// `block_cost_bounded` brings each candidate's coefficient error into the
+/// sample domain by multiplying it by `side^2`, and then compares candidates of
+/// different sizes as though a unit of sample-domain squared error were equally
+/// visible whichever transform carried it.
+///
+/// Phase 6.2 measured that it is not
+/// (`jpegxl-rs.observation.one-frequency-curve-fits-all-squares-2026-08-12`).
+/// At *equal total injected sample-domain error*, a DCT32x32 basis costs 4% to
+/// 21% more butteraugli than DCT8x8 bases — monotonically in size, in every one
+/// of nine radial-frequency bins, on both corpus photographs. Error on a 32x32
+/// support is spatially coherent over a large region, where the same energy
+/// spread across sixteen independently-signed 8x8 patches is closer to noise,
+/// and noise is easier to mask. The objective therefore under-penalises large
+/// transforms, which biases the hierarchical cover toward merging.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CoverSizePenalty {
+    /// Price every transform's sample-domain error identically: the shipped
+    /// objective, and byte-identical to the pre-Phase-6 encoder.
+    #[default]
+    Neutral,
+    /// Scale each candidate's distortion by [`CoverSizePenalty::measured`].
+    Measured,
+}
+
+impl CoverSizePenalty {
+    /// The per-transform distortion multiplier, keyed by the transform's
+    /// coefficient edge (8, 16 or 32).
+    ///
+    /// [`Self::Neutral`] returns exactly `1.0`, so the shipped objective is
+    /// bit-identical rather than merely close: IEEE multiplication by one is
+    /// exact.
+    ///
+    /// [`Self::Measured`]'s constants come from Phase 6.2's equalised-energy
+    /// sweep, converted from a butteraugli ratio into an energy-equivalent
+    /// distortion ratio. Butteraugli is not linear in injected energy: over the
+    /// measured 4x energy step it follows `ba ~ E^p` with `p = 0.4477`,
+    /// `0.4477` and `0.4433` for the three sizes (mean `0.4462`), so a measured
+    /// butteraugli ratio `r` corresponds to `r^(1/p)` of distortion. That maps
+    /// the 3.8%/5.7% mean butteraugli excess onto the multipliers below, which
+    /// were stable across both probe amplitudes (DCT16x16 identical to four
+    /// decimals; DCT32x32 within 1.4%).
+    #[must_use]
+    pub fn multiplier(self, coeff_edge: usize) -> f64 {
+        match self {
+            Self::Neutral => 1.0,
+            Self::Measured => match coeff_edge {
+                16 => 1.0881,
+                32 => 1.1331,
+                _ => 1.0,
+            },
+        }
+    }
+}
+
 /// One encode request.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct EncodeRequest {
@@ -241,6 +297,10 @@ pub struct EncodeRequest {
     /// [`EpfSharpnessMode::Uniform7`] after the Phase 5I corpus gate. The plane
     /// has an effect only when [`RestorationDecision::epf_iters`] is nonzero.
     pub epf_sharpness: EpfSharpnessMode,
+    /// Research policy for the cover objective's per-transform distortion
+    /// scale. Production stays at [`CoverSizePenalty::Neutral`], which is
+    /// bit-identical to the pre-Phase-6 objective.
+    pub cover_size_penalty: CoverSizePenalty,
     /// Coarse section-parallelism policy for emission (Opt-P).
     ///
     /// Default is [`jpxl_encode::EncodeResources::auto`]. Rate-loop intermediate
@@ -283,6 +343,7 @@ impl EncodeRequest {
             tolerance: RateTolerance::default(),
             restoration: RestorationDecision::default(),
             epf_sharpness: EpfSharpnessMode::default(),
+            cover_size_penalty: CoverSizePenalty::default(),
             resources: jpxl_encode::EncodeResources::auto(),
         }
     }

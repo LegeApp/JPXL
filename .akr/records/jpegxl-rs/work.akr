@@ -1996,6 +1996,56 @@ record jpegxl-rs.work.arch-phase6-2-per-transform-step-shapes/2 : work {
     supersedes [ @jpegxl-rs.work.arch-phase6-2-per-transform-step-shapes/1 ]
 }
 
+record jpegxl-rs.work.arch-phase6-2b-large-transform-penalty-screen/1 : work {
+    title "Phase 6.2b: screen Phase 6.2 Result B alone -- the per-transform distortion scale, without the CSF curve"
+    state active
+    scope [
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/request.rs",
+        path "test-set/**"
+    ]
+    intent """
+        Phase 6.3 pairs two independent corrections: a first-principles CSF frequency weight (Result A) and a per-transform level correction (Result B). Result B is far cheaper to test -- one scalar per transform size, no CSF derivation, no per-cell table -- and it answers the prior question 6.3 depends on: does re-pricing the cover objective move Butteraugli at all? Split it out and screen it alone, so a null result costs a day rather than a week and a positive result de-risks 6.3.
+
+        Add CoverSizePenalty as a research control on EncodeRequest, defaulting to Neutral. block_cost_bounded already brings coefficient error into the sample domain by multiplying by side^2; Measured multiplies that by a per-transform constant so a large candidate is charged what Phase 6.2 measured it to cost. Neutral returns exactly 1.0, so IEEE multiplication by one leaves the shipped objective bit-identical rather than merely close.
+
+        The constants convert Result B's butteraugli excess into an energy-equivalent distortion ratio. Butteraugli is not linear in injected energy: over the measured 4x energy step it follows ba ~ E^p with p = 0.4477, 0.4477 and 0.4433 for the three sizes (mean 0.4462), so a butteraugli ratio r means r^(1/p) of distortion. That maps the measured 3.8% and 5.7% mean excesses onto multipliers 1.0000 / 1.0881 / 1.1331 for DCT8x8 / DCT16x16 / DCT32x32, stable across both probe amplitudes.
+
+        Screen neutral against measured at exactly matched rate: encode neutral at the requested bpp, take its achieved byte count as the cap, and encode measured to that exact cap. Decode both with the pinned djxl and score with the in-repo SSIMULACRA2 and butteraugli. Test-set inputs still lack provenance sidecars, so the table is diagnostic rather than a promoted corpus baseline -- the same status Phase 5O recorded.
+
+        Honest-negative acceptable and pre-registered: if a correctly-priced transform scale does not move Butteraugli, that localises the deficit away from cover selection and is the more valuable of the two outcomes for 6.3's scoping. Production stays Neutral unless the direction is uniformly non-regressing.
+        """
+    acceptance {
+        check neutral-byte-identical {
+            statement """
+                Neutral's multiplier is exactly 1.0 for every transform size and an explicitly-neutral request encodes byte-identically to the default request, so the shipped objective is unchanged.
+                """
+            method command
+        }
+        check penalty-moves-the-cover {
+            statement """
+                Tests prove the measured multipliers are strictly increasing in transform size and that, on a fixture which merges under the neutral objective, charging large transforms more reduces merging rather than increasing it.
+                """
+            method command
+        }
+        check quality-screen {
+            statement """
+                Matched-rate Butteraugli and SSIMULACRA2 across the screened scenes and both rates decide whether the per-transform scale is carried into Phase 6.3 as a promoted correction, or recorded as an honest negative that localises the deficit away from cover selection.
+                """
+            method observation
+        }
+    }
+    blocks [ @jpegxl-rs.work.arch-phase6-3-frequency-weight-cover-objective ]
+    depends_on [ @jpegxl-rs.work.arch-phase6-2-per-transform-step-shapes ]
+    derived_from [ @jpegxl-rs.observation.one-frequency-curve-fits-all-squares-2026-08-12 ]
+    implements [
+        @jpegxl-rs.decision.encoder-architecture-phases,
+        @jpegxl-rs.policy.optimization-correctness-gates
+    ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+}
+
 record jpegxl-rs.work.arch-phase6-3-frequency-weight-cover-objective/1 : work {
     title "Phase 6.3: a first-principles frequency weight plus a per-transform level correction, in the cover/CfL objective"
     state proposed

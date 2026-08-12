@@ -5,7 +5,7 @@ build {
     tool "akr 0.3.1"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:c07ae8604ebbe12e95e404e35cd58f73430ffbca4a15a9b6d079bf1d244030ea"
+    source_graph "sha256:2e90b6c102e29b6c33d4c88565a07b07a1bcf7b8d35b98f743e6da837b819040"
 }
 
 source ".akr/project.akr" {
@@ -59,8 +59,8 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:8f29bd8d8d6768662539831cbdedd159905ca794d84ac33a92aeaacdc5dc31d1"
-    records 66
+    hash "sha256:2ff7375e8624dafd7bd4e26de37b91a79fce20a89ccb93edfecb1829d1ccecbc"
+    records 67
 }
 
 resolution @jpegxl-rs.decision.encoder-architecture-phases/1 {
@@ -1845,6 +1845,42 @@ resolution @jpegxl-rs.work.arch-phase6-2-per-transform-step-shapes/2 {
     hash "sha256:49975e17bd10998d72b08fccfe98fdea9bdf68ef56e4404dd68e94e1e2d75f23"
 }
 
+resolution @jpegxl-rs.work.arch-phase6-2b-large-transform-penalty-screen/1 {
+    slot blocks
+    to @jpegxl-rs.work.arch-phase6-3-frequency-weight-cover-objective/1
+    hash "sha256:b57e6f3499c4d8df284bf962e2fafd20fd758740aaffe134a14c545bd2d403c5"
+}
+
+resolution @jpegxl-rs.work.arch-phase6-2b-large-transform-penalty-screen/1 {
+    slot depends_on
+    to @jpegxl-rs.work.arch-phase6-2-per-transform-step-shapes/2
+    hash "sha256:3cb68093234df80569a29c7fa67642d84d7aafe8e0a8ae553bfc90e59ba1988d"
+}
+
+resolution @jpegxl-rs.work.arch-phase6-2b-large-transform-penalty-screen/1 {
+    slot derived_from
+    to @jpegxl-rs.observation.one-frequency-curve-fits-all-squares-2026-08-12/1
+    hash "sha256:d211a88682affea7390b52ce5976c21cbf6fa3f6319f1543bdebbbb01455ea7c"
+}
+
+resolution @jpegxl-rs.work.arch-phase6-2b-large-transform-penalty-screen/1 {
+    slot implements
+    to @jpegxl-rs.decision.encoder-architecture-phases/1
+    hash "sha256:bebc6ba8560b5b033c8661d3025f45375dcd7f485639aba3dcc1338c845dcfa4"
+}
+
+resolution @jpegxl-rs.work.arch-phase6-2b-large-transform-penalty-screen/1 {
+    slot implements
+    to @jpegxl-rs.policy.optimization-correctness-gates/1
+    hash "sha256:2d55841ae9cef36d25aa5be36434795cda6df34a3609490f1d8ede3c919b3cd5"
+}
+
+resolution @jpegxl-rs.work.arch-phase6-2b-large-transform-penalty-screen/1 {
+    slot part_of
+    to @jpegxl-rs.track.encoder-optimization/1
+    hash "sha256:49975e17bd10998d72b08fccfe98fdea9bdf68ef56e4404dd68e94e1e2d75f23"
+}
+
 resolution @jpegxl-rs.work.arch-phase6-3-frequency-weight-cover-objective/1 {
     slot depends_on
     to @jpegxl-rs.work.arch-phase6-2-per-transform-step-shapes/2
@@ -3613,6 +3649,11 @@ seal @jpegxl-rs.work.arch-phase6-2-per-transform-step-shapes/1 {
 seal @jpegxl-rs.work.arch-phase6-2-per-transform-step-shapes/2 {
     state completed
     hash "sha256:3cb68093234df80569a29c7fa67642d84d7aafe8e0a8ae553bfc90e59ba1988d"
+}
+
+seal @jpegxl-rs.work.arch-phase6-2b-large-transform-penalty-screen/1 {
+    state active
+    hash "sha256:abddd11ccedd365ba17d172c9c8c26b1f0d70b7d917a4df34be12dffd4622664"
 }
 
 seal @jpegxl-rs.work.arch-phase6-3-quantizer-normalised-y-distortion/1 {

@@ -71,6 +71,10 @@ Lossy options (8-bit RGB only; either one selects the VarDCT path):
                                   default 1); research control
     --epf-sharpness <mode>        EPF sharpness plane: zero (fixed default) or
                                   uniform7 (target-rate default); research control
+    --cover-size-penalty <mode>   Cover objective's per-transform distortion
+                                  scale: neutral (default) or measured (Phase
+                                  6.2's large-transform correction); research
+                                  control
 
     There is no `--distance`. cjxl's -d targets butteraugli; JPXL has no
     perceptual model, so its rate loop hits a *size*, not a visual quality.
@@ -314,6 +318,7 @@ fn cmd_encode(args: &[String]) -> u8 {
     let mut b_qm_scale: Option<u8> = None;
     let mut epf_iters: Option<u8> = None;
     let mut epf_sharpness: Option<jpxl_encode_policy::EpfSharpnessMode> = None;
+    let mut cover_size_penalty: Option<jpxl_encode_policy::CoverSizePenalty> = None;
     let mut positional: Vec<&String> = Vec::new();
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
@@ -420,6 +425,20 @@ fn cmd_encode(args: &[String]) -> u8 {
                     }
                 });
             }
+            "--cover-size-penalty" => {
+                let Some(value) = rest.next() else {
+                    fail("`--cover-size-penalty` needs one of: neutral, measured");
+                    return EXIT_ERROR;
+                };
+                cover_size_penalty = Some(match value.as_str() {
+                    "neutral" => jpxl_encode_policy::CoverSizePenalty::Neutral,
+                    "measured" => jpxl_encode_policy::CoverSizePenalty::Measured,
+                    _ => {
+                        fail("`--cover-size-penalty` needs one of: neutral, measured");
+                        return EXIT_ERROR;
+                    }
+                });
+            }
             "--target-bytes" => {
                 let Some(v) = rest.next().and_then(|v| v.parse::<u64>().ok()) else {
                     fail("`--target-bytes` needs a positive byte count");
@@ -509,6 +528,7 @@ fn cmd_encode(args: &[String]) -> u8 {
                     b_qm_scale,
                     epf_iters,
                     epf_sharpness,
+                    cover_size_penalty,
                 },
             ) {
                 Ok(report) => {
@@ -1194,6 +1214,7 @@ struct LossyOverrides {
     b_qm_scale: Option<u8>,
     epf_iters: Option<u8>,
     epf_sharpness: Option<jpxl_encode_policy::EpfSharpnessMode>,
+    cover_size_penalty: Option<jpxl_encode_policy::CoverSizePenalty>,
 }
 
 fn encode_lossy_to_target(
@@ -1250,6 +1271,9 @@ fn encode_lossy_to_target(
     }
     if let Some(sharpness) = overrides.epf_sharpness {
         request.epf_sharpness = sharpness;
+    }
+    if let Some(penalty) = overrides.cover_size_penalty {
+        request.cover_size_penalty = penalty;
     }
     jpxl_encode_policy::encode_srgb8_to_target(
         image.width(),
