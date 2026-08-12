@@ -5,7 +5,7 @@ build {
     tool "akr 0.3.1"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:e506db33e909491dc8cd668bb306d177a0c0cad81414f0d786c8f4eb1a5fb78c"
+    source_graph "sha256:c07ae8604ebbe12e95e404e35cd58f73430ffbca4a15a9b6d079bf1d244030ea"
 }
 
 source ".akr/project.akr" {
@@ -29,8 +29,8 @@ source ".akr/records/jpegxl-rs/decisions.akr" {
 }
 
 source ".akr/records/jpegxl-rs/evidence.akr" {
-    hash "sha256:26a179a46149a077ac7b36ebc0da18941e0baeabb18995f9e40618e24d711a74"
-    records 130
+    hash "sha256:c3b26162f06b37177e9a653fd8ebc38149007e64f91b83c06420245a13b3d999"
+    records 132
 }
 
 source ".akr/records/jpegxl-rs/milestones.akr" {
@@ -59,7 +59,7 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:b392a193f0a946b2a8a160534acc7bc2769c6295b6679d1d72b2aa4dc1aec2e8"
+    hash "sha256:8f29bd8d8d6768662539831cbdedd159905ca794d84ac33a92aeaacdc5dc31d1"
     records 66
 }
 
@@ -533,14 +533,14 @@ resolution @jpegxl-rs.observation.one-frequency-curve-fits-all-squares-2026-08-1
 
 resolution @jpegxl-rs.observation.one-frequency-curve-fits-all-squares-2026-08-12/1 {
     slot verified_by
-    to @jpegxl-rs.evidence.phase6-2-cross-size-decision-2026-08-12/1
-    hash "sha256:93e1317cd223f7dfcd0f71673170a60bf448d38993a55ae362f5babfd9d114e8"
+    to @jpegxl-rs.evidence.phase6-2-cross-size-decision-2026-08-12/2
+    hash "sha256:b7bfa9ec5a4a9cab05062080f412655233d3c246cc6707cd89e44fa38a561e38"
 }
 
 resolution @jpegxl-rs.observation.one-frequency-curve-fits-all-squares-2026-08-12/1 {
     slot verified_by
-    to @jpegxl-rs.evidence.phase6-2-cross-size-harness-2026-08-12/1
-    hash "sha256:42c8216a7b6968657fa4300491f1b736a4c604f60d6839d409b240eac1122c1f"
+    to @jpegxl-rs.evidence.phase6-2-cross-size-harness-2026-08-12/2
+    hash "sha256:9737e5a6a1db4f4e9603c4fe4eaf13d7e721a80eddb7f263a5e1e1cfcc24d323"
 }
 
 resolution @jpegxl-rs.observation.one-frequency-curve-fits-all-squares-2026-08-12/1 {
@@ -1848,7 +1848,7 @@ resolution @jpegxl-rs.work.arch-phase6-2-per-transform-step-shapes/2 {
 resolution @jpegxl-rs.work.arch-phase6-3-frequency-weight-cover-objective/1 {
     slot depends_on
     to @jpegxl-rs.work.arch-phase6-2-per-transform-step-shapes/2
-    hash "sha256:ad4dba4838fd4e559764008eef5a705e9c9030c3b3e2920db7bba71a026d7309"
+    hash "sha256:3cb68093234df80569a29c7fa67642d84d7aafe8e0a8ae553bfc90e59ba1988d"
 }
 
 resolution @jpegxl-rs.work.arch-phase6-3-frequency-weight-cover-objective/1 {
@@ -1878,7 +1878,7 @@ resolution @jpegxl-rs.work.arch-phase6-3-frequency-weight-cover-objective/1 {
 resolution @jpegxl-rs.work.arch-phase6-3-quantizer-normalised-y-distortion/1 {
     slot depends_on
     to @jpegxl-rs.work.arch-phase6-2-per-transform-step-shapes/2
-    hash "sha256:ad4dba4838fd4e559764008eef5a705e9c9030c3b3e2920db7bba71a026d7309"
+    hash "sha256:3cb68093234df80569a29c7fa67642d84d7aafe8e0a8ae553bfc90e59ba1988d"
 }
 
 resolution @jpegxl-rs.work.arch-phase6-3-quantizer-normalised-y-distortion/1 {
@@ -2831,13 +2831,23 @@ seal @jpegxl-rs.evidence.phase6-1-step-proportional-harness-2026-08-12/1 {
 }
 
 seal @jpegxl-rs.evidence.phase6-2-cross-size-decision-2026-08-12/1 {
+    state superseded
+    hash "sha256:8a63e7bc0d893475f11f9f5453f5485050ef99ff9be7ca82690e90cc29d51516"
+}
+
+seal @jpegxl-rs.evidence.phase6-2-cross-size-decision-2026-08-12/2 {
     state verified
-    hash "sha256:93e1317cd223f7dfcd0f71673170a60bf448d38993a55ae362f5babfd9d114e8"
+    hash "sha256:b7bfa9ec5a4a9cab05062080f412655233d3c246cc6707cd89e44fa38a561e38"
 }
 
 seal @jpegxl-rs.evidence.phase6-2-cross-size-harness-2026-08-12/1 {
+    state superseded
+    hash "sha256:44d941eddb3892c42a4bfca20cae8619d660db7eeb86f40ec1ccdf83093c3d27"
+}
+
+seal @jpegxl-rs.evidence.phase6-2-cross-size-harness-2026-08-12/2 {
     state verified
-    hash "sha256:42c8216a7b6968657fa4300491f1b736a4c604f60d6839d409b240eac1122c1f"
+    hash "sha256:9737e5a6a1db4f4e9603c4fe4eaf13d7e721a80eddb7f263a5e1e1cfcc24d323"
 }
 
 seal @jpegxl-rs.evidence.phase6-2-transpose-immaterial-2026-08-12/1 {
@@ -3601,8 +3611,8 @@ seal @jpegxl-rs.work.arch-phase6-2-per-transform-step-shapes/1 {
 }
 
 seal @jpegxl-rs.work.arch-phase6-2-per-transform-step-shapes/2 {
-    state active
-    hash "sha256:ad4dba4838fd4e559764008eef5a705e9c9030c3b3e2920db7bba71a026d7309"
+    state completed
+    hash "sha256:3cb68093234df80569a29c7fa67642d84d7aafe8e0a8ae553bfc90e59ba1988d"
 }
 
 seal @jpegxl-rs.work.arch-phase6-3-quantizer-normalised-y-distortion/1 {

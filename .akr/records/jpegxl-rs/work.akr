@@ -1955,7 +1955,7 @@ record jpegxl-rs.work.arch-phase6-2-per-transform-step-shapes/1 : work {
 
 record jpegxl-rs.work.arch-phase6-2-per-transform-step-shapes/2 : work {
     title "Phase 6.2: per-transform step shapes, so a frequency weight can be applied across transform sizes"
-    state active
+    state completed
     scope [ path "JPXL/crates/jpxl-conformance/tests/perceptual_frequency.rs" ]
     intent """
         Phases 6.0 and 6.1 measured DCT8x8 only. block_cost_bounded's whole job is comparing a large square transform against four sub-quadrants, so a weight defined only for 8x8 cannot be wired into it: applying an 8x8 table to a cross-size comparison would introduce a new bias rather than remove the existing one. This work item is the prerequisite that makes the Phase 6.3 encoder change safe, and it must complete before 6.3 lands.
@@ -1974,12 +1974,14 @@ record jpegxl-rs.work.arch-phase6-2-per-transform-step-shapes/2 : work {
                 The three sizes' normalised weights are reported against normalised spatial frequency and the record states explicitly whether they collapse onto one curve, and therefore whether a per-transform weight can be applied to cover selection without biasing the cross-size comparison.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.phase6-2-cross-size-decision-2026-08-12/2 ]
         }
         check sizes-measured {
             statement """
                 Both the equal-coefficient-error and step-proportional sweeps run for DCT8x8, DCT16x16 and DCT32x32 on the same corpus and amplitude ladder, each with its own inverse transform, its own I.2.5 default matrix, the zero-self-distance assertion and the sample-domain SSE control.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase6-2-cross-size-harness-2026-08-12/2 ]
         }
     }
     depends_on [ @jpegxl-rs.work.arch-phase6-1-quantizer-normalised-residual ]
