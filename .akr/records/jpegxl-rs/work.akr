@@ -2284,6 +2284,54 @@ record jpegxl-rs.work.arch-phase6-5-quant-donor-weight/1 : work {
     resolves [ @jpegxl-rs.question.which-perceptual-weight-crosses-the-cleanroom-line ]
 }
 
+record jpegxl-rs.work.arch-phase6-5b-promote-donor-weight/1 : work {
+    title "Phase 6.5b: promote the quantizer-donated frequency weight to the target-rate default"
+    state active
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/request.rs",
+        path "test-set/**"
+    ]
+    intent """
+        jpegxl-rs.decision.ssimulacra2-is-the-primary-promotion-metric makes SSIMULACRA2 the deciding metric. Phase 6.5's donor weight was rejected under the old rule solely because butteraugli was not uniformly non-regressing; re-read under the new rule it passes clearly and is promoted.
+
+        The evidence is Phase 6.5's own 28-cell screen, unchanged -- no re-measurement is needed because the data was collected on both metrics and only the deciding rule has changed. SSIMULACRA2 improves in 14 of 14 scenes at 0.5 and 1 bpp (mean +4.85 and +0.70, best cell +5.97), is neutral at 2 and 4 bpp (mean -0.0002 and -0.0735, worst single cell -0.18), and pooled improves in 18 of 28 with a mean of +1.37. Butteraugli is also net positive pooled (better in 17 of 28, mean -0.17%), so this is not a metric trade.
+
+        Scope the promotion to EncodeRequest::for_target, matching how Phases 5G and 5I promoted and matching where the screen was measured: every screened encode was target-rate. EncodeRequest::defaults stays the stable fixed-quantizer, restoration-off request, so the Contract A fixed-quantizer fingerprints are untouched.
+
+        The target-rate production fingerprint changes. Record the new one explicitly: the old 97,539 bytes / SSIMULACRA2 62.5738 / butteraugli 5.0325 for test-set/20240501_110934 at 1 bpp has been the baseline sanity check in Phases 6.2b, 6.3 and 6.5 and is cited across those records, so it must be superseded rather than left to rot as a stale assertion.
+
+        No new mechanism ships: CoverFrequencyWeight::QuantDonor already exists, is tested against its published table cell for cell, is mean-1 normalised so lambda stays calibrated, and its curve is derived from the standard's own I.2.5 DCT8x8 matrix rather than fitted to any metric.
+        """
+    acceptance {
+        check corpus-confirms {
+            statement """
+                A fresh run of the promoted default against the pre-promotion default reproduces Phase 6.5's screened direction on the corpus, confirming the promotion changed what was measured and nothing else.
+                """
+            method observation
+        }
+        check new-fingerprint-recorded {
+            statement """
+                The new target-rate production fingerprint for test-set/20240501_110934 at 1 bpp is measured and recorded, explicitly superseding the 97,539 bytes / SSIMULACRA2 62.5738 / butteraugli 5.0325 baseline that Phases 6.2b, 6.3 and 6.5 cite.
+                """
+            method observation
+        }
+        check target-rate-promoted {
+            statement """
+                EncodeRequest::for_target selects CoverFrequencyWeight::QuantDonor while EncodeRequest::defaults stays flat, so the fixed-quantizer path remains byte-identical and only the screened target-rate path changes.
+                """
+            method command
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase6-5-quant-donor-weight ]
+    derived_from [ @jpegxl-rs.observation.donor-weight-wins-at-low-rate-and-fades-2026-08-12 ]
+    implements [
+        @jpegxl-rs.decision.encoder-architecture-phases,
+        @jpegxl-rs.decision.ssimulacra2-is-the-primary-promotion-metric
+    ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+}
+
 record jpegxl-rs.work.arch-phase7-0-rate-distortion-quantizer/1 : work {
     title "Phase 7.0: make the HF quantizer rate-distortion aware instead of nearest-reconstruction"
     state completed

@@ -315,6 +315,42 @@ record jpegxl-rs.decision.retire-performance-md/1 : decision {
         """
 }
 
+record jpegxl-rs.decision.ssimulacra2-is-the-primary-promotion-metric/1 : decision {
+    title "Optimize for SSIMULACRA2 first; butteraugli becomes a secondary axis to refine later"
+    state proposed
+    scope [ path "JPXL/crates/jpxl-encode-policy/**", path "test-set/**" ]
+    topic promotion-metric
+    decision """
+        SSIMULACRA2 is the primary metric for promoting a lossy encoder policy. Butteraugli is retained as a reported secondary axis and as the eventual refinement target, but it no longer holds a veto.
+
+        Concretely, replacing the previously implicit Contract B tie-break ('uniformly non-regressing Butteraugli without material SSIMULACRA2 loss'):
+
+        - A candidate is promotable when SSIMULACRA2 does not regress materially on any screened cell and improves on the corpus as a whole. Butteraugli is reported per cell and pooled, and a butteraugli regression is a recorded caveat rather than a blocker.
+        - Both metrics are still measured and both still appear in every screen table. This changes which one decides, not what is collected.
+        - The rule is stated BEFORE each screen runs, per the process note Phase 7.0 raised.
+        """
+    context """
+        Phase 7.0 demonstrated that a single lever can move the two metrics in opposite directions reliably and at scale: a rate-aware quantizer improved butteraugli in 20 of 28 cells (mean -5.21%, best -29.9%) while regressing SSIMULACRA2 in 24 of 28 (mean -1.80), at properly matched rate. With no stated tie-break, the promotion decision would have been made by whichever metric happened to be quoted first.
+
+        The two metrics are not interchangeable. Butteraugli aggregates by max-norm and rewards reduced peak error, so it favours smoothing; SSIMULACRA2 is structure- and detail-sensitive and penalises lost texture. Phase 7.0's over-zeroing is exactly that divergence.
+
+        User decision, 2026-08-12: optimize for SSIMULACRA2 and refine for perceptual later.
+        """
+    consequences """
+        IMMEDIATE. Phase 6.5's quantizer-donated frequency weight becomes promotable and is promoted. It was rejected under the old rule solely because butteraugli was not uniformly non-regressing. Re-read with SSIMULACRA2 primary it improves 14 of 14 scenes at 0.5 and 1 bpp (mean +4.85 and +0.70), is neutral at 2 and 4 bpp (mean -0.00 and -0.07, worst single cell -0.18), and butteraugli is ALSO net positive pooled (better in 17 of 28, mean -0.17%) -- so it is not even a trade.
+
+        Phase 7.0's rate-distortion quantizer stays rejected, now for the primary reason rather than a secondary one.
+
+        HISTORICAL PROMOTIONS REMAIN VALID, with one caveat to revisit. Phase 5G (AQ Off, quant_lf 8, no LF fill) was promoted on butteraugli but also improved SSIMULACRA2 in 10 of its 12 cells; the exceptions are small3/1 (-0.37) and small4/1 (-4.37). That small4/1 loss is material under the new rule and should be re-examined when the corpus next gets attention -- it is recorded here rather than silently inherited. Phase 5I (active EPF, uniform Sharpness 7) improved SSIMULACRA2 in 11 of 12 cells with a single -0.0351 exception and is unaffected.
+
+        WHAT THIS DOES NOT MEAN. Butteraugli is not abandoned. The measured corpus gap against cjxl effort-7 is still stated in butteraugli terms, and closing it remains the track's goal; this decision orders the work, putting a metric the encoder can currently move in a consistent direction first. When the track returns to butteraugli it will do so with the structural deficits (rate proxy, quantizer) already addressed, which is the condition Phase 7.0 showed was missing.
+        """
+    derived_from [
+        @jpegxl-rs.observation.donor-weight-wins-at-low-rate-and-fades-2026-08-12,
+        @jpegxl-rs.observation.the-quantizer-is-the-lever-and-its-rate-proxy-is-the-defect-2026-08-12
+    ]
+}
+
 record jpegxl-rs.decision.xyb-inverse-matrix-normative/1 : decision {
     title "XYB inverse matrix is verified normative"
     state proposed

@@ -5,7 +5,7 @@ build {
     tool "akr 0.3.1"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:ebb69afd8fd836263d2f72aab169ce72398fae986c8941a22efedd7500a4561d"
+    source_graph "sha256:547b5473e8bd50bd90c16c936443a50a7424be430ec150bf00640bdf5c999e02"
 }
 
 source ".akr/project.akr" {
@@ -24,8 +24,8 @@ source ".akr/records/jpegxl-rs/constraints.akr" {
 }
 
 source ".akr/records/jpegxl-rs/decisions.akr" {
-    hash "sha256:7a088e04e45c48395f74913e878c956b2b8704d5fc6b6a8358a98e4121627842"
-    records 13
+    hash "sha256:d7895b6fd356467ac88c9549fd25955f710e0212d13163fe3f8d1296b14358a8"
+    records 14
 }
 
 source ".akr/records/jpegxl-rs/evidence.akr" {
@@ -64,8 +64,8 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:81ada6c72fa7e2b1829b6bf11671d623abe4e785ebaa9e40249798e969904832"
-    records 70
+    hash "sha256:e9bbb1bacc0ac0855acd33b821cf421e75d7757960391e2c71bbf678c4c09a76"
+    records 71
 }
 
 resolution @jpegxl-rs.decision.encoder-architecture-phases/1 {
@@ -144,6 +144,18 @@ resolution @jpegxl-rs.decision.optimization-pass-opened/1 {
     slot supported_by
     to @jpegxl-rs.assessment.encoder-static-optimization/1
     hash "sha256:8548505b7e04728e0c442fc78e178335cd58ed6cb481f7df9a9a751db20f0d04"
+}
+
+resolution @jpegxl-rs.decision.ssimulacra2-is-the-primary-promotion-metric/1 {
+    slot derived_from
+    to @jpegxl-rs.observation.donor-weight-wins-at-low-rate-and-fades-2026-08-12/2
+    hash "sha256:6acd5475393af896dc2de7df736c72f40822de7ad1211192e5d17804d737d4e1"
+}
+
+resolution @jpegxl-rs.decision.ssimulacra2-is-the-primary-promotion-metric/1 {
+    slot derived_from
+    to @jpegxl-rs.observation.the-quantizer-is-the-lever-and-its-rate-proxy-is-the-defect-2026-08-12/1
+    hash "sha256:5c90a8fbca6ea837c35102427a256dbcce4f55feb5ceeab9b121221d2e7fc6d4"
 }
 
 resolution @jpegxl-rs.milestone.durable-rulings/1 {
@@ -2186,6 +2198,36 @@ resolution @jpegxl-rs.work.arch-phase6-5-quant-donor-weight/1 {
     hash "sha256:6c64f611344c1cf01f143c1a915c4a6ff07515957195129ed799cf594b349666"
 }
 
+resolution @jpegxl-rs.work.arch-phase6-5b-promote-donor-weight/1 {
+    slot depends_on
+    to @jpegxl-rs.work.arch-phase6-5-quant-donor-weight/1
+    hash "sha256:1a4896075a5cd76db3707b94fa11c6bdc8ae46c14137165b25e3ebf45b82a474"
+}
+
+resolution @jpegxl-rs.work.arch-phase6-5b-promote-donor-weight/1 {
+    slot derived_from
+    to @jpegxl-rs.observation.donor-weight-wins-at-low-rate-and-fades-2026-08-12/2
+    hash "sha256:6acd5475393af896dc2de7df736c72f40822de7ad1211192e5d17804d737d4e1"
+}
+
+resolution @jpegxl-rs.work.arch-phase6-5b-promote-donor-weight/1 {
+    slot implements
+    to @jpegxl-rs.decision.encoder-architecture-phases/1
+    hash "sha256:bebc6ba8560b5b033c8661d3025f45375dcd7f485639aba3dcc1338c845dcfa4"
+}
+
+resolution @jpegxl-rs.work.arch-phase6-5b-promote-donor-weight/1 {
+    slot implements
+    to @jpegxl-rs.decision.ssimulacra2-is-the-primary-promotion-metric/1
+    hash "sha256:f927e29edf301dbffa2cf948aeae5879f8b55b0cb3c9d5598348fce85177e001"
+}
+
+resolution @jpegxl-rs.work.arch-phase6-5b-promote-donor-weight/1 {
+    slot part_of
+    to @jpegxl-rs.track.encoder-optimization/1
+    hash "sha256:49975e17bd10998d72b08fccfe98fdea9bdf68ef56e4404dd68e94e1e2d75f23"
+}
+
 resolution @jpegxl-rs.work.arch-phase7-0-rate-distortion-quantizer/1 {
     slot depends_on
     to @jpegxl-rs.work.arch-phase6-5-quant-donor-weight/1
@@ -4044,6 +4086,11 @@ seal @jpegxl-rs.work.arch-phase6-3-quantizer-normalised-y-distortion/1 {
 seal @jpegxl-rs.work.arch-phase6-5-quant-donor-weight/1 {
     state completed
     hash "sha256:1a4896075a5cd76db3707b94fa11c6bdc8ae46c14137165b25e3ebf45b82a474"
+}
+
+seal @jpegxl-rs.work.arch-phase6-5b-promote-donor-weight/1 {
+    state active
+    hash "sha256:f0625ca4bf9c5dfb7e6f22afb7bd89b6d42ae636d2eabd3770aa21eadc35af1d"
 }
 
 seal @jpegxl-rs.work.arch-phase7-0-rate-distortion-quantizer/1 {

@@ -435,6 +435,7 @@ impl EncodeRequest {
         request.budget.rate.lf_fill_probes = 0;
         request.restoration.epf_iters = 1;
         request.epf_sharpness = EpfSharpnessMode::Uniform7;
+        request.cover_frequency_weight = CoverFrequencyWeight::QuantDonor;
         request
     }
 }
@@ -442,6 +443,35 @@ impl EncodeRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_donor_weight_is_promoted_for_target_rate_only() {
+        // Phase 6.5b promoted under an SSIMULACRA2-primary rule. The scope
+        // matters as much as the choice: the screen measured target-rate
+        // encodes, so `defaults` must stay flat or the Contract A
+        // fixed-quantizer fingerprints move on evidence that never covered
+        // them.
+        assert_eq!(
+            EncodeRequest::defaults().cover_frequency_weight,
+            CoverFrequencyWeight::Flat,
+            "the fixed-quantizer request must stay flat"
+        );
+        assert_eq!(
+            EncodeRequest::for_target(RateTarget::BitsPerPixel(1.0)).cover_frequency_weight,
+            CoverFrequencyWeight::QuantDonor,
+            "the target-rate policy carries the promoted weight"
+        );
+        // The other two research controls stay neutral: 6.2b's size penalty was
+        // an honest negative and 7.0's quantizer rule regressed SSIMULACRA2.
+        assert_eq!(
+            EncodeRequest::for_target(RateTarget::BitsPerPixel(1.0)).cover_size_penalty,
+            CoverSizePenalty::Neutral
+        );
+        assert_eq!(
+            EncodeRequest::for_target(RateTarget::BitsPerPixel(1.0)).quantizer_choice,
+            QuantizerChoiceMode::Nearest
+        );
+    }
 
     #[test]
     fn default_request_is_representable() {
