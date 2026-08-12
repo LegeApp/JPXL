@@ -217,6 +217,9 @@ Work is dispatched as briefs that list whole files. Rules:
   AKR work record or checkpoint note rather than adding it yourself.
 - If two briefs appear to overlap, stop and report the conflict; do not
   arbitrate it by editing first.
+- **One exception:** whitespace-only reformatting by `cargo fmt`/`rustfmt` may
+  land in files outside your brief. See the git notes in section 10 — do not
+  revert it to keep your diff narrow.
 
 ## 9. Legal
 
@@ -327,14 +330,21 @@ Install with `cargo install --git https://github.com/LegeApp/AKR.git akr-cli`.
 - Hooks are installed (`akr git install-hooks` → `commit-msg`/`pre-commit`
   wrapping `akr git-hook`). Respect them; don't `--no-verify` around them
   without a stated reason.
-- **`cargo fmt`/`rustfmt` can silently reformat pre-existing drift in sibling
-  files you never intended to touch** — observed repeatedly this session,
-  both from a crate-wide `cargo fmt -p <crate>` and, at least once, from
-  `rustfmt` invoked on an explicit file list. Always run `git status` /
-  `git diff --stat` immediately after any formatting step and revert anything
-  outside the file set you actually meant to change, before staging. Don't
-  assume `cargo fmt -p <crate> -- --check`'s diff list is scoped to your
-  edits — cross-check it against what you actually touched.
+- **`cargo fmt`/`rustfmt` reformatting unrelated files is fine — do not revert
+  it.** A crate-wide `cargo fmt -p <crate>`, and sometimes even `rustfmt` on an
+  explicit file list, will also normalise pre-existing drift in sibling files
+  you never intended to touch. That is an acceptable, welcome side effect: the
+  tree is meant to be `cargo fmt --all` clean, so any drift it removes was a
+  latent failure of the `cargo fmt --all --check` gate in
+  `scripts/ci-akr.sh`. Let the reformat stand and mention it in the commit
+  message; do not hand-restore the old formatting to keep a diff narrow. This
+  is a deliberate exception to the file-ownership rule in section 8, and it is
+  the *only* one: whitespace-only reformatting by rustfmt is exempt, every
+  other edit outside your brief is not.
+  Still run `git status` / `git diff --stat` after formatting, not to revert
+  but to *know* what moved — and if the reformat is large or touches crates far
+  from your work, commit it separately from the change you were actually
+  making, so the real diff stays reviewable.
 - This checkout currently has no remotes configured, so local history can be
   rewritten without affecting anyone else — but see the AKR git-integration
   gotcha above before doing that on a branch with recorded evidence.
