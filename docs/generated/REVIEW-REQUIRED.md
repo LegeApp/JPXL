@@ -7,7 +7,7 @@
 
 What should not be trusted without re-checking: records the build flagged `stale` or `at_risk`. Neither flag means a record is wrong (D-003); both mean look at it. This view is generated on every successful build, including one that exits 0 with a long queue (D-024). An empty file on an active project is more often a sign the `watches` globs are wrong than a sign the knowledge is perfect.
 
-## Stale (23)
+## Stale (24)
 
 ### I.2.5 default dequantization constants verified
 
@@ -38,6 +38,12 @@ What should not be trusted without re-checking: records the build flagged `stale
 `verified` · `@jpegxl-rs.observation.phase4l-full-only-negative-2026-08-11/1` · observation · **stale** · [Full-only rate search is slower despite fewer prices](CURRENT-STATE.md#full-only-rate-search-is-slower-despite-fewer-prices)
 
 **Cause** — `watches "JPXL/crates/jpxl-encode-policy/src/rate.rs"` was matched by `95c0217e`, which touched `JPXL/crates/jpxl-encode-policy/src/rate.rs`.
+
+### The cover/CfL objective misprices Y-channel error by 2.65x across DCT8x8 frequency; the mispricing is in the ruler, not the lever
+
+`verified` · `@jpegxl-rs.observation.distortion-currency-misprices-frequency-2026-08-12/1` · observation · **stale** · [The cover/CfL objective misprices Y-channel error by 2.65x across DCT8x8 frequency; the mispricing is in the ruler, not the lever](CURRENT-STATE.md#the-covercfl-objective-misprices-y-channel-error-by-265x-across-dct8x8-frequency-the-mispricing-is-in-the-ruler-not-the-lever)
+
+**Cause** — `watches "JPXL/crates/jpxl-conformance/tests/perceptual_frequency.rs"` was matched by `a9e930a8`, which touched `JPXL/crates/jpxl-conformance/tests/perceptual_frequency.rs`.
 
 ### Historical lossy quality tables used asymmetric decoders
 
@@ -147,16 +153,10 @@ What should not be trusted without re-checking: records the build flagged `stale
 
 **Cause** — `watches "JPXL/crates/jpxl-decode/**"` was matched by `d2e19366`, which touched `JPXL/crates/jpxl-decode/src/modular/mod.rs`.
 
-## At risk (2)
-
-### The cover/CfL objective misprices Y-channel error by 2.65x across DCT8x8 frequency; the mispricing is in the ruler, not the lever
-
-`verified` · `@jpegxl-rs.observation.distortion-currency-misprices-frequency-2026-08-12/1` · observation · **depth 1** · [The cover/CfL objective misprices Y-channel error by 2.65x across DCT8x8 frequency; the mispricing is in the ruler, not the lever](CURRENT-STATE.md#the-covercfl-objective-misprices-y-channel-error-by-265x-across-dct8x8-frequency-the-mispricing-is-in-the-ruler-not-the-lever)
-
-**Via** `derived_from` → `@jpegxl-rs.observation.phase5-quality-policy-screen-2026-08-11/11` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/field.rs"` was matched by `cddce2b9`, which touched `JPXL/crates/jpxl-encode-policy/src/field.rs`.)
+## At risk (1)
 
 ### Phase 6.1: re-measure the frequency response per unit of quantizer-normalised error, not raw coefficient error
 
-`proposed` · `@jpegxl-rs.work.arch-phase6-1-quantizer-normalised-residual/1` · work · **depth 2** · [Phase 6.1: re-measure the frequency response per unit of quantizer-normalised error, not raw coefficient error](ACTIVE-WORK.md#phase-61-re-measure-the-frequency-response-per-unit-of-quantizer-normalised-error-not-raw-coefficient-error)
+`proposed` · `@jpegxl-rs.work.arch-phase6-1-quantizer-normalised-residual/1` · work · **depth 1** · [Phase 6.1: re-measure the frequency response per unit of quantizer-normalised error, not raw coefficient error](ACTIVE-WORK.md#phase-61-re-measure-the-frequency-response-per-unit-of-quantizer-normalised-error-not-raw-coefficient-error)
 
-**Via** `derived_from` → `@jpegxl-rs.observation.distortion-currency-misprices-frequency-2026-08-12/1` → `@jpegxl-rs.observation.phase5-quality-policy-screen-2026-08-11/11` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/field.rs"` was matched by `cddce2b9`, which touched `JPXL/crates/jpxl-encode-policy/src/field.rs`.)
+**Via** `derived_from` → `@jpegxl-rs.observation.distortion-currency-misprices-frequency-2026-08-12/1` (stale: `watches "JPXL/crates/jpxl-conformance/tests/perceptual_frequency.rs"` was matched by `a9e930a8`, which touched `JPXL/crates/jpxl-conformance/tests/perceptual_frequency.rs`.)

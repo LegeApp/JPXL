@@ -322,7 +322,7 @@ Full tables, stability matrix and method: JPXL/docs/experiments/2026-08-12-disto
 
 **derived_from** `@jpegxl-rs.observation.lossy-perceptual-baseline-2026-08-10/1`, `@jpegxl-rs.observation.phase5-quality-policy-screen-2026-08-11/11` · **verified_by** `@jpegxl-rs.evidence.phase6-0-frequency-harness-2026-08-12/1`, `@jpegxl-rs.evidence.phase6-0-frequency-spread-2026-08-12/1`
 
-> **At risk** at depth 1 via `derived_from` → `@jpegxl-rs.observation.phase5-quality-policy-screen-2026-08-11/11` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/field.rs"` was matched by `cddce2b9`, which touched `JPXL/crates/jpxl-encode-policy/src/field.rs`.). See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#the-covercfl-objective-misprices-y-channel-error-by-265x-across-dct8x8-frequency-the-mispricing-is-in-the-ruler-not-the-lever).
+> **Stale** — `watches "JPXL/crates/jpxl-conformance/tests/perceptual_frequency.rs"` was matched by `a9e930a8`, which touched `JPXL/crates/jpxl-conformance/tests/perceptual_frequency.rs`. See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#the-covercfl-objective-misprices-y-channel-error-by-265x-across-dct8x8-frequency-the-mispricing-is-in-the-ruler-not-the-lever).
 
 ### J.4 EPF has four flip points
 
