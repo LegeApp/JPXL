@@ -75,8 +75,10 @@ Lossy options (8-bit RGB only; either one selects the VarDCT path):
                                   scale: neutral (default) or measured (Phase
                                   6.2's large-transform correction); research
                                   control
-    --quantizer-choice <mode>     HF quantizer rule: nearest (default) or
-                                  rate-distortion (Phase 7.0); research control
+    --quantizer-choice <mode>     HF quantizer rule: nearest (default),
+                                  rate-distortion (Phase 7.0, rejected) or
+                                  trailing-truncation (Phase 7.1); research
+                                  control
     --cover-freq-weight <mode>    Cover objective's per-cell frequency weight:
                                   flat (default), csf (Mannos-Sakrison at 60
                                   ppd, rejected by Phase 6.3), or quant-donor
@@ -465,14 +467,23 @@ fn cmd_encode(args: &[String]) -> u8 {
             }
             "--quantizer-choice" => {
                 let Some(value) = rest.next() else {
-                    fail("`--quantizer-choice` needs one of: nearest, rate-distortion");
+                    fail(
+                        "`--quantizer-choice` needs one of: nearest, rate-distortion, \
+                         trailing-truncation",
+                    );
                     return EXIT_ERROR;
                 };
                 quantizer_choice = Some(match value.as_str() {
                     "nearest" => jpxl_encode_policy::QuantizerChoiceMode::Nearest,
                     "rate-distortion" => jpxl_encode_policy::QuantizerChoiceMode::RateDistortion,
+                    "trailing-truncation" => {
+                        jpxl_encode_policy::QuantizerChoiceMode::TrailingTruncation
+                    }
                     _ => {
-                        fail("`--quantizer-choice` needs one of: nearest, rate-distortion");
+                        fail(
+                            "`--quantizer-choice` needs one of: nearest, rate-distortion, \
+                             trailing-truncation",
+                        );
                         return EXIT_ERROR;
                     }
                 });

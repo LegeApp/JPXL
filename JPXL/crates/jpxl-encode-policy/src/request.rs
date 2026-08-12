@@ -305,7 +305,20 @@ pub enum QuantizerChoiceMode {
     #[default]
     Nearest,
     /// Rate-aware choice against the cover objective's own Lagrange weight.
+    ///
+    /// Phase 7.0. Rejected: it improved butteraugli in 20 of 28 cells but
+    /// regressed SSIMULACRA2 in 24 of 28 by over-zeroing, because a
+    /// per-coefficient rule cannot see runs.
     RateDistortion,
+    /// Nearest per-coefficient choice, followed by Phase 7.1's block-level
+    /// pass that drops trailing nonzeros whose removal shortens the I.4 walk.
+    ///
+    /// This is the selectivity Phase 7.0 lacked: zeroing a block's *last*
+    /// nonzero frees its own token plus every interior zero back to the
+    /// previous nonzero, while zeroing mid-run frees nothing. The pass only
+    /// ever removes from the end, so it cannot strip texture uniformly the way
+    /// a magnitude rule does.
+    TrailingTruncation,
 }
 
 /// One encode request.

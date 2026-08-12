@@ -171,7 +171,15 @@ pub struct HfQuantizer {
     ///
     /// `None` is the shipped nearest-reconstruction rule, and the branch on it
     /// is what keeps that path bit-identical.
+    ///
+    /// Phase 7.1 also needs this weight for its trailing-truncation decision
+    /// *without* changing how `choose` picks, so the table's presence and its
+    /// use by `choose` are separate: see [`Self::rd_choose`].
     rd: Option<[Box<[f32]>; NUM_CHANNELS]>,
+    /// Whether [`Self::choose`] itself minimises the rate-distortion cost.
+    /// Phase 7.0's mode; off by default and off under Phase 7.1, which wants
+    /// the weight but keeps the nearest per-coefficient rule.
+    rd_choose: bool,
 }
 
 impl HfQuantizer {
@@ -259,6 +267,7 @@ impl HfQuantizer {
             steps,
             zero_threshold,
             rd: None,
+            rd_choose: false,
         })
     }
 
@@ -269,7 +278,12 @@ impl HfQuantizer {
     /// [`crate::block_cost_bounded`] multiplies that cell's squared error by,
     /// or the quantizer and the cover search will be minimising different
     /// objectives — which is the whole defect this fixes.
-    pub(crate) fn install_rd_weights(&mut self, mut weight_at: impl FnMut(usize, usize) -> f64) {
+    pub(crate) fn install_rd_weights(
+        &mut self,
+        rd_choose: bool,
+        mut weight_at: impl FnMut(usize, usize) -> f64,
+    ) {
+        self.rd_choose = rd_choose;
         let cells = self.steps.first().map_or(0, |s| s.len());
         #[allow(
             clippy::cast_possible_truncation,
@@ -288,6 +302,15 @@ impl HfQuantizer {
     /// nearest rule.
     #[inline]
     fn rd_weight(&self, channel: usize, cell: usize) -> Option<f32> {
+        if !self.rd_choose {
+            return None;
+        }
+        self.weight_at(channel, cell)
+    }
+
+    /// The Lagrange weight for one cell regardless of which rule `choose` uses.
+    /// Phase 7.1's truncation pass reads this while `choose` stays nearest.
+    pub(crate) fn weight_at(&self, channel: usize, cell: usize) -> Option<f32> {
         self.rd
             .as_ref()
             .and_then(|t| t.get(channel))
@@ -316,6 +339,118 @@ impl HfQuantizer {
             b
         };
         bits + rd * error * error
+    }
+
+    /// Phase 7.1: drop trailing nonzeros whose removal shortens the walk more
+    /// than it costs in distortion.
+    ///
+    /// # Why this is a block pass and not a per-coefficient rule
+    ///
+    /// 18181-1 I.4 emits a coefficient token for every order position up to
+    /// and including the **last** nonzero, then stops. So zeroing the last
+    /// nonzero frees its own token *plus every interior zero back to the
+    /// previous nonzero*, while zeroing mid-run frees nothing at all. Phase
+    /// 7.1a measured that bonus at 0.91 / 1.56 / 1.43 tokens per
+    /// varblock-channel at 0.5 / 1 / 2 bpp.
+    ///
+    /// `residual_bits` is indifferent between those two decisions, which is why
+    /// Phase 7.0's per-coefficient rate term zeroed by magnitude alone and
+    /// stripped texture uniformly. The last-nonzero position is a property of
+    /// the whole block, so no per-coefficient rule can express this — hence a
+    /// backward pass over the block.
+    ///
+    /// `order` is the coefficient order; `num_blocks` is where the HF positions
+    /// start (LLF cells below it are written from the LF image and never coded
+    /// here). `target_at` returns the pre-quantization coefficient for a cell,
+    /// which is what the distortion of zeroing is measured against.
+    ///
+    /// Returns how many coefficients were dropped.
+    pub(crate) fn truncate_trailing(
+        &self,
+        channel: usize,
+        quant: &mut [i32],
+        order: &[u32],
+        num_blocks: usize,
+        zero_token_bits: f32,
+        mut target_at: impl FnMut(usize) -> f32,
+    ) -> usize {
+        let size = order.len().min(quant.len());
+        if num_blocks >= size {
+            return 0;
+        }
+        // Positions of the nonzeros, in order. The pass only ever removes from
+        // the end, so this is built once.
+        let mut nonzero_positions: Vec<usize> = (num_blocks..size)
+            .filter(|&k| {
+                order
+                    .get(k)
+                    .and_then(|&c| quant.get(c as usize))
+                    .copied()
+                    .unwrap_or(0)
+                    != 0
+            })
+            .collect();
+
+        let mut dropped = 0usize;
+        while let Some(&last) = nonzero_positions.last() {
+            let Some(&cell_u32) = order.get(last) else {
+                break;
+            };
+            let cell = cell_u32 as usize;
+            let Some(&q) = quant.get(cell) else { break };
+            if q == 0 {
+                nonzero_positions.pop();
+                continue;
+            }
+            let Some(weight) = self.weight_at(channel, cell) else {
+                break;
+            };
+
+            // Rate saved: this coefficient's own token, plus every interior
+            // zero it currently keeps inside the walk. With no nonzero before
+            // it, the walk collapses to nothing and every HF position from
+            // `num_blocks` is freed.
+            let previous = nonzero_positions
+                .len()
+                .checked_sub(2)
+                .and_then(|i| nonzero_positions.get(i).copied());
+            let exposed_zeros = match previous {
+                Some(p) => last.saturating_sub(p).saturating_sub(1),
+                None => last.saturating_sub(num_blocks),
+            };
+            #[allow(
+                clippy::cast_precision_loss,
+                reason = "a block has at most 1024 positions; exact in f32"
+            )]
+            let zeros = exposed_zeros as f32;
+            let own_bits = {
+                #[allow(
+                    clippy::cast_precision_loss,
+                    reason = "a bit length is at most 33; exact in f32"
+                )]
+                let b = (33 - q.unsigned_abs().leading_zeros()) as f32;
+                b
+            };
+            let bits_saved = own_bits + zeros * zero_token_bits;
+
+            // Distortion added: the error goes from (recon - target)^2 to
+            // target^2, because a dropped coefficient reconstructs as zero.
+            let target = target_at(cell);
+            let recon = self.reconstruct(q, channel, cell);
+            let kept = recon - target;
+            let added = target.mul_add(target, -(kept * kept));
+            let cost = weight * added;
+
+            if bits_saved <= cost {
+                break;
+            }
+            if let Some(slot) = quant.get_mut(cell) {
+                *slot = 0;
+            }
+            nonzero_positions.pop();
+            dropped += 1;
+        }
+        dropped
     }
 
     /// I.5.3's bias adjustment.

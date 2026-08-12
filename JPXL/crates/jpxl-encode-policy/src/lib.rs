@@ -851,6 +851,10 @@ struct HfQuantizers {
     /// sample-domain step `8 * s`, and [`block_cost`] scales each candidate's
     /// coefficient error by its own `side^2`.
     lambda: [f64; NUM_CHANNELS],
+    /// Phase 7.1: whether the per-varblock trailing-truncation pass runs.
+    /// Carried here rather than threaded through `quantize_group` because the
+    /// quantizer set is already the thing that knows the operating point.
+    truncate_trailing: bool,
     /// Phase 6.2's per-transform distortion scale, applied on top of
     /// `side^2` in [`block_cost_bounded`]. `Neutral` is exactly `1.0`, so the
     /// shipped objective is bit-identical.
@@ -943,6 +947,7 @@ impl HfQuantizers {
         let mut built = Self {
             by_key,
             baseline,
+            truncate_trailing: quantizer_choice == QuantizerChoiceMode::TrailingTruncation,
             lambda,
             size_penalty,
             frequency_weights,
@@ -954,7 +959,10 @@ impl HfQuantizers {
         // here rather than in `HfQuantizer::new` is forced by ordering:
         // `lambda` is calibrated from the finished DCT8x8 baseline quantizer,
         // so it does not exist until every quantizer is built.
-        if quantizer_choice == QuantizerChoiceMode::RateDistortion {
+        // Install the Lagrange weights whenever *either* Phase 7.0's choose
+        // rule or Phase 7.1's truncation pass needs them; `rd_choose` decides
+        // which of the two actually reads them.
+        if quantizer_choice != QuantizerChoiceMode::Nearest {
             let lambda = built.lambda;
             let penalty = built.size_penalty;
             let weights: Vec<(usize, Vec<f32>)> = built.frequency_weights.clone();
@@ -970,7 +978,8 @@ impl HfQuantizers {
                     .find(|(s, _)| *s == side)
                     .map(|(_, w)| w.clone())
                     .unwrap_or_default();
-                quant.install_rd_weights(|channel, cell| {
+                let rd_choose = quantizer_choice == QuantizerChoiceMode::RateDistortion;
+                quant.install_rd_weights(rd_choose, |channel, cell| {
                     let w = freq.get(cell).copied().map_or(1.0, f64::from);
                     lambda.get(channel).copied().unwrap_or(0.0) * to_sample_domain * w
                 });
@@ -1328,6 +1337,22 @@ fn set_lf(
     }
 }
 
+/// Phase 7.1's estimate of what one interior-zero coefficient token costs.
+///
+/// Token *counts* are exact — the walk emits one per order position up to the
+/// last nonzero — but token *bits* are not, because each symbol's real cost
+/// depends on the ANS cluster and hybrid-uint configuration the census builds
+/// after the walk. Phase 7.1a measured 291,954 symbols against 98,136 bytes at
+/// 1 bpp, an average of 2.7 bits per symbol across the whole stream; zero
+/// tokens are 62.9% of coefficient tokens there and so must sit well below that
+/// average. One bit is a deliberately conservative estimate of that: it
+/// under-credits truncation rather than over-credits it, so the pass errs
+/// toward keeping coefficients.
+///
+/// This is a stated estimate, not a measurement. Sweeping it is the first thing
+/// to try if the pass screens close to neutral.
+const ZERO_TOKEN_BITS: f32 = 1.0;
+
 /// Reused per-varblock temporaries for [`quantize_square_varblock`].
 struct QuantScratch {
     d_y_lf: Vec<f32>,
@@ -1376,6 +1401,7 @@ fn quantize_square_varblock(
     lf_width: u32,
     lf_planes: &mut [Vec<i32>; NUM_CHANNELS],
     quant: &mut [i32],
+    truncate: bool,
 ) -> Result<()> {
     let n = transform.block_dims().0;
     let side = transform.sample_cols();
@@ -1420,6 +1446,19 @@ fn quantize_square_varblock(
     }
     // Phase-2: final HF quant as contiguous lanes (Y, then chroma with CfL).
     hf_quant.quantize_lane(1, y_coeff, qy, side, n, true)?;
+    // Phase 7.1 truncation runs on Y *before* `d_y_hf` is read, so the chroma
+    // CfL targets decorrelate against the Y the decoder will actually
+    // reconstruct rather than against coefficients this pass then drops.
+    let order = if truncate {
+        transform.natural_coeff_order()
+    } else {
+        Vec::new()
+    };
+    if truncate {
+        hf_quant.truncate_trailing(1, qy, &order, n * n, ZERO_TOKEN_BITS, |cell| {
+            y_coeff.get(cell).copied().unwrap_or(0.0)
+        });
+    }
     for cell in 0..cells {
         if is_llf_cell(cell, side, n) {
             continue;
@@ -1467,6 +1506,11 @@ fn quantize_square_varblock(
             }
         }
         hf_quant.quantize_lane(channel, &qscratch.chroma_targets, out, side, n, true)?;
+        if truncate {
+            hf_quant.truncate_trailing(channel, out, &order, n * n, ZERO_TOKEN_BITS, |cell| {
+                qscratch.chroma_targets.get(cell).copied().unwrap_or(0.0)
+            });
+        }
     }
 
     Ok(())
@@ -1992,6 +2036,7 @@ fn quantize_group(
             blocks.width,
             &mut lf_planes,
             slot,
+            hf_quants.truncate_trailing,
         )?;
         starts.push([cursor, cursor + ch_cells, cursor + ch_cells * 2]);
         cursor = end;
