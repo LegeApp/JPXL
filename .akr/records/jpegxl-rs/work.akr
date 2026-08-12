@@ -2490,7 +2490,7 @@ record jpegxl-rs.work.arch-phase7-1a-rate-proxy-gap/1 : work {
 
 record jpegxl-rs.work.arch-phase7-2-lambda-calibration/1 : work {
     title "Phase 7.2: calibrate lambda, the one term never checked against a perceptual metric"
-    state active
+    state completed
     scope [
         path "JPXL/crates/jpxl-cli/src/main.rs",
         path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
@@ -2518,18 +2518,21 @@ record jpegxl-rs.work.arch-phase7-2-lambda-calibration/1 : work {
                 The lambda multiplier defaults to 1.0 and the shipped path stays byte-identical.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase7-2-default-byte-identical-2026-08-12 ]
         }
         check operating-point-decided {
             statement """
                 The record states explicitly whether an operating point exists where SSIMULACRA2 is non-regressing and butteraugli retains its gain, or that none does and rate-aware quantization is unavailable to this encoder at any exchange rate.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.phase7-2-operating-point-decided-2026-08-12 ]
         }
         check sweep-run {
             statement """
                 A lambda sweep runs over the 28-cell protocol with the Phase 7.1 truncation pass on, reporting SSIMULACRA2, butteraugli and achieved-versus-requested bpp per cell, with s7/0.5 reported separately.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.phase7-2-sweep-run-2026-08-12 ]
         }
     }
     depends_on [ @jpegxl-rs.work.arch-phase7-1-run-aware-rate-estimate ]

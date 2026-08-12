@@ -510,6 +510,76 @@ record jpegxl-rs.observation.k2-upsampling-afv-transpose/1 : observation {
     }
 }
 
+record jpegxl-rs.observation.lambda-x4-is-the-operating-point-2026-08-12/1 : observation {
+    title "Lambda×4 under trailing truncation is the first rate-aware quantizer operating point that improves SSIMULACRA2 while keeping butteraugli gain"
+    state superseded
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/request.rs"
+    ]
+    statement """
+        WHAT WAS BUILT. EncodeRequest::lambda_scale (default 1.0) multiplies the derived lambda before the cover objective and the Phase 7.0/7.1 RD weights read it. CLI --lambda-scale. Non-positive or non-finite values fall back to 1.0. The unit scale is byte-identical to the pre-Phase-7.2 path.
+
+        SWEEP. Same 28-cell matched-rate protocol as Phases 7.0/7.1, trailing truncation on, scales 0.5 / 1.0 / 2.0 / 4.0 / 8.0 against a flat nearest baseline that sets the byte cap. Primary 1 bpp row; s7/0.5 reported separately.
+
+        RESULTS, pooled. Scale 0.5: SSIM 1/28 mean -2.98, BA 14/28 mean +1.54% (worse). Scale 1.0 (Phase 7.1): SSIM 3/28 mean -0.68, BA 19/28 mean -3.46%. Scale 2.0: SSIM 15/28 mean +1.10, BA 23/28 mean -4.94%. Scale 4.0: SSIM 24/28 mean +1.94, BA 23/28 mean -6.81%, both better 22/28. Scale 8.0: SSIM 21/28 mean +2.21, BA 17/28 mean -3.06% (BA weakens at 4 bpp, +6.46% mean, undershoot -6.99%).
+
+        PRIMARY 1 bpp at scale 4.0: SSIM 7/7 mean +1.42, BA 7/7 mean -9.06%, both 7/7. Byte deltas at scale 4.0 by rate: -0.73 / -0.55 / -0.60 / -1.93%; the 1 bpp row is clean. s7/0.5 at scale 4.0: SSIM +6.79, BA -6.51% -- no longer an adverse outlier.
+
+        DECISION. An operating point exists. lambda_scale=4.0 under trailing truncation is the chosen point: first rate-aware setting that is non-regressing on SSIMULACRA2 and keeps (enlarges) the butteraugli gain. Scale 2.0 also clears the mean gate but is weaker; scale 8.0 loses BA at high rate. Promoted on EncodeRequest::for_target only; fixed-quantizer defaults stay nearest at unit lambda.
+
+        DIRECTION. In this encoder's R + lambda D form, higher lambda values distortion more and truncates less. The unit-scale arms over-zeroed for SSIMULACRA2 because the uniform-quantizer derivation under-weighted sample-domain distortion relative to what SSIMULACRA2 accounts as structure. Multiplying by four is an empirical correction, not a new derivation.
+
+        Full tables: JPXL/docs/experiments/2026-08-12-lambda-calibration.md. Raw rows: .agent/scratch/phase7-2-lambda-2026-08-12/.
+        """
+    observed_at git:b949b17f4d04083487c87a6ac2ab56d7f020e0ed
+    method observation
+    derived_from [
+        @jpegxl-rs.observation.selectivity-halves-the-damage-but-lambda-is-the-remaining-term-2026-08-12
+    ]
+    source {
+        kind internal
+    }
+}
+
+record jpegxl-rs.observation.lambda-x4-is-the-operating-point-2026-08-12/2 : observation {
+    title "Lambda×4 under trailing truncation is the first rate-aware quantizer operating point that improves SSIMULACRA2 while keeping butteraugli gain"
+    state verified
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/request.rs"
+    ]
+    statement """
+        WHAT WAS BUILT. EncodeRequest::lambda_scale (default 1.0) multiplies the derived lambda before the cover objective and the Phase 7.0/7.1 RD weights read it. CLI --lambda-scale. Non-positive or non-finite values fall back to 1.0. The unit scale is byte-identical to the pre-Phase-7.2 path.
+
+        SWEEP. Same 28-cell matched-rate protocol as Phases 7.0/7.1, trailing truncation on, scales 0.5 / 1.0 / 2.0 / 4.0 / 8.0 against a flat nearest baseline that sets the byte cap. Primary 1 bpp row; s7/0.5 reported separately.
+
+        RESULTS, pooled. Scale 0.5: SSIM 1/28 mean -2.98, BA 14/28 mean +1.54% (worse). Scale 1.0 (Phase 7.1): SSIM 3/28 mean -0.68, BA 19/28 mean -3.46%. Scale 2.0: SSIM 15/28 mean +1.10, BA 23/28 mean -4.94%. Scale 4.0: SSIM 24/28 mean +1.94, BA 23/28 mean -6.81%, both better 22/28. Scale 8.0: SSIM 21/28 mean +2.21, BA 17/28 mean -3.06% (BA weakens at 4 bpp, +6.46% mean, undershoot -6.99%).
+
+        PRIMARY 1 bpp at scale 4.0: SSIM 7/7 mean +1.42, BA 7/7 mean -9.06%, both 7/7. Byte deltas at scale 4.0 by rate: -0.73 / -0.55 / -0.60 / -1.93%; the 1 bpp row is clean. s7/0.5 at scale 4.0: SSIM +6.79, BA -6.51% -- no longer an adverse outlier.
+
+        DECISION. An operating point exists. lambda_scale=4.0 under trailing truncation is the chosen point: first rate-aware setting that is non-regressing on SSIMULACRA2 and keeps (enlarges) the butteraugli gain. Scale 2.0 also clears the mean gate but is weaker; scale 8.0 loses BA at high rate. Promoted on EncodeRequest::for_target only; fixed-quantizer defaults stay nearest at unit lambda.
+
+        DIRECTION. In this encoder's R + lambda D form, higher lambda values distortion more and truncates less. The unit-scale arms over-zeroed for SSIMULACRA2 because the uniform-quantizer derivation under-weighted sample-domain distortion relative to what SSIMULACRA2 accounts as structure. Multiplying by four is an empirical correction, not a new derivation.
+
+        Full tables: JPXL/docs/experiments/2026-08-12-lambda-calibration.md. Raw rows: .agent/scratch/phase7-2-lambda-2026-08-12/.
+        """
+    observed_at git:b949b17f4d04083487c87a6ac2ab56d7f020e0ed
+    method observation
+    derived_from [
+        @jpegxl-rs.observation.selectivity-halves-the-damage-but-lambda-is-the-remaining-term-2026-08-12
+    ]
+    supersedes [ @jpegxl-rs.observation.lambda-x4-is-the-operating-point-2026-08-12/1 ]
+    verified_by [
+        @jpegxl-rs.evidence.phase7-2-default-byte-identical-2026-08-12,
+        @jpegxl-rs.evidence.phase7-2-operating-point-decided-2026-08-12,
+        @jpegxl-rs.evidence.phase7-2-sweep-run-2026-08-12
+    ]
+    source {
+        kind internal
+    }
+}
+
 record jpegxl-rs.observation.lf-frame-multipass/1 : observation {
     title "Progressive: kLFFrame, kUseLfFrame, multi-pass HF"
     state verified

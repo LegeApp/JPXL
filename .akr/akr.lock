@@ -5,7 +5,7 @@ build {
     tool "akr 0.3.1"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:a6f7003eb8ae19392544c07fb6576a06e2907627156a11fa5d1911664e2bd2e4"
+    source_graph "sha256:63bc8a433e4ee911386e52fcbdbf9452e5d132bc434dbd64377b356e8ed2a741"
 }
 
 source ".akr/project.akr" {
@@ -29,8 +29,8 @@ source ".akr/records/jpegxl-rs/decisions.akr" {
 }
 
 source ".akr/records/jpegxl-rs/evidence.akr" {
-    hash "sha256:64a88a149e577ff16c775921b444ed4a802ea9bcd34c1aa8baddd847f788c857"
-    records 151
+    hash "sha256:1224a29471d7221a3691d68cb28543910a7d233aa51b0f591dc26dc34f5adcef"
+    records 154
 }
 
 source ".akr/records/jpegxl-rs/milestones.akr" {
@@ -39,8 +39,8 @@ source ".akr/records/jpegxl-rs/milestones.akr" {
 }
 
 source ".akr/records/jpegxl-rs/observations.akr" {
-    hash "sha256:47c52818ed1b2d654fd48668da46eca323de0e2bd2e4bafa12500f36e714889a"
-    records 64
+    hash "sha256:6746b454032ad3bdec4b2913651f6ca5441c4d5780062b722bcdca35de8df791"
+    records 66
 }
 
 source ".akr/records/jpegxl-rs/papercuts.akr" {
@@ -64,7 +64,7 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:c91fd81bf22bf9425c4a37d1ff9e641e1e74deb0522e6f32c901ecaaf5b877c9"
+    hash "sha256:d804c9ab8eac17c578c28e6d5707eeb51cb78f1d115662efd7034794174d1759"
     records 73
 }
 
@@ -606,6 +606,36 @@ resolution @jpegxl-rs.observation.frequency-is-the-live-lever-csf-is-the-wrong-c
     slot verified_by
     to @jpegxl-rs.evidence.phase6-3-scorer-recomputation-2026-08-12/1
     hash "sha256:65e62cdc46be6783eff170f63d833e28280ab0e85d0711b84a5ba9cd14bc6802"
+}
+
+resolution @jpegxl-rs.observation.lambda-x4-is-the-operating-point-2026-08-12/1 {
+    slot derived_from
+    to @jpegxl-rs.observation.selectivity-halves-the-damage-but-lambda-is-the-remaining-term-2026-08-12/1
+    hash "sha256:460e153bf1b6e801a8e456d279b44b3203b8a2db32337416892ed3b8a020c9be"
+}
+
+resolution @jpegxl-rs.observation.lambda-x4-is-the-operating-point-2026-08-12/2 {
+    slot derived_from
+    to @jpegxl-rs.observation.selectivity-halves-the-damage-but-lambda-is-the-remaining-term-2026-08-12/1
+    hash "sha256:460e153bf1b6e801a8e456d279b44b3203b8a2db32337416892ed3b8a020c9be"
+}
+
+resolution @jpegxl-rs.observation.lambda-x4-is-the-operating-point-2026-08-12/2 {
+    slot verified_by
+    to @jpegxl-rs.evidence.phase7-2-default-byte-identical-2026-08-12/1
+    hash "sha256:b0ceb27cc9b15939192ac21b1ce5d0de784a8458d54ab1290cbe01a7166d5509"
+}
+
+resolution @jpegxl-rs.observation.lambda-x4-is-the-operating-point-2026-08-12/2 {
+    slot verified_by
+    to @jpegxl-rs.evidence.phase7-2-operating-point-decided-2026-08-12/1
+    hash "sha256:6fc2c5da328ef888a404e0d4cadd781e51011aabb588f756ebf57e57c1a0ce18"
+}
+
+resolution @jpegxl-rs.observation.lambda-x4-is-the-operating-point-2026-08-12/2 {
+    slot verified_by
+    to @jpegxl-rs.evidence.phase7-2-sweep-run-2026-08-12/1
+    hash "sha256:6e4238a926794a0f56cd42cb12950b358aa4480642ded935b7064729cfc93b63"
 }
 
 resolution @jpegxl-rs.observation.lossy-harness-decoder-asymmetry-2026-08-11/1 {
@@ -2402,6 +2432,24 @@ resolution @jpegxl-rs.work.arch-phase7-2-lambda-calibration/1 {
     hash "sha256:49975e17bd10998d72b08fccfe98fdea9bdf68ef56e4404dd68e94e1e2d75f23"
 }
 
+resolution @jpegxl-rs.work.arch-phase7-2-lambda-calibration/1 {
+    slot verified_by
+    to @jpegxl-rs.evidence.phase7-2-default-byte-identical-2026-08-12/1
+    hash "sha256:b0ceb27cc9b15939192ac21b1ce5d0de784a8458d54ab1290cbe01a7166d5509"
+}
+
+resolution @jpegxl-rs.work.arch-phase7-2-lambda-calibration/1 {
+    slot verified_by
+    to @jpegxl-rs.evidence.phase7-2-operating-point-decided-2026-08-12/1
+    hash "sha256:6fc2c5da328ef888a404e0d4cadd781e51011aabb588f756ebf57e57c1a0ce18"
+}
+
+resolution @jpegxl-rs.work.arch-phase7-2-lambda-calibration/1 {
+    slot verified_by
+    to @jpegxl-rs.evidence.phase7-2-sweep-run-2026-08-12/1
+    hash "sha256:6e4238a926794a0f56cd42cb12950b358aa4480642ded935b7064729cfc93b63"
+}
+
 resolution @jpegxl-rs.work.arch-s8-cover-lane-simd/1 {
     slot implements
     to @jpegxl-rs.decision.encoder-architecture-phases/1
@@ -3422,6 +3470,21 @@ seal @jpegxl-rs.evidence.phase7-1a-lever-identified-2026-08-12/1 {
     hash "sha256:d4e450f0572f9f63cbc8726177c72669b7d57389a9c5a6faa92e6714e5ebdb51"
 }
 
+seal @jpegxl-rs.evidence.phase7-2-default-byte-identical-2026-08-12/1 {
+    state verified
+    hash "sha256:b0ceb27cc9b15939192ac21b1ce5d0de784a8458d54ab1290cbe01a7166d5509"
+}
+
+seal @jpegxl-rs.evidence.phase7-2-operating-point-decided-2026-08-12/1 {
+    state verified
+    hash "sha256:6fc2c5da328ef888a404e0d4cadd781e51011aabb588f756ebf57e57c1a0ce18"
+}
+
+seal @jpegxl-rs.evidence.phase7-2-sweep-run-2026-08-12/1 {
+    state verified
+    hash "sha256:6e4238a926794a0f56cd42cb12950b358aa4480642ded935b7064729cfc93b63"
+}
+
 seal @jpegxl-rs.evidence.retire-handoff-durable-facts-2026-08-11/1 {
     state verified
     hash "sha256:d5bdf84076bed194a4be6e7e9ea15569dbed84339827e224b936cd8feeb95a65"
@@ -3700,6 +3763,16 @@ seal @jpegxl-rs.observation.icc-stream-placement/1 {
 seal @jpegxl-rs.observation.k2-upsampling-afv-transpose/1 {
     state verified
     hash "sha256:547248aaaf60e6539f010ba7e3915698436a9a91886db8887a10d587b00a223f"
+}
+
+seal @jpegxl-rs.observation.lambda-x4-is-the-operating-point-2026-08-12/1 {
+    state superseded
+    hash "sha256:ec88475936dceab7a7526d2339cff413e792066285a6e31f6df86d0e83b557fb"
+}
+
+seal @jpegxl-rs.observation.lambda-x4-is-the-operating-point-2026-08-12/2 {
+    state verified
+    hash "sha256:7a364e5a0c079dd95b297bcfe6d114565941bafb6b6e906891eea74365bc3f5d"
 }
 
 seal @jpegxl-rs.observation.lf-frame-multipass/1 {
@@ -4265,6 +4338,11 @@ seal @jpegxl-rs.work.arch-phase7-1-run-aware-rate-estimate/1 {
 seal @jpegxl-rs.work.arch-phase7-1a-rate-proxy-gap/1 {
     state completed
     hash "sha256:2a0224678cd77aef2279fe657074dde7b424b9b29a692d8ddbf4c9e0fb709993"
+}
+
+seal @jpegxl-rs.work.arch-phase7-2-lambda-calibration/1 {
+    state completed
+    hash "sha256:9778edeaa36416984d989a5399e0c448b0bd67f82a393c0c6654e151d811ef38"
 }
 
 seal @jpegxl-rs.work.arch-s8-cover-lane-simd/1 {
