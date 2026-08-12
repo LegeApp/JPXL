@@ -5,7 +5,7 @@ build {
     tool "akr 0.3.1"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:5919dcce2207a78e327aafcd6e5ef5a7967d5be3f41e9bedd98db18babaf3ee0"
+    source_graph "sha256:ebb69afd8fd836263d2f72aab169ce72398fae986c8941a22efedd7500a4561d"
 }
 
 source ".akr/project.akr" {
@@ -29,8 +29,8 @@ source ".akr/records/jpegxl-rs/decisions.akr" {
 }
 
 source ".akr/records/jpegxl-rs/evidence.akr" {
-    hash "sha256:2a249a7c0542dbdfb4fee93e0a802322f3312b0f1189b0cc0c97af55a5fc1d86"
-    records 143
+    hash "sha256:54af30cd8e307ee005daf7f86199e6d397c2fe9648ca6c2178b5bc820fe3b16f"
+    records 145
 }
 
 source ".akr/records/jpegxl-rs/milestones.akr" {
@@ -39,8 +39,8 @@ source ".akr/records/jpegxl-rs/milestones.akr" {
 }
 
 source ".akr/records/jpegxl-rs/observations.akr" {
-    hash "sha256:8ce0573d72a46c0953cbc95e87b49ed191fdb32d95871c482a142b316b47dff6"
-    records 61
+    hash "sha256:869ab572096502c012c4d1654d9e970153a92016ee0ff3df32f29a958f90119e"
+    records 62
 }
 
 source ".akr/records/jpegxl-rs/papercuts.akr" {
@@ -64,8 +64,8 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:8d028c7b67fca061c8940bd40db3490dbe8d266893ce2ec78603955cd41d8598"
-    records 69
+    hash "sha256:81ada6c72fa7e2b1829b6bf11671d623abe4e785ebaa9e40249798e969904832"
+    records 70
 }
 
 resolution @jpegxl-rs.decision.encoder-architecture-phases/1 {
@@ -1298,6 +1298,24 @@ resolution @jpegxl-rs.observation.quantizer-normalised-distortion-is-the-lever-2
     hash "sha256:dc96fe030043157ad86f50c0e0510298a8859003a3e142010ede3ba52f3d26c6"
 }
 
+resolution @jpegxl-rs.observation.the-quantizer-is-the-lever-and-its-rate-proxy-is-the-defect-2026-08-12/1 {
+    slot derived_from
+    to @jpegxl-rs.observation.donor-weight-wins-at-low-rate-and-fades-2026-08-12/2
+    hash "sha256:6acd5475393af896dc2de7df736c72f40822de7ad1211192e5d17804d737d4e1"
+}
+
+resolution @jpegxl-rs.observation.the-quantizer-is-the-lever-and-its-rate-proxy-is-the-defect-2026-08-12/1 {
+    slot verified_by
+    to @jpegxl-rs.evidence.phase7-0-quality-screen-2026-08-12/1
+    hash "sha256:dec0a092cf947016dd6f0cb74de07e5ffd345211009c45b13c8fc6223576d3f0"
+}
+
+resolution @jpegxl-rs.observation.the-quantizer-is-the-lever-and-its-rate-proxy-is-the-defect-2026-08-12/1 {
+    slot verified_by
+    to @jpegxl-rs.evidence.phase7-0-rd-implementation-2026-08-12/1
+    hash "sha256:897201bbcd5faf9fcc76df8eaad94a7c55ce89ca5d25393a0a66e8a02b9fd2d9"
+}
+
 resolution @jpegxl-rs.observation.transform-size-axis-is-not-the-deficit-2026-08-12/1 {
     slot derived_from
     to @jpegxl-rs.observation.one-frequency-curve-fits-all-squares-2026-08-12/1
@@ -2193,6 +2211,36 @@ resolution @jpegxl-rs.work.arch-phase7-0-rate-distortion-quantizer/1 {
 }
 
 resolution @jpegxl-rs.work.arch-phase7-0-rate-distortion-quantizer/1 {
+    slot part_of
+    to @jpegxl-rs.track.encoder-optimization/1
+    hash "sha256:49975e17bd10998d72b08fccfe98fdea9bdf68ef56e4404dd68e94e1e2d75f23"
+}
+
+resolution @jpegxl-rs.work.arch-phase7-1-run-aware-rate-estimate/1 {
+    slot depends_on
+    to @jpegxl-rs.work.arch-phase7-0-rate-distortion-quantizer/1
+    hash "sha256:6f51dc8f308be40ac2a985e7db9658e99d21a7814112180cf9c93e894815ce65"
+}
+
+resolution @jpegxl-rs.work.arch-phase7-1-run-aware-rate-estimate/1 {
+    slot derived_from
+    to @jpegxl-rs.observation.the-quantizer-is-the-lever-and-its-rate-proxy-is-the-defect-2026-08-12/1
+    hash "sha256:5c90a8fbca6ea837c35102427a256dbcce4f55feb5ceeab9b121221d2e7fc6d4"
+}
+
+resolution @jpegxl-rs.work.arch-phase7-1-run-aware-rate-estimate/1 {
+    slot implements
+    to @jpegxl-rs.decision.encoder-architecture-phases/1
+    hash "sha256:bebc6ba8560b5b033c8661d3025f45375dcd7f485639aba3dcc1338c845dcfa4"
+}
+
+resolution @jpegxl-rs.work.arch-phase7-1-run-aware-rate-estimate/1 {
+    slot implements
+    to @jpegxl-rs.policy.optimization-correctness-gates/1
+    hash "sha256:2d55841ae9cef36d25aa5be36434795cda6df34a3609490f1d8ede3c919b3cd5"
+}
+
+resolution @jpegxl-rs.work.arch-phase7-1-run-aware-rate-estimate/1 {
     slot part_of
     to @jpegxl-rs.track.encoder-optimization/1
     hash "sha256:49975e17bd10998d72b08fccfe98fdea9bdf68ef56e4404dd68e94e1e2d75f23"
@@ -3173,6 +3221,16 @@ seal @jpegxl-rs.evidence.phase6-5-quality-screen-2026-08-12/1 {
     hash "sha256:1650dfebc8ba4dbb5decf31c12d0261f88e38494bce34bfc55393de1ce33ffb9"
 }
 
+seal @jpegxl-rs.evidence.phase7-0-quality-screen-2026-08-12/1 {
+    state verified
+    hash "sha256:dec0a092cf947016dd6f0cb74de07e5ffd345211009c45b13c8fc6223576d3f0"
+}
+
+seal @jpegxl-rs.evidence.phase7-0-rd-implementation-2026-08-12/1 {
+    state verified
+    hash "sha256:897201bbcd5faf9fcc76df8eaad94a7c55ce89ca5d25393a0a66e8a02b9fd2d9"
+}
+
 seal @jpegxl-rs.evidence.retire-handoff-durable-facts-2026-08-11/1 {
     state verified
     hash "sha256:d5bdf84076bed194a4be6e7e9ea15569dbed84339827e224b936cd8feeb95a65"
@@ -3648,6 +3706,11 @@ seal @jpegxl-rs.observation.realworld-encode-vs-cjxl-2026-08-06/1 {
     hash "sha256:7e4565cecadb16ef1791f6123f266919138447b2fbabafa77b7a67c49e709337"
 }
 
+seal @jpegxl-rs.observation.the-quantizer-is-the-lever-and-its-rate-proxy-is-the-defect-2026-08-12/1 {
+    state verified
+    hash "sha256:5c90a8fbca6ea837c35102427a256dbcce4f55feb5ceeab9b121221d2e7fc6d4"
+}
+
 seal @jpegxl-rs.observation.transform-size-axis-is-not-the-deficit-2026-08-12/1 {
     state verified
     hash "sha256:ddea896277f9661b8da8bc19f71b805528d66051170668086a3cb3a700d87b4c"
@@ -3984,8 +4047,8 @@ seal @jpegxl-rs.work.arch-phase6-5-quant-donor-weight/1 {
 }
 
 seal @jpegxl-rs.work.arch-phase7-0-rate-distortion-quantizer/1 {
-    state active
-    hash "sha256:c31675cd74a4baff972684b2d5482f1bb3d6e0c58a978b259f05015239a97fb8"
+    state completed
+    hash "sha256:6f51dc8f308be40ac2a985e7db9658e99d21a7814112180cf9c93e894815ce65"
 }
 
 seal @jpegxl-rs.work.arch-s8-cover-lane-simd/1 {

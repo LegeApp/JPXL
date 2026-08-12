@@ -1620,6 +1620,30 @@ record jpegxl-rs.evidence.phase6-5-quality-screen-2026-08-12/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase7-0-quality-screen-2026-08-12/1 : evidence {
+    title "Phase 7.0 screen: largest quality movement on the track, but butteraugli and SSIMULACRA2 split sharply"
+    state verified
+    result pass
+    method observation
+    observed_at git:ecf5cc1303e2b26ab0baf10480e903522ffef9aa
+    artifact "JPXL/docs/experiments/2026-08-12-rate-distortion-quantizer.md"
+    summary """
+        28 cells on the Phase 6.2b/6.3/6.5 corpus and protocol. Pooled butteraugli better in 20 of 28 (mean -5.21%, best cell -29.9%) and SSIMULACRA2 better in only 4 of 28 (mean -1.80). By rate: 0.5 bpp butteraugli 5/7 (mean -2.08%) with SSIMULACRA2 4/7 (mean -0.72); 1 bpp butteraugli 5/7 (mean -8.79%) with SSIMULACRA2 0/7 (mean -3.00); 2 bpp butteraugli 4/7 (mean -4.29%) with SSIMULACRA2 0/7 (mean -2.36); 4 bpp butteraugli 6/7 (mean -5.66%) with SSIMULACRA2 0/7 (mean -1.10). At 0.5 and 1 bpp byte deltas are -0.34% and -0.43% so those rows are properly matched and the metric split is not a rate artifact. At 2 and 4 bpp the RD arm lands 3.0% and 5.7% under the cap (worst -7.8%) because a smaller stream at every quantizer setting worsens the known Phase 4M high-rate undershoot, so those two rows are confounded and flagged as such. Contract B fails on material SSIMULACRA2 loss; production remains QuantizerChoiceMode::Nearest
+        """
+}
+
+record jpegxl-rs.evidence.phase7-0-rd-implementation-2026-08-12/1 : evidence {
+    title "Phase 7.0 RD quantizer implemented; nearest still bit-identical, RD provably minimises its objective"
+    state verified
+    result pass
+    method command
+    observed_at git:ecf5cc1303e2b26ab0baf10480e903522ffef9aa
+    command "cargo test --workspace"
+    summary """
+        Nearest is the default and an explicitly-nearest request encodes byte-identically to it, while the rate-distortion arm provably reaches the wire. rate_distortion_choice_minimises_its_own_objective_and_widens_the_dead_zone checks over every square transform and 24 target magnitudes per cell that no candidate beats the chosen one on residual_bits + rd*error^2 recomputed independently from the public surface, and that the RD rule never selects a larger magnitude than nearest -- a rate term can only make coefficients cheaper, so the dead zone can only widen -- plus that the mode is not inert. Full workspace suite green and cargo fmt --all --check clean
+        """
+}
+
 record jpegxl-rs.evidence.retire-handoff-durable-facts-2026-08-11/1 : evidence {
     title "HANDOFF permanent facts are represented in AKR"
     state verified

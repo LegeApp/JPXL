@@ -1724,6 +1724,61 @@ record jpegxl-rs.observation.realworld-encode-vs-cjxl-2026-08-06/1 : observation
     author "grok-build"
 }
 
+record jpegxl-rs.observation.the-quantizer-is-the-lever-and-its-rate-proxy-is-the-defect-2026-08-12/1 : observation {
+    title "A rate-aware quantizer moves quality an order of magnitude more than any cover lever, but its crude rate proxy over-zeroes: butteraugli 20/28 better, SSIMULACRA2 4/28"
+    state verified
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/quantize.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/request.rs"
+    ]
+    statement """
+        HfQuantizer::choose now optionally minimises residual_bits(q) + rd * (recon - target)^2 instead of the nearest |recon - target|, where rd is exactly the coefficient block_cost_bounded already multiplies squared coefficient error by (lambda[channel] * side^2 * size_penalty * frequency_weight[cell]). Minimising that per coefficient minimises the same total the cover search sums, so the quantizer and the cover finally agree on one currency. The table is installed on the quantizer after lambda is calibrated; None is the shipped nearest rule and keeps that path bit-identical. The zero shortcut is skipped under RD (it would bypass the wider zeroing the mode exists for) and the SIMD choose_lane4 delegates to four scalar choose calls under RD so the two stay bit-identical by construction. cell_lower_bound's provable prune assumes the nearest rule, so s8-cover-prune is not validated against this mode.
+
+        RESULT: THE BIGGEST LEVER ON THE TRACK, AND A SHARP METRIC SPLIT. Across 28 cells on the Phase 6.2b/6.3/6.5 corpus and protocol, butteraugli improves in 20 of 28 (mean -5.21%, best cell -29.9%) while SSIMULACRA2 improves in only 4 of 28 (mean -1.80). For scale on the identical protocol, Phase 6.2b moved butteraugli +2.03% with everything inside plus or minus 14% and Phase 6.5 moved it -0.17%. By rate: 0.5 bpp butteraugli 5/7 (mean -2.08%) SSIMULACRA2 4/7 (-0.72); 1 bpp butteraugli 5/7 (mean -8.79%) SSIMULACRA2 0/7 (-3.00); 2 bpp butteraugli 4/7 (-4.29%) SSIMULACRA2 0/7 (-2.36); 4 bpp butteraugli 6/7 (-5.66%) SSIMULACRA2 0/7 (-1.10).
+
+        THE SPLIT IS REAL, NOT A RATE ARTIFACT. At 0.5 and 1 bpp the byte deltas are -0.34% and -0.43%, properly matched. At 1 bpp butteraugli improves by a mean of -8.79% while SSIMULACRA2 regresses on EVERY scene by a mean of -3.00. The mechanism is over-smoothing: widening the dead zone removes small nonzero coefficients, butteraugli's max-norm rewards the reduced peak error, and SSIMULACRA2 penalises the lost texture. A rate proxy that cannot see zero runs zeroes uniformly rather than selectively, so it takes texture everywhere instead of where runs would actually pay.
+
+        SECOND, SEPARATE FINDING: RD WORSENS THE HIGH-RATE UNDERSHOOT. At 2 and 4 bpp the RD arm lands 3.0% and 5.7% under the cap on average, worst -7.8%, on the same cells whose nearest encode already undershot (the known Phase 4M behaviour). A smaller stream at every quantizer setting pushes the rate loop further from a cap it already struggled to reach. Those two rate rows are therefore confounded and must not be read as matched-rate comparisons -- though the 4 bpp butteraugli improvement is achieved while spending 5.7% FEWER bytes, which is a genuine rate-distortion improvement on that axis.
+
+        CONTRACT B FAILS on material SSIMULACRA2 loss (0 of 7 scenes better at 1, 2 and 4 bpp); production stays QuantizerChoiceMode::Nearest.
+
+        WHERE THIS POINTS, AND WHY IT IS SHARPER THAN A NULL. The work record pre-registered that a null would mean the deficit is not in per-coefficient decisions and the track should turn to the entropy model. It was not a null -- the quantizer moved quality an order of magnitude more than any cover-side lever -- and it STILL points at the entropy model, for a better reason: the rate term works and its PROXY is what is wrong. residual_bits charges magnitude bit length plus sign and, as sources/outside-advice.md states, knows nothing about entropy context, zero-run behaviour, coefficient order, neighbouring nonzeros, token probabilities or table overhead. The classic rate-distortion quantization win is zeroing to extend a zero run, and this proxy cannot see runs at all. A run- and context-aware rate estimate would zero selectively, keeping the texture SSIMULACRA2 measures and the coefficients that extend no run. entropy.rs already tokenises with the exact C.2.3 hybrid-uint arithmetic the writer uses, so that replacement has a foundation, and re-running this exact screen against it is the cleanest possible A/B with everything else held fixed.
+
+        Two process notes. Any future mode that changes stream size at fixed quantizer settings must report achieved-versus-requested bpp as a first-class number: the undershoot regression here was not anticipated by the protocol and would have silently confounded a weaker result. And butteraugli and SSIMULACRA2 disagreeing this sharply and this consistently (20/28 against 4/28) is information about the metrics as much as the encoder -- Phase 5 promoted on butteraugli with SSIMULACRA2 as a guard, and if a lever can move them in opposite directions this reliably, that promotion rule needs restating before the next promotion rather than after.
+
+        Full tables and the confound arithmetic: JPXL/docs/experiments/2026-08-12-rate-distortion-quantizer.md. Raw rows and driver: .agent/scratch/phase7-0-rd-quantizer-2026-08-12/.
+        """
+    observed_at git:ecf5cc1303e2b26ab0baf10480e903522ffef9aa
+    method command
+    watches [
+        "JPXL/crates/jpxl-encode-policy/src/quantize.rs",
+        "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        "JPXL/crates/jpxl-encode-policy/src/entropy.rs"
+    ]
+    derived_from [ @jpegxl-rs.observation.donor-weight-wins-at-low-rate-and-fades-2026-08-12 ]
+    verified_by [
+        @jpegxl-rs.evidence.phase7-0-quality-screen-2026-08-12,
+        @jpegxl-rs.evidence.phase7-0-rd-implementation-2026-08-12
+    ]
+    source {
+        kind external
+        role rationale
+        path "sources/outside-advice.md"
+        use """
+            Its diagnosis that quantization is reconstruction-nearest rather than rate-distortion optimized, and its list of what residual_bits cannot see, which this phase confirms is the binding constraint.
+            """
+    }
+    source {
+        kind internal
+        role evidence
+        path "JPXL/docs/experiments/2026-08-12-rate-distortion-quantizer.md"
+        use """
+            Method, the proofs, the 28-cell rate-split table and the undershoot confound.
+            """
+    }
+}
+
 record jpegxl-rs.observation.transform-size-axis-is-not-the-deficit-2026-08-12/1 : observation {
     title "Correctly repricing the cover's transform-size axis does not improve quality: the extra splits cost more bits than the better size choice buys"
     state verified

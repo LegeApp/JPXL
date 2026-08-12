@@ -2286,7 +2286,7 @@ record jpegxl-rs.work.arch-phase6-5-quant-donor-weight/1 : work {
 
 record jpegxl-rs.work.arch-phase7-0-rate-distortion-quantizer/1 : work {
     title "Phase 7.0: make the HF quantizer rate-distortion aware instead of nearest-reconstruction"
-    state active
+    state completed
     scope [
         path "JPXL/crates/jpxl-cli/src/main.rs",
         path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
@@ -2315,22 +2315,82 @@ record jpegxl-rs.work.arch-phase7-0-rate-distortion-quantizer/1 : work {
                 Nearest remains the default and an explicitly-nearest request encodes byte-identically to it; the default encode of test-set/20240501_110934 at 1 bpp still reproduces 97,539 bytes, SSIMULACRA2 62.5738 and butteraugli 5.0325.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase7-0-rd-implementation-2026-08-12/1 ]
         }
         check quality-screen {
             statement """
                 Matched-rate Butteraugli and SSIMULACRA2 across 7 scenes at 0.5, 1, 2 and 4 bpp, reported split by rate and alongside Phases 6.3 and 6.5 on the same protocol, decide whether the rate-aware quantizer is promoted under Contract B or recorded as an honest negative that redirects the track to the entropy model.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.phase7-0-quality-screen-2026-08-12/1 ]
         }
         check rd-choice-proof {
             statement """
                 Tests prove the rate-distortion mode never selects a candidate whose residual_bits + rd * squared error exceeds another candidate's, that choose_lane4 stays bit-identical to choose under both modes, and that the mode widens the effective dead zone rather than narrowing it.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase7-0-rd-implementation-2026-08-12/1 ]
         }
     }
     depends_on [ @jpegxl-rs.work.arch-phase6-5-quant-donor-weight ]
     derived_from [ @jpegxl-rs.observation.donor-weight-wins-at-low-rate-and-fades-2026-08-12 ]
+    implements [
+        @jpegxl-rs.decision.encoder-architecture-phases,
+        @jpegxl-rs.policy.optimization-correctness-gates
+    ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+}
+
+record jpegxl-rs.work.arch-phase7-1-run-aware-rate-estimate/1 : work {
+    title "Phase 7.1: a run- and context-aware rate estimate to replace residual_bits"
+    state proposed
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/src/entropy.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/quantize.rs",
+        path "test-set/**"
+    ]
+    intent """
+        Phase 7.0 made the HF quantizer rate-aware and produced the largest quality movement on this track -- butteraugli better in 20 of 28 cells (mean -5.21%, best -29.9%) against Phase 6.5's -0.17% and Phase 6.2b's +2.03% on the identical protocol. But SSIMULACRA2 regressed in 24 of 28 (mean -1.80), on every scene at 1, 2 and 4 bpp, and at properly matched rate. The mechanism is over-smoothing: the rate term works, and its proxy is what is wrong.
+
+        residual_bits(q) charges magnitude bit length plus sign. sources/outside-advice.md lists what it cannot see: entropy context, zero-run behaviour, coefficient order, neighbouring nonzero structure, token probabilities, table overhead. The classic rate-distortion quantization win is zeroing a coefficient to EXTEND A ZERO RUN, and this proxy cannot see runs at all, so it zeroes uniformly instead of selectively -- taking texture everywhere rather than where a run would actually pay. That is exactly the signature SSIMULACRA2 caught.
+
+        Build a rate estimate that knows about runs and context, and re-run Phase 7.0's screen against it. entropy.rs already tokenises coefficients with the exact C.2.3 hybrid-uint arithmetic the writer uses, so the foundation exists rather than needing invention.
+
+        The A/B is unusually clean: everything except the rate term is held fixed, the corpus and protocol are shared with Phases 6.2b, 6.3, 6.5 and 7.0, and the prediction is specific -- a selective rate term should retain most of 7.0's butteraugli gain while removing most of its SSIMULACRA2 loss. If butteraugli holds and SSIMULACRA2 recovers, the quantizer is the answer and this is promotable. If SSIMULACRA2 stays down, the deficit is not the rate proxy and the over-smoothing is intrinsic to dead-zone widening at this lambda, which would point at lambda calibration rather than at rate.
+
+        Two protocol requirements carried from 7.0. Report achieved-versus-requested bpp as a first-class number: 7.0's rate-distortion mode worsened the known Phase 4M high-rate undershoot to -7.8% on one cell and confounded its own 2 and 4 bpp rows, which a weaker result would have hidden. And restate the promotion rule before screening, not after: 7.0 showed a lever can move butteraugli and SSIMULACRA2 in opposite directions reliably (20/28 against 4/28), so Contract B's 'butteraugli non-regressing without material SSIMULACRA2 loss' needs an explicit tie-break decided in advance.
+        """
+    acceptance {
+        check default-byte-identical {
+            statement """
+                The shipped path remains byte-identical with the new estimate off.
+                """
+            method command
+        }
+        check estimate-proof {
+            statement """
+                Tests prove the run- and context-aware estimate agrees with the actual entropy-coded size to a stated tolerance on real coefficient blocks, and that it prices a coefficient that extends a zero run differently from one that does not -- the property residual_bits lacks.
+                """
+            method command
+        }
+        check promotion-rule-restated {
+            statement """
+                The butteraugli/SSIMULACRA2 tie-break is stated and recorded BEFORE the screen runs, given Phase 7.0 demonstrated a lever can move the two metrics in opposite directions reliably.
+                """
+            method observation
+        }
+        check quality-screen {
+            statement """
+                The Phase 7.0 screen is re-run against the new estimate on the same corpus, rates and protocol, with achieved-versus-requested bpp reported per cell, and decides whether the rate-aware quantizer becomes promotable or whether the over-smoothing is intrinsic and the track turns to lambda calibration.
+                """
+            method observation
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase7-0-rate-distortion-quantizer ]
+    derived_from [
+        @jpegxl-rs.observation.the-quantizer-is-the-lever-and-its-rate-proxy-is-the-defect-2026-08-12
+    ]
     implements [
         @jpegxl-rs.decision.encoder-architecture-phases,
         @jpegxl-rs.policy.optimization-correctness-gates
