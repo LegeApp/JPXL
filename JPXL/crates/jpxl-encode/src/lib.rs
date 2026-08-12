@@ -638,7 +638,8 @@ mod tests {
             MaTree::single_leaf(Predictor::Gradient),
             true,
         );
-        let store = build_sections(&source, &geometry, EncodeResources::serial()).expect("sections");
+        let store =
+            build_sections(&source, &geometry, EncodeResources::serial()).expect("sections");
         assert_eq!(store.len() as u64, geometry.num_sections());
         assert_eq!(store.len(), 2 + 1 + 4);
     }

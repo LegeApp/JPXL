@@ -385,18 +385,8 @@ pub fn dct_ii_16(v: &mut [f32; 16]) {
         // Two f32x4 chunks cover the 8 even/odd pairs.
         for chunk in 0..2 {
             let base = chunk * 4;
-            let lo = f32x4::new([
-                v[base],
-                v[base + 1],
-                v[base + 2],
-                v[base + 3],
-            ]);
-            let hi = f32x4::new([
-                v[15 - base],
-                v[14 - base],
-                v[13 - base],
-                v[12 - base],
-            ]);
+            let lo = f32x4::new([v[base], v[base + 1], v[base + 2], v[base + 3]]);
+            let hi = f32x4::new([v[15 - base], v[14 - base], v[13 - base], v[12 - base]]);
             let e = (lo + hi).to_array();
             let o = (lo - hi).to_array();
             even[base..base + 4].copy_from_slice(&e);
@@ -418,12 +408,8 @@ pub fn dct_ii_16(v: &mut [f32; 16]) {
         let scale = f32x4::splat(FRAC_1_SQRT_2);
         for chunk in 0..2 {
             let base = chunk * 4;
-            let e = f32x4::new([
-                even[base],
-                even[base + 1],
-                even[base + 2],
-                even[base + 3],
-            ]) * scale;
+            let e =
+                f32x4::new([even[base], even[base + 1], even[base + 2], even[base + 3]]) * scale;
             let o = f32x4::new([odd[base], odd[base + 1], odd[base + 2], odd[base + 3]]) * scale;
             let ea = e.to_array();
             let oa = o.to_array();
@@ -478,12 +464,7 @@ pub fn dct_iii_16(v: &mut [f32; 16]) {
         use wide::f32x4;
         for chunk in 0..2 {
             let base = chunk * 4;
-            let e = f32x4::new([
-                even[base],
-                even[base + 1],
-                even[base + 2],
-                even[base + 3],
-            ]);
+            let e = f32x4::new([even[base], even[base + 1], even[base + 2], even[base + 3]]);
             let o = f32x4::new([odd[base], odd[base + 1], odd[base + 2], odd[base + 3]]);
             let sum = (e + o).to_array();
             let dif = (e - o).to_array();
@@ -516,18 +497,8 @@ pub fn dct_ii_32(v: &mut [f32; 32]) {
         use wide::f32x4;
         for chunk in 0..4 {
             let base = chunk * 4;
-            let lo = f32x4::new([
-                v[base],
-                v[base + 1],
-                v[base + 2],
-                v[base + 3],
-            ]);
-            let hi = f32x4::new([
-                v[31 - base],
-                v[30 - base],
-                v[29 - base],
-                v[28 - base],
-            ]);
+            let lo = f32x4::new([v[base], v[base + 1], v[base + 2], v[base + 3]]);
+            let hi = f32x4::new([v[31 - base], v[30 - base], v[29 - base], v[28 - base]]);
             even[base..base + 4].copy_from_slice(&(lo + hi).to_array());
             odd[base..base + 4].copy_from_slice(&(lo - hi).to_array());
         }
@@ -547,12 +518,8 @@ pub fn dct_ii_32(v: &mut [f32; 32]) {
         let scale = f32x4::splat(FRAC_1_SQRT_2);
         for chunk in 0..4 {
             let base = chunk * 4;
-            let e = f32x4::new([
-                even[base],
-                even[base + 1],
-                even[base + 2],
-                even[base + 3],
-            ]) * scale;
+            let e =
+                f32x4::new([even[base], even[base + 1], even[base + 2], even[base + 3]]) * scale;
             let o = f32x4::new([odd[base], odd[base + 1], odd[base + 2], odd[base + 3]]) * scale;
             let ea = e.to_array();
             let oa = o.to_array();
@@ -610,12 +577,7 @@ pub fn dct_iii_32(v: &mut [f32; 32]) {
         use wide::f32x4;
         for chunk in 0..4 {
             let base = chunk * 4;
-            let e = f32x4::new([
-                even[base],
-                even[base + 1],
-                even[base + 2],
-                even[base + 3],
-            ]);
+            let e = f32x4::new([even[base], even[base + 1], even[base + 2], even[base + 3]]);
             let o = f32x4::new([odd[base], odd[base + 1], odd[base + 2], odd[base + 3]]);
             let sum = (e + o).to_array();
             let dif = (e - o).to_array();

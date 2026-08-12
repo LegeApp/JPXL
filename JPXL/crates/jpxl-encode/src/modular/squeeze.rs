@@ -80,7 +80,13 @@ pub fn default_params(channels: &[CodedChannel], nb_meta_channels: usize) -> Vec
 #[must_use]
 pub fn default_would_run(width: u32, height: u32, num_channels: usize) -> bool {
     let channels: Vec<CodedChannel> = (0..num_channels)
-        .map(|_| CodedChannel::full_shared(width, height, std::sync::Arc::from(Vec::new().into_boxed_slice())))
+        .map(|_| {
+            CodedChannel::full_shared(
+                width,
+                height,
+                std::sync::Arc::from(Vec::new().into_boxed_slice()),
+            )
+        })
         .collect();
     !default_params(&channels, 0).is_empty()
 }

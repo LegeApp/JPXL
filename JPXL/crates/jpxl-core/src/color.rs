@@ -176,32 +176,19 @@ fn linear_srgb_to_xyb_planes_simd(r: &mut [f32], g: &mut [f32], b: &mut [f32]) {
             b.get(i + 2).copied().unwrap_or(0.0),
             b.get(i + 3).copied().unwrap_or(0.0),
         ]);
-        let lm = f32x4::splat(ml[0]) * rv + f32x4::splat(ml[1]) * gv + f32x4::splat(ml[2]) * bv + bias;
+        let lm =
+            f32x4::splat(ml[0]) * rv + f32x4::splat(ml[1]) * gv + f32x4::splat(ml[2]) * bv + bias;
         let mm_ =
             f32x4::splat(mm[0]) * rv + f32x4::splat(mm[1]) * gv + f32x4::splat(mm[2]) * bv + bias;
-        let sm = f32x4::splat(ms[0]) * rv + f32x4::splat(ms[1]) * gv + f32x4::splat(ms[2]) * bv + bias;
+        let sm =
+            f32x4::splat(ms[0]) * rv + f32x4::splat(ms[1]) * gv + f32x4::splat(ms[2]) * bv + bias;
         // Scalar cbrt per lane so nonlinearities match linear_srgb_to_xyb.
         let lma = lm.to_array();
         let mma = mm_.to_array();
         let sma = sm.to_array();
-        let lg = f32x4::new([
-            lma[0].cbrt(),
-            lma[1].cbrt(),
-            lma[2].cbrt(),
-            lma[3].cbrt(),
-        ]) - bias_c;
-        let mg = f32x4::new([
-            mma[0].cbrt(),
-            mma[1].cbrt(),
-            mma[2].cbrt(),
-            mma[3].cbrt(),
-        ]) - bias_c;
-        let sg = f32x4::new([
-            sma[0].cbrt(),
-            sma[1].cbrt(),
-            sma[2].cbrt(),
-            sma[3].cbrt(),
-        ]) - bias_c;
+        let lg = f32x4::new([lma[0].cbrt(), lma[1].cbrt(), lma[2].cbrt(), lma[3].cbrt()]) - bias_c;
+        let mg = f32x4::new([mma[0].cbrt(), mma[1].cbrt(), mma[2].cbrt(), mma[3].cbrt()]) - bias_c;
+        let sg = f32x4::new([sma[0].cbrt(), sma[1].cbrt(), sma[2].cbrt(), sma[3].cbrt()]) - bias_c;
         let x = half * (lg - mg);
         let y = half * (lg + mg);
         let xa = x.to_array();

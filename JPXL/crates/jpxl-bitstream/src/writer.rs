@@ -360,11 +360,7 @@ impl BitWriter {
             let rem = u32::try_from(other.bit_len % 8).map_err(|_| BitstreamError::Overflow)?;
             if rem > 0 {
                 let last = *other.bytes.get(full).ok_or(BitstreamError::Overflow)?;
-                let mask = if rem >= 8 {
-                    0xFFu32
-                } else {
-                    (1u32 << rem) - 1
-                };
+                let mask = if rem >= 8 { 0xFFu32 } else { (1u32 << rem) - 1 };
                 self.write_bits(rem, u32::from(last) & mask)?;
             }
             return Ok(());
@@ -378,11 +374,7 @@ impl BitWriter {
         let rem = u32::try_from(other.bit_len % 8).map_err(|_| BitstreamError::Overflow)?;
         if rem > 0 {
             let last = *other.bytes.get(full).ok_or(BitstreamError::Overflow)?;
-            let mask = if rem >= 8 {
-                0xFFu32
-            } else {
-                (1u32 << rem) - 1
-            };
+            let mask = if rem >= 8 { 0xFFu32 } else { (1u32 << rem) - 1 };
             self.write_bits(rem, u32::from(last) & mask)?;
         }
         Ok(())

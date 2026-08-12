@@ -178,9 +178,7 @@ fn gaborish_forward_interior_simd(
             let ne = load(y - 1, x + 1);
             let sw = load(y + 1, x - 1);
             let se = load(y + 1, x + 1);
-            let acc = mid * c
-                + (north + south + west + east) * e
-                + (nw + ne + sw + se) * k;
+            let acc = mid * c + (north + south + west + east) * e + (nw + ne + sw + se) * k;
             let a = acc.to_array();
             for (i, &val) in a.iter().enumerate() {
                 if let Some(slot) = out.get_mut(y.saturating_mul(width).saturating_add(x + i)) {

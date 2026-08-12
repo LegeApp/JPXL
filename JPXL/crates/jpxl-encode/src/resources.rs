@@ -241,13 +241,8 @@ mod tests {
 
     #[test]
     fn first_error_is_lowest_index() {
-        let f = |i: usize| -> Result<usize, usize> {
-            if i == 3 || i == 7 {
-                Err(i)
-            } else {
-                Ok(i)
-            }
-        };
+        let f =
+            |i: usize| -> Result<usize, usize> { if i == 3 || i == 7 { Err(i) } else { Ok(i) } };
         assert_eq!(ordered_map(10, 4, f), Err(3));
         assert_eq!(ordered_map(10, 1, f), Err(3));
     }
