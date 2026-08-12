@@ -75,6 +75,9 @@ Lossy options (8-bit RGB only; either one selects the VarDCT path):
                                   scale: neutral (default) or measured (Phase
                                   6.2's large-transform correction); research
                                   control
+    --cover-freq-weight <mode>    Cover objective's per-cell frequency weight:
+                                  flat (default) or csf (Mannos-Sakrison at 60
+                                  ppd); research control
 
     There is no `--distance`. cjxl's -d targets butteraugli; JPXL has no
     perceptual model, so its rate loop hits a *size*, not a visual quality.
@@ -319,6 +322,7 @@ fn cmd_encode(args: &[String]) -> u8 {
     let mut epf_iters: Option<u8> = None;
     let mut epf_sharpness: Option<jpxl_encode_policy::EpfSharpnessMode> = None;
     let mut cover_size_penalty: Option<jpxl_encode_policy::CoverSizePenalty> = None;
+    let mut cover_frequency_weight: Option<jpxl_encode_policy::CoverFrequencyWeight> = None;
     let mut positional: Vec<&String> = Vec::new();
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
@@ -439,6 +443,20 @@ fn cmd_encode(args: &[String]) -> u8 {
                     }
                 });
             }
+            "--cover-freq-weight" => {
+                let Some(value) = rest.next() else {
+                    fail("`--cover-freq-weight` needs one of: flat, csf");
+                    return EXIT_ERROR;
+                };
+                cover_frequency_weight = Some(match value.as_str() {
+                    "flat" => jpxl_encode_policy::CoverFrequencyWeight::Flat,
+                    "csf" => jpxl_encode_policy::CoverFrequencyWeight::Csf,
+                    _ => {
+                        fail("`--cover-freq-weight` needs one of: flat, csf");
+                        return EXIT_ERROR;
+                    }
+                });
+            }
             "--target-bytes" => {
                 let Some(v) = rest.next().and_then(|v| v.parse::<u64>().ok()) else {
                     fail("`--target-bytes` needs a positive byte count");
@@ -529,6 +547,7 @@ fn cmd_encode(args: &[String]) -> u8 {
                     epf_iters,
                     epf_sharpness,
                     cover_size_penalty,
+                    cover_frequency_weight,
                 },
             ) {
                 Ok(report) => {
@@ -1215,6 +1234,7 @@ struct LossyOverrides {
     epf_iters: Option<u8>,
     epf_sharpness: Option<jpxl_encode_policy::EpfSharpnessMode>,
     cover_size_penalty: Option<jpxl_encode_policy::CoverSizePenalty>,
+    cover_frequency_weight: Option<jpxl_encode_policy::CoverFrequencyWeight>,
 }
 
 fn encode_lossy_to_target(
@@ -1274,6 +1294,9 @@ fn encode_lossy_to_target(
     }
     if let Some(penalty) = overrides.cover_size_penalty {
         request.cover_size_penalty = penalty;
+    }
+    if let Some(weight) = overrides.cover_frequency_weight {
+        request.cover_frequency_weight = weight;
     }
     jpxl_encode_policy::encode_srgb8_to_target(
         image.width(),

@@ -64,6 +64,7 @@
 
 pub mod analysis;
 pub mod block;
+pub mod csf;
 pub mod diagnostics;
 mod entropy;
 pub mod error;
@@ -113,8 +114,8 @@ pub use rate::{
     search_frame,
 };
 pub use request::{
-    CoverMode, CoverSizePenalty, EncodeRequest, EpfSharpnessMode, RateSearchBudget, RateTarget,
-    RateTolerance, SearchBudget,
+    CoverFrequencyWeight, CoverMode, CoverSizePenalty, EncodeRequest, EpfSharpnessMode,
+    RateSearchBudget, RateTarget, RateTolerance, SearchBudget,
 };
 pub use source::PreparedFrame;
 // Re-export so callers can set [`EncodeRequest::restoration`] without a
@@ -330,6 +331,7 @@ fn plan_at_with_cfl(
         request.x_qm_scale.get(),
         request.b_qm_scale.get(),
         request.cover_size_penalty,
+        request.cover_frequency_weight,
     )?;
 
     // The cover is selected before chroma-from-luma is estimated: the estimate
@@ -852,6 +854,10 @@ struct HfQuantizers {
     /// `side^2` in [`block_cost_bounded`]. `Neutral` is exactly `1.0`, so the
     /// shipped objective is bit-identical.
     size_penalty: CoverSizePenalty,
+    /// Phase 6.3's per-cell frequency weight, one table per square transform,
+    /// keyed by coefficient edge. Empty under `Flat`, which is what keeps the
+    /// shipped objective bit-identical.
+    frequency_weights: Vec<(usize, Vec<f32>)>,
 }
 
 impl HfQuantizers {
@@ -867,6 +873,7 @@ impl HfQuantizers {
             NEUTRAL_QM_SCALE,
             NEUTRAL_QM_SCALE,
             CoverSizePenalty::Neutral,
+            CoverFrequencyWeight::Flat,
         )
     }
 
@@ -877,6 +884,7 @@ impl HfQuantizers {
         x_qm_scale: u32,
         b_qm_scale: u32,
         size_penalty: CoverSizePenalty,
+        frequency_weight: CoverFrequencyWeight,
     ) -> Result<Self> {
         let mut by_key = Vec::with_capacity(SQUARE_TRANSFORMS.len() * muls.len());
         for transform in SQUARE_TRANSFORMS {
@@ -909,12 +917,34 @@ impl HfQuantizers {
             let mean = sum / f64::from(count.max(1));
             *slot = if mean > 0.0 { 16.0 / mean } else { 0.0 };
         }
+        let frequency_weights = match frequency_weight {
+            CoverFrequencyWeight::Flat => Vec::new(),
+            CoverFrequencyWeight::Csf => SQUARE_TRANSFORMS
+                .iter()
+                .map(|t| {
+                    let side = t.coeff_cols();
+                    (side, crate::csf::square_weights(side, t.block_dims().0))
+                })
+                .collect(),
+        };
         Ok(Self {
             by_key,
             baseline,
             lambda,
             size_penalty,
+            frequency_weights,
         })
+    }
+
+    /// Phase 6.3's per-cell frequency weight table for one transform, or an
+    /// empty slice under the flat production policy — which the scorer reads
+    /// as "charge every cell alike", keeping the shipped objective untouched.
+    fn frequency_weights(&self, transform: TransformType) -> &[f32] {
+        let side = transform.coeff_cols();
+        self.frequency_weights
+            .iter()
+            .find(|(s, _)| *s == side)
+            .map_or(&[][..], |(_, w)| w.as_slice())
     }
 
     /// Phase 6.2's distortion multiplier for one transform, keyed by its
@@ -1996,6 +2026,13 @@ fn mul_signal_bits(hf_mul: HfMul, baseline: HfMul) -> f64 {
 ///
 /// As [`HfQuantizer::choose`].
 #[allow(clippy::too_many_arguments)]
+/// The Phase 6.3 frequency weight for one cell, or exactly `1.0` when the
+/// table is empty (the flat production objective).
+#[inline]
+fn cell_weight(freq: &[f32], cell: usize) -> f64 {
+    freq.get(cell).map_or(1.0, |w| f64::from(*w))
+}
+
 fn score_channel_lanes(
     hf_quant: &HfQuantizer,
     channel: usize,
@@ -2008,6 +2045,10 @@ fn score_channel_lanes(
     bits: &mut u64,
     weighted_sse: &mut f64,
     check: &impl Fn(u64, f64) -> bool,
+    // Phase 6.3's per-cell frequency weight. Empty means the flat production
+    // objective: `cell_weight` then returns exactly 1.0 and the arithmetic is
+    // bit-identical to the pre-Phase-6 scorer.
+    freq: &[f32],
 ) -> Result<bool> {
     for row in 0..side {
         let col_start = if row < n { n } else { 0 };
@@ -2028,7 +2069,10 @@ fn score_channel_lanes(
                 let recon = recons.get(i).copied().unwrap_or(0.0);
                 let target = targets.get(i).copied().unwrap_or(0.0);
                 *bits = bits.saturating_add(residual_bits(q));
-                *weighted_sse += lambda * to_sample_domain * f64::from(recon - target).powi(2);
+                *weighted_sse += lambda
+                    * to_sample_domain
+                    * cell_weight(freq, cell)
+                    * f64::from(recon - target).powi(2);
                 on_recon(cell, recon);
                 if check(*bits, *weighted_sse) {
                     return Ok(true);
@@ -2042,7 +2086,10 @@ fn score_channel_lanes(
             let q = hf_quant.choose(target, channel, cell)?;
             let recon = hf_quant.reconstruct(q, channel, cell);
             *bits = bits.saturating_add(residual_bits(q));
-            *weighted_sse += lambda * to_sample_domain * f64::from(recon - target).powi(2);
+            *weighted_sse += lambda
+                * to_sample_domain
+                * cell_weight(freq, cell)
+                * f64::from(recon - target).powi(2);
             on_recon(cell, recon);
             if check(*bits, *weighted_sse) {
                 return Ok(true);
@@ -2080,6 +2127,7 @@ fn cheap_stage_would_prune(
     bits_so_far: u64,
     weighted_sse_so_far: f64,
     cutoff: f64,
+    freq: &[f32],
 ) -> Result<bool> {
     let mut bits = bits_so_far;
     let mut weighted_sse = weighted_sse_so_far;
@@ -2089,7 +2137,7 @@ fn cheap_stage_would_prune(
             let cell = row * side + col;
             let (b, s) = hf_quant.cell_lower_bound(target_at(cell), channel, cell)?;
             bits = bits.saturating_add(b);
-            weighted_sse += lambda * to_sample_domain * s;
+            weighted_sse += lambda * to_sample_domain * cell_weight(freq, cell) * s;
         }
     }
     diagnostics::note_cover_prune_check();
@@ -2144,6 +2192,9 @@ fn block_cost_bounded(
         reason = "side is at most 32; exact in f64"
     )]
     let to_sample_domain = (side * side) as f64 * hf_quants.size_penalty(transform);
+    // Phase 6.3: empty under the flat production policy, and `cell_weight`
+    // then returns exactly 1.0, so the shipped objective is untouched.
+    let freq = hf_quants.frequency_weights(transform);
     let cy = fwd.coeffs.get(1).map_or(&[][..], Vec::as_slice);
     let cx = fwd.coeffs.get(0).map_or(&[][..], Vec::as_slice);
     let cb = fwd.coeffs.get(2).map_or(&[][..], Vec::as_slice);
@@ -2176,6 +2227,7 @@ fn block_cost_bounded(
                 bits,
                 weighted_sse,
                 cut,
+                freq,
             )
         })?;
         if would_prune {
@@ -2199,6 +2251,7 @@ fn block_cost_bounded(
             &mut bits,
             &mut weighted_sse,
             &check,
+            freq,
         )
     })?;
     if pruned {
@@ -2223,6 +2276,7 @@ fn block_cost_bounded(
                     bits,
                     weighted_sse,
                     cut,
+                    freq,
                 )
             })?;
             if would_prune {
@@ -2245,6 +2299,7 @@ fn block_cost_bounded(
                 &mut bits,
                 &mut weighted_sse,
                 &check,
+                freq,
             )
         })?;
         if pruned {
@@ -2897,6 +2952,105 @@ mod tests {
             encode_srgb8_vardct(256, 256, &rgb, &explicit).expect("encodes"),
             "the default request and an explicitly neutral one must agree byte for byte"
         );
+    }
+
+    #[test]
+    fn the_flat_frequency_weight_is_byte_identical_and_the_csf_weight_is_not() {
+        // `Flat` builds no table at all, so `cell_weight` returns exactly 1.0
+        // and the arithmetic is the pre-Phase-6 scorer's, bit for bit.
+        assert_eq!(
+            CoverFrequencyWeight::default(),
+            CoverFrequencyWeight::Flat,
+            "production must stay flat"
+        );
+        let rgb = mixed_detail_rgb(256, 256);
+        let mut explicit = hierarchical_request();
+        explicit.cover_frequency_weight = CoverFrequencyWeight::Flat;
+        let baseline = encode_srgb8_vardct(256, 256, &rgb, &hierarchical_request()).expect("enc");
+        assert_eq!(
+            baseline,
+            encode_srgb8_vardct(256, 256, &rgb, &explicit).expect("enc"),
+            "an explicitly flat request must be byte-identical to the default"
+        );
+
+        let mut csf = hierarchical_request();
+        csf.cover_frequency_weight = CoverFrequencyWeight::Csf;
+        let weighted = encode_srgb8_vardct(256, 256, &rgb, &csf).expect("enc");
+        assert_ne!(
+            baseline, weighted,
+            "the CSF weight must actually reach the objective; if this passes \
+             trivially the weight is not being applied"
+        );
+    }
+
+    #[test]
+    fn the_csf_weight_matches_a_direct_recomputation_of_the_weighted_term() {
+        // Proves the scorer applies the same per-cell table `csf::square_weights`
+        // publishes, on each transform's own grid, rather than some other
+        // ordering or a single shared table.
+        for transform in SQUARE_TRANSFORMS {
+            let side = transform.coeff_cols();
+            let llf = transform.block_dims().0;
+            let quants = HfQuantizers::new_with_scales(
+                45_000,
+                HfMul::new(1).expect("legal"),
+                &[HfMul::new(1).expect("legal")],
+                NEUTRAL_QM_SCALE,
+                NEUTRAL_QM_SCALE,
+                CoverSizePenalty::Neutral,
+                CoverFrequencyWeight::Csf,
+            )
+            .expect("quantizers");
+            let table = quants.frequency_weights(transform);
+            let expected = crate::csf::square_weights(side, llf);
+            assert_eq!(
+                table.len(),
+                expected.len(),
+                "{transform:?} weight table length"
+            );
+            for (cell, (got, want)) in table.iter().zip(&expected).enumerate() {
+                assert!(
+                    (got - want).abs() < 1e-6,
+                    "{transform:?} cell {cell}: scorer weight {got} != csf weight {want}"
+                );
+            }
+            // The mean-1 property is what keeps `lambda` calibrated, so assert
+            // it here too rather than only in the csf module's own tests: this
+            // is the table the objective actually reads.
+            let mut sum = 0.0f64;
+            let mut count = 0usize;
+            for cell in 0..side * side {
+                if cell / side < llf && cell % side < llf {
+                    continue;
+                }
+                sum += f64::from(table[cell]);
+                count += 1;
+            }
+            #[allow(clippy::cast_precision_loss, reason = "counts are small")]
+            let mean = sum / count as f64;
+            assert!(
+                (mean - 1.0).abs() < 1e-5,
+                "{transform:?} weight mean {mean} would decalibrate lambda"
+            );
+        }
+
+        // And the flat policy must publish no table at all.
+        let flat = HfQuantizers::new_with_scales(
+            45_000,
+            HfMul::new(1).expect("legal"),
+            &[HfMul::new(1).expect("legal")],
+            NEUTRAL_QM_SCALE,
+            NEUTRAL_QM_SCALE,
+            CoverSizePenalty::Neutral,
+            CoverFrequencyWeight::Flat,
+        )
+        .expect("quantizers");
+        for transform in SQUARE_TRANSFORMS {
+            assert!(
+                flat.frequency_weights(transform).is_empty(),
+                "the flat policy must build no table for {transform:?}"
+            );
+        }
     }
 
     #[test]

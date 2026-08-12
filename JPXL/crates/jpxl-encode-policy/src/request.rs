@@ -249,6 +249,30 @@ impl CoverSizePenalty {
     }
 }
 
+/// Research policy for the cover objective's per-cell frequency weight.
+///
+/// [`Self::Flat`] is the shipped objective: every coefficient cell of every
+/// transform is charged identically for the same error. Phase 6.0 measured that
+/// costs butteraugli by up to 2.65x across the DCT8x8 frequency plane, and
+/// Phase 6.2 showed the same curve applies to DCT16x16 and DCT32x32 once
+/// expressed against normalised spatial frequency.
+///
+/// [`Self::Csf`] weights each cell by [`crate::csf`]'s Mannos-Sakrison
+/// contrast-sensitivity model, normalised to mean 1 so `lambda` stays
+/// calibrated. **It is a research arm, not a candidate default:** Phase 6.3's
+/// pre-registered check found the model does not agree with the measured
+/// response (worst bin ratio 3.14x against a 1.35x limit, Pearson r 0.41
+/// against a 0.80 limit), so it is retained to test whether frequency
+/// reweighting moves the objective at all, not because its curve is right.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CoverFrequencyWeight {
+    /// Charge every cell identically: the shipped objective, bit-identical.
+    #[default]
+    Flat,
+    /// Weight by the Mannos-Sakrison CSF at 60 pixels per degree.
+    Csf,
+}
+
 /// One encode request.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct EncodeRequest {
@@ -301,6 +325,10 @@ pub struct EncodeRequest {
     /// scale. Production stays at [`CoverSizePenalty::Neutral`], which is
     /// bit-identical to the pre-Phase-6 objective.
     pub cover_size_penalty: CoverSizePenalty,
+    /// Research policy for the cover objective's per-cell frequency weight.
+    /// Production stays at [`CoverFrequencyWeight::Flat`], which is
+    /// bit-identical to the pre-Phase-6 objective.
+    pub cover_frequency_weight: CoverFrequencyWeight,
     /// Coarse section-parallelism policy for emission (Opt-P).
     ///
     /// Default is [`jpxl_encode::EncodeResources::auto`]. Rate-loop intermediate
@@ -344,6 +372,7 @@ impl EncodeRequest {
             restoration: RestorationDecision::default(),
             epf_sharpness: EpfSharpnessMode::default(),
             cover_size_penalty: CoverSizePenalty::default(),
+            cover_frequency_weight: CoverFrequencyWeight::default(),
             resources: jpxl_encode::EncodeResources::auto(),
         }
     }
