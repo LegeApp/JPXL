@@ -645,6 +645,42 @@ record jpegxl-rs.evidence.phase4b-sampled-gather-interleaved-2026-08-08/1 : evid
         """
 }
 
+record jpegxl-rs.evidence.phase4c-multi-group-size-2026-08-12/1 : evidence {
+    title "Phase 4C: multi-section global tree beats local re-pay when it wins; never larger than local"
+    state verified
+    result pass
+    method command
+    observed_at git:85f2d01cc4e160ae3db383fccef4b4f98ad146d5
+    command "cargo test -p jpxl-encode --test global_tree_size -- --nocapture"
+    summary """
+        300x200 grey group_dim 128: global codestream 491 B vs local modular-section re-pay 3318 B. build_sections keeps global only when total_len <= local. 1024x768 photo effort 1 lands at 1075465 B (size gate chose local; matches phase4-0b baseline), so production never ships a larger multi-section stream than pre-4C.
+        """
+}
+
+record jpegxl-rs.evidence.phase4c-pixel-identity-2026-08-12/1 : evidence {
+    title "Phase 4C: multi-section global tree round-trips losslessly (jpxl-decode + djxl)"
+    state verified
+    result pass
+    method command
+    observed_at git:85f2d01cc4e160ae3db383fccef4b4f98ad146d5
+    command "cargo test -p jpxl-encode --lib multi_section --test roundtrip --test oracle -- --nocapture"
+    summary """
+        multi_section_* roundtrips and every_group_size_shift_round_trips pass under jpxl-decode. djxl_decodes_our_output_to_the_source_samples passes with PATH to libjxl djxl, including multi-group forced fixtures. Photo 1024x768 global/local gated stream decodes to exact samples via djxl.
+        """
+}
+
+record jpegxl-rs.evidence.phase4c-policy-decision-2026-08-12/1 : evidence {
+    title "Phase 4C policy: multi-section tries global tree, size-gated against local re-pay"
+    state verified
+    result pass
+    method observation
+    observed_at git:85f2d01cc4e160ae3db383fccef4b4f98ad146d5
+    artifact "JPXL/docs/experiments/2026-08-12-global-ma-tree.md"
+    summary """
+        Default multi-section emission builds both global-tree and local-tree section payloads and keeps the smaller. Single-section remains local-tree only. Search charges MA tree once. Remaining Phase 4 work is 4D LZ77 search alignment.
+        """
+}
+
 record jpegxl-rs.evidence.phase4f-bytes-unchanged-2026-08-10/1 : evidence {
     title "At 08e67ef the corpus fingerprints are unchanged by the search elision. Default effort: small_0p8MP 1,075,465 B sha16 C3C60CEE4D0741D9 in 240 ms, mid_4MP 5,157,974 B sha16 5C49AB9020706F0D in 470 ms, large_12MP 9,795,599 B sha16 CA27799D3E7B441D in 1008 ms -- all three IDENTICAL to the pre-4E fingerprints, so 4F changed no byte at the default. Effort 7 likewise reproduces all three fingerprints (1207 / 5366 / 15646 ms), confirming the elision does not fire on the density anchor. Separately, jpxl bench modular --iters 3 at 12 MP reports the median falling from 1025.6 ms to 873.5 ms (-14.8%) with diag residual_scans 1 -> 0 and plane_clone_bytes 288,000,000 -> 144,000,000: the skipped work was the RCT scoring copy, the Arc wrap of every plane, and one strided residual scan."
     state verified

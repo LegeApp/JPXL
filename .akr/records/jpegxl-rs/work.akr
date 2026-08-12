@@ -529,7 +529,7 @@ record jpegxl-rs.work.arch-phase4b-sampled-gather-scoped/1 : work {
 
 record jpegxl-rs.work.arch-phase4c-global-ma-tree/1 : work {
     title "Phase 4C: emit one global MA tree (use_global_tree) instead of re-paying per section"
-    state active
+    state completed
     scope [
         path "JPXL/crates/jpxl-encode/src/lib.rs",
         path "JPXL/crates/jpxl-encode/src/lossless.rs",
@@ -551,24 +551,28 @@ record jpegxl-rs.work.arch-phase4c-global-ma-tree/1 : work {
                 At least one multi-group fixture is strictly smaller with global tree than with per-section trees; no multi-group fixture grows.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase4c-multi-group-size-2026-08-12 ]
         }
         check pixel-identity {
             statement """
                 Multi-group and single-group modular streams round-trip exact pixels through jpxl-decode; multi-group also through djxl when available.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase4c-pixel-identity-2026-08-12 ]
         }
         check policy-decision {
             statement """
                 Global tree is either default for multi-section modular emission or an explicit research flag with production default unchanged; decision recorded with size evidence.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.phase4c-policy-decision-2026-08-12 ]
         }
         check single-section-safe {
             statement """
                 Single-section modular encode still decodes; size is not worse than pre-4C beyond a documented slack (prefer identical or smaller).
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase4c-pixel-identity-2026-08-12 ]
         }
     }
     depends_on [
