@@ -428,37 +428,27 @@ record jpegxl-rs.work.arch-phase4-0b-density-gate/1 : work {
 
 record jpegxl-rs.work.arch-phase4-modular-scoped/1 : work {
     title "Phase 4: rebuild modular planning, scoped density-first (sub-phases 4.0, 4A-4D)"
-    state proposed
+    state completed
     intent """
-        Scope (not yet implement) outside-advice.md Phase 4 (§20: "rebuild modular planning"), reoriented by jpegxl-rs.assessment.s8-close-phase4-reorient after S8's closure. Not a from-scratch rebuild: Phase 1 already eliminated modular's cheap copy/interpretation costs (Arc-shared score planes, specialized single-leaf residual kernels, cheap-vs-exact trial pricing -- crates/jpxl-encode/src/lossless.rs, modular/mod.rs). What outside-advice.md §14-15 still diagnoses as unaddressed is model-strength and density: no Weighted predictor, local-only MA trees (use_global_tree=false, no global histogram clustering), full-image cheap-tier trial scans instead of a sampled/summarized gather, and a naive 256-entry linear LZ77 lookback.
+        Scope outside-advice.md Phase 4 (§20: rebuild modular planning), reoriented by
+        jpegxl-rs.assessment.s8-close-phase4-reorient after S8's closure. Not a from-
+        scratch rebuild: Phase 1 already eliminated modular's cheap copy costs.
 
-        Modular is the largest remaining absolute wall-time cost (33.5s vs VarDCT's 8.3s at 12MP) and the worst density benchmark point on record (~118x slower than cjxl e1 for essentially identical output size -- a model-strength failure). It is also the safest major rebuild available: lossless gives an exact-pixel-identity oracle for every sub-phase, no Butteraugli/perceptual-calibration dependency the way further VarDCT work would need (that's Phase 5's territory).
+        Sub-phases (all completed via their own work records):
+        - 4.0 / 4.0b: baseline re-measure and density gate
+        - 4B: sampled property-gather (promoted default, ~2.6-2.8x wall)
+        - 4A: Weighted predictor wired
+        - 4C: multi-section global MA tree with size gate
+        - 4D: Exact-tier LZ77 alignment + hash-chain at lookback 256; row-lookback
+          expansion honest-negative
 
-        Each sub-phase is independently gated, following the same discipline S8 and Phases 1-3 used: measure before design, prove safety/decision-preservation before wiring behind a feature flag, honest negative results are an acceptable, plan-sanctioned outcome (not a bug to chase).
-
-        Sub-phases:
-        - 4.0 (mandatory first step): re-measure the current, post-Phase-1 modular baseline by stage on real content (cheap-tier trial scans vs exact finalist pass vs LZ77 alternative-encode vs entropy), so no later sub-phase re-solves a cost Phase 1 already made cheap. Also quantify the size gap to cjxl e1/e7 per corpus stratum -- density, not speed, is modular's worst benchmark point and 4A/4C's payoff should be measured against it directly.
-        - 4A: Weighted (H.5 self-correcting) predictor, currently deferred (lossless.rs). Density-only, exact-lossless-safe: pixel identity always holds, so the only oracle is byte size vs. trial-time cost. Gate behind a feature; promote only if it reduces bytes on the corpus without unacceptable trial-time regression.
-        - 4D: cheap repetition-estimate gate ahead of the full LZ77 alternative encode, and/or hash-chain lookback to replace the 256-entry linear scan. Output-preserving (decides only whether/how to search matches, not what wins) -- byte-identity is the safety gate, the lowest-risk sub-phase, a good candidate to land alongside or before 4A.
-        - 4B: sampled property-gather (outside-advice.md §15's core) replacing full-image cheap-tier trial scans with one sampled/summarized pass feeding tree/threshold selection; source traversed exactly only for the settled winner. The invasive piece. Scope as: (1) build the sampled gather as an additive alternative scorer: (2) prove on fixtures that winner selection matches the full-scan scorer within tolerance, using the same independent-second-walk pattern S8's regret.rs harness established; (3) wire behind a flag and measure. Honest-negative-acceptable: if sampling changes winners too often or doesn't pay for itself, it stays off.
-        - 4C: global/chunk-global MA tree with histogram clustering in place of per-group local trees (use_global_tree=true path). Density-focused; scoped separately from 4B because it interacts with the entropy stage. Measure the byte win against the per-group modeling cost it gives up.
-
-        Suggested order: 4.0 -> (4A + 4D, both cheap/safe) -> 4B -> 4C. Front-load the exact-safe density win (4A) and output-preserving speed win (4D); reserve the sampled-gather restructure (4B) and global-model change (4C) for after 4.0's measurement confirms they target the actual remaining cost.
+        Parent closed after 4D. Remaining encoder optimization is outside this
+        modular-planning scope (e.g. Phase 6.4 chroma operating point).
         """
     note """
-        PROPOSED, not started as a whole -- but 4.0, 4.0b, 4B (promoted to default), and 4A are all DONE.
-
-        4.0/4.0b: baseline re-measured; the '118x' figure is a wall-time ratio, not a density gap (jpegxl-rs.assessment.phase4-density-gap-is-vs-e7-only).
-
-        4B (sampled property-gather): DONE, promoted to default. ~2.6-2.8x modular wall-time reduction, byte-identical output, decode-validated.
-
-        4A (Weighted predictor): DONE. Predictor::Weighted wired into jpxl-encode's predictor sweep and per-leaf refinement (not the split loop), backed by jpxl_core::modular_weighted (moved from jpxl-decode so both crates share the exact same, spec-resolved H.5.2 arithmetic). Correctness gated by forced single-leaf, mixed-tree, and multi-section round trips through jpxl-decode plus an independent djxl oracle test, all passing; a decision-preservation test proves plan_for-with-Weighted never regresses versus the pre-4A six-predictor search. NOT gated behind a feature flag: unlike 4B, this needed no approximation-safety flag because it's a strict additional candidate under the existing unconditional exact-price gate. See jpegxl-rs.assessment.phase4a-weighted-integration-design and jpegxl-rs.evidence.phase4a-weighted-predictor-wired-2026-08-08.
-
-        Open follow-up from 4A (performance-only, not correctness): the advisor-flagged worst-case where a Weighted-seeded split search on a large frame could trigger many sequential full-plane scans per split round. A spot-check (jpegxl-rs.evidence.phase4a-worst-case-timing-spotcheck-2026-08-08) found no blowup at the size the risk would bite hardest, but is not a full stress-test closure -- left open, not blocking.
-
-        Also surfaced (pre-existing, unrelated to 4A, NOT fixed): the encoder's search cost model excludes LZ77 (allow_lz77=false during search vs true at real emission), a known gap already scoped as the future 'Phase 4D'. This can make the search's ranking wrong on LZ77-friendly inputs; it never produces incorrect bytes, only a possible missed optimization. Worth folding into 4D's eventual scope.
-
-        Remaining order: 4C (global tree, addresses the vs-e7-only density gap) -> 4D (LZ77 gating, now with two independent motivations: the originally-scoped hash-chain lookback AND this session's search/emission LZ77 mismatch finding).
+        COMPLETED 2026-08-12. All sub-phases done. 4D closed with Exact allow_lz77=true,
+        hash-chain lookback 256, photo corpus byte-identical. Row-sized lookback was
+        an honest negative (no size win, large wall cost).
         """
     implements [
         @jpegxl-rs.decision.encoder-architecture-phases,

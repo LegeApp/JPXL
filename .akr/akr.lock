@@ -5,7 +5,7 @@ build {
     tool "akr 0.3.1"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:3feed2778c85ee3bd4a27792b82fdc5277b3763fb165c3221f0ea3caf6e586cb"
+    source_graph "sha256:45c61fe86fa2e81a696a04fdb587eb60abeb6f9da10dd76d996df4aff63bd885"
 }
 
 source ".akr/project.akr" {
@@ -64,7 +64,7 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:01df6c4831c4e2bda9fa81e95e180018253daf174a8e9674385f4e8cf28f49d2"
+    hash "sha256:d4b8997383f55aca9bd071bad1107efb5213ae0fb572f9e7840a293c22aa8dec"
     records 75
 }
 
@@ -4379,6 +4379,11 @@ seal @jpegxl-rs.work.arch-phase3-forward-cache/2 {
 seal @jpegxl-rs.work.arch-phase4-0b-density-gate/1 {
     state completed
     hash "sha256:28a1c0190a9545687432c806056b78e6a7d5513a3144e8eb7f92d3eb4b4b75a7"
+}
+
+seal @jpegxl-rs.work.arch-phase4-modular-scoped/1 {
+    state completed
+    hash "sha256:cd12b3810059f5c06c82c3ccbc4450da5f181f13620441eb33efab8e641a52f8"
 }
 
 seal @jpegxl-rs.work.arch-phase4a-weighted-predictor-scoped/1 {
