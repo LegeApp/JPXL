@@ -1724,6 +1724,53 @@ record jpegxl-rs.observation.realworld-encode-vs-cjxl-2026-08-06/1 : observation
     author "grok-build"
 }
 
+record jpegxl-rs.observation.selectivity-halves-the-damage-but-lambda-is-the-remaining-term-2026-08-12/1 : observation {
+    title "Selective truncation cuts the SSIMULACRA2 damage by 62% but still regresses 25 of 28 cells: the remaining term is lambda, never calibrated against any perceptual metric"
+    state verified
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/quantize.rs"
+    ]
+    statement """
+        WHAT WAS BUILT. HfQuantizer::truncate_trailing is a block-level backward pass: quantize greedily, then walk back from the last nonzero pricing each trailing-nonzero drop at its own token bits plus the interior zeros it exposes times ZERO_TOKEN_BITS, against weight[cell] * (target^2 - (recon - target)^2), accepting while favourable. It only ever removes from the end, so unlike Phase 7.0's per-coefficient rule it cannot strip texture uniformly. Y is truncated before d_y_hf is read, so chroma CfL decorrelates against the Y the decoder will actually reconstruct. ZERO_TOKEN_BITS = 1.0 is a stated conservative estimate, not a measurement: token counts are exact but token bits depend on an ANS cluster the census builds after the walk.
+
+        PROVED AGAINST THE REAL WALK, not a restatement. On a 256x256 fixture at 1 bpp the pass removes 11.8% of nonzero tokens but collapses 42.6% of zero tokens (total symbols 20,098 to 13,529), with the non_zeros symbol count unchanged. That asymmetry is the signature: a magnitude rule would move both counts together, a mid-run rule would raise the zero count.
+
+        SCREEN, 28 cells on the Phase 7.0 protocol. Pooled SSIMULACRA2 better in 3 of 28 (mean -0.68); butteraugli better in 19 of 28 (mean -3.46%). Against Phase 7.0 on the identical protocol (SSIMULACRA2 4/28, mean -1.80; butteraugli 20/28, mean -5.21%): selectivity cut the SSIMULACRA2 damage by 62% while keeping most of the butteraugli gain.
+
+        SO THE DESIGN HYPOTHESIS IS CONFIRMED AND THE GATE STILL FAILS. Restricting removals to those that actually truncate a walk did exactly what Phase 7.1a predicted. But under the SSIMULACRA2-primary decision the metric regresses in 25 of 28 cells, so production stays QuantizerChoiceMode::Nearest.
+
+        WHY THIS POINTS AT LAMBDA, SPECIFICALLY. The finding is sharper than 'rate-aware quantization hurts'. A pass that removes ONLY coefficients whose removal collapses a run -- the most rate-efficient removals available anywhere in the block -- still costs SSIMULACRA2 on 25 of 28 cells. The problem is therefore not WHICH coefficients are dropped; it is that dropping ANY HF coefficient at this operating point costs more structure than the bits are worth on SSIMULACRA2's accounting. That is a statement about the exchange rate.
+
+        lambda is derived in HfQuantizers::new_with_scales as 16 / mean(s^2) over the non-LLF DCT8x8 cells, from a uniform-quantizer argument: halving a step costs one bit per coefficient and moves s^2/12 to s^2/48. It has NEVER been calibrated against a perceptual metric. If it over-values bits, every rate-aware decision over-zeroes regardless of selectivity -- which is exactly the pattern across 7.0 and 7.1. Note that ZERO_TOKEN_BITS and lambda are the same knob in effect, both scaling rate against distortion, so sweeping the former is not an independent experiment; calibrating lambda is.
+
+        CAVEATS. The high-rate byte undershoot recurs, milder than 7.0's: byte deltas by rate are -1.38 / -0.36 / -2.00 / -3.98%, so the 1 bpp row is clean and carries the clearest signal (butteraugli better on 6 of 7 by a mean of -8.00%, SSIMULACRA2 worse on 6 of 7) while the high-rate rows are partly confounded. s7/0.5 is an outlier that should not be read as a normal cell: its flat baseline SSIMULACRA2 is already negative (-10.08, the scene is destroyed at that rate) and it lands 7.00% under cap; its -5.17 delta dominates the 0.5 bpp mean, which is -0.25 without it rather than -0.95. The within-block pass ignores cross-block context coupling, and the natural-order vector is allocated per varblock -- acceptable for an opt-in mode, would need hoisting before any promotion.
+
+        Full tables and the walk-verified proof: JPXL/docs/experiments/2026-08-12-trailing-truncation.md. Raw rows and driver: .agent/scratch/phase7-1-truncation-2026-08-12/.
+        """
+    observed_at git:236dd69b4cf58d4d35ad2a01ffb4c46538c8d6b2
+    method command
+    watches [
+        "JPXL/crates/jpxl-encode-policy/src/quantize.rs",
+        "JPXL/crates/jpxl-encode-policy/src/lib.rs"
+    ]
+    derived_from [
+        @jpegxl-rs.observation.the-rate-proxy-is-blind-to-most-symbols-and-the-lever-is-truncation-2026-08-12
+    ]
+    verified_by [
+        @jpegxl-rs.evidence.phase7-1-quality-screen-2026-08-12,
+        @jpegxl-rs.evidence.phase7-1-truncation-proof-2026-08-12
+    ]
+    source {
+        kind internal
+        role evidence
+        path "JPXL/docs/experiments/2026-08-12-trailing-truncation.md"
+        use """
+            The design, the walk-verified token proof, the 28-cell screen and the lambda argument.
+            """
+    }
+}
+
 record jpegxl-rs.observation.the-quantizer-is-the-lever-and-its-rate-proxy-is-the-defect-2026-08-12/1 : observation {
     title "A rate-aware quantizer moves quality an order of magnitude more than any cover lever, but its crude rate proxy over-zeroes: butteraugli 20/28 better, SSIMULACRA2 4/28"
     state verified

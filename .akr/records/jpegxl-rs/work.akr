@@ -2394,7 +2394,7 @@ record jpegxl-rs.work.arch-phase7-0-rate-distortion-quantizer/1 : work {
 
 record jpegxl-rs.work.arch-phase7-1-run-aware-rate-estimate/1 : work {
     title "Phase 7.1: a block-level trailing-nonzero decision priced at its true token saving"
-    state proposed
+    state completed
     scope [
         path "JPXL/crates/jpxl-encode-policy/src/entropy.rs",
         path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
@@ -2424,18 +2424,21 @@ record jpegxl-rs.work.arch-phase7-1-run-aware-rate-estimate/1 : work {
                 The shipped path remains byte-identical with the pass off.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase7-1-truncation-proof-2026-08-12/1 ]
         }
         check quality-screen {
             statement """
                 The Phase 7.0 screen is re-run on the same corpus, rates and protocol with achieved-versus-requested bpp reported per cell, and SSIMULACRA2 decides promotion under the SSIMULACRA2-primary decision.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.phase7-1-quality-screen-2026-08-12/1 ]
         }
         check truncation-saving-proof {
             statement """
                 Tests prove the pass prices a trailing-nonzero drop at its true token saving -- its own token plus the interior zeros it exposes plus the reduced non_zeros symbol -- verified against the real walk's emitted symbol count on the same block, not against a reimplementation.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase7-1-truncation-proof-2026-08-12/1 ]
         }
     }
     depends_on [ @jpegxl-rs.work.arch-phase7-1a-rate-proxy-gap ]
@@ -2482,6 +2485,61 @@ record jpegxl-rs.work.arch-phase7-1a-rate-proxy-gap/1 : work {
         @jpegxl-rs.observation.the-quantizer-is-the-lever-and-its-rate-proxy-is-the-defect-2026-08-12
     ]
     implements [ @jpegxl-rs.decision.encoder-architecture-phases ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+}
+
+record jpegxl-rs.work.arch-phase7-2-lambda-calibration/1 : work {
+    title "Phase 7.2: calibrate lambda, the one term never checked against a perceptual metric"
+    state proposed
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/request.rs",
+        path "test-set/**"
+    ]
+    intent """
+        Four phases now form one argument. Phase 6.2b showed the cover's transform-size axis is inert. Phase 6.5 showed the frequency axis helps and is promoted. Phase 7.0 showed the rate axis moves quality hard -- butteraugli better in 20 of 28 cells -- but against SSIMULACRA2. Phase 7.1 restricted removals to those that actually truncate the I.4 walk, the most rate-efficient removals available anywhere in a block, and still regressed SSIMULACRA2 in 25 of 28 cells while cutting the damage 62%.
+
+        So the problem is not WHICH coefficients get dropped. It is that dropping any HF coefficient at this operating point costs more structure than the bits are worth on SSIMULACRA2's accounting. That is a statement about the exchange rate between rate and distortion, and the exchange rate is lambda.
+
+        lambda is derived in HfQuantizers::new_with_scales as 16 / mean(s^2) over the non-LLF DCT8x8 cells, from a uniform-quantizer argument -- halving a step costs one bit per coefficient and moves s^2/12 to s^2/48. It has never been calibrated against any perceptual metric. If it over-values bits, every rate-aware decision over-zeroes regardless of how selective it is, which is precisely the pattern 7.0 and 7.1 produced.
+
+        Expose a lambda multiplier as a research control and sweep it over the same 28-cell protocol with the Phase 7.1 truncation pass on, since that is the best-behaved rate-aware mode available. Find whether an operating point exists where SSIMULACRA2 is non-regressing and butteraugli keeps its gain.
+
+        Note that ZERO_TOKEN_BITS and lambda are the same knob in effect -- both scale rate against distortion -- so sweeping the former is not an independent experiment and only lambda needs a control.
+
+        Honest-negative pre-registered and genuinely valuable here: if no multiplier gives a non-regressing SSIMULACRA2 while retaining butteraugli gain, then rate-aware quantization is not available to this encoder at ANY exchange rate. That would end this line of enquiry cleanly rather than leaving it as a permanent maybe, and would redirect the track to the entropy model or to the cover, both of which have unexhausted levers.
+
+        Two protocol requirements carried forward. Report achieved-versus-requested bpp per cell: both 7.0 and 7.1 worsened the known high-rate undershoot and partly confounded their own high-rate rows, so the 1 bpp row is the cleanest comparison and should be treated as the primary one. And exclude or separately report s7/0.5, whose flat-baseline SSIMULACRA2 is already negative and which dominated 7.1's 0.5 bpp mean (-0.95 with it, -0.25 without).
+        """
+    acceptance {
+        check default-byte-identical {
+            statement """
+                The lambda multiplier defaults to 1.0 and the shipped path stays byte-identical.
+                """
+            method command
+        }
+        check operating-point-decided {
+            statement """
+                The record states explicitly whether an operating point exists where SSIMULACRA2 is non-regressing and butteraugli retains its gain, or that none does and rate-aware quantization is unavailable to this encoder at any exchange rate.
+                """
+            method observation
+        }
+        check sweep-run {
+            statement """
+                A lambda sweep runs over the 28-cell protocol with the Phase 7.1 truncation pass on, reporting SSIMULACRA2, butteraugli and achieved-versus-requested bpp per cell, with s7/0.5 reported separately.
+                """
+            method observation
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase7-1-run-aware-rate-estimate ]
+    derived_from [
+        @jpegxl-rs.observation.selectivity-halves-the-damage-but-lambda-is-the-remaining-term-2026-08-12
+    ]
+    implements [
+        @jpegxl-rs.decision.encoder-architecture-phases,
+        @jpegxl-rs.decision.ssimulacra2-is-the-primary-promotion-metric,
+        @jpegxl-rs.policy.optimization-correctness-gates
+    ]
     part_of [ @jpegxl-rs.track.encoder-optimization ]
 }
 

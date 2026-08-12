@@ -1668,6 +1668,30 @@ record jpegxl-rs.evidence.phase7-0-rd-implementation-2026-08-12/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase7-1-quality-screen-2026-08-12/1 : evidence {
+    title "Phase 7.1 screen: selectivity halves the SSIMULACRA2 damage but does not remove it"
+    state verified
+    result pass
+    method observation
+    observed_at git:236dd69b4cf58d4d35ad2a01ffb4c46538c8d6b2
+    artifact "JPXL/docs/experiments/2026-08-12-trailing-truncation.md"
+    summary """
+        28 cells on the Phase 7.0 corpus, rates and protocol. Pooled SSIMULACRA2 better in 3 of 28 (mean -0.68) and butteraugli better in 19 of 28 (mean -3.46%). Against Phase 7.0's per-coefficient rate term on the identical protocol (SSIMULACRA2 4/28, mean -1.80; butteraugli 20/28, mean -5.21%) selectivity cut the SSIMULACRA2 damage by 62% while keeping most of the butteraugli gain, confirming the design hypothesis. The gate still fails under the SSIMULACRA2-primary decision, so production stays QuantizerChoiceMode::Nearest. Byte deltas by rate are -1.38/-0.36/-2.00/-3.98%, so the 1 bpp row is clean and the high-rate rows partly confound the known undershoot; s7/0.5 is an outlier whose flat baseline SSIMULACRA2 is already negative and which dominates the 0.5 bpp mean (excluding it that mean is -0.25 rather than -0.95)
+        """
+}
+
+record jpegxl-rs.evidence.phase7-1-truncation-proof-2026-08-12/1 : evidence {
+    title "The truncation pass provably shortens the walk rather than zeroing by magnitude"
+    state verified
+    result pass
+    method command
+    observed_at git:236dd69b4cf58d4d35ad2a01ffb4c46538c8d6b2
+    command "cargo test -p jpxl-encode-policy --release --test truncation_saving -- --nocapture"
+    summary """
+        Checked against the real jpxl_encode::vardct::walk_frame rather than a restatement of the same assumption. On a 256x256 mixed-content fixture at 1 bpp the pass removes 11.8% of nonzero tokens (5,513 to 4,863) and collapses 42.6% of zero tokens (13,907 to 7,988), total symbols 20,098 to 13,529. That asymmetry is the signature being tested: a magnitude rule would move the two counts together and a mid-run rule would raise the zero count. non_zeros symbol count is unchanged at 678, confirming the pass touches coefficients and never the cover. A second test pins that the default target-rate policy is byte-identical with the pass merely available
+        """
+}
+
 record jpegxl-rs.evidence.phase7-1a-gap-measured-2026-08-12/1 : evidence {
     title "residual_bits prices only 21.7-50.9% of the symbols the encoder emits"
     state verified
