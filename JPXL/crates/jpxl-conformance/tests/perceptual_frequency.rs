@@ -52,9 +52,10 @@
 //! fraction of the channel's own sample standard deviation, default
 //! `0.25,0.5,1.0`), `JPXL_CALIB_CHANNELS` (`x`, `y`, `b`, or a comma list;
 //! default all three), `JPXL_CALIB_TRANSFORMS` (`8`, `16`, `32`, or a comma
-//! list; default `8`) and `JPXL_CALIB_SIDE` (centre-crop edge in pixels,
-//! default 512, always rounded down to a whole DCT32x32 so every transform
-//! tiles the identical crop).
+//! list; default `8`), `JPXL_CALIB_SIDE` (centre-crop edge in pixels, default
+//! 512, always rounded down to a whole DCT32x32 so every transform tiles the
+//! identical crop), and `JPXL_CALIB_TARGET_BA` (controlled-sweep Butteraugli
+//! target, default 2.0 and required to be in the 1..3 operating band).
 
 #![cfg(all(feature = "butteraugli", feature = "ssimulacra2"))]
 
@@ -283,6 +284,14 @@ struct Setup {
     squares: Vec<Square>,
 }
 
+struct ProbeScore {
+    coeff_sse: f64,
+    sample_sse: f64,
+    ba_distance: f64,
+    ba_pnorm3: f64,
+    ssim2: f64,
+}
+
 impl Setup {
     /// Returns `None` when `JPXL_CALIB_REF` is unset, so the harness skips
     /// rather than fails on a machine without a corpus.
@@ -404,6 +413,32 @@ impl Setup {
         );
     }
 
+    fn score_cell(
+        &self,
+        square: Square,
+        channel: usize,
+        cell: usize,
+        amplitude: f32,
+    ) -> ProbeScore {
+        let mut probe = Xyb {
+            w: self.clean.w,
+            h: self.clean.h,
+            planes: self.clean.planes.clone(),
+        };
+        let coeff_sse = f64::from(amplitude) * f64::from(amplitude) * self.blocks(square) as f64;
+        let _realized = inject(&mut probe, square, channel, cell, amplitude);
+        let perturbed = probe.to_image();
+        let ba = butteraugli_distance(&self.base, &perturbed).expect("butteraugli");
+        let ssim2 = ssimulacra2_score(&self.base, &perturbed).expect("ssimulacra2");
+        ProbeScore {
+            coeff_sse,
+            sample_sse: image_sse(&self.base, &perturbed),
+            ba_distance: ba.distance,
+            ba_pnorm3: ba.pnorm3,
+            ssim2,
+        }
+    }
+
     /// Runs the cell sweep over every requested square. `cell_scale` returns the
     /// per-cell multiplier on the base amplitude: constant 1.0 is Phase 6.0's
     /// equal-coefficient-error probe, and the quantizer step shape is 6.1's.
@@ -434,34 +469,145 @@ impl Setup {
                         )]
                         let size_norm = side as f32 / 8.0;
                         let amplitude = amp * scale * size_norm * cell_scale(square, channel, cell);
-                        let mut probe = Xyb {
-                            w: self.clean.w,
-                            h: self.clean.h,
-                            planes: self.clean.planes.clone(),
-                        };
-                        let coeff_sse = f64::from(amplitude)
-                            * f64::from(amplitude)
-                            * self.blocks(square) as f64;
-                        let _realized = inject(&mut probe, square, channel, cell, amplitude);
-                        let perturbed = probe.to_image();
-                        let ba = butteraugli_distance(&self.base, &perturbed).expect("butteraugli");
-                        let s2 = ssimulacra2_score(&self.base, &perturbed).expect("ssimulacra2");
-                        let sample_sse = image_sse(&self.base, &perturbed);
+                        let score = self.score_cell(square, channel, cell, amplitude);
                         let (u, v) = (cell / side, cell % side);
                         println!(
-                            "{}\t{}\t{amp}\t{cell}\t{u}\t{v}\t{:.5}\t{:.5}\t{coeff_sse:.6}\t{sample_sse:.1}\t{:.6}\t{:.6}\t{:.4}",
+                            "{}\t{}\t{amp}\t{cell}\t{u}\t{v}\t{:.5}\t{:.5}\t{:.6}\t{:.1}\t{:.6}\t{:.6}\t{:.4}",
                             side,
                             ["X", "Y", "B"][channel],
                             u as f32 / side as f32,
                             v as f32 / side as f32,
-                            ba.distance,
-                            ba.pnorm3,
-                            s2
+                            score.coeff_sse,
+                            score.sample_sse,
+                            score.ba_distance,
+                            score.ba_pnorm3,
+                            score.ssim2
                         );
                     }
                 }
             }
         }
+    }
+
+    /// Finds the per-cell base amplitude whose realized Butteraugli distance is
+    /// closest to the requested operating point. `cell_scale` maps that base
+    /// amplitude into the actual coefficient error, so the returned base value
+    /// is directly comparable in either raw-coefficient or quantizer units.
+    fn controlled_sweep(&self, label: &str, cell_scale: &dyn Fn(Square, usize, usize) -> f32) {
+        let target = std::env::var("JPXL_CALIB_TARGET_BA")
+            .ok()
+            .and_then(|v| v.parse::<f64>().ok())
+            .unwrap_or(2.0);
+        assert!(
+            (1.0..=3.0).contains(&target),
+            "JPXL_CALIB_TARGET_BA must be in the 1..3 operating band"
+        );
+        println!("# controlled sweep: {label}; target Butteraugli={target:.3}");
+        println!(
+            "tf\tchan\tsweep\tcell\tu\tv\tfu\tfv\tcell_scale\tbase_amp\tinjected_amp\tcoeff_sse\tsample_sse\tba_distance\tba_pnorm3\tssim2"
+        );
+        let mut max_target_error = 0.0f64;
+
+        for &square in &self.squares {
+            let side = square.side;
+            for &channel in &self.channels {
+                let channel_std = self.clean.std_dev(channel);
+                assert!(channel_std > 0.0, "channel {channel} is constant");
+                for cell in 0..square.cells() {
+                    if square.is_llf(cell) {
+                        continue;
+                    }
+                    let scale = cell_scale(square, channel, cell);
+                    assert!(scale.is_finite() && scale > 0.0, "invalid cell scale");
+                    #[allow(
+                        clippy::cast_precision_loss,
+                        reason = "side is 8, 16 or 32; exact in f32"
+                    )]
+                    let size_norm = side as f32 / 8.0;
+                    // Start every cell at the same actual coefficient error.
+                    // This avoids using the wide chroma step ranges as an
+                    // accidental operating-point ladder.
+                    let mut high = 0.5 * channel_std * size_norm / scale;
+                    let mut high_score = self.score_cell(square, channel, cell, high * scale);
+                    for _ in 0..12 {
+                        if high_score.ba_distance >= target {
+                            break;
+                        }
+                        high *= 2.0;
+                        high_score = self.score_cell(square, channel, cell, high * scale);
+                    }
+                    assert!(
+                        high_score.ba_distance >= target,
+                        "failed to bracket target for {} channel {} cell {}",
+                        square.name(),
+                        channel,
+                        cell
+                    );
+
+                    let mut low = 0.0f32;
+                    let mut best_amp = high;
+                    let mut best_score = high_score;
+                    for _ in 0..12 {
+                        let mid = (low + high) * 0.5;
+                        let score = self.score_cell(square, channel, cell, mid * scale);
+                        let distance = score.ba_distance;
+                        if (score.ba_distance - target).abs()
+                            < (best_score.ba_distance - target).abs()
+                        {
+                            best_amp = mid;
+                            best_score = score;
+                        }
+                        if best_score.ba_distance >= 1.0
+                            && best_score.ba_distance <= 3.0
+                            && (best_score.ba_distance - target).abs() <= 0.01
+                        {
+                            break;
+                        }
+                        if distance < target {
+                            low = mid;
+                        } else {
+                            high = mid;
+                        }
+                    }
+                    assert!(
+                        (1.0..=3.0).contains(&best_score.ba_distance),
+                        "controlled score escaped the operating band"
+                    );
+                    max_target_error =
+                        max_target_error.max((best_score.ba_distance - target).abs());
+                    let injected_amp = best_amp * scale;
+                    let (u, v) = (cell / side, cell % side);
+                    println!(
+                        "{}\t{}\t{}\t{}\t{}\t{}\t{:.5}\t{:.5}\t{:.6}\t{:.8}\t{:.8}\t{:.6}\t{:.1}\t{:.6}\t{:.6}\t{:.4}",
+                        side,
+                        ["X", "Y", "B"][channel],
+                        label,
+                        cell,
+                        u,
+                        v,
+                        u as f32 / side as f32,
+                        v as f32 / side as f32,
+                        scale,
+                        best_amp,
+                        injected_amp,
+                        best_score.coeff_sse,
+                        best_score.sample_sse,
+                        best_score.ba_distance,
+                        best_score.ba_pnorm3,
+                        best_score.ssim2
+                    );
+                }
+            }
+        }
+        // Eight-bit output makes the response piecewise constant, especially
+        // for low-amplitude chroma probes. The nearest representable point can
+        // miss the requested target slightly, but a larger miss means the
+        // binary search or its monotonicity assumption is no longer credible.
+        assert!(
+            max_target_error <= 0.1,
+            "controlled sweep missed target by {max_target_error:.4}"
+        );
+        println!("# maximum target error: {max_target_error:.6}");
     }
 }
 
@@ -585,6 +731,43 @@ fn dct8x8_quantizer_normalised_frequency_response() {
             .and_then(|&i| shapes.get(i))
             .and_then(|s| s.get(channel))
             .and_then(|s| s.get(cell))
+            .copied()
+            .unwrap_or(1.0)
+    });
+}
+
+#[test]
+#[ignore = "measurement harness: needs JPXL_CALIB_REF and minutes of butteraugli"]
+fn controlled_equal_coefficient_frequency_response() {
+    let Some(setup) = Setup::from_env() else {
+        eprintln!("skipped: set JPXL_CALIB_REF to an 8-bit binary PPM");
+        return;
+    };
+    setup.header("Phase 6.4 controlled equal-coefficient frequency response");
+    setup.controlled_sweep("equal", &|_square, _channel, _cell| 1.0);
+}
+
+#[test]
+#[ignore = "measurement harness: needs JPXL_CALIB_REF and minutes of butteraugli"]
+fn controlled_quantizer_normalised_frequency_response() {
+    let Some(setup) = Setup::from_env() else {
+        eprintln!("skipped: set JPXL_CALIB_REF to an 8-bit binary PPM");
+        return;
+    };
+    setup.header("Phase 6.4 controlled quantizer-normalised frequency response");
+    let shapes = report_step_shapes(&setup);
+    let index: std::collections::HashMap<usize, usize> = setup
+        .squares
+        .iter()
+        .enumerate()
+        .map(|(i, square)| (square.side, i))
+        .collect();
+    setup.controlled_sweep("step", &|square, channel, cell| {
+        index
+            .get(&square.side)
+            .and_then(|&i| shapes.get(i))
+            .and_then(|channels| channels.get(channel))
+            .and_then(|shape| shape.get(cell))
             .copied()
             .unwrap_or(1.0)
     });
