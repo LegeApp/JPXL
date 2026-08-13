@@ -5,7 +5,7 @@ build {
     tool "akr 0.3.1"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:80b2d2018f68a20fee81577944c75c88b5e920ee980ddd6d147c8215a082d7ab"
+    source_graph "sha256:52434cad45a430616c082dcb746591c254f603e355f325fb60705b8c9949eff3"
 }
 
 source ".akr/project.akr" {
@@ -29,8 +29,8 @@ source ".akr/records/jpegxl-rs/decisions.akr" {
 }
 
 source ".akr/records/jpegxl-rs/evidence.akr" {
-    hash "sha256:89194f3ce125aed9ea3d8388b5e1e1312483346be8cd0d0dee09357c91b4f3c2"
-    records 172
+    hash "sha256:14ebe1d59c9dd6136a1e202c90560926a4934e5e80d51f4f2cd2fde01390735a"
+    records 176
 }
 
 source ".akr/records/jpegxl-rs/milestones.akr" {
@@ -64,7 +64,7 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:9b3459620128d9bef4456f01eab57dcb59246f61993a49a240f4d8faee4c420c"
+    hash "sha256:0dae8fb72b5fe1acdacc06cda2201d23d1c61339c19b1d114a7cc37f4da394b2"
     records 77
 }
 
@@ -3217,6 +3217,26 @@ seal @jpegxl-rs.evidence.phase1-plane-clones-current-2026-08-13/1 {
     hash "sha256:b3d91d5244feed5e06280cc33a273f80a5d05c69f825eb7b1de3ef15fe23fa8c"
 }
 
+seal @jpegxl-rs.evidence.phase1b-diag-available-2026-08-13/1 {
+    state verified
+    hash "sha256:160331881a2b049c1692d9108a3a59a7f76a604b1da753c78b53a8ac1162ab91"
+}
+
+seal @jpegxl-rs.evidence.phase1b-output-identity-2026-08-13/1 {
+    state verified
+    hash "sha256:c9cd2140c38564addfc2824a54f868395282ec9989a2f13ff7c8abf1c36cb0cf"
+}
+
+seal @jpegxl-rs.evidence.phase1b-overhead-2026-08-13/1 {
+    state verified
+    hash "sha256:db5866a84ed6431641d711e415fd09186a8eeaa55c85c698fb6e948393fe0bbe"
+}
+
+seal @jpegxl-rs.evidence.phase1b-quality-relative-2026-08-13/1 {
+    state verified
+    hash "sha256:839669087876c4c3716b604462ea19fd6d112e8caedacbd98e0ef926600b5807"
+}
+
 seal @jpegxl-rs.evidence.phase2-analytic-cfl-regressed-correctness/1 {
     state verified
     hash "sha256:38b8ecb1596314cdbfd0f324477bea1720f4dbc352773adb17fbbafd87a838d3"
@@ -4433,8 +4453,8 @@ seal @jpegxl-rs.work.arch-phase1b-opt-in-diagnostics/1 {
 }
 
 seal @jpegxl-rs.work.arch-phase1b-opt-in-diagnostics/2 {
-    state active
-    hash "sha256:84cf35c15ec91e8bc116a59b00a13842f79956f87a4d252bcf1be2a40c66d04c"
+    state completed
+    hash "sha256:d2d477ef5e02e92608f206de9b058492157948dbaa741e0d966a1ee9cf80d565"
 }
 
 seal @jpegxl-rs.work.arch-phase2-cfl-quant/1 {

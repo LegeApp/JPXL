@@ -539,6 +539,57 @@ record jpegxl-rs.evidence.phase1-plane-clones-current-2026-08-13/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase1b-diag-available-2026-08-13/1 : evidence {
+    title "Phase 1B opt-in diagnostics remain available"
+    state verified
+    result pass
+    method command
+    observed_at git:b34856ce5eef640695286dfdc1fb052c3d58bd43
+    command "JPXL/target/release/jpxl bench modular --width 4000 --height 3000 --iters 3 --diag --threads 1; JPXL/target/release/jpxl bench vardct-fixed --width 4000 --height 3000 --iters 3 --diag --threads 1"
+    artifact ".agent/scratch/phase1b-opt-in-diagnostics-2026-08-13/12mp-opt-in.txt"
+    summary """
+        With --diag, Modular reported plane_clone_bytes=144000000 and fixed VarDCT reported choose_total=95906268 plus stage, cache, and CfL counters.
+        """
+}
+
+record jpegxl-rs.evidence.phase1b-output-identity-2026-08-13/1 : evidence {
+    title "Phase 1B output identity and tests"
+    state verified
+    result pass
+    method command
+    observed_at git:b34856ce5eef640695286dfdc1fb052c3d58bd43
+    command "cd JPXL && cargo test -p jpxl-encode -p jpxl-encode-policy --lib --release; ../../.agent/scratch/phase1b-opt-in-diagnostics-2026-08-13/run-12mp.sh"
+    artifact ".agent/scratch/phase1b-opt-in-diagnostics-2026-08-13/12mp-opt-in.txt"
+    summary """
+        Release library suites passed (129 encode and 92 policy tests); 12 MP Modular remained 242037 bytes/fingerprint 9796222c28048081 and fixed VarDCT remained 439241 bytes/fingerprint 1b6fa66fa2ad0406.
+        """
+}
+
+record jpegxl-rs.evidence.phase1b-overhead-2026-08-13/1 : evidence {
+    title "Phase 1B 12 MP diagnostics overhead"
+    state verified
+    result pass
+    method observation
+    observed_at git:b34856ce5eef640695286dfdc1fb052c3d58bd43
+    artifact ".agent/scratch/phase1b-opt-in-diagnostics-2026-08-13/12mp-opt-in.txt"
+    summary """
+        Matched three-iteration serial 12 MP medians were VarDCT 2781.195 ms diagnostics off versus 2876.406 ms on (3.3% lower off); Modular 3700.344 ms off versus 3689.460 ms on was noise-level. The earlier always-on single-run baselines were 2965.420 ms VarDCT and 3729.826 ms Modular.
+        """
+}
+
+record jpegxl-rs.evidence.phase1b-quality-relative-2026-08-13/1 : evidence {
+    title "Phase 1B libjxl-relative quality unchanged"
+    state verified
+    result pass
+    method command
+    observed_at git:b34856ce5eef640695286dfdc1fb052c3d58bd43
+    command ".agent/scratch/phase6-4-controlled-chroma-2026-08-13/oracle-relative.sh; diff normalized pre/post relative results"
+    artifact ".agent/scratch/phase1b-opt-in-diagnostics-2026-08-13/post-relative.txt"
+    summary """
+        Across small/mid images at 1 and 2 bpp, normalized pre/post JPXL and cjxl sizes, rate parameters, RMSE, PSNR, SSIMULACRA2, Butteraugli, and Butteraugli pnorm3 were identical.
+        """
+}
+
 record jpegxl-rs.evidence.phase2-analytic-cfl-regressed-correctness/1 : evidence {
     title "Closed-form HF CfL factor selection from 3 sufficient stats regressed correctness twice; reverted to exact-oracle scoring over a narrower window"
     state verified

@@ -133,7 +133,7 @@ record jpegxl-rs.work.arch-phase1b-opt-in-diagnostics/1 : work {
 
 record jpegxl-rs.work.arch-phase1b-opt-in-diagnostics/2 : work {
     title "Phase 1B: make architecture diagnostics opt-in"
-    state active
+    state completed
     scope [
         path "JPXL/crates/jpxl-cli/src/main.rs",
         path "JPXL/crates/jpxl-encode-policy/src/diagnostics.rs",
@@ -149,18 +149,21 @@ record jpegxl-rs.work.arch-phase1b-opt-in-diagnostics/2 : work {
                 With diagnostics disabled by default, fixed VarDCT and Modular benchmark output fingerprints remain identical to the Phase 0 baseline and encoder library tests pass.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase1b-output-identity-2026-08-13/1 ]
         }
         check diag-still-available {
             statement """
                 Release jpxl bench --diag still reports nonzero choose_total for vardct-fixed and residual_scans or plane_clone_bytes for modular.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase1b-diag-available-2026-08-13/1 ]
         }
         check overhead-measured {
             statement """
                 A matched 12 MP serial comparison records wall time before and after opt-in diagnostics, with any speed change reported honestly.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.phase1b-overhead-2026-08-13/1 ]
         }
     }
     implements [
