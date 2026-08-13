@@ -1716,6 +1716,43 @@ record jpegxl-rs.evidence.phase6-3-scorer-recomputation-2026-08-12/1 : evidence 
         """
 }
 
+record jpegxl-rs.evidence.phase6-4-chroma-verdict-2026-08-13/1 : evidence {
+    title "Quantizer-normalized chroma distortion is rejected: controlled step-normalized X required-amplitude spreads were 7.33x to 8.01x and B 16.08x to 18.48x; despite repeatable step curves, B's equal-error response was image-dependent (r=0.451), so production X/B normalization remains off."
+    state verified
+    result pass
+    method observation
+    observed_at git:a7afc336449d5e427cd7934e7e877087cd432808
+    artifact ".agent/scratch/phase6-4-controlled-chroma-2026-08-13/matrix-summary.txt"
+    summary """
+        Quantizer-normalized chroma distortion is rejected: controlled step-normalized X required-amplitude spreads were 7.33x to 8.01x and B 16.08x to 18.48x; despite repeatable step curves, B's equal-error response was image-dependent (r=0.451), so production X/B normalization remains off.
+        """
+}
+
+record jpegxl-rs.evidence.phase6-4-controlled-harness-2026-08-13/1 : evidence {
+    title "Controlled searches reported required amplitude for every non-LLF DCT8x8 cell; all retained probes landed within 0.054 Butteraugli of targets 1.25, 2.0, or 2.75 and inside the 1..3 operating band."
+    state verified
+    result pass
+    method command
+    observed_at git:a7afc336449d5e427cd7934e7e877087cd432808
+    command "JPXL_CALIB_SIDE=256 JPXL_CALIB_TARGET_BA={1.25,2.0,2.75} cargo test --release -p jpxl-conformance --features perceptual --test perceptual_frequency controlled_{equal_coefficient,quantizer_normalised}_frequency_response -- --ignored --nocapture"
+    artifact ".agent/scratch/phase6-4-controlled-chroma-2026-08-13/matrix-summary.txt"
+    summary """
+        Controlled searches reported required amplitude for every non-LLF DCT8x8 cell; all retained probes landed within 0.054 Butteraugli of targets 1.25, 2.0, or 2.75 and inside the 1..3 operating band.
+        """
+}
+
+record jpegxl-rs.evidence.phase6-4-y-crosscheck-2026-08-13/1 : evidence {
+    title "At BA 2, controlled equal-error Y required-amplitude spreads were 2.55x and 2.87x, reproducing Phase 6.0's 2.65x; controlled step-normalized Y was 2.41x and 2.20x, not Phase 6.1's 1.86x. Y curves remained stable across images and BA 1.25..2.75 (Pearson r 0.904..0.962)."
+    state verified
+    result pass
+    method observation
+    observed_at git:a7afc336449d5e427cd7934e7e877087cd432808
+    artifact ".agent/scratch/phase6-4-controlled-chroma-2026-08-13/matrix-summary.txt"
+    summary """
+        At BA 2, controlled equal-error Y required-amplitude spreads were 2.55x and 2.87x, reproducing Phase 6.0's 2.65x; controlled step-normalized Y was 2.41x and 2.20x, not Phase 6.1's 1.86x. Y curves remained stable across images and BA 1.25..2.75 (Pearson r 0.904..0.962).
+        """
+}
+
 record jpegxl-rs.evidence.phase6-5-agreement-pass-2026-08-12/1 : evidence {
     title "Phase 6.5 agreement gate passes at median 1.41x, worst-interior 2.02x"
     state verified

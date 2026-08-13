@@ -2308,7 +2308,7 @@ record jpegxl-rs.work.arch-phase6-3-quantizer-normalised-y-distortion/1 : work {
 
 record jpegxl-rs.work.arch-phase6-4-chroma-controlled-operating-point/1 : work {
     title "Phase 6.4: measure chroma frequency response at a controlled operating point"
-    state proposed
+    state completed
     scope [ path "JPXL/crates/jpxl-conformance/tests/perceptual_frequency.rs" ]
     intent """
         Phase 6.1's X and B results (2.35x to 6.76x, 1.56x to 11.60x) are not a verdict on chroma. The amplitude ladder scales one constant by the channel's standard deviation, which is sound for Phase 6.0's constant shape but not for a step shape spanning 8.23x (X) or 20.67x (B): the highest-frequency injections land far outside any operating point the encoder reaches, and butteraugli's max-norm aggregation saturates there. The measurement cannot currently distinguish a real chroma mispricing from metric saturation.
@@ -2325,18 +2325,21 @@ record jpegxl-rs.work.arch-phase6-4-chroma-controlled-operating-point/1 : work {
                 X and B each get an explicit verdict on whether quantizer-normalised distortion should apply to them, or a stated reason why the question remains open.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.phase6-4-chroma-verdict-2026-08-13/1 ]
         }
         check controlled-amplitude {
             statement """
                 Each cell's amplitude is chosen so the realized butteraugli distance falls inside a stated target band, and the amplitude required is reported alongside the score so the weight is derived from injected energy at fixed perceptual cost rather than from a score that may have saturated.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase6-4-controlled-harness-2026-08-13/1 ]
         }
         check method-cross-checked {
             statement """
                 Y re-measured under the controlled-amplitude method is compared against Phase 6.0's 2.65x and Phase 6.1's 1.86x, and the record states whether the new method reproduces them and therefore whether the chroma numbers can be believed.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.phase6-4-y-crosscheck-2026-08-13/1 ]
         }
     }
     depends_on [ @jpegxl-rs.work.arch-phase6-1-quantizer-normalised-residual ]

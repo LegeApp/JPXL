@@ -5,7 +5,7 @@ build {
     tool "akr 0.3.1"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:45c61fe86fa2e81a696a04fdb587eb60abeb6f9da10dd76d996df4aff63bd885"
+    source_graph "sha256:9317ecf77d6896d117269f8da59a7a7dd3f327b55af6f4c33abc1959907310d4"
 }
 
 source ".akr/project.akr" {
@@ -29,8 +29,8 @@ source ".akr/records/jpegxl-rs/decisions.akr" {
 }
 
 source ".akr/records/jpegxl-rs/evidence.akr" {
-    hash "sha256:b5f73e4e272df5ea0a1aba54bc347f7635cff0c77d85a6c43f34475dde7adb73"
-    records 165
+    hash "sha256:944ce4575da8d043e90536f8dc212ef13dd337f70be79c27f7d72bcf21ae0a6b"
+    records 168
 }
 
 source ".akr/records/jpegxl-rs/milestones.akr" {
@@ -64,7 +64,7 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:d4b8997383f55aca9bd071bad1107efb5213ae0fb572f9e7840a293c22aa8dec"
+    hash "sha256:509137586bf2b259c0bd6f80d7407620b92e3090a99e8b1603cc8134ce64ad19"
     records 75
 }
 
@@ -1469,7 +1469,7 @@ resolution @jpegxl-rs.observation.transform-size-axis-is-not-the-deficit-2026-08
 resolution @jpegxl-rs.question.which-perceptual-weight-crosses-the-cleanroom-line/1 {
     slot blocks
     to @jpegxl-rs.work.arch-phase6-4-chroma-controlled-operating-point/1
-    hash "sha256:ed5ad5ecf4b58a2864d6f5e669c964e497b6737f4c6c95eb3f287a2e4359a8a6"
+    hash "sha256:66871bb8fbd73dbc769e7f3df69c9d98147b29cd04e324d8912af51329cf030d"
 }
 
 resolution @jpegxl-rs.question.which-perceptual-weight-crosses-the-cleanroom-line/1 {
@@ -1487,7 +1487,7 @@ resolution @jpegxl-rs.question.which-perceptual-weight-crosses-the-cleanroom-lin
 resolution @jpegxl-rs.question.which-perceptual-weight-crosses-the-cleanroom-line/2 {
     slot blocks
     to @jpegxl-rs.work.arch-phase6-4-chroma-controlled-operating-point/1
-    hash "sha256:ed5ad5ecf4b58a2864d6f5e669c964e497b6737f4c6c95eb3f287a2e4359a8a6"
+    hash "sha256:66871bb8fbd73dbc769e7f3df69c9d98147b29cd04e324d8912af51329cf030d"
 }
 
 resolution @jpegxl-rs.question.which-perceptual-weight-crosses-the-cleanroom-line/2 {
@@ -3656,6 +3656,21 @@ seal @jpegxl-rs.evidence.phase6-3-scorer-recomputation-2026-08-12/1 {
     hash "sha256:65e62cdc46be6783eff170f63d833e28280ab0e85d0711b84a5ba9cd14bc6802"
 }
 
+seal @jpegxl-rs.evidence.phase6-4-chroma-verdict-2026-08-13/1 {
+    state verified
+    hash "sha256:043253f91b05eb28f90f980c9ca29fb0846c8b24e526a161a3331851176a0a22"
+}
+
+seal @jpegxl-rs.evidence.phase6-4-controlled-harness-2026-08-13/1 {
+    state verified
+    hash "sha256:0bf65923e24b40a7a21736d2b679bad991e3bcbd92c52ea787dd555a31be511e"
+}
+
+seal @jpegxl-rs.evidence.phase6-4-y-crosscheck-2026-08-13/1 {
+    state verified
+    hash "sha256:2e5bedf83a86cd956e492bb375a87057e7977feae1ded1b05edd314262e9dbdb"
+}
+
 seal @jpegxl-rs.evidence.phase6-5-agreement-pass-2026-08-12/1 {
     state verified
     hash "sha256:1e7cd471cf2dc4692264c5e52d00e87c4143545ef91676ec1e745f2a6e04b432"
@@ -4584,6 +4599,11 @@ seal @jpegxl-rs.work.arch-phase6-3-frequency-weight-cover-objective/1 {
 seal @jpegxl-rs.work.arch-phase6-3-quantizer-normalised-y-distortion/1 {
     state superseded
     hash "sha256:6c04b2afb0c28d594eb1912e6b7314fe40ddbdfc8afea81822e2e5550a0d7a20"
+}
+
+seal @jpegxl-rs.work.arch-phase6-4-chroma-controlled-operating-point/1 {
+    state completed
+    hash "sha256:66871bb8fbd73dbc769e7f3df69c9d98147b29cd04e324d8912af51329cf030d"
 }
 
 seal @jpegxl-rs.work.arch-phase6-5-quant-donor-weight/1 {
