@@ -3,7 +3,7 @@ project jpegxl-rs
 
 record jpegxl-rs.work.arch-phase0-instrumentation/1 : work {
     title "Phase 0: encode diagnostics and thread-scaling counters"
-    state active
+    state completed
     intent """
         Instrument VarDCT plan stages (choose calls by cover/cfl_y/cfl_factor/final,
         stage wall times, candidate-forward and CfL sample memory proxies) and
@@ -18,6 +18,7 @@ record jpegxl-rs.work.arch-phase0-instrumentation/1 : work {
                 release binary for modular and vardct-fixed modes.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase0-diag-available-2026-08-13/1 ]
         }
         check twelve-mp-diag-logged {
             statement """
@@ -26,6 +27,7 @@ record jpegxl-rs.work.arch-phase0-instrumentation/1 : work {
                 path.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.phase0-12mp-thread-scaling-2026-08-13/1 ]
         }
     }
     implements [
@@ -46,7 +48,7 @@ record jpegxl-rs.work.arch-phase0-instrumentation/1 : work {
 
 record jpegxl-rs.work.arch-phase1-output-preserving/1 : work {
     title "Phase 1: output-preserving encode speed fixes"
-    state active
+    state completed
     intent """
         Output-preserving corrections from sources/outside-advice.md Phase 1:
         exact zero return and precomputed steps in HfQuantizer::choose; bounded
@@ -64,6 +66,7 @@ record jpegxl-rs.work.arch-phase1-output-preserving/1 : work {
                 """
             method command
             command "cd JPXL && cargo test -p jpxl-encode -p jpxl-encode-policy --lib --release"
+            verified_by [ @jpegxl-rs.evidence.phase1-default-paths-current-2026-08-13/1 ]
         }
         check plane-clone-down {
             statement """
@@ -71,6 +74,7 @@ record jpegxl-rs.work.arch-phase1-output-preserving/1 : work {
                 plan_for is far below the Phase-0 ~10GB (shared Arc path).
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.phase1-plane-clones-current-2026-08-13/1 ]
         }
     }
     implements [

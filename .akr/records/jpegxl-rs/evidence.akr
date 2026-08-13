@@ -490,6 +490,55 @@ record jpegxl-rs.evidence.performance-md-stub-at-head/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase0-12mp-thread-scaling-2026-08-13/1 : evidence {
+    title "On a 4000x3000 synthetic RGB frame, Modular measured 3729.8 ms serial versus 2074.1 ms auto (1.80x), while fixed VarDCT measured 2965.4 versus 2945.1 ms (1.01x). Fixed VarDCT reported 95,906,268 choose calls, 266,892,288 candidate-forward bytes, and 384,000,000 CfL sample bytes."
+    state verified
+    result pass
+    method observation
+    observed_at git:33a0dfd5869cc736c0bc5bde2154c3b7350de582
+    artifact ".agent/scratch/phase0-instrumentation-2026-08-13/12mp-diag.txt"
+    summary """
+        On a 4000x3000 synthetic RGB frame, Modular measured 3729.8 ms serial versus 2074.1 ms auto (1.80x), while fixed VarDCT measured 2965.4 versus 2945.1 ms (1.01x). Fixed VarDCT reported 95,906,268 choose calls, 266,892,288 candidate-forward bytes, and 384,000,000 CfL sample bytes.
+        """
+}
+
+record jpegxl-rs.evidence.phase0-diag-available-2026-08-13/1 : evidence {
+    title "Release jpxl bench printed residual_scans and plane_clone_bytes for Modular and choose_total with per-stage counts/times and memory proxies for fixed VarDCT; serial and auto fingerprints matched per mode."
+    state verified
+    result pass
+    method command
+    observed_at git:33a0dfd5869cc736c0bc5bde2154c3b7350de582
+    command "target/release/jpxl bench {modular,vardct-fixed} --width 4000 --height 3000 --iters 1 --diag --threads {1,auto}"
+    artifact ".agent/scratch/phase0-instrumentation-2026-08-13/12mp-diag.txt"
+    summary """
+        Release jpxl bench printed residual_scans and plane_clone_bytes for Modular and choose_total with per-stage counts/times and memory proxies for fixed VarDCT; serial and auto fingerprints matched per mode.
+        """
+}
+
+record jpegxl-rs.evidence.phase1-default-paths-current-2026-08-13/1 : evidence {
+    title "All 128 jpxl-encode and 91 jpxl-encode-policy release library tests passed, including deterministic effort, scalar/SIMD choose identity, multi-section Modular thread identity, fixed/default quantizer identity, and multi-group VarDCT thread identity."
+    state verified
+    result pass
+    method command
+    observed_at git:33a0dfd5869cc736c0bc5bde2154c3b7350de582
+    command "cargo test --manifest-path JPXL/Cargo.toml -p jpxl-encode -p jpxl-encode-policy --lib --release"
+    summary """
+        All 128 jpxl-encode and 91 jpxl-encode-policy release library tests passed, including deterministic effort, scalar/SIMD choose identity, multi-section Modular thread identity, fixed/default quantizer identity, and multi-group VarDCT thread identity.
+        """
+}
+
+record jpegxl-rs.evidence.phase1-plane-clones-current-2026-08-13/1 : evidence {
+    title "A 4000x3000 RGB Modular encode reported plane_clone_bytes=144,000,000, exactly one three-plane i32 payload rather than a deep clone per planning trial; serial and auto output fingerprints were identical."
+    state verified
+    result pass
+    method observation
+    observed_at git:33a0dfd5869cc736c0bc5bde2154c3b7350de582
+    artifact ".agent/scratch/phase0-instrumentation-2026-08-13/12mp-diag.txt"
+    summary """
+        A 4000x3000 RGB Modular encode reported plane_clone_bytes=144,000,000, exactly one three-plane i32 payload rather than a deep clone per planning trial; serial and auto output fingerprints were identical.
+        """
+}
+
 record jpegxl-rs.evidence.phase2-analytic-cfl-regressed-correctness/1 : evidence {
     title "Closed-form HF CfL factor selection from 3 sufficient stats regressed correctness twice; reverted to exact-oracle scoring over a narrower window"
     state verified

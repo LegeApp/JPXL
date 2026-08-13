@@ -5,7 +5,7 @@ build {
     tool "akr 0.3.1"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:9317ecf77d6896d117269f8da59a7a7dd3f327b55af6f4c33abc1959907310d4"
+    source_graph "sha256:eabc12cce103a31a430dde2667fe70bfc2f8dc6852eecfc6b6fb6f9f3f86a3d1"
 }
 
 source ".akr/project.akr" {
@@ -29,8 +29,8 @@ source ".akr/records/jpegxl-rs/decisions.akr" {
 }
 
 source ".akr/records/jpegxl-rs/evidence.akr" {
-    hash "sha256:944ce4575da8d043e90536f8dc212ef13dd337f70be79c27f7d72bcf21ae0a6b"
-    records 168
+    hash "sha256:89194f3ce125aed9ea3d8388b5e1e1312483346be8cd0d0dee09357c91b4f3c2"
+    records 172
 }
 
 source ".akr/records/jpegxl-rs/milestones.akr" {
@@ -64,7 +64,7 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:509137586bf2b259c0bd6f80d7407620b92e3090a99e8b1603cc8134ce64ad19"
+    hash "sha256:1f64c0ff821a89a4f9b37a9c6740afbc961e94fffb200df27cd3da1ae58a1385"
     records 75
 }
 
@@ -3161,6 +3161,26 @@ seal @jpegxl-rs.evidence.performance-md-stub-at-head/1 {
     hash "sha256:b3df9def5053956b566273a4f2d4e3545cbf0df276d26683db48f272e4aa5d3e"
 }
 
+seal @jpegxl-rs.evidence.phase0-12mp-thread-scaling-2026-08-13/1 {
+    state verified
+    hash "sha256:8d974cdcb86bd41173a6fb843649ce3df93ac393910a27753354d12724e6dba3"
+}
+
+seal @jpegxl-rs.evidence.phase0-diag-available-2026-08-13/1 {
+    state verified
+    hash "sha256:d79a91aa4361897ce792abad50d1ccc9647ea228aa5bcd622e896e8185cacf12"
+}
+
+seal @jpegxl-rs.evidence.phase1-default-paths-current-2026-08-13/1 {
+    state verified
+    hash "sha256:46ee6be7f4ec1030d2ab7135448af4277da78e5d5588b6e12121ef6a0b23d98d"
+}
+
+seal @jpegxl-rs.evidence.phase1-plane-clones-current-2026-08-13/1 {
+    state verified
+    hash "sha256:b3d91d5244feed5e06280cc33a273f80a5d05c69f825eb7b1de3ef15fe23fa8c"
+}
+
 seal @jpegxl-rs.evidence.phase2-analytic-cfl-regressed-correctness/1 {
     state verified
     hash "sha256:38b8ecb1596314cdbfd0f324477bea1720f4dbc352773adb17fbbafd87a838d3"
@@ -4362,13 +4382,13 @@ seal @jpegxl-rs.question.which-perceptual-weight-crosses-the-cleanroom-line/2 {
 }
 
 seal @jpegxl-rs.work.arch-phase0-instrumentation/1 {
-    state active
-    hash "sha256:156c05d501906a814e3766c441d901349c9b1a606d368a9ec0e9310d09d97e34"
+    state completed
+    hash "sha256:790307aa3799f54a4d32c0fe4cf3a07585682472d8a897a57eb14abac55bd072"
 }
 
 seal @jpegxl-rs.work.arch-phase1-output-preserving/1 {
-    state active
-    hash "sha256:cd107169f9c63ff00f8cedacc1f0bbb19342e823e6a8d9e88cd851b3234f922a"
+    state completed
+    hash "sha256:98d5d4ea74f34589b209b410a2072f841a0fab835f87a1a8741583ff9984ae36"
 }
 
 seal @jpegxl-rs.work.arch-phase2-cfl-quant/1 {
