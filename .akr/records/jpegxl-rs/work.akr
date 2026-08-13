@@ -2770,7 +2770,7 @@ record jpegxl-rs.work.arch-phase7-2-lambda-calibration/1 : work {
 
 record jpegxl-rs.work.arch-phase8-0-search-amplification/1 : work {
     title "Phase 8.0: expose target-rate search and writer amplification"
-    state active
+    state completed
     scope [
         path "JPXL/crates/jpxl-cli/src/main.rs",
         path "JPXL/crates/jpxl-encode-policy/src/diagnostics.rs",
@@ -2788,18 +2788,21 @@ record jpegxl-rs.work.arch-phase8-0-search-amplification/1 : work {
                 jpxl bench vardct-rate --diag reports search-scoped Fast/Full plan, entropy, writer, section, pool, and candidate-cache multiplicity plus derived search and writer amplification.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase8-0-aggregate-diagnostics/1 ]
         }
         check baseline-recorded {
             statement """
                 Scratch evidence records representative 0.8 MP, 4 MP, and 12 MP rate-search amplification across requested rates, content classes, and thread modes with provenance and resource measurements.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.phase8-0-stratified-baseline/1 ]
         }
         check output-identical {
             statement """
                 Instrumentation-disabled production output, fingerprints, decoded pixels, and libjxl-relative quality matrix are identical before and after.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase8-0-output-identity/1 ]
         }
     }
     implements [

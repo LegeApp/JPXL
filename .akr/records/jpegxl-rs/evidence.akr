@@ -2022,6 +2022,57 @@ record jpegxl-rs.evidence.phase7-2-sweep-run-2026-08-12/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase8-0-aggregate-diagnostics/1 : evidence {
+    title "Phase 8.0 aggregate diagnostics are phase-attributed"
+    state verified
+    result pass
+    method command
+    observed_at git:8cd4ae816418dfae11ba338f0838ec2b3bec2743
+    command "RESUME=1 bash .agent/scratch/phase8-aggregate-instrumentation-2026-08-13/run-matrix.sh"
+    artifact ".agent/scratch/phase8-aggregate-instrumentation-2026-08-13/matrix.txt"
+    summary """
+        The 12-cell bench emitted Fast/Full plan, entropy, Count/Store, section, pool, candidate-cache, and derived amplification telemetry; production and diagnostic fingerprints agreed in all 12 cells.
+        """
+}
+
+record jpegxl-rs.evidence.phase8-0-output-identity/1 : evidence {
+    title "Phase 8.0 preserves bitstreams and libjxl-relative quality"
+    state verified
+    result pass
+    method command
+    observed_at git:8cd4ae816418dfae11ba338f0838ec2b3bec2743
+    command ".agent/scratch/phase6-4-controlled-chroma-2026-08-13/oracle-relative.sh"
+    artifact ".agent/scratch/phase8-aggregate-instrumentation-2026-08-13-post-relative-final.txt"
+    summary """
+        All 12 production/diagnostic cell byte counts and fingerprints matched. The final post-change four-cell JPXL/cjxl size and RMSE/PSNR/SSIMULACRA2/Butteraugli matrix exactly matched the pre-change matrix after excluding timing and executable hashes.
+        """
+}
+
+record jpegxl-rs.evidence.phase8-0-stratified-baseline/1 : evidence {
+    title "Phase 8.0 stratified amplification baseline"
+    state verified
+    result pass
+    method observation
+    observed_at git:8cd4ae816418dfae11ba338f0838ec2b3bec2743
+    artifact ".agent/scratch/phase8-aggregate-instrumentation-2026-08-13/matrix.txt"
+    summary """
+        Across 0.8, 4.3, and 12 MP photo/low-detail/noise/line cells at 0.5/1/2/4 bpp and serial/4-thread modes, production search amplification ranged 24.239x to 867.770x and writer traversal amplification 6x to 154x; the 12 MP photo anchor was 316.214 s median, 4.172 s MAD, 867.770x search, 139x writer, and 1,365,428 KiB peak RSS.
+        """
+}
+
+record jpegxl-rs.evidence.phase8-0-verification-gates/1 : evidence {
+    title "Phase 8.0 build and test gates"
+    state verified
+    result pass
+    method command
+    observed_at git:8cd4ae816418dfae11ba338f0838ec2b3bec2743
+    command "cargo build --workspace && cargo test --workspace && cargo fmt --all --check"
+    artifact ".agent/scratch/phase8-aggregate-instrumentation-2026-08-13-clippy.txt"
+    summary """
+        Workspace build, workspace tests, formatting, release encoder/policy suites, the cover-prune regression, and scoped changed-crate clippy passed. Strict workspace clippy remains blocked by 70 pre-existing unchanged jpxl-core indexing_slicing/excessive_precision errors.
+        """
+}
+
 record jpegxl-rs.evidence.retire-handoff-durable-facts-2026-08-11/1 : evidence {
     title "HANDOFF permanent facts are represented in AKR"
     state verified
