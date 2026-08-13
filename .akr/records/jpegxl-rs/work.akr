@@ -2822,7 +2822,7 @@ record jpegxl-rs.work.arch-phase8-0-search-amplification/1 : work {
 
 record jpegxl-rs.work.arch-phase8-1-persistent-executor/1 : work {
     title "Phase 8.1: persistent executor and parallel exact pricing"
-    state active
+    state completed
     scope [
         path "JPXL/crates/jpxl-encode-policy/**",
         path "JPXL/crates/jpxl-encode/src/resources.rs",
@@ -2837,12 +2837,14 @@ record jpegxl-rs.work.arch-phase8-1-persistent-executor/1 : work {
                 Serial and multicore Count/Store paths produce identical sizing and codestream bytes.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase8-1-contract-a/1 ]
         }
         check end-to-end-win {
             statement """
                 Interleaved target-rate benchmarks show an end-to-end median improvement without CPU oversubscription.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.phase8-1-interleaved-speed/1 ]
         }
     }
     depends_on [ @jpegxl-rs.work.arch-phase8-0-search-amplification ]

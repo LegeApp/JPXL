@@ -2073,6 +2073,70 @@ record jpegxl-rs.evidence.phase8-0-verification-gates/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase8-1-contract-a/1 : evidence {
+    title "Phase 8.1 executor width preserves Contract A"
+    state verified
+    result pass
+    method command
+    observed_at git:e93b5e6d22d5e028eff05c034f2b7dea486f7bc3
+    command "cargo test -p jpxl-encode-policy --release target_rate_is_byte_identical_across_executor_widths -- --nocapture && cargo test -p jpxl-encode persistent_executor_builds_one_pool_for_several_maps -- --nocapture"
+    artifact ".agent/scratch/phase8-1-persistent-executor-2026-08-13"
+    summary """
+        Serial and four-worker target-rate searches produced identical codestream bytes, sizing, chosen quantizer and trace; repeated maps on one executor recorded exactly one pool build.
+        """
+}
+
+record jpegxl-rs.evidence.phase8-1-count-attribution/1 : evidence {
+    title "Phase 8.1 exact Count attribution"
+    state verified
+    result pass
+    method observation
+    observed_at git:e93b5e6d22d5e028eff05c034f2b7dea486f7bc3
+    artifact ".agent/scratch/phase8-1-persistent-executor-2026-08-13/large-noise-diag-post.txt"
+    summary """
+        On the 4000x3000 noise cell, Fast plus Full Count time fell from 18,205.5 ms to 10,201.3 ms (44.0%) while pool builds fell from twelve Full builds to one request-scoped Fast build; output size and fingerprint were unchanged.
+        """
+}
+
+record jpegxl-rs.evidence.phase8-1-interleaved-speed/1 : evidence {
+    title "Phase 8.1 interleaved A/B speed win"
+    state verified
+    result pass
+    method command
+    observed_at git:e93b5e6d22d5e028eff05c034f2b7dea486f7bc3
+    command ".agent/scratch/phase8-1-persistent-executor-2026-08-13/run-ab.sh"
+    artifact ".agent/scratch/phase8-1-persistent-executor-2026-08-13"
+    summary """
+        Pinned six-core interleaved A/B medians improved 2.552% at 1024x768, 9.444% at 2400x1800, and 15.410% at 4000x3000; all paired outputs were byte-identical and median CPU remained 107-125% with a four-thread cap.
+        """
+}
+
+record jpegxl-rs.evidence.phase8-1-libjxl-relative/1 : evidence {
+    title "Phase 8.1 libjxl-relative quality parity preserved"
+    state verified
+    result pass
+    method command
+    observed_at git:e93b5e6d22d5e028eff05c034f2b7dea486f7bc3
+    command ".agent/scratch/phase6-4-controlled-chroma-2026-08-13/oracle-relative.sh"
+    artifact ".agent/scratch/phase8-1-persistent-executor-2026-08-13-post-relative.txt"
+    summary """
+        Pre/post oracle-relative normalization was identical across all four controlled cells: JPXL sizes, SSIMULACRA2 and Butteraugli were unchanged while the same libjxl black-box comparison remained available.
+        """
+}
+
+record jpegxl-rs.evidence.phase8-1-workspace-gates/1 : evidence {
+    title "Phase 8.1 workspace and scoped lint gates"
+    state verified
+    result pass
+    method command
+    observed_at git:e93b5e6d22d5e028eff05c034f2b7dea486f7bc3
+    command "cargo build --workspace && cargo test --workspace && cargo fmt --all --check; cargo clippy -p jpxl-encode -p jpxl-encode-policy -p jpxl-cli --all-targets -- -D warnings [established project lint allowances]"
+    artifact ".agent/scratch/phase8-1-persistent-executor-2026-08-13-clippy.txt"
+    summary """
+        Workspace build, full tests and formatting passed; touched encode, policy and CLI crates passed scoped clippy. Strict workspace clippy remains stopped by the unchanged 70-warning jpxl-core baseline.
+        """
+}
+
 record jpegxl-rs.evidence.retire-handoff-durable-facts-2026-08-11/1 : evidence {
     title "HANDOFF permanent facts are represented in AKR"
     state verified
