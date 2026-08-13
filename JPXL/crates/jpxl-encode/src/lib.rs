@@ -77,7 +77,7 @@ use section::SectionStore;
 
 pub use error::{EncodeError, Result};
 pub use lossless::Effort;
-pub use resources::{EncodeResources, ParallelAxis};
+pub use resources::{EncodeExecutor, EncodeResources, ParallelAxis};
 
 /// The largest bit depth this encoder writes (18181-1 D.7 carries more; the
 /// modular residual range and the CLI's Netpbm I/O both stop at 16).

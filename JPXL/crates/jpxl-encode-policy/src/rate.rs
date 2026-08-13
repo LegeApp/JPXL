@@ -61,7 +61,7 @@
 use jpxl_encode::vardct::ids::{GlobalScale, HfMul, MAX_GLOBAL_SCALE, QuantLf};
 use jpxl_encode::vardct::size::CodestreamSizing;
 use jpxl_encode::vardct::{
-    Emission, ValidatedEmissionPlan, emit_codestream_with, price_codestream,
+    Emission, ValidatedEmissionPlan, emit_codestream_with_executor, price_codestream_with,
 };
 
 use crate::error::{PolicyError, Result};
@@ -759,13 +759,15 @@ impl<F: FnMut(QuantizerChoice) -> Result<u64>> Search<F> {
 /// Persistent state shared across every quantizer probe of one rate search.
 ///
 /// This is the Opt-V2 `PreparedSearch` split: geometry, preconditioned frame,
-/// analysis, and the candidate-forward cache live here. Per-probe work
-/// (quantizers, cover rescoring, CfL, entropy, emission) does not rebuild them.
+/// analysis, candidate-forward cache, and request-scoped executor live here.
+/// Per-probe work (quantizers, cover rescoring, CfL, entropy, emission) does
+/// not rebuild them.
 struct PreparedSearch<'a> {
     frame: &'a crate::PreparedFrame,
     transform_frame: &'a crate::PreparedFrame,
     atlas: &'a crate::AnalysisAtlas,
     request: &'a EncodeRequest,
+    executor: &'a jpxl_encode::EncodeExecutor,
     fwd_cache: CandidateForwardCache,
     stats: RateProbeStats,
 }
@@ -790,6 +792,7 @@ impl<'a> PreparedSearch<'a> {
                     quantizer,
                     &mut self.fwd_cache,
                     entropy,
+                    Some(self.executor),
                 )
             })
         })
@@ -857,11 +860,15 @@ pub fn search_frame(
     } else {
         frame
     };
+    let executor = diagnostics::with_search_phase(diagnostics::SearchDiagnosticPhase::Fast, || {
+        request.resources.executor()
+    });
     let mut prepared = PreparedSearch {
         frame,
         transform_frame,
         atlas,
         request,
+        executor: &executor,
         fwd_cache: CandidateForwardCache::new(),
         stats,
     };
@@ -888,7 +895,7 @@ pub fn search_frame(
                 diagnostics::with_search_phase(diagnostics::SearchDiagnosticPhase::Fast, || {
                     diagnostics::with_count_kind(
                         jpxl_encode::vardct::diagnostics::CountEmissionKind::Outer,
-                        || price_codestream(&plan),
+                        || price_codestream_with(&plan, prepared.executor),
                     )
                 })?;
             prepared.stats.fast_prices = prepared.stats.fast_prices.saturating_add(1);
@@ -939,7 +946,7 @@ pub fn search_frame(
                     || {
                         diagnostics::with_count_kind(
                             jpxl_encode::vardct::diagnostics::CountEmissionKind::Outer,
-                            || price_codestream(&plan),
+                            || price_codestream_with(&plan, prepared.executor),
                         )
                     },
                 ) else {
@@ -1002,7 +1009,7 @@ pub fn search_frame(
             // Finalist Full emits use the request's EncodeResources (parallel groups).
             let emission =
                 diagnostics::with_search_phase(diagnostics::SearchDiagnosticPhase::Full, || {
-                    emit_codestream_with(&plan, prepared.request.resources)
+                    emit_codestream_with_executor(&plan, prepared.executor)
                 })?;
             prepared.stats.full_prices = prepared.stats.full_prices.saturating_add(1);
             let bytes = emission.sizing.total;

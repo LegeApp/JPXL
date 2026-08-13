@@ -153,6 +153,7 @@ pub fn measure_winner_stability(
             quantizer,
             &mut cache,
             EntropySearch::Fast,
+            None,
         )?;
         covers.push(ProbeCover {
             quantizer,

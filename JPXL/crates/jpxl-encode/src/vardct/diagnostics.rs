@@ -217,6 +217,7 @@ pub(crate) fn note_sections(total: usize, lf: usize, pass_groups: usize) {
     });
 }
 
+#[cfg(any(feature = "parallel", test))]
 pub(crate) fn note_pool_build(elapsed_ns: u64) {
     update(|diagnostics| {
         diagnostics.executor_pool_builds = diagnostics.executor_pool_builds.saturating_add(1);

@@ -226,6 +226,7 @@ pub(crate) fn plan_at(
         None,
         &mut cache,
         EntropySearch::Full,
+        None,
     )
 }
 
@@ -239,6 +240,7 @@ pub(crate) fn plan_at_on(
     quantizer: QuantizerChoice,
     cache: &mut CandidateForwardCache,
     entropy: EntropySearch,
+    executor: Option<&jpxl_encode::EncodeExecutor>,
 ) -> Result<ValidatedEmissionPlan> {
     plan_at_with_cfl(
         frame,
@@ -249,6 +251,7 @@ pub(crate) fn plan_at_on(
         Some(transform_frame),
         cache,
         entropy,
+        executor,
     )
 }
 
@@ -273,6 +276,7 @@ fn plan_at_with_cfl(
     transform_override: Option<&PreparedFrame>,
     cache: &mut CandidateForwardCache,
     entropy_search: EntropySearch,
+    executor: Option<&jpxl_encode::EncodeExecutor>,
 ) -> Result<ValidatedEmissionPlan> {
     // Phase-0: one clean snapshot per plan_at (rate probes overwrite; last wins).
     diagnostics::reset_encode_diag();
@@ -505,7 +509,7 @@ fn plan_at_with_cfl(
     // Slice 18 / 18b: train under the default I.2.2 map, then optionally
     // adopt custom coefficient orders on an exact price win (Full only).
     let with_default = diagnostics::time_stage(diagnostics::StageTimer::Entropy, || {
-        train_entropy_with_orders(provisional.clone(), &geometry, entropy_search)
+        train_entropy_with_orders(provisional.clone(), &geometry, entropy_search, executor)
     })?;
 
     // Fast rate probes stop here: default map + natural orders is an upper
@@ -528,10 +532,10 @@ fn plan_at_with_cfl(
         let mut custom_walk = provisional.clone();
         custom_walk.entropy = entropy_plan(&geometry, placeholder_histograms(), candidate_bc)?;
         let with_custom = diagnostics::time_stage(diagnostics::StageTimer::Entropy, || {
-            train_entropy_with_orders(custom_walk, &geometry, EntropySearch::Full)
+            train_entropy_with_orders(custom_walk, &geometry, EntropySearch::Full, executor)
         })?;
-        let best_size = internal_price_total(&best)?;
-        let custom_size = internal_price_total(&with_custom)?;
+        let best_size = internal_price_total(&best, executor)?;
+        let custom_size = internal_price_total(&with_custom, executor)?;
         if custom_size < best_size {
             best = with_custom;
         }
@@ -563,10 +567,10 @@ fn plan_at_with_cfl(
             // rebuilds them from the multi-offset census.
         }
         if let Ok(with_presets) = diagnostics::time_stage(diagnostics::StageTimer::Entropy, || {
-            train_entropy_with_orders(multi, &geometry, EntropySearch::Full)
+            train_entropy_with_orders(multi, &geometry, EntropySearch::Full, executor)
         }) {
-            let best_size = internal_price_total(&best)?;
-            let multi_size = internal_price_total(&with_presets)?;
+            let best_size = internal_price_total(&best, executor)?;
+            let multi_size = internal_price_total(&with_presets, executor)?;
             if multi_size < best_size {
                 best = with_presets;
             }
@@ -577,10 +581,20 @@ fn plan_at_with_cfl(
 }
 
 /// Exact Count price used only to compare alternatives inside one Full plan.
-fn internal_price_total(plan: &ValidatedEmissionPlan) -> Result<u64> {
+fn internal_price_total(
+    plan: &ValidatedEmissionPlan,
+    executor: Option<&jpxl_encode::EncodeExecutor>,
+) -> Result<u64> {
     diagnostics::with_count_kind(
         jpxl_encode::vardct::diagnostics::CountEmissionKind::Internal,
-        || Ok(jpxl_encode::vardct::price_codestream(plan)?.total),
+        || {
+            let sizing = if let Some(executor) = executor {
+                jpxl_encode::vardct::price_codestream_with(plan, executor)?
+            } else {
+                jpxl_encode::vardct::price_codestream(plan)?
+            };
+            Ok(sizing.total)
+        },
     )
 }
 
@@ -605,13 +619,13 @@ fn price_default_and_custom(
         SectionLayout::for_geometry(geometry),
     );
     let with_default =
-        train_entropy_with_orders(provisional.clone(), geometry, EntropySearch::Full)?;
+        train_entropy_with_orders(provisional.clone(), geometry, EntropySearch::Full, None)?;
     let mut custom_walk = provisional;
     custom_walk.entropy = entropy_plan(geometry, placeholder_histograms(), candidate)?;
-    let with_custom = train_entropy_with_orders(custom_walk, geometry, EntropySearch::Full)?;
+    let with_custom = train_entropy_with_orders(custom_walk, geometry, EntropySearch::Full, None)?;
     Ok((
-        internal_price_total(&with_default)?,
-        internal_price_total(&with_custom)?,
+        internal_price_total(&with_default, None)?,
+        internal_price_total(&with_custom, None)?,
     ))
 }
 
@@ -621,6 +635,7 @@ fn train_entropy_with_orders(
     provisional: EmissionPlan,
     geometry: &VardctGeometry,
     entropy_search: EntropySearch,
+    executor: Option<&jpxl_encode::EncodeExecutor>,
 ) -> Result<ValidatedEmissionPlan> {
     let block_context = provisional.entropy.block_context.clone();
     let num_hf_presets = provisional.entropy.num_hf_presets;
@@ -679,8 +694,8 @@ fn train_entropy_with_orders(
         sections: reordered_walk.sections,
     })?;
 
-    let natural_size = internal_price_total(&natural)?;
-    let reordered_size = internal_price_total(&reordered)?;
+    let natural_size = internal_price_total(&natural, executor)?;
+    let reordered_size = internal_price_total(&reordered, executor)?;
     Ok(if reordered_size < natural_size {
         reordered
     } else {
@@ -2863,6 +2878,18 @@ mod tests {
             serial, auto,
             "Contract A: EncodeResources::auto must match serial emission"
         );
+        let frame = PreparedFrame::from_srgb8(width, height, &rgb).expect("frame");
+        let plan = plan_frame(&frame, &request).expect("plan");
+        let serial_executor = jpxl_encode::EncodeResources::serial().executor();
+        let parallel_executor = jpxl_encode::EncodeResources::groups(4).executor();
+        let serial_sizing =
+            jpxl_encode::vardct::price_codestream_with(&plan, &serial_executor).expect("prices");
+        let parallel_sizing =
+            jpxl_encode::vardct::price_codestream_with(&plan, &parallel_executor).expect("prices");
+        assert_eq!(
+            serial_sizing, parallel_sizing,
+            "Contract A: Count sizing must not depend on executor width"
+        );
         let image = decode(&serial, &Limits::default()).expect("decodes");
         assert_eq!((image.width, image.height), (width, height));
     }
@@ -2911,6 +2938,7 @@ mod tests {
             None,
             &mut cache,
             EntropySearch::Full,
+            None,
         )
         .expect("a legal plan");
         jpxl_encode::vardct::write_codestream(&plan).expect("encodes")
@@ -3005,6 +3033,7 @@ mod tests {
             None,
             &mut cache,
             EntropySearch::Full,
+            None,
         )
         .expect("a legal plan");
         let non_neutral_lf = plan.plan().spatial.lf.correlation != LfCorrelationDecision::default();

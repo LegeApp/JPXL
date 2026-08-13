@@ -400,8 +400,9 @@ pub struct EncodeRequest {
     pub lambda_scale: f32,
     /// Coarse section-parallelism policy for emission (Opt-P).
     ///
-    /// Default is [`jpxl_encode::EncodeResources::auto`]. Rate-loop intermediate
-    /// prices stay serial for predictability; Final Full emits use this budget.
+    /// Default is [`jpxl_encode::EncodeResources::auto`]. The target-rate path
+    /// builds one request-scoped executor and reuses this budget for exact
+    /// Count pricing and the final Full Store emission.
     pub resources: jpxl_encode::EncodeResources,
 }
 

@@ -131,6 +131,26 @@ fn default_size(width: u32, height: u32, source: &[u8]) -> u64 {
 }
 
 #[test]
+fn target_rate_is_byte_identical_across_executor_widths() {
+    let (width, height) = (300u32, 260u32);
+    let source = test_image(width, height);
+    let target = RateTarget::BitsPerPixel(1.0);
+    let mut serial_request = EncodeRequest::for_target(target);
+    serial_request.resources = jpxl_encode::EncodeResources::serial();
+    let mut parallel_request = serial_request;
+    parallel_request.resources = jpxl_encode::EncodeResources::groups(4);
+
+    let serial = encode_srgb8_to_target(width, height, &source, &serial_request, target)
+        .expect("serial target-rate search");
+    let parallel = encode_srgb8_to_target(width, height, &source, &parallel_request, target)
+        .expect("parallel target-rate search");
+    assert_eq!(serial.codestream, parallel.codestream);
+    assert_eq!(serial.sizing, parallel.sizing);
+    assert_eq!(serial.chosen, parallel.chosen);
+    assert_eq!(serial.trace, parallel.trace);
+}
+
+#[test]
 fn every_rung_hits_every_target_from_below() {
     for rung in ladder() {
         let source = test_image(rung.width, rung.height);

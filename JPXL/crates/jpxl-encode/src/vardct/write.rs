@@ -283,7 +283,23 @@ pub fn write_codestream_with(
 ///
 /// As [`emit_codestream`].
 pub fn price_codestream(plan: &ValidatedEmissionPlan) -> Result<CodestreamSizing> {
-    Ok(emit_codestream_mode(plan, EmitMode::Count, crate::EncodeResources::serial())?.sizing)
+    let executor = crate::EncodeResources::serial().executor();
+    price_codestream_with(plan, &executor)
+}
+
+/// Exact count-only size using a caller-owned executor.
+///
+/// This is the target-rate path: the same request-scoped worker pool is
+/// reused across every candidate Count and the final Store emission.
+///
+/// # Errors
+///
+/// As [`price_codestream`].
+pub fn price_codestream_with(
+    plan: &ValidatedEmissionPlan,
+    executor: &crate::EncodeExecutor,
+) -> Result<CodestreamSizing> {
+    Ok(emit_codestream_mode(plan, EmitMode::Count, executor)?.sizing)
 }
 
 /// Whether section bodies and the final codestream buffer are retained.
@@ -318,20 +334,33 @@ pub fn emit_codestream_with(
     plan: &ValidatedEmissionPlan,
     resources: crate::EncodeResources,
 ) -> Result<Emission> {
-    emit_codestream_mode(plan, EmitMode::Store, resources)
+    let executor = resources.executor();
+    emit_codestream_with_executor(plan, &executor)
+}
+
+/// Stored emission using a caller-owned request-scoped executor.
+///
+/// # Errors
+///
+/// As [`emit_codestream`].
+pub fn emit_codestream_with_executor(
+    plan: &ValidatedEmissionPlan,
+    executor: &crate::EncodeExecutor,
+) -> Result<Emission> {
+    emit_codestream_mode(plan, EmitMode::Store, executor)
 }
 
 fn emit_codestream_mode(
     plan: &ValidatedEmissionPlan,
     mode: EmitMode,
-    resources: crate::EncodeResources,
+    executor: &crate::EncodeExecutor,
 ) -> Result<Emission> {
     match mode {
         EmitMode::Count => {
-            diagnostics::time_count_emission(|| emit_codestream_mode_inner(plan, mode, resources))
+            diagnostics::time_count_emission(|| emit_codestream_mode_inner(plan, mode, executor))
         }
         EmitMode::Store => {
-            diagnostics::time_stored_emission(|| emit_codestream_mode_inner(plan, mode, resources))
+            diagnostics::time_stored_emission(|| emit_codestream_mode_inner(plan, mode, executor))
         }
     }
 }
@@ -339,7 +368,7 @@ fn emit_codestream_mode(
 fn emit_codestream_mode_inner(
     plan: &ValidatedEmissionPlan,
     mode: EmitMode,
-    resources: crate::EncodeResources,
+    executor: &crate::EncodeExecutor,
 ) -> Result<Emission> {
     let inner = plan.plan();
     check_supported(inner)?;
@@ -362,7 +391,7 @@ fn emit_codestream_mode_inner(
     )?;
     let frame_header_bits = w.bit_len() - image_headers * 8;
 
-    let store = write_frame_body(inner, &geometry, mode, resources)?;
+    let store = write_frame_body(inner, &geometry, mode, executor)?;
     let lengths = store.lengths();
     let before_toc = w.bit_len();
     store.write(&mut w)?;
@@ -420,7 +449,7 @@ fn write_frame_body(
     plan: &EmissionPlan,
     geometry: &VardctGeometry,
     mode: EmitMode,
-    resources: crate::EncodeResources,
+    executor: &crate::EncodeExecutor,
 ) -> Result<SectionStore> {
     let orders = OrderTables::from_order_set(
         &plan
@@ -465,8 +494,7 @@ fn write_frame_body(
         section_result(mode, |w| write_lf_global(plan, w))?,
     );
 
-    let lf_workers = resources.workers_for(n_lf);
-    let lf_parts = crate::resources::ordered_map(n_lf, lf_workers, |index| {
+    let lf_parts = crate::resources::ordered_map_with(n_lf, executor, |index| {
         let id = LfGroupId::new(u32::try_from(index).unwrap_or(u32::MAX));
         section_result(mode, |w| write_lf_group(plan, geometry, id, w))
     })?;
@@ -480,8 +508,7 @@ fn write_frame_body(
         section_result(mode, |w| write_hf_global(plan, geometry, &tables, w))?,
     );
 
-    let pg_workers = resources.workers_for(n_pg);
-    let pg_parts = crate::resources::ordered_map(n_pg, pg_workers, |group| {
+    let pg_parts = crate::resources::ordered_map_with(n_pg, executor, |group| {
         let group = u64::try_from(group).unwrap_or(u64::MAX);
         section_result(mode, |w| {
             write_pass_group(plan, geometry, &orders, &tables, group, w)

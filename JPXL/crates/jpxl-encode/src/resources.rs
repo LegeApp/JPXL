@@ -17,6 +17,25 @@
 
 use core::num::NonZeroUsize;
 
+/// Request-scoped owner of the worker infrastructure used by an encode.
+///
+/// Construct this once, then reuse it across Count and Store emissions. The
+/// fixed-index collection in [`ordered_map_with`] keeps output independent of
+/// scheduling and worker count.
+pub struct EncodeExecutor {
+    resources: EncodeResources,
+    #[cfg(feature = "parallel")]
+    pool: Option<rayon::ThreadPool>,
+}
+
+impl core::fmt::Debug for EncodeExecutor {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("EncodeExecutor")
+            .field("resources", &self.resources)
+            .finish_non_exhaustive()
+    }
+}
+
 /// Which coarse axis may use more than one worker.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ParallelAxis {
@@ -108,6 +127,58 @@ impl EncodeResources {
     pub fn parallel_groups(self) -> bool {
         matches!(self.axis, ParallelAxis::Groups) && self.threads > 1
     }
+
+    /// Builds one executor for an encode request.
+    #[must_use]
+    pub fn executor(self) -> EncodeExecutor {
+        EncodeExecutor::new(self)
+    }
+}
+
+impl EncodeExecutor {
+    /// Builds the worker pool once for this executor.
+    #[must_use]
+    pub fn new(resources: EncodeResources) -> Self {
+        #[cfg(feature = "parallel")]
+        {
+            let pool_started = crate::vardct::diagnostics::enabled().then(std::time::Instant::now);
+            let pool = resources
+                .parallel_groups()
+                .then(|| {
+                    rayon::ThreadPoolBuilder::new()
+                        .num_threads(resources.threads)
+                        .build()
+                        .ok()
+                })
+                .flatten();
+            if pool.is_some()
+                && let Some(pool_started) = pool_started
+            {
+                crate::vardct::diagnostics::note_pool_build(
+                    u64::try_from(pool_started.elapsed().as_nanos()).unwrap_or(u64::MAX),
+                );
+            }
+            Self { resources, pool }
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            Self { resources }
+        }
+    }
+
+    /// Resource policy this executor was built from.
+    #[must_use]
+    pub const fn resources(&self) -> EncodeResources {
+        self.resources
+    }
+
+    fn workers_for(&self, ready: usize) -> usize {
+        #[cfg(feature = "parallel")]
+        if self.pool.is_none() {
+            return 1;
+        }
+        self.resources.workers_for(ready)
+    }
 }
 
 /// Map `0..n` with `f`, reducing results in index order (Contract A).
@@ -121,24 +192,40 @@ where
     E: Send,
     F: Fn(usize) -> Result<T, E> + Sync,
 {
+    let executor = EncodeExecutor::new(EncodeResources::groups(workers.min(n).max(1)));
+    ordered_map_with(n, &executor, f)
+}
+
+/// Map `0..n` on a persistent executor and reduce in index order.
+pub(crate) fn ordered_map_with<T, E, F>(
+    n: usize,
+    executor: &EncodeExecutor,
+    f: F,
+) -> Result<Vec<T>, E>
+where
+    T: Send,
+    E: Send,
+    F: Fn(usize) -> Result<T, E> + Sync,
+{
     if n == 0 {
         return Ok(Vec::new());
     }
-    let workers = NonZeroUsize::new(workers.max(1))
+    let workers = NonZeroUsize::new(executor.workers_for(n).max(1))
         .map(|w| w.get().min(n))
         .unwrap_or(1);
 
     if workers == 1 {
-        let mut out = Vec::with_capacity(n);
-        for i in 0..n {
-            out.push(f(i)?);
-        }
-        return Ok(out);
+        return ordered_map_serial(n, f);
     }
 
     #[cfg(feature = "parallel")]
     {
-        ordered_map_rayon(n, workers, f)
+        if let Some(pool) = executor.pool.as_ref() {
+            return ordered_map_rayon(pool, n, f);
+        }
+        // Pool construction can fail under a host resource limit. Preserve
+        // correctness and avoid an encoder panic by collapsing to serial.
+        ordered_map_serial(n, f)
     }
     #[cfg(not(feature = "parallel"))]
     {
@@ -146,33 +233,25 @@ where
     }
 }
 
+fn ordered_map_serial<T, E, F>(n: usize, f: F) -> Result<Vec<T>, E>
+where
+    F: Fn(usize) -> Result<T, E>,
+{
+    let mut out = Vec::with_capacity(n);
+    for i in 0..n {
+        out.push(f(i)?);
+    }
+    Ok(out)
+}
+
 #[cfg(feature = "parallel")]
-fn ordered_map_rayon<T, E, F>(n: usize, workers: usize, f: F) -> Result<Vec<T>, E>
+fn ordered_map_rayon<T, E, F>(pool: &rayon::ThreadPool, n: usize, f: F) -> Result<Vec<T>, E>
 where
     T: Send,
     E: Send,
     F: Fn(usize) -> Result<T, E> + Sync,
 {
     use rayon::prelude::*;
-    let pool_started = crate::vardct::diagnostics::enabled().then(std::time::Instant::now);
-
-    // Local pool capped at `workers` so one encode does not oversubscribe the
-    // process when the caller asked for a small budget.
-    let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(workers)
-        .build()
-        .unwrap_or_else(|_| {
-            // Fall back to a one-thread pool rather than panicking on exotic hosts.
-            rayon::ThreadPoolBuilder::new()
-                .num_threads(1)
-                .build()
-                .expect("single-thread rayon pool")
-        });
-    if let Some(pool_started) = pool_started {
-        crate::vardct::diagnostics::note_pool_build(
-            u64::try_from(pool_started.elapsed().as_nanos()).unwrap_or(u64::MAX),
-        );
-    }
 
     let mut slots: Vec<Option<Result<T, E>>> = (0..n).map(|_| None).collect();
     pool.install(|| {
@@ -251,6 +330,25 @@ mod tests {
             |i: usize| -> Result<usize, usize> { if i == 3 || i == 7 { Err(i) } else { Ok(i) } };
         assert_eq!(ordered_map(10, 4, f), Err(3));
         assert_eq!(ordered_map(10, 1, f), Err(3));
+    }
+
+    #[cfg(feature = "parallel")]
+    #[test]
+    fn persistent_executor_builds_one_pool_for_several_maps() {
+        crate::vardct::diagnostics::set_enabled(true);
+        crate::vardct::diagnostics::reset();
+        let executor = EncodeExecutor::new(EncodeResources::groups(4));
+        let f = |i: usize| -> Result<usize, &'static str> { Ok(i + 1) };
+        assert_eq!(ordered_map_with(8, &executor, f), Ok((1..=8).collect()));
+        assert_eq!(ordered_map_with(5, &executor, f), Ok((1..=5).collect()));
+        assert_eq!(
+            crate::vardct::diagnostics::snapshot()
+                .other
+                .executor_pool_builds,
+            1
+        );
+        crate::vardct::diagnostics::set_enabled(false);
+        crate::vardct::diagnostics::reset();
     }
 
     #[test]
