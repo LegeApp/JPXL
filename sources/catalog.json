@@ -1,0 +1,14 @@
+[
+  {
+    "added_at": "2026-08-13",
+    "availability": "full",
+    "byte_len": 24121,
+    "content_hash": "sha256:62242d232a35bb4b7e09f8075d825ae4e8dc67e6733b2de1232429c4b2fd9868",
+    "id": "optimize-roadmap-2026-08-13",
+    "media_type": "text/markdown",
+    "origin": "external",
+    "path": "sources/external/optimize-roadmap-2026-08-13--62242d23.md",
+    "scope": "JPXL/crates/jpxl-encode-policy/**",
+    "title": "Target-rate encoder optimization roadmap"
+  }
+]

@@ -2768,6 +2768,227 @@ record jpegxl-rs.work.arch-phase7-2-lambda-calibration/1 : work {
     part_of [ @jpegxl-rs.track.encoder-optimization ]
 }
 
+record jpegxl-rs.work.arch-phase8-0-search-amplification/1 : work {
+    title "Phase 8.0: expose target-rate search and writer amplification"
+    state active
+    scope [
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/diagnostics.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/rate.rs",
+        path "JPXL/crates/jpxl-encode/src/resources.rs",
+        path "JPXL/crates/jpxl-encode/src/vardct/**"
+    ]
+    intent """
+        Add opt-in search-scoped Fast/Full counters and timings for nested planning, entropy, exact writer, section traversal, pool construction, and candidate storage. Establish search/writer amplification baselines without changing encoder decisions, then stop before mechanism changes.
+        """
+    acceptance {
+        check aggregate-diagnostics {
+            statement """
+                jpxl bench vardct-rate --diag reports search-scoped Fast/Full plan, entropy, writer, section, pool, and candidate-cache multiplicity plus derived search and writer amplification.
+                """
+            method command
+        }
+        check baseline-recorded {
+            statement """
+                Scratch evidence records representative 0.8 MP, 4 MP, and 12 MP rate-search amplification across requested rates, content classes, and thread modes with provenance and resource measurements.
+                """
+            method observation
+        }
+        check output-identical {
+            statement """
+                Instrumentation-disabled production output, fingerprints, decoded pixels, and libjxl-relative quality matrix are identical before and after.
+                """
+            method command
+        }
+    }
+    implements [
+        @jpegxl-rs.decision.encoder-architecture-phases,
+        @jpegxl-rs.policy.optimization-correctness-gates
+    ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+    source {
+        kind external
+        role rationale
+        path "sources/external/optimize-roadmap-2026-08-13--62242d23.md"
+        use """
+            Adopt the staged target-rate optimization sequence while retaining the exhaustive path and correctness gates.
+            """
+    }
+}
+
+record jpegxl-rs.work.arch-phase8-1-persistent-executor/1 : work {
+    title "Phase 8.1: persistent executor and parallel exact pricing"
+    state proposed
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/**",
+        path "JPXL/crates/jpxl-encode/src/resources.rs",
+        path "JPXL/crates/jpxl-encode/src/vardct/**"
+    ]
+    intent """
+        After Phase 8.0 evidence, introduce one request-scoped executor and deterministic parallel Count pricing. Preserve exact codestream bytes and do not start without an explicit continuation request.
+        """
+    acceptance {
+        check contract-a {
+            statement """
+                Serial and multicore Count/Store paths produce identical sizing and codestream bytes.
+                """
+            method command
+        }
+        check end-to-end-win {
+            statement """
+                Interleaved target-rate benchmarks show an end-to-end median improvement without CPU oversubscription.
+                """
+            method observation
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase8-0-search-amplification ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+    source {
+        kind external
+        role rationale
+        path "sources/external/optimize-roadmap-2026-08-13--62242d23.md"
+        use """
+            Adopt the staged target-rate optimization sequence while retaining the exhaustive path and correctness gates.
+            """
+    }
+}
+
+record jpegxl-rs.work.arch-phase8-2-dense-group-banks/1 : work {
+    title "Phase 8.2: dense LF-group coefficient banks and planning parallelism"
+    state proposed
+    scope [ path "JPXL/crates/jpxl-encode-policy/**" ]
+    intent """
+        Replace global hash/per-candidate allocation ownership with dense LF-group coefficient banks, then parallelize group-local cover, CfL preparation, quantization, and census with ordered reductions. Do not start without explicit continuation.
+        """
+    acceptance {
+        check contract-a {
+            statement """
+                The refactor is byte-identical across serial and multicore paths.
+                """
+            method command
+        }
+        check ownership-win {
+            statement """
+                Allocation count, peak RSS, and end-to-end fixed/rate wall time improve on the Phase 8.0 baseline.
+                """
+            method observation
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase8-1-persistent-executor ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+    source {
+        kind external
+        role rationale
+        path "sources/external/optimize-roadmap-2026-08-13--62242d23.md"
+        use """
+            Adopt the staged target-rate optimization sequence while retaining the exhaustive path and correctness gates.
+            """
+    }
+}
+
+record jpegxl-rs.work.arch-phase8-3-anchor-sketch/1 : work {
+    title "Phase 8.3: anchor-and-sketch target-rate search"
+    state proposed
+    scope [ path "JPXL/crates/jpxl-cli/**", path "JPXL/crates/jpxl-encode-policy/**" ]
+    intent """
+        Add a feature-gated structural anchor and context-aware RateSketch search with exact finalist replanning and exhaustive fallback. Normal-path budgets are at most two structural builds, two Full entropy searches, four exact candidates, and one final Store. Promotion requires target adherence, fallback <=5%, no per-cell SSIMULACRA2 regression beyond 0.25, and non-regressing corpus mean.
+        """
+    acceptance {
+        check probe-collapse {
+            statement """
+                Normal-path structural and exact probe counts meet the stated budgets with fallback at or below 5%.
+                """
+            method observation
+        }
+        check rate-and-quality {
+            statement """
+                Across the promotion corpus, output never exceeds target, undershoot meets the existing tolerance, SSIMULACRA2 regresses by no more than 0.25 per cell and not in aggregate, and all secondary metrics are reported.
+                """
+            method observation
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase8-2-dense-group-banks ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+    source {
+        kind external
+        role rationale
+        path "sources/external/optimize-roadmap-2026-08-13--62242d23.md"
+        use """
+            Adopt the staged target-rate optimization sequence while retaining the exhaustive path and correctness gates.
+            """
+    }
+}
+
+record jpegxl-rs.work.arch-phase8-4-finalist-token-tape/1 : work {
+    title "Phase 8.4: finalist-only entropy and shared token tape"
+    state proposed
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/**",
+        path "JPXL/crates/jpxl-encode/src/vardct/**"
+    ]
+    intent """
+        Confine entropy alternatives to one or two finalists and share a typed per-section token tape between training and exact Count/Store. Compare Store-every-finalist with Count-then-Store-one; require a 3% end-to-end win before changing policy.
+        """
+    acceptance {
+        check entropy-amplification {
+            statement """
+                Census, training, and exact writer amplification fall and total encode time improves; Count-then-Store is adopted only if its median win is at least 3%.
+                """
+            method observation
+        }
+        check quality-and-target {
+            statement """
+                The Phase 8.3 target and strict per-cell quality gates remain satisfied.
+                """
+            method observation
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase8-3-anchor-sketch ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+    source {
+        kind external
+        role rationale
+        path "sources/external/optimize-roadmap-2026-08-13--62242d23.md"
+        use """
+            Adopt the staged target-rate optimization sequence while retaining the exhaustive path and correctness gates.
+            """
+    }
+}
+
+record jpegxl-rs.work.arch-phase8-5-leaf-finishing/1 : work {
+    title "Phase 8.5: profile-guided leaf and build optimization"
+    state proposed
+    scope [ path "JPXL/Cargo.toml", path "JPXL/crates/**" ]
+    intent """
+        After structural amplification is removed, reprofile and optimize only leaves at or above 5% of samples, then evaluate native CPU selection, LTO, PGO, allocator behavior, and hardware counters. Preserve scalar fallbacks and clean-room boundaries.
+        """
+    acceptance {
+        check profile-justified {
+            statement """
+                Every leaf change targets at least 5% of current samples and improves end-to-end production-quality time.
+                """
+            method observation
+        }
+        check quality-preserved {
+            statement """
+                All decoder, target-rate, perceptual, and thread-determinism gates remain satisfied.
+                """
+            method command
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase8-4-finalist-token-tape ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+    source {
+        kind external
+        role rationale
+        path "sources/external/optimize-roadmap-2026-08-13--62242d23.md"
+        use """
+            Adopt the staged target-rate optimization sequence while retaining the exhaustive path and correctness gates.
+            """
+    }
+}
+
 record jpegxl-rs.work.arch-s8-cover-lane-simd/1 : work {
     title "outside-advice.md §8 (S8), narrowed per Opus advisor review: bit-identical coefficient-lane SIMD for cover scoring"
     state completed

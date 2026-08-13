@@ -146,8 +146,9 @@ the encode time, never the decoded pixels.
                           collapses to one split. `full` retires the collapse
                           (needed to reach depth at all on a real photo).
 
-Prints one line per run: mode, size, iters, wall_ms_total, wall_ms_median,
-output_bytes, fingerprint. With --diag, a second `diag=...` line follows.
+Prints one line per run: mode, size, iters, wall_ms_total, wall_ms_min,
+wall_ms_median, wall_ms_mad, output_bytes, fingerprint. With --diag,
+additional stage and amplification lines follow.
 
 Note: vardct-fixed still uses EncodeRequest::defaults (hierarchical cover,
 CfL, AQ) — only the rate loop is off. See sources/outside-advice.md §2.
@@ -941,10 +942,13 @@ fn cmd_bench(args: &[String]) -> u8 {
         Ok(report) => {
             println!(
                 "mode={mode} size={width}x{height} iters={iters} \
-                 wall_ms_total={:.3} wall_ms_median={:.3} \
+                 wall_ms_total={:.3} wall_ms_min={:.3} wall_ms_median={:.3} \
+                 wall_ms_mad={:.3} \
                  output_bytes={} fingerprint={:016x}",
                 report.wall_ms_total,
+                report.wall_ms_min,
                 report.wall_ms_median,
+                report.wall_ms_mad,
                 report.output_bytes,
                 report.fingerprint
             );
@@ -977,9 +981,20 @@ fn cmd_bench(args: &[String]) -> u8 {
                             println!(
                                 "rate_diag=fast_prices={} full_prices={} \
                                  dct_cache_hits={} dct_cache_misses={} \
-                                 dct_cache_hit_rate={hit_rate:.4}",
-                                s.fast_prices, s.full_prices, s.dct_cache_hits, s.dct_cache_misses,
+                                 dct_cache_hit_rate={hit_rate:.4} candidate_entries={} \
+                                 candidate_payload_bytes={} candidate_allocations={}",
+                                s.fast_prices,
+                                s.full_prices,
+                                s.dct_cache_hits,
+                                s.dct_cache_misses,
+                                s.candidate_cache_entries,
+                                s.candidate_payload_bytes,
+                                s.candidate_allocations,
                             );
+                            print_rate_phase("rate_plan_fast", s.fast);
+                            print_rate_phase("rate_plan_full", s.full);
+                            print_writer_phase("rate_writer_fast", s.writer.fast);
+                            print_writer_phase("rate_writer_full", s.writer.full);
                         }
                         if let Some(t) = report.rate_trace {
                             println!(
@@ -1005,6 +1020,23 @@ fn cmd_bench(args: &[String]) -> u8 {
                     _ => {}
                 }
             }
+            if mode == "vardct-rate"
+                && let Some(a) = report.rate_amplification
+            {
+                if diag {
+                    println!(
+                        "rate_amp=selected_emit_ms_median={:.3} \
+                         search_amplification={:.3} writer_amplification={:.3}",
+                        a.selected_emit_ms_median, a.search_amplification, a.writer_amplification,
+                    );
+                } else {
+                    println!(
+                        "rate_amp=selected_emit_ms_median={:.3} \
+                         search_amplification={:.3} writer_amplification=disabled",
+                        a.selected_emit_ms_median, a.search_amplification,
+                    );
+                }
+            }
             EXIT_OK
         }
         Err(err) => {
@@ -1016,7 +1048,9 @@ fn cmd_bench(args: &[String]) -> u8 {
 
 struct BenchReport {
     wall_ms_total: f64,
+    wall_ms_min: f64,
     wall_ms_median: f64,
+    wall_ms_mad: f64,
     output_bytes: usize,
     fingerprint: u64,
     /// Rate-search multiplicity counters from the last timed iteration.
@@ -1024,6 +1058,69 @@ struct BenchReport {
     rate_stats: Option<jpxl_encode_policy::RateProbeStats>,
     /// Control-flow and rung summary from the last timed rate search.
     rate_trace: Option<RateTraceStats>,
+    /// Target-rate search and exact-writer amplification (`vardct-rate`).
+    rate_amplification: Option<RateAmplification>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct RateAmplification {
+    selected_emit_ms_median: f64,
+    search_amplification: f64,
+    writer_amplification: f64,
+}
+
+fn ns_ms(ns: u64) -> f64 {
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "diagnostic nanoseconds are printed approximately as milliseconds"
+    )]
+    let ms = ns as f64 / 1e6;
+    ms
+}
+
+fn print_rate_phase(label: &str, phase: jpxl_encode_policy::diagnostics::SearchPhaseDiagnostics) {
+    println!(
+        "{label}=plans={} cover_passes={} cfl_searches={} quantize_group_passes={} \
+         census_passes={} entropy_trainings={} order_candidates={} \
+         block_context_candidates={} preset_candidates={} plan_ms={:.1} cover_ms={:.1} \
+         cfl_ms={:.1} quantize_ms={:.1} entropy_ms={:.1}",
+        phase.plans,
+        phase.cover_passes,
+        phase.cfl_searches,
+        phase.quantize_group_passes,
+        phase.census_passes,
+        phase.entropy_trainings,
+        phase.order_candidates,
+        phase.block_context_candidates,
+        phase.preset_candidates,
+        ns_ms(phase.plan_ns),
+        ns_ms(phase.cover_ns),
+        ns_ms(phase.cfl_ns),
+        ns_ms(phase.quantize_ns),
+        ns_ms(phase.entropy_ns),
+    );
+}
+
+fn print_writer_phase(
+    label: &str,
+    phase: jpxl_encode::vardct::diagnostics::WriterPhaseDiagnostics,
+) {
+    println!(
+        "{label}=internal_counts={} outer_counts={} other_counts={} stores={} \
+         section_traversals={} lf_sections={} pass_group_sections={} pool_builds={} \
+         count_ms={:.1} store_ms={:.1} pool_build_ms={:.1}",
+        phase.internal_count_emissions,
+        phase.outer_count_emissions,
+        phase.other_count_emissions,
+        phase.stored_emissions,
+        phase.section_body_traversals,
+        phase.lf_section_encodes,
+        phase.pass_group_section_encodes,
+        phase.executor_pool_builds,
+        ns_ms(phase.count_emission_ns),
+        ns_ms(phase.stored_emission_ns),
+        ns_ms(phase.executor_pool_build_ns),
+    );
 }
 
 /// Compact handoff telemetry for `vardct-rate --diag`.
@@ -1150,23 +1247,73 @@ fn bench_vardct_rate(
     request.resources = resources;
     let warm = jpxl_encode_policy::encode_srgb8_to_target(width, height, rgb, &request, target)
         .map_err(|e| e.to_string())?;
-    let warm_len = warm.codestream.len();
-    let warm_fp = fnv1a64(&warm.codestream);
-    // Rate-loop-specific telemetry from the last timed iteration; attached to
-    // `time_iters`'s shared report below.
-    let last_stats = std::cell::Cell::new(warm.stats);
-    let last_trace = std::cell::Cell::new(RateTraceStats::from_outcome(&warm));
-    let mut report = time_iters(iters, warm_len, warm_fp, || {
+    let output_bytes = warm.codestream.len();
+    let fingerprint = fnv1a64(&warm.codestream);
+    let mut search_samples_ms = Vec::with_capacity(iters);
+    let mut selected_emit_samples_ms = Vec::with_capacity(iters);
+    let mut last_stats = warm.stats;
+    let mut last_trace = RateTraceStats::from_outcome(&warm);
+    let mut last_writer_amplification = 0.0;
+    for _ in 0..iters {
+        let search_started = std::time::Instant::now();
         let outcome =
             jpxl_encode_policy::encode_srgb8_to_target(width, height, rgb, &request, target)
                 .map_err(|e| e.to_string())?;
-        last_stats.set(outcome.stats);
-        last_trace.set(RateTraceStats::from_outcome(&outcome));
-        Ok(outcome.codestream)
-    })?;
-    report.rate_stats = Some(last_stats.get());
-    report.rate_trace = Some(last_trace.get());
-    Ok(report)
+        let search_ms = search_started.elapsed().as_secs_f64() * 1000.0;
+        if outcome.codestream.len() != output_bytes || fnv1a64(&outcome.codestream) != fingerprint {
+            return Err("rate-search output changed across iterations".to_owned());
+        }
+
+        // Measure one exact emission of the selected plan outside the search
+        // timer. This is both the denominator for search amplification and a
+        // byte-for-byte guard that the retained winning emission matches the
+        // plan handed back by the search.
+        let emit_started = std::time::Instant::now();
+        let selected = jpxl_encode::vardct::emit_codestream_with(&outcome.plan, resources)
+            .map_err(|e| e.to_string())?;
+        let selected_emit_ms = emit_started.elapsed().as_secs_f64() * 1000.0;
+        if selected.bytes != outcome.codestream || selected.sizing != outcome.sizing {
+            return Err("selected-plan re-emission differs from retained winner".to_owned());
+        }
+
+        let one_emission_sections = u64::try_from(outcome.sizing.sections.len()).unwrap_or(0);
+        #[allow(
+            clippy::cast_precision_loss,
+            reason = "diagnostic traversal counts stay inside f64's exact integer range"
+        )]
+        let writer_amplification = if one_emission_sections == 0 {
+            0.0
+        } else {
+            outcome.stats.writer.total_section_traversals() as f64 / one_emission_sections as f64
+        };
+        search_samples_ms.push(search_ms);
+        selected_emit_samples_ms.push(selected_emit_ms);
+        last_writer_amplification = writer_amplification;
+        last_stats = outcome.stats;
+        last_trace = RateTraceStats::from_outcome(&outcome);
+    }
+    let (wall_ms_min, wall_ms_median, wall_ms_mad) = summarize_ms(&mut search_samples_ms);
+    let selected_emit_ms_median = median_ms(&mut selected_emit_samples_ms);
+    let search_amplification = if selected_emit_ms_median > 0.0 {
+        wall_ms_median / selected_emit_ms_median
+    } else {
+        0.0
+    };
+    Ok(BenchReport {
+        wall_ms_total: search_samples_ms.iter().sum(),
+        wall_ms_min,
+        wall_ms_median,
+        wall_ms_mad,
+        output_bytes,
+        fingerprint,
+        rate_stats: Some(last_stats),
+        rate_trace: Some(last_trace),
+        rate_amplification: Some(RateAmplification {
+            selected_emit_ms_median,
+            search_amplification,
+            writer_amplification: last_writer_amplification,
+        }),
+    })
 }
 
 fn bench_vardct_probe(
@@ -1218,23 +1365,41 @@ where
         samples_ms.push(ms);
     }
     let wall_ms_total = start_all.elapsed().as_secs_f64() * 1000.0;
-    samples_ms.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    let mid = samples_ms.len() / 2;
-    let wall_ms_median = if samples_ms.len().is_multiple_of(2) && samples_ms.len() >= 2 {
-        let lo = samples_ms.get(mid - 1).copied().unwrap_or(0.0);
-        let hi = samples_ms.get(mid).copied().unwrap_or(0.0);
-        (lo + hi) / 2.0
-    } else {
-        samples_ms.get(mid).copied().unwrap_or(0.0)
-    };
+    let (wall_ms_min, wall_ms_median, wall_ms_mad) = summarize_ms(&mut samples_ms);
     Ok(BenchReport {
         wall_ms_total,
+        wall_ms_min,
         wall_ms_median,
+        wall_ms_mad,
         output_bytes,
         fingerprint,
         rate_stats: None,
         rate_trace: None,
+        rate_amplification: None,
     })
+}
+
+fn median_ms(samples: &mut [f64]) -> f64 {
+    samples.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let mid = samples.len() / 2;
+    if samples.len().is_multiple_of(2) && samples.len() >= 2 {
+        let lo = samples.get(mid - 1).copied().unwrap_or(0.0);
+        let hi = samples.get(mid).copied().unwrap_or(0.0);
+        (lo + hi) / 2.0
+    } else {
+        samples.get(mid).copied().unwrap_or(0.0)
+    }
+}
+
+fn summarize_ms(samples: &mut [f64]) -> (f64, f64, f64) {
+    let median = median_ms(samples);
+    let minimum = samples.first().copied().unwrap_or(0.0);
+    let mut deviations: Vec<f64> = samples
+        .iter()
+        .map(|sample| (sample - median).abs())
+        .collect();
+    let mad = median_ms(&mut deviations);
+    (minimum, median, mad)
 }
 
 /// Deterministic synthetic RGB for reproducible benches (not a corpus fixture).

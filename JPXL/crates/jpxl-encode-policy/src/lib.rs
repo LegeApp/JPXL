@@ -524,13 +524,14 @@ fn plan_at_with_cfl(
         best.plan().quantized.as_ref(),
     );
     if !matches!(candidate_bc, HfBlockContextPlan::Default) {
+        diagnostics::note_block_context_candidate();
         let mut custom_walk = provisional.clone();
         custom_walk.entropy = entropy_plan(&geometry, placeholder_histograms(), candidate_bc)?;
         let with_custom = diagnostics::time_stage(diagnostics::StageTimer::Entropy, || {
             train_entropy_with_orders(custom_walk, &geometry, EntropySearch::Full)
         })?;
-        let best_size = jpxl_encode::vardct::price_codestream(&best)?.total;
-        let custom_size = jpxl_encode::vardct::price_codestream(&with_custom)?.total;
+        let best_size = internal_price_total(&best)?;
+        let custom_size = internal_price_total(&with_custom)?;
         if custom_size < best_size {
             best = with_custom;
         }
@@ -543,6 +544,7 @@ fn plan_at_with_cfl(
         best.plan().spatial.as_ref(),
         best.plan().quantized.as_ref(),
     ) {
+        diagnostics::note_preset_candidate();
         let mut multi = best.plan().clone();
         multi.entropy.num_hf_presets = num_presets;
         if let Some(pass) = multi.entropy.passes.first_mut() {
@@ -563,8 +565,8 @@ fn plan_at_with_cfl(
         if let Ok(with_presets) = diagnostics::time_stage(diagnostics::StageTimer::Entropy, || {
             train_entropy_with_orders(multi, &geometry, EntropySearch::Full)
         }) {
-            let best_size = jpxl_encode::vardct::price_codestream(&best)?.total;
-            let multi_size = jpxl_encode::vardct::price_codestream(&with_presets)?.total;
+            let best_size = internal_price_total(&best)?;
+            let multi_size = internal_price_total(&with_presets)?;
             if multi_size < best_size {
                 best = with_presets;
             }
@@ -572,6 +574,14 @@ fn plan_at_with_cfl(
     }
 
     Ok(best)
+}
+
+/// Exact Count price used only to compare alternatives inside one Full plan.
+fn internal_price_total(plan: &ValidatedEmissionPlan) -> Result<u64> {
+    diagnostics::with_count_kind(
+        jpxl_encode::vardct::diagnostics::CountEmissionKind::Internal,
+        || Ok(jpxl_encode::vardct::price_codestream(plan)?.total),
+    )
 }
 
 /// Test hook: sizes of the default-map plan and of a forced custom-map plan
@@ -600,8 +610,8 @@ fn price_default_and_custom(
     custom_walk.entropy = entropy_plan(geometry, placeholder_histograms(), candidate)?;
     let with_custom = train_entropy_with_orders(custom_walk, geometry, EntropySearch::Full)?;
     Ok((
-        jpxl_encode::vardct::price_codestream(&with_default)?.total,
-        jpxl_encode::vardct::price_codestream(&with_custom)?.total,
+        internal_price_total(&with_default)?,
+        internal_price_total(&with_custom)?,
     ))
 }
 
@@ -620,7 +630,9 @@ fn train_entropy_with_orders(
         .first()
         .map(|p| p.group_presets.to_vec())
         .unwrap_or_default();
+    diagnostics::note_census();
     let census = census_frame(&provisional, geometry)?;
+    diagnostics::note_entropy_training();
     let model = entropy::train(&census)?;
     // Arc-clone spatial/quantized; only entropy is rebuilt.
     let natural = validate(EmissionPlan {
@@ -643,12 +655,15 @@ fn train_entropy_with_orders(
     if orders.overrides().is_empty() {
         return Ok(natural);
     }
+    diagnostics::note_order_candidate();
 
     let mut reordered_walk = provisional;
     if let Some(pass) = reordered_walk.entropy.passes.first_mut() {
         pass.orders = orders.clone();
     }
+    diagnostics::note_census();
     let census = census_frame(&reordered_walk, geometry)?;
+    diagnostics::note_entropy_training();
     let model = entropy::train(&census)?;
     let reordered = validate(EmissionPlan {
         entropy: trained_entropy_plan(
@@ -664,8 +679,8 @@ fn train_entropy_with_orders(
         sections: reordered_walk.sections,
     })?;
 
-    let natural_size = jpxl_encode::vardct::price_codestream(&natural)?.total;
-    let reordered_size = jpxl_encode::vardct::price_codestream(&reordered)?.total;
+    let natural_size = internal_price_total(&natural)?;
+    let reordered_size = internal_price_total(&reordered)?;
     Ok(if reordered_size < natural_size {
         reordered
     } else {
@@ -1097,6 +1112,10 @@ pub(crate) struct CandidateForwardCache {
     hits: u64,
     /// Times a forward was computed for the first time.
     misses: u64,
+    /// Retained coefficient payload, excluding Vec/HashMap metadata.
+    payload_bytes: u64,
+    /// One coefficient allocation per channel of every cached candidate.
+    allocations: u64,
 }
 
 impl CandidateForwardCache {
@@ -1112,6 +1131,18 @@ impl CandidateForwardCache {
     /// Miss count for Opt-V2 rate-loop telemetry.
     pub(crate) fn misses(&self) -> u64 {
         self.misses
+    }
+
+    pub(crate) fn entries(&self) -> u64 {
+        u64::try_from(self.entries.len()).unwrap_or(u64::MAX)
+    }
+
+    pub(crate) fn payload_bytes(&self) -> u64 {
+        self.payload_bytes
+    }
+
+    pub(crate) fn allocations(&self) -> u64 {
+        self.allocations
     }
 
     fn key(transform: TransformType, px: u32, py: u32) -> ForwardKey {
@@ -1148,6 +1179,12 @@ impl CandidateForwardCache {
             };
             let n_f32 = fwd.coeffs.iter().map(Vec::len).sum::<usize>();
             diagnostics::note_candidate_forward(n_f32);
+            self.payload_bytes = self
+                .payload_bytes
+                .saturating_add(u64::try_from(n_f32).unwrap_or(u64::MAX).saturating_mul(4));
+            self.allocations = self
+                .allocations
+                .saturating_add(u64::try_from(NUM_CHANNELS).unwrap_or(u64::MAX));
             self.entries.insert(key, fwd);
             self.misses = self.misses.saturating_add(1);
         }

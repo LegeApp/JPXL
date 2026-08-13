@@ -50,6 +50,7 @@ use jpxl_entropy::encode::{
 use crate::entropy::pack_signed;
 use crate::error::{EncodeError, Result};
 use crate::section::SectionStore;
+use crate::vardct::diagnostics;
 use crate::vardct::geometry::VardctGeometry;
 use crate::vardct::headers::{VARDCT_GROUP_SIZE_SHIFT, write_frame_header, write_image_headers};
 use crate::vardct::ids::{ClusterId, LfGroupId, PreContextId};
@@ -325,6 +326,21 @@ fn emit_codestream_mode(
     mode: EmitMode,
     resources: crate::EncodeResources,
 ) -> Result<Emission> {
+    match mode {
+        EmitMode::Count => {
+            diagnostics::time_count_emission(|| emit_codestream_mode_inner(plan, mode, resources))
+        }
+        EmitMode::Store => {
+            diagnostics::time_stored_emission(|| emit_codestream_mode_inner(plan, mode, resources))
+        }
+    }
+}
+
+fn emit_codestream_mode_inner(
+    plan: &ValidatedEmissionPlan,
+    mode: EmitMode,
+    resources: crate::EncodeResources,
+) -> Result<Emission> {
     let inner = plan.plan();
     check_supported(inner)?;
     let geometry = inner.spatial.frame.geometry().map_err(EncodeError::Plan)?;
@@ -420,6 +436,9 @@ fn write_frame_body(
         EmitMode::Store => SectionStore::new(),
         EmitMode::Count => SectionStore::counting(),
     };
+    let n_lf = usize::try_from(geometry.num_lf_groups()).unwrap_or(0);
+    let n_pg = usize::try_from(geometry.num_groups()).unwrap_or(0);
+    diagnostics::note_sections(plan.sections.kinds.len(), n_lf, n_pg);
     if geometry.is_single_section() {
         let mut body = match mode {
             EmitMode::Store => BitWriter::new(),
@@ -446,7 +465,6 @@ fn write_frame_body(
         section_result(mode, |w| write_lf_global(plan, w))?,
     );
 
-    let n_lf = usize::try_from(geometry.num_lf_groups()).unwrap_or(0);
     let lf_workers = resources.workers_for(n_lf);
     let lf_parts = crate::resources::ordered_map(n_lf, lf_workers, |index| {
         let id = LfGroupId::new(u32::try_from(index).unwrap_or(u32::MAX));
@@ -462,7 +480,6 @@ fn write_frame_body(
         section_result(mode, |w| write_hf_global(plan, geometry, &tables, w))?,
     );
 
-    let n_pg = usize::try_from(geometry.num_groups()).unwrap_or(0);
     let pg_workers = resources.workers_for(n_pg);
     let pg_parts = crate::resources::ordered_map(n_pg, pg_workers, |group| {
         let group = u64::try_from(group).unwrap_or(u64::MAX);
@@ -1603,6 +1620,35 @@ mod tests {
             emission.bytes,
             "write_codestream is emit_codestream's bytes"
         );
+    }
+
+    #[test]
+    fn writer_diagnostics_count_real_count_and_store_traversals() {
+        use crate::vardct::diagnostics::{
+            self, CountEmissionKind, DiagnosticPhase, WriterDiagnostics,
+        };
+
+        let plan = validate(tiny_plan()).expect("legal plan");
+        diagnostics::set_enabled(true);
+        diagnostics::reset();
+        diagnostics::with_phase(DiagnosticPhase::Fast, || {
+            diagnostics::with_count_kind(CountEmissionKind::Outer, || {
+                price_codestream(&plan).expect("prices");
+            });
+        });
+        diagnostics::with_phase(DiagnosticPhase::Full, || {
+            emit_codestream(&plan).expect("stores");
+        });
+        let observed = diagnostics::snapshot();
+        assert_eq!(observed.fast.outer_count_emissions, 1);
+        assert_eq!(observed.fast.section_body_traversals, 1);
+        assert_eq!(observed.fast.lf_section_encodes, 1);
+        assert_eq!(observed.fast.pass_group_section_encodes, 1);
+        assert_eq!(observed.full.stored_emissions, 1);
+        assert_eq!(observed.full.section_body_traversals, 1);
+        diagnostics::set_enabled(false);
+        diagnostics::reset();
+        assert_eq!(diagnostics::snapshot(), WriterDiagnostics::default());
     }
 
     /// Every byte is attributed to exactly one of headers, TOC or a section.

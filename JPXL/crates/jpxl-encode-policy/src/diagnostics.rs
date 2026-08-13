@@ -105,6 +105,40 @@ pub struct EncodeDiag {
     pub cfl_sample_bytes: u64,
 }
 
+/// Planning work attributed to one target-rate search phase.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct SearchPhaseDiagnostics {
+    pub plans: u64,
+    pub cover_passes: u64,
+    pub cfl_searches: u64,
+    pub quantize_group_passes: u64,
+    pub census_passes: u64,
+    pub entropy_trainings: u64,
+    pub order_candidates: u64,
+    pub block_context_candidates: u64,
+    pub preset_candidates: u64,
+    pub plan_ns: u64,
+    pub cover_ns: u64,
+    pub cfl_ns: u64,
+    pub quantize_ns: u64,
+    pub entropy_ns: u64,
+}
+
+/// Aggregate planning work for one target-rate search.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct SearchDiagnostics {
+    pub fast: SearchPhaseDiagnostics,
+    pub full: SearchPhaseDiagnostics,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum SearchDiagnosticPhase {
+    Fast,
+    Full,
+    #[default]
+    Other,
+}
+
 impl EncodeDiag {
     /// Total `HfQuantizer::choose` invocations across all stages.
     #[must_use]
@@ -165,6 +199,23 @@ impl EncodeDiag {
 
 std::thread_local! {
     static ENABLED: Cell<bool> = const { Cell::new(false) };
+    static SEARCH_PHASE: Cell<SearchDiagnosticPhase> = const { Cell::new(SearchDiagnosticPhase::Other) };
+    static SEARCH_DIAG: Cell<SearchDiagnostics> = const { Cell::new(SearchDiagnostics {
+        fast: SearchPhaseDiagnostics {
+            plans: 0, cover_passes: 0, cfl_searches: 0,
+            quantize_group_passes: 0, census_passes: 0,
+            entropy_trainings: 0, order_candidates: 0,
+            block_context_candidates: 0, preset_candidates: 0,
+            plan_ns: 0, cover_ns: 0, cfl_ns: 0, quantize_ns: 0, entropy_ns: 0,
+        },
+        full: SearchPhaseDiagnostics {
+            plans: 0, cover_passes: 0, cfl_searches: 0,
+            quantize_group_passes: 0, census_passes: 0,
+            entropy_trainings: 0, order_candidates: 0,
+            block_context_candidates: 0, preset_candidates: 0,
+            plan_ns: 0, cover_ns: 0, cfl_ns: 0, quantize_ns: 0, entropy_ns: 0,
+        },
+    }) };
     static DIAG: Cell<EncodeDiag> = const { Cell::new(EncodeDiag {
         choose_cover: 0,
         choose_cfl_y: 0,
@@ -200,6 +251,7 @@ std::thread_local! {
 /// `bench --diag` path enables it around the measured encode.
 pub fn set_encode_diag_enabled(enabled: bool) {
     ENABLED.with(|cell| cell.set(enabled));
+    jpxl_encode::vardct::diagnostics::set_enabled(enabled);
 }
 
 #[inline]
@@ -211,6 +263,106 @@ fn enabled() -> bool {
 pub fn reset_encode_diag() {
     DIAG.with(|c| c.set(EncodeDiag::default()));
     STAGE.with(|c| c.set(ChooseStage::Other));
+}
+
+/// Clears aggregate counters at the start of one target-rate search.
+pub(crate) fn reset_search_diag() {
+    SEARCH_DIAG.with(|cell| cell.set(SearchDiagnostics::default()));
+    SEARCH_PHASE.with(|cell| cell.set(SearchDiagnosticPhase::Other));
+    jpxl_encode::vardct::diagnostics::reset();
+}
+
+/// Snapshot of aggregate planning counters for the current search.
+#[must_use]
+pub(crate) fn search_diag() -> SearchDiagnostics {
+    SEARCH_DIAG.with(Cell::get)
+}
+
+fn update_search(f: impl FnOnce(&mut SearchPhaseDiagnostics)) {
+    if !enabled() {
+        return;
+    }
+    let phase = SEARCH_PHASE.with(Cell::get);
+    SEARCH_DIAG.with(|cell| {
+        let mut diagnostics = cell.get();
+        let target = match phase {
+            SearchDiagnosticPhase::Fast => &mut diagnostics.fast,
+            SearchDiagnosticPhase::Full => &mut diagnostics.full,
+            SearchDiagnosticPhase::Other => return,
+        };
+        f(target);
+        cell.set(diagnostics);
+    });
+}
+
+/// Runs work attributed to one Fast or Full target-rate phase.
+pub(crate) fn with_search_phase<R>(phase: SearchDiagnosticPhase, f: impl FnOnce() -> R) -> R {
+    if !enabled() {
+        return f();
+    }
+    let previous = SEARCH_PHASE.with(Cell::get);
+    SEARCH_PHASE.with(|cell| cell.set(phase));
+    let writer_phase = match phase {
+        SearchDiagnosticPhase::Fast => jpxl_encode::vardct::diagnostics::DiagnosticPhase::Fast,
+        SearchDiagnosticPhase::Full => jpxl_encode::vardct::diagnostics::DiagnosticPhase::Full,
+        SearchDiagnosticPhase::Other => jpxl_encode::vardct::diagnostics::DiagnosticPhase::Other,
+    };
+    let result = jpxl_encode::vardct::diagnostics::with_phase(writer_phase, f);
+    SEARCH_PHASE.with(|cell| cell.set(previous));
+    result
+}
+
+/// Times and counts one complete `plan_at` under the current search phase.
+pub(crate) fn time_search_plan<R>(f: impl FnOnce() -> R) -> R {
+    if !enabled() {
+        return f();
+    }
+    let started = Instant::now();
+    let result = f();
+    let elapsed = u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX);
+    update_search(|diagnostics| {
+        diagnostics.plans = diagnostics.plans.saturating_add(1);
+        diagnostics.plan_ns = diagnostics.plan_ns.saturating_add(elapsed);
+    });
+    result
+}
+
+pub(crate) fn with_count_kind<R>(
+    kind: jpxl_encode::vardct::diagnostics::CountEmissionKind,
+    f: impl FnOnce() -> R,
+) -> R {
+    jpxl_encode::vardct::diagnostics::with_count_kind(kind, f)
+}
+
+pub(crate) fn note_census() {
+    update_search(|diagnostics| {
+        diagnostics.census_passes = diagnostics.census_passes.saturating_add(1);
+    });
+}
+
+pub(crate) fn note_entropy_training() {
+    update_search(|diagnostics| {
+        diagnostics.entropy_trainings = diagnostics.entropy_trainings.saturating_add(1);
+    });
+}
+
+pub(crate) fn note_order_candidate() {
+    update_search(|diagnostics| {
+        diagnostics.order_candidates = diagnostics.order_candidates.saturating_add(1);
+    });
+}
+
+pub(crate) fn note_block_context_candidate() {
+    update_search(|diagnostics| {
+        diagnostics.block_context_candidates =
+            diagnostics.block_context_candidates.saturating_add(1);
+    });
+}
+
+pub(crate) fn note_preset_candidate() {
+    update_search(|diagnostics| {
+        diagnostics.preset_candidates = diagnostics.preset_candidates.saturating_add(1);
+    });
 }
 
 /// Snapshot of the current counters without clearing.
@@ -293,6 +445,26 @@ pub fn note_stage_ns(which: StageTimer, ns: u64) {
             StageTimer::Entropy => d.stage_entropy_ns = d.stage_entropy_ns.saturating_add(ns),
         }
         c.set(d);
+    });
+    update_search(|diagnostics| match which {
+        StageTimer::Cover => {
+            diagnostics.cover_passes = diagnostics.cover_passes.saturating_add(1);
+            diagnostics.cover_ns = diagnostics.cover_ns.saturating_add(ns);
+        }
+        StageTimer::Cfl => {
+            diagnostics.cfl_searches = diagnostics.cfl_searches.saturating_add(1);
+            diagnostics.cfl_ns = diagnostics.cfl_ns.saturating_add(ns);
+        }
+        StageTimer::Quantize => {
+            diagnostics.quantize_group_passes = diagnostics.quantize_group_passes.saturating_add(1);
+            diagnostics.quantize_ns = diagnostics.quantize_ns.saturating_add(ns);
+        }
+        StageTimer::Entropy => {
+            diagnostics.entropy_ns = diagnostics.entropy_ns.saturating_add(ns);
+        }
+        StageTimer::CoverForward | StageTimer::CoverScore => {}
+        #[cfg(feature = "s8-cover-prune")]
+        StageTimer::CoverPrune => {}
     });
 }
 
@@ -404,12 +576,48 @@ mod tests {
     fn disabled_diagnostics_do_not_accumulate() {
         set_encode_diag_enabled(false);
         reset_encode_diag();
+        reset_search_diag();
         with_choose_stage(ChooseStage::Cover, note_choose);
         note_stage_ns(StageTimer::Cover, 7);
+        with_search_phase(SearchDiagnosticPhase::Fast, || {
+            time_search_plan(|| {});
+            note_census();
+            note_entropy_training();
+        });
         note_candidate_forward(64);
         note_selected_forward_clone(64);
         note_cfl_samples(4);
         assert_eq!(take_encode_diag(), EncodeDiag::default());
+        assert_eq!(search_diag(), SearchDiagnostics::default());
+    }
+
+    #[test]
+    fn search_work_is_attributed_to_fast_and_full() {
+        set_encode_diag_enabled(true);
+        reset_search_diag();
+        with_search_phase(SearchDiagnosticPhase::Fast, || {
+            time_search_plan(|| {});
+            note_stage_ns(StageTimer::Cover, 11);
+            note_stage_ns(StageTimer::Quantize, 13);
+            note_census();
+            note_entropy_training();
+        });
+        with_search_phase(SearchDiagnosticPhase::Full, || {
+            time_search_plan(|| {});
+            note_order_candidate();
+            note_block_context_candidate();
+            note_preset_candidate();
+        });
+        let diagnostics = search_diag();
+        assert_eq!(diagnostics.fast.plans, 1);
+        assert_eq!(diagnostics.fast.cover_passes, 1);
+        assert_eq!(diagnostics.fast.quantize_group_passes, 1);
+        assert_eq!(diagnostics.fast.census_passes, 1);
+        assert_eq!(diagnostics.full.plans, 1);
+        assert_eq!(diagnostics.full.order_candidates, 1);
+        assert_eq!(diagnostics.full.block_context_candidates, 1);
+        assert_eq!(diagnostics.full.preset_candidates, 1);
+        set_encode_diag_enabled(false);
     }
 
     #[test]

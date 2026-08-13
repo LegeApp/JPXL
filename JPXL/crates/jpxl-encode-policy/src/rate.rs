@@ -66,7 +66,7 @@ use jpxl_encode::vardct::{
 
 use crate::error::{PolicyError, Result};
 use crate::request::{EncodeRequest, RateSearchBudget, RateTarget, RateTolerance};
-use crate::{CandidateForwardCache, EntropySearch};
+use crate::{CandidateForwardCache, EntropySearch, diagnostics};
 
 /// How many `HfMul` rungs extend the ladder above `global_scale`'s ceiling.
 ///
@@ -264,6 +264,18 @@ pub struct RateProbeStats {
     pub dct_cache_hits: u64,
     /// Forward-DCT first-time fills across every probe.
     pub dct_cache_misses: u64,
+    /// Complete retained candidate set at the end of the search.
+    pub candidate_cache_entries: u64,
+    /// Retained f32 coefficient payload, excluding collection metadata.
+    pub candidate_payload_bytes: u64,
+    /// Per-channel coefficient allocations made by the current cache.
+    pub candidate_allocations: u64,
+    /// Aggregate Fast planning work, including nested entropy passes.
+    pub fast: diagnostics::SearchPhaseDiagnostics,
+    /// Aggregate Full planning work, including nested entropy passes.
+    pub full: diagnostics::SearchPhaseDiagnostics,
+    /// Aggregate Count/Store writer and executor work.
+    pub writer: jpxl_encode::vardct::diagnostics::WriterDiagnostics,
 }
 
 impl RateProbeStats {
@@ -764,15 +776,23 @@ impl<'a> PreparedSearch<'a> {
         quantizer: QuantizerChoice,
         entropy: EntropySearch,
     ) -> Result<ValidatedEmissionPlan> {
-        crate::plan_at_on(
-            self.frame,
-            self.transform_frame,
-            self.atlas,
-            self.request,
-            quantizer,
-            &mut self.fwd_cache,
-            entropy,
-        )
+        let phase = match entropy {
+            EntropySearch::Fast => diagnostics::SearchDiagnosticPhase::Fast,
+            EntropySearch::Full => diagnostics::SearchDiagnosticPhase::Full,
+        };
+        diagnostics::with_search_phase(phase, || {
+            diagnostics::time_search_plan(|| {
+                crate::plan_at_on(
+                    self.frame,
+                    self.transform_frame,
+                    self.atlas,
+                    self.request,
+                    quantizer,
+                    &mut self.fwd_cache,
+                    entropy,
+                )
+            })
+        })
     }
 }
 
@@ -823,6 +843,7 @@ pub fn search_frame(
     request: &EncodeRequest,
     target: RateTarget,
 ) -> Result<RateOutcome> {
+    diagnostics::reset_search_diag();
     let target_bytes = target.bytes_for(frame.width(), frame.height());
     let start = QuantizerChoice::from_request(request).rung;
 
@@ -863,7 +884,13 @@ pub fn search_frame(
         fast_budget,
         |quantizer| {
             let plan = prepared.plan(quantizer, EntropySearch::Fast)?;
-            let sizing = price_codestream(&plan)?;
+            let sizing =
+                diagnostics::with_search_phase(diagnostics::SearchDiagnosticPhase::Fast, || {
+                    diagnostics::with_count_kind(
+                        jpxl_encode::vardct::diagnostics::CountEmissionKind::Outer,
+                        || price_codestream(&plan),
+                    )
+                })?;
             prepared.stats.fast_prices = prepared.stats.fast_prices.saturating_add(1);
             let bytes = sizing.total;
             let better = kept.as_ref().is_none_or(|&(rung, _, ref prev)| {
@@ -907,7 +934,15 @@ pub fn search_frame(
                 if !lf_quant_fits_legacy_16bit(&plan) {
                     continue;
                 }
-                let Ok(sizing) = price_codestream(&plan) else {
+                let Ok(sizing) = diagnostics::with_search_phase(
+                    diagnostics::SearchDiagnosticPhase::Fast,
+                    || {
+                        diagnostics::with_count_kind(
+                            jpxl_encode::vardct::diagnostics::CountEmissionKind::Outer,
+                            || price_codestream(&plan),
+                        )
+                    },
+                ) else {
                     continue;
                 };
                 prepared.stats.fast_prices = prepared.stats.fast_prices.saturating_add(1);
@@ -965,7 +1000,10 @@ pub fn search_frame(
             let plan = prepared.plan(quantizer, EntropySearch::Full)?;
             // Keep the emission of the incumbent so the winner is not re-encoded.
             // Finalist Full emits use the request's EncodeResources (parallel groups).
-            let emission = emit_codestream_with(&plan, prepared.request.resources)?;
+            let emission =
+                diagnostics::with_search_phase(diagnostics::SearchDiagnosticPhase::Full, || {
+                    emit_codestream_with(&plan, prepared.request.resources)
+                })?;
             prepared.stats.full_prices = prepared.stats.full_prices.saturating_add(1);
             let bytes = emission.sizing.total;
             let better = full_best.as_ref().is_none_or(|(prev_q, _, prev)| {
@@ -995,6 +1033,13 @@ pub fn search_frame(
 
     prepared.stats.dct_cache_hits = prepared.fwd_cache.hits();
     prepared.stats.dct_cache_misses = prepared.fwd_cache.misses();
+    prepared.stats.candidate_cache_entries = prepared.fwd_cache.entries();
+    prepared.stats.candidate_payload_bytes = prepared.fwd_cache.payload_bytes();
+    prepared.stats.candidate_allocations = prepared.fwd_cache.allocations();
+    let aggregate = diagnostics::search_diag();
+    prepared.stats.fast = aggregate.fast;
+    prepared.stats.full = aggregate.full;
+    prepared.stats.writer = jpxl_encode::vardct::diagnostics::snapshot();
 
     Ok(RateOutcome {
         codestream: emission.bytes,

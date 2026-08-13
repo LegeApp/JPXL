@@ -21,6 +21,7 @@
 //! ([`sink`]), and the writer that will only accept a validated one
 //! ([`emit`]).
 
+pub mod diagnostics;
 pub mod dump;
 pub mod emit;
 pub mod error;

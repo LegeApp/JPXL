@@ -154,6 +154,7 @@ where
     F: Fn(usize) -> Result<T, E> + Sync,
 {
     use rayon::prelude::*;
+    let pool_started = crate::vardct::diagnostics::enabled().then(std::time::Instant::now);
 
     // Local pool capped at `workers` so one encode does not oversubscribe the
     // process when the caller asked for a small budget.
@@ -167,6 +168,11 @@ where
                 .build()
                 .expect("single-thread rayon pool")
         });
+    if let Some(pool_started) = pool_started {
+        crate::vardct::diagnostics::note_pool_build(
+            u64::try_from(pool_started.elapsed().as_nanos()).unwrap_or(u64::MAX),
+        );
+    }
 
     let mut slots: Vec<Option<Result<T, E>>> = (0..n).map(|_| None).collect();
     pool.install(|| {

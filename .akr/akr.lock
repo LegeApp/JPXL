@@ -5,7 +5,7 @@ build {
     tool "akr 0.3.1"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:52434cad45a430616c082dcb746591c254f603e355f325fb60705b8c9949eff3"
+    source_graph "sha256:a99d7dac6cf43a2b6d4af105d53694c897f37b09fe309a721862f05a0041e861"
 }
 
 source ".akr/project.akr" {
@@ -64,8 +64,8 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:0dae8fb72b5fe1acdacc06cda2201d23d1c61339c19b1d114a7cc37f4da394b2"
-    records 77
+    hash "sha256:56377e6cfd8c5355c1b1478a0ae16fb5467bd4ba923aa578bb92ff9a4faecabb"
+    records 83
 }
 
 resolution @jpegxl-rs.decision.encoder-architecture-phases/1 {
@@ -2672,6 +2672,84 @@ resolution @jpegxl-rs.work.arch-phase7-2-lambda-calibration/1 {
     hash "sha256:6e4238a926794a0f56cd42cb12950b358aa4480642ded935b7064729cfc93b63"
 }
 
+resolution @jpegxl-rs.work.arch-phase8-0-search-amplification/1 {
+    slot implements
+    to @jpegxl-rs.decision.encoder-architecture-phases/1
+    hash "sha256:bebc6ba8560b5b033c8661d3025f45375dcd7f485639aba3dcc1338c845dcfa4"
+}
+
+resolution @jpegxl-rs.work.arch-phase8-0-search-amplification/1 {
+    slot implements
+    to @jpegxl-rs.policy.optimization-correctness-gates/1
+    hash "sha256:2d55841ae9cef36d25aa5be36434795cda6df34a3609490f1d8ede3c919b3cd5"
+}
+
+resolution @jpegxl-rs.work.arch-phase8-0-search-amplification/1 {
+    slot part_of
+    to @jpegxl-rs.track.encoder-optimization/1
+    hash "sha256:49975e17bd10998d72b08fccfe98fdea9bdf68ef56e4404dd68e94e1e2d75f23"
+}
+
+resolution @jpegxl-rs.work.arch-phase8-1-persistent-executor/1 {
+    slot depends_on
+    to @jpegxl-rs.work.arch-phase8-0-search-amplification/1
+    hash "sha256:99ef4a16ec63392580b7fc82a089d31666488884169b6005c92658f2942168de"
+}
+
+resolution @jpegxl-rs.work.arch-phase8-1-persistent-executor/1 {
+    slot part_of
+    to @jpegxl-rs.track.encoder-optimization/1
+    hash "sha256:49975e17bd10998d72b08fccfe98fdea9bdf68ef56e4404dd68e94e1e2d75f23"
+}
+
+resolution @jpegxl-rs.work.arch-phase8-2-dense-group-banks/1 {
+    slot depends_on
+    to @jpegxl-rs.work.arch-phase8-1-persistent-executor/1
+    hash "sha256:f5a7c4e4ae3d04760c29690e91c80a039ce118dd7242aa79059b600511e299bd"
+}
+
+resolution @jpegxl-rs.work.arch-phase8-2-dense-group-banks/1 {
+    slot part_of
+    to @jpegxl-rs.track.encoder-optimization/1
+    hash "sha256:49975e17bd10998d72b08fccfe98fdea9bdf68ef56e4404dd68e94e1e2d75f23"
+}
+
+resolution @jpegxl-rs.work.arch-phase8-3-anchor-sketch/1 {
+    slot depends_on
+    to @jpegxl-rs.work.arch-phase8-2-dense-group-banks/1
+    hash "sha256:b135861c8d72149f1585270228caea5a9f9deae4ddba52313df3f41f8c0e835c"
+}
+
+resolution @jpegxl-rs.work.arch-phase8-3-anchor-sketch/1 {
+    slot part_of
+    to @jpegxl-rs.track.encoder-optimization/1
+    hash "sha256:49975e17bd10998d72b08fccfe98fdea9bdf68ef56e4404dd68e94e1e2d75f23"
+}
+
+resolution @jpegxl-rs.work.arch-phase8-4-finalist-token-tape/1 {
+    slot depends_on
+    to @jpegxl-rs.work.arch-phase8-3-anchor-sketch/1
+    hash "sha256:d990fcfb07687280a626e9f6ebe08688a3936fa55a1669c1e38900f6e51e29b6"
+}
+
+resolution @jpegxl-rs.work.arch-phase8-4-finalist-token-tape/1 {
+    slot part_of
+    to @jpegxl-rs.track.encoder-optimization/1
+    hash "sha256:49975e17bd10998d72b08fccfe98fdea9bdf68ef56e4404dd68e94e1e2d75f23"
+}
+
+resolution @jpegxl-rs.work.arch-phase8-5-leaf-finishing/1 {
+    slot depends_on
+    to @jpegxl-rs.work.arch-phase8-4-finalist-token-tape/1
+    hash "sha256:2227e58df43038ba7baed231e04630e7aa2e980e2aef2b97893cdd28c003152c"
+}
+
+resolution @jpegxl-rs.work.arch-phase8-5-leaf-finishing/1 {
+    slot part_of
+    to @jpegxl-rs.track.encoder-optimization/1
+    hash "sha256:49975e17bd10998d72b08fccfe98fdea9bdf68ef56e4404dd68e94e1e2d75f23"
+}
+
 resolution @jpegxl-rs.work.arch-s8-cover-lane-simd/1 {
     slot implements
     to @jpegxl-rs.decision.encoder-architecture-phases/1
@@ -4720,6 +4798,11 @@ seal @jpegxl-rs.work.arch-phase7-1a-rate-proxy-gap/1 {
 seal @jpegxl-rs.work.arch-phase7-2-lambda-calibration/1 {
     state completed
     hash "sha256:9778edeaa36416984d989a5399e0c448b0bd67f82a393c0c6654e151d811ef38"
+}
+
+seal @jpegxl-rs.work.arch-phase8-0-search-amplification/1 {
+    state active
+    hash "sha256:99ef4a16ec63392580b7fc82a089d31666488884169b6005c92658f2942168de"
 }
 
 seal @jpegxl-rs.work.arch-s8-cover-lane-simd/1 {
