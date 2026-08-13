@@ -824,6 +824,7 @@ impl PlanMultiplicity {
 }
 
 std::thread_local! {
+    static PLAN_DIAGNOSTICS_ENABLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static LAST_PLAN_MULTIPLICITY: std::cell::Cell<PlanMultiplicity> =
         const { std::cell::Cell::new(PlanMultiplicity {
             exact_residual_prices: 0,
@@ -831,6 +832,20 @@ std::thread_local! {
             residual_scans: 0,
             plane_clone_bytes: 0,
         }) };
+}
+
+/// Enables or disables modular planning diagnostics on the current thread.
+///
+/// The normal encoder leaves this off. `jpxl bench --diag` enables it around
+/// its warm-up and timed iterations so production planning does not pay for
+/// counter updates nobody reads.
+pub fn set_plan_diagnostics_enabled(enabled: bool) {
+    PLAN_DIAGNOSTICS_ENABLED.with(|cell| cell.set(enabled));
+}
+
+#[inline]
+fn plan_diagnostics_enabled() -> bool {
+    PLAN_DIAGNOSTICS_ENABLED.with(std::cell::Cell::get)
 }
 
 /// Multiplicity counters from the most recent [`plan_for`] on this thread.
@@ -846,6 +861,9 @@ fn reset_multiplicity() {
 }
 
 fn bump_exact() {
+    if !plan_diagnostics_enabled() {
+        return;
+    }
     LAST_PLAN_MULTIPLICITY.with(|c| {
         let mut m = c.get();
         m.exact_residual_prices = m.exact_residual_prices.saturating_add(1);
@@ -856,6 +874,9 @@ fn bump_exact() {
 
 /// Records plane deep-clone traffic from modular source construction (Phase-0).
 pub(crate) fn note_plane_clone_bytes(bytes: u64) {
+    if !plan_diagnostics_enabled() {
+        return;
+    }
     LAST_PLAN_MULTIPLICITY.with(|c| {
         let mut m = c.get();
         m.plane_clone_bytes = m.plane_clone_bytes.saturating_add(bytes);
@@ -864,6 +885,9 @@ pub(crate) fn note_plane_clone_bytes(bytes: u64) {
 }
 
 fn bump_cheap() {
+    if !plan_diagnostics_enabled() {
+        return;
+    }
     LAST_PLAN_MULTIPLICITY.with(|c| {
         let mut m = c.get();
         m.cheap_scores = m.cheap_scores.saturating_add(1);
@@ -1029,6 +1053,16 @@ fn exact_residual_bits(source: &modular::ModularSource, group_size_shift: u32) -
 #[allow(clippy::indexing_slicing, clippy::cast_possible_truncation)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn disabled_plan_diagnostics_do_not_accumulate() {
+        set_plan_diagnostics_enabled(false);
+        reset_multiplicity();
+        bump_exact();
+        bump_cheap();
+        note_plane_clone_bytes(4096);
+        assert_eq!(last_plan_multiplicity(), PlanMultiplicity::default());
+    }
     use crate::EncodeOptions;
 
     /// Phase 4B decision-preservation regret harness (echoes S8 Phase C's
@@ -1261,6 +1295,7 @@ mod tests {
     /// palette/squeeze), not for every property×threshold trial.
     #[test]
     fn plan_for_prices_exact_only_on_finalists() {
+        set_plan_diagnostics_enabled(true);
         let width = 48u32;
         let height = 48u32;
         let plane: Plane = (0..height)
@@ -1281,6 +1316,7 @@ mod tests {
             m.exact_residual_prices >= 1,
             "the MA winner must be exact-priced: {m:?}"
         );
+        set_plan_diagnostics_enabled(false);
         assert!(
             m.cheap_scores > m.exact_residual_prices * 5,
             "cheap ranking should dominate exact finalist prices: {m:?}"

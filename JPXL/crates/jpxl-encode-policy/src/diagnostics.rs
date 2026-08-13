@@ -1,9 +1,10 @@
 //! Phase-0 encode diagnostics (outside-advice instrumentation).
 //!
 //! Thread-local counters and stage wall times for one VarDCT `plan_at` (or
-//! rate search). Always recorded; zero cost when unread. Call
-//! [`reset_encode_diag`] at the start of a measured encode and
-//! [`take_encode_diag`] / [`last_encode_diag`] afterward.
+//! rate search). They are disabled by default; call
+//! [`set_encode_diag_enabled`] around a measured encode, with
+//! [`reset_encode_diag`] at its start and [`take_encode_diag`] or
+//! [`last_encode_diag`] afterward.
 //!
 //! These numbers prove architectural multiplicity (how many times
 //! [`crate::quantize::HfQuantizer::choose`] runs per stage, how much
@@ -163,6 +164,7 @@ impl EncodeDiag {
 }
 
 std::thread_local! {
+    static ENABLED: Cell<bool> = const { Cell::new(false) };
     static DIAG: Cell<EncodeDiag> = const { Cell::new(EncodeDiag {
         choose_cover: 0,
         choose_cfl_y: 0,
@@ -191,6 +193,20 @@ std::thread_local! {
     static STAGE: Cell<ChooseStage> = const { Cell::new(ChooseStage::Other) };
 }
 
+/// Enables or disables diagnostics on the current thread.
+///
+/// Normal encoding leaves this disabled so the Phase-0 counters do not turn
+/// every scalar quantizer choice into several thread-local updates. The CLI's
+/// `bench --diag` path enables it around the measured encode.
+pub fn set_encode_diag_enabled(enabled: bool) {
+    ENABLED.with(|cell| cell.set(enabled));
+}
+
+#[inline]
+fn enabled() -> bool {
+    ENABLED.with(Cell::get)
+}
+
 /// Clears counters for a new measured encode on this thread.
 pub fn reset_encode_diag() {
     DIAG.with(|c| c.set(EncodeDiag::default()));
@@ -215,11 +231,17 @@ pub fn take_encode_diag() -> EncodeDiag {
 
 /// Sets the stage that subsequent [`note_choose`] calls attribute to.
 pub fn set_choose_stage(stage: ChooseStage) {
+    if !enabled() {
+        return;
+    }
     STAGE.with(|c| c.set(stage));
 }
 
 /// Runs `f` with [`ChooseStage`] set, restoring the previous stage afterward.
 pub fn with_choose_stage<R>(stage: ChooseStage, f: impl FnOnce() -> R) -> R {
+    if !enabled() {
+        return f();
+    }
     let prev = STAGE.with(Cell::get);
     STAGE.with(|c| c.set(stage));
     let out = f();
@@ -230,6 +252,9 @@ pub fn with_choose_stage<R>(stage: ChooseStage, f: impl FnOnce() -> R) -> R {
 /// Records one `HfQuantizer::choose` call against the current stage.
 #[inline]
 pub fn note_choose() {
+    if !enabled() {
+        return;
+    }
     let stage = STAGE.with(Cell::get);
     DIAG.with(|c| {
         let mut d = c.get();
@@ -246,6 +271,9 @@ pub fn note_choose() {
 
 /// Accumulates wall time for a named plan stage.
 pub fn note_stage_ns(which: StageTimer, ns: u64) {
+    if !enabled() {
+        return;
+    }
     DIAG.with(|c| {
         let mut d = c.get();
         match which {
@@ -289,6 +317,9 @@ pub enum StageTimer {
 
 /// Times `f` and adds the elapsed wall nanoseconds to `which`.
 pub fn time_stage<R>(which: StageTimer, f: impl FnOnce() -> R) -> R {
+    if !enabled() {
+        return f();
+    }
     let t0 = Instant::now();
     let out = f();
     let ns = u64::try_from(t0.elapsed().as_nanos()).unwrap_or(u64::MAX);
@@ -298,6 +329,9 @@ pub fn time_stage<R>(which: StageTimer, f: impl FnOnce() -> R) -> R {
 
 /// Records one candidate-forward cache insert (`n_f32` coefficients total across channels).
 pub fn note_candidate_forward(n_f32: usize) {
+    if !enabled() {
+        return;
+    }
     DIAG.with(|c| {
         let mut d = c.get();
         d.candidate_forwards = d.candidate_forwards.saturating_add(1);
@@ -309,6 +343,9 @@ pub fn note_candidate_forward(n_f32: usize) {
 
 /// Records one selected-forward clone (`n_f32` coefficients).
 pub fn note_selected_forward_clone(n_f32: usize) {
+    if !enabled() {
+        return;
+    }
     DIAG.with(|c| {
         let mut d = c.get();
         d.selected_forward_clones = d.selected_forward_clones.saturating_add(1);
@@ -322,6 +359,9 @@ pub fn note_selected_forward_clone(n_f32: usize) {
 /// (`s8-cover-prune` feature only).
 #[cfg(feature = "s8-cover-prune")]
 pub fn note_cover_prune_check() {
+    if !enabled() {
+        return;
+    }
     DIAG.with(|c| {
         let mut d = c.get();
         d.cover_prune_checks = d.cover_prune_checks.saturating_add(1);
@@ -333,6 +373,9 @@ pub fn note_cover_prune_check() {
 /// (`s8-cover-prune` feature only).
 #[cfg(feature = "s8-cover-prune")]
 pub fn note_cover_prune_hit() {
+    if !enabled() {
+        return;
+    }
     DIAG.with(|c| {
         let mut d = c.get();
         d.cover_prune_hits = d.cover_prune_hits.saturating_add(1);
@@ -342,6 +385,9 @@ pub fn note_cover_prune_hit() {
 
 /// Records CfL sample pushes (`count` samples at ~16 B each).
 pub fn note_cfl_samples(count: u64) {
+    if !enabled() {
+        return;
+    }
     DIAG.with(|c| {
         let mut d = c.get();
         d.cfl_samples = d.cfl_samples.saturating_add(count);
@@ -355,16 +401,30 @@ mod tests {
     use super::*;
 
     #[test]
+    fn disabled_diagnostics_do_not_accumulate() {
+        set_encode_diag_enabled(false);
+        reset_encode_diag();
+        with_choose_stage(ChooseStage::Cover, note_choose);
+        note_stage_ns(StageTimer::Cover, 7);
+        note_candidate_forward(64);
+        note_selected_forward_clone(64);
+        note_cfl_samples(4);
+        assert_eq!(take_encode_diag(), EncodeDiag::default());
+    }
+
+    #[test]
     fn choose_stages_accumulate() {
+        set_encode_diag_enabled(true);
         reset_encode_diag();
         with_choose_stage(ChooseStage::Cover, || {
             note_choose();
             note_choose();
         });
-        with_choose_stage(ChooseStage::Final, || note_choose());
+        with_choose_stage(ChooseStage::Final, note_choose);
         let d = take_encode_diag();
         assert_eq!(d.choose_cover, 2);
         assert_eq!(d.choose_final, 1);
         assert_eq!(d.choose_total(), 3);
+        set_encode_diag_enabled(false);
     }
 }

@@ -917,6 +917,8 @@ fn cmd_bench(args: &[String]) -> u8 {
         None => synthetic_rgb8(width, height),
     };
 
+    jpxl_encode::lossless::set_plan_diagnostics_enabled(diag);
+    jpxl_encode_policy::diagnostics::set_encode_diag_enabled(diag);
     let timed = match mode {
         "modular" => bench_modular(&rgb, width, height, iters, resources, effort, overrides),
         "vardct-fixed" => bench_vardct_fixed(&rgb, width, height, iters, resources),
@@ -929,6 +931,11 @@ fn cmd_bench(args: &[String]) -> u8 {
             return EXIT_ERROR;
         }
     };
+
+    // Do not leak measurement state if the CLI grows another command in this
+    // process later (or when `run` is called repeatedly by tests).
+    jpxl_encode::lossless::set_plan_diagnostics_enabled(false);
+    jpxl_encode_policy::diagnostics::set_encode_diag_enabled(false);
 
     match timed {
         Ok(report) => {

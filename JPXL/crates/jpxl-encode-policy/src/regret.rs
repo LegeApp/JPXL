@@ -960,6 +960,7 @@ mod tests {
     #[cfg(feature = "s8-cover-prune")]
     #[test]
     fn wired_prune_does_not_change_tile_regions_decisions() {
+        crate::diagnostics::set_encode_diag_enabled(true);
         for (name, frame) in [
             ("ramp", ramp_frame(128, 128)),
             ("noisy", noisy_frame(128, 128)),
@@ -985,5 +986,6 @@ mod tests {
                  which Phase C's exhaustive safety proof says should be impossible"
             );
         }
+        crate::diagnostics::set_encode_diag_enabled(false);
     }
 }
