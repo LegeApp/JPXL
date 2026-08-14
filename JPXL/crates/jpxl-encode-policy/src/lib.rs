@@ -195,6 +195,9 @@ pub fn plan_frame_with_atlas(
 /// with Full so intermediate probes skip several full `price_codestream`s.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum EntropySearch {
+    /// Provisional entropy only. The caller may census the quantized plan for
+    /// a rate sketch, but must never ask the exact writer to price it.
+    Sketch,
     /// Default I.2.2 map, natural orders, one census + train.
     Fast,
     /// Slice-18 alternatives with exact-price adopt gates.
@@ -615,6 +618,13 @@ fn plan_at_with_cfl(
         )?,
         SectionLayout::for_geometry(&geometry),
     );
+    // Phase 8.5: sketch-only navigation consumes the raw coefficient census,
+    // not a trained entropy model. The provisional model is structurally legal
+    // and carries the same default block context / natural orders the sketch
+    // walk needs, so return it before the otherwise-discarded census+training.
+    if entropy_search == EntropySearch::Sketch {
+        return Ok(validate(provisional)?);
+    }
     // Slice 18 / 18b: train under the default I.2.2 map, then optionally
     // adopt custom coefficient orders on an exact price win (Full only).
     let with_default = diagnostics::time_stage(diagnostics::StageTimer::Entropy, || {

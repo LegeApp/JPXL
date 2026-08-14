@@ -799,7 +799,7 @@ impl<'a> PreparedSearch<'a> {
         entropy: EntropySearch,
     ) -> Result<ValidatedEmissionPlan> {
         let phase = match entropy {
-            EntropySearch::Fast => diagnostics::SearchDiagnosticPhase::Fast,
+            EntropySearch::Sketch | EntropySearch::Fast => diagnostics::SearchDiagnosticPhase::Fast,
             EntropySearch::Full => diagnostics::SearchDiagnosticPhase::Full,
         };
         diagnostics::with_search_phase(phase, || {
@@ -827,7 +827,7 @@ impl<'a> PreparedSearch<'a> {
         capture: Option<&mut Option<StructuralAnchor>>,
     ) -> Result<ValidatedEmissionPlan> {
         let phase = match entropy {
-            EntropySearch::Fast => diagnostics::SearchDiagnosticPhase::Fast,
+            EntropySearch::Sketch | EntropySearch::Fast => diagnostics::SearchDiagnosticPhase::Fast,
             EntropySearch::Full => diagnostics::SearchDiagnosticPhase::Full,
         };
         diagnostics::with_search_phase(phase, || {
@@ -1149,7 +1149,8 @@ fn search_frame_anchor_sketch(
             if let Some((_, bytes)) = known.iter().find(|(known_q, _)| *known_q == quantizer) {
                 return Ok(*bytes);
             }
-            let plan = prepared.plan_anchor(quantizer, EntropySearch::Fast, Some(&anchor), None)?;
+            let plan =
+                prepared.plan_anchor(quantizer, EntropySearch::Sketch, Some(&anchor), None)?;
             let sketch = sketch_plan(&plan, prepared.executor)?;
             prepared.stats.sketch_probes = prepared.stats.sketch_probes.saturating_add(1);
             Ok(calibration.predict(sketch))

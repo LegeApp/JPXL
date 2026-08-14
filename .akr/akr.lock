@@ -5,7 +5,7 @@ build {
     tool "akr 0.3.1"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:88c38035f874b47dd1b6e1925afa672f00e482eb55f42de9b967e285af9e84da"
+    source_graph "sha256:b055827500885c6e3e100a3314a845b5df0dd0751bd39d53341116e1358aacf7"
 }
 
 source ".akr/project.akr" {
@@ -64,7 +64,7 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:7535caaec323c5602cfd8276092da7c43eb5f8d5244a47a6d2e9c1387226d945"
+    hash "sha256:af5dd0682e986518ec9ec8ff10354683f283cfbe01f29816dd3d54029a4a0ed2"
     records 86
 }
 
@@ -4964,6 +4964,11 @@ seal @jpegxl-rs.work.arch-phase8-4-finalist-token-tape/1 {
 seal @jpegxl-rs.work.arch-phase8-4-finalist-token-tape/2 {
     state completed
     hash "sha256:f089bf1069f6a829fdc322819e0609f9431a02420ccf754a7cf1bb2b44279fca"
+}
+
+seal @jpegxl-rs.work.arch-phase8-5-leaf-finishing/1 {
+    state active
+    hash "sha256:0451e97eb5a0e22a5412a18790e8caf6bd0a36d024879f45fc600ce044ceb13e"
 }
 
 seal @jpegxl-rs.work.arch-s8-cover-lane-simd/1 {
