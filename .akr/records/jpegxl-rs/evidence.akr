@@ -2246,6 +2246,31 @@ record jpegxl-rs.evidence.phase8-4-windows-speed/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase8-5-checked-round-correctness-2026-08-15/1 : evidence {
+    title "Checked rounding preserves quantization and stream behavior"
+    state verified
+    result pass
+    method command
+    observed_at git:7f6d90673ad604a2240ba5f35292387e7b13af2c
+    command "cd JPXL && cargo test -p jpxl-encode-policy --release --features anchor-sketch && cargo check -p jpxl-encode-policy --no-default-features --features anchor-sketch && cargo test --workspace --quiet && cargo fmt --all --check"
+    artifact ".agent/scratch/phase8-5-rounding-2026-08-14/SUMMARY.md"
+    summary """
+        The exhaustive working-range/tie equivalence test, SIMD and scalar builds, workspace tests, release policy/oracle checks, formatting gate, and paired output fingerprints all passed; JPXL streams were also byte-identical between one and four threads.
+        """
+}
+
+record jpegxl-rs.evidence.phase8-5-checked-round-speed-2026-08-15/1 : evidence {
+    title "Checked rounding removes roundf and improves encode speed"
+    state verified
+    result pass
+    method observation
+    observed_at git:7f6d90673ad604a2240ba5f35292387e7b13af2c
+    artifact ".agent/scratch/phase8-5-rounding-2026-08-14/SUMMARY.md"
+    summary """
+        A fresh profile justified the >=9.8% quantization leaf; byte-identical checked rounding improved median end-to-end time 3.18% on the mid image (5/5 paired wins) and 1.62% on the large image (2/3), reduced perf cycles 2.68%, and removed roundf from the measured profile.
+        """
+}
+
 record jpegxl-rs.evidence.phase8-5-current-libjxl-gap-2026-08-14/1 : evidence {
     title "Current matched-quality libjxl speed gap"
     state verified
@@ -2295,6 +2320,31 @@ record jpegxl-rs.evidence.phase8-5-final-pgo-and-gap-2026-08-14/1 : evidence {
     artifact ".agent/scratch/phase8-5-finishing-2026-08-14/SUMMARY.md"
     summary """
         Final PGO adds 13.27% at 4.3 MP and 11.66% at unseen 12 MP; at matched SSIMULACRA2 the remaining black-box cjxl gap is 8.86x and 6.75x respectively.
+        """
+}
+
+record jpegxl-rs.evidence.phase8-5-fresh-pgo-scaling-provenance-2026-08-15/1 : evidence {
+    title "Fresh post-rounding PGO provenance for scaling matrix"
+    state verified
+    result pass
+    method command
+    observed_at git:7f6d90673ad604a2240ba5f35292387e7b13af2c
+    command "cd .agent/scratch/phase8-5-scaling-2026-08-15 && ./run-scaling.sh"
+    artifact ".agent/scratch/phase8-5-scaling-2026-08-15/SUMMARY.md"
+    summary """
+        PGO was regenerated after the rounding control-flow change from seven canonical 1024x768 training images plus the mid photo; the large image remained unseen. The resulting profile SHA-256 was fe58507f896b4ee0081fe01ee2421d4299cde21fa1a4a211bd1bd2f4a0477509 and JPXL binary SHA-256 was 9b09633e0215a2612adab6f62fde3f5fc691f2eb27e2a5c74ab04ded71ab7c68.
+        """
+}
+
+record jpegxl-rs.evidence.phase8-5-jpxl-cjxl-scaling-2026-08-15/1 : evidence {
+    title "Matched-quality JPXL and cjxl sequential/threaded scaling baseline"
+    state verified
+    result pass
+    method observation
+    observed_at git:7f6d90673ad604a2240ba5f35292387e7b13af2c
+    artifact ".agent/scratch/phase8-5-scaling-2026-08-15/SUMMARY.md"
+    summary """
+        Fresh-PGO process-to-process timings at matched quality measured JPXL 1->4-thread speedups of 1.34x mid and 1.95x large versus cjxl 2.54x and 2.34x. JPXL/cjxl gaps were 3.02x/3.47x sequential and 5.71x/4.17x at four threads. Thread-count streams were byte-identical within each codec.
         """
 }
 

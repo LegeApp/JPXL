@@ -3173,7 +3173,7 @@ record jpegxl-rs.work.arch-phase8-5-leaf-finishing/5 : work {
 
 record jpegxl-rs.work.arch-phase8-5-leaf-finishing/6 : work {
     title "Phase 8.5: profile-guided leaf and build optimization"
-    state active
+    state superseded
     scope [ path "JPXL/Cargo.toml", path "JPXL/crates/**" ]
     intent """
         After structural amplification is removed, reprofile and optimize only leaves at or above 5% of samples, then evaluate native CPU selection, LTO, PGO, allocator behavior, and hardware counters. Preserve scalar fallbacks and clean-room boundaries.
@@ -3203,6 +3203,80 @@ record jpegxl-rs.work.arch-phase8-5-leaf-finishing/6 : work {
     depends_on [ @jpegxl-rs.work.arch-phase8-4-finalist-token-tape ]
     part_of [ @jpegxl-rs.track.encoder-optimization ]
     supersedes [ @jpegxl-rs.work.arch-phase8-5-leaf-finishing/5 ]
+}
+
+record jpegxl-rs.work.arch-phase8-5-leaf-finishing/7 : work {
+    title "Phase 8.5: profile-guided leaf and build optimization"
+    state superseded
+    scope [ path "JPXL/Cargo.toml", path "JPXL/crates/**" ]
+    intent """
+        After structural amplification is removed, reprofile and optimize only leaves at or above 5% of samples, then evaluate native CPU selection, LTO, PGO, allocator behavior, and hardware counters. Preserve scalar fallbacks and clean-room boundaries.
+        """
+    note """
+        Retained the checked ties-away rounding leaf change at commit 7f6d90673ad604a2240ba5f35292387e7b13af2c after a fresh profile placed HF quantization at >=9.8%: median end-to-end time improved 3.18% on the mid image (5/5 paired wins) and 1.62% on the large image (2/3), cycles fell 2.68%, roundf disappeared, and all tested streams remained byte-identical. A fresh post-change PGO, matched-quality process-to-process matrix then established the architecture baseline: JPXL 1->4-thread speedup is 1.34x mid and 1.95x large versus cjxl 2.54x and 2.34x; JPXL/cjxl gaps are 3.02x/3.47x sequential and 5.71x/4.17x at four threads. Matching cjxl scaling alone would only restore the roughly 3.0-3.5x sequential gap, so parity requires both major sequential work reduction and finer-than-current-LF-group parallel work, especially for the mid-size case. The next checkpoint should split hot quantization/planning into more independent deterministic units or remove serial global work, then rerun this exact matrix. Saliency/AQ and raw-autotune scene semantics remain optional quality priors, not the primary parity architecture; raw-autotune must communicate through a neutral boundary because of its AGPL license.
+        """
+    acceptance {
+        check profile-justified {
+            statement """
+                Every leaf change targets >=5% current samples and improves end-to-end.
+                """
+            method observation
+            verified_by [
+                @jpegxl-rs.evidence.phase8-5-linux-leaf-speed-2026-08-14/1,
+                @jpegxl-rs.evidence.phase8-5-linux-profile-attribution-2026-08-14/1
+            ]
+        }
+        check quality-preserved {
+            statement """
+                All decoder, target-rate, perceptual, thread-determinism gates pass.
+                """
+            method command
+            verified_by [ @jpegxl-rs.evidence.phase8-5-linux-quality-2026-08-14/1 ]
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase8-4-finalist-token-tape ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+    supersedes [ @jpegxl-rs.work.arch-phase8-5-leaf-finishing/6 ]
+}
+
+record jpegxl-rs.work.arch-phase8-5-leaf-finishing/8 : work {
+    title "Phase 8.5: profile-guided leaf and build optimization"
+    state active
+    scope [ path "JPXL/Cargo.toml", path "JPXL/crates/**" ]
+    intent """
+        After structural amplification is removed, reprofile and optimize only leaves at or above 5% of samples, then evaluate native CPU selection, LTO, PGO, allocator behavior, and hardware counters. Preserve scalar fallbacks and clean-room boundaries.
+        """
+    note """
+        Retained the checked ties-away rounding leaf change at commit 7f6d90673ad604a2240ba5f35292387e7b13af2c after a fresh profile placed HF quantization at >=9.8%: median end-to-end time improved 3.18% on the mid image (5/5 paired wins) and 1.62% on the large image (2/3), cycles fell 2.68%, roundf disappeared, and all tested streams remained byte-identical. A fresh post-change PGO, matched-quality process-to-process matrix then established the architecture baseline: JPXL 1->4-thread speedup is 1.34x mid and 1.95x large versus cjxl 2.54x and 2.34x; JPXL/cjxl gaps are 3.02x/3.47x sequential and 5.71x/4.17x at four threads. Matching cjxl scaling alone would only restore the roughly 3.0-3.5x sequential gap, so parity requires both major sequential work reduction and finer-than-current-LF-group parallel work, especially for the mid-size case. The next checkpoint should split hot quantization/planning into more independent deterministic units or remove serial global work, then rerun this exact matrix. Saliency/AQ and raw-autotune scene semantics remain optional quality priors, not the primary parity architecture; raw-autotune must communicate through a neutral boundary because of its AGPL license.
+        """
+    acceptance {
+        check profile-justified {
+            statement """
+                Every leaf change targets >=5% current samples and improves end-to-end.
+                """
+            method observation
+            verified_by [
+                @jpegxl-rs.evidence.phase8-5-checked-round-speed-2026-08-15/1,
+                @jpegxl-rs.evidence.phase8-5-fresh-pgo-scaling-provenance-2026-08-15/1,
+                @jpegxl-rs.evidence.phase8-5-jpxl-cjxl-scaling-2026-08-15/1,
+                @jpegxl-rs.evidence.phase8-5-linux-leaf-speed-2026-08-14/1,
+                @jpegxl-rs.evidence.phase8-5-linux-profile-attribution-2026-08-14/1
+            ]
+        }
+        check quality-preserved {
+            statement """
+                All decoder, target-rate, perceptual, thread-determinism gates pass.
+                """
+            method command
+            verified_by [
+                @jpegxl-rs.evidence.phase8-5-checked-round-correctness-2026-08-15/1,
+                @jpegxl-rs.evidence.phase8-5-linux-quality-2026-08-14/1
+            ]
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase8-4-finalist-token-tape ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+    supersedes [ @jpegxl-rs.work.arch-phase8-5-leaf-finishing/7 ]
 }
 
 record jpegxl-rs.work.arch-phase8-6-butteraugli-localization/1 : work {

@@ -5,7 +5,7 @@ build {
     tool "akr 0.3.1"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:51fb57304aae3939abd73610b9b57f9559563a2a64152a0a31bb87f1a485388b"
+    source_graph "sha256:ff18c2eb09d595ab2863b124c4fcadb44dd43037980bd83454cdd41c7b46b018"
 }
 
 source ".akr/project.akr" {
@@ -29,8 +29,8 @@ source ".akr/records/jpegxl-rs/decisions.akr" {
 }
 
 source ".akr/records/jpegxl-rs/evidence.akr" {
-    hash "sha256:e1a24f8537086446c1346e3f805affc9ca7cf57276bda5a023a05bdfd4a7a359"
-    records 215
+    hash "sha256:972b1347944ddbcc42afcd345aab13aa61b58f39f29918cc54d1e6c80df484a7"
+    records 219
 }
 
 source ".akr/records/jpegxl-rs/milestones.akr" {
@@ -64,8 +64,8 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:0748bc5624090acf2ebc12202f7fcc0b24f510de3c63cfc7c2b881eb1143f324"
-    records 95
+    hash "sha256:eb5b7621c8ed8c67024f2fe325c7f6242ddc858246d60dd059677e1c8d9aa7d5"
+    records 97
 }
 
 resolution @jpegxl-rs.decision.encoder-architecture-phases/1 {
@@ -2846,6 +2846,30 @@ resolution @jpegxl-rs.work.arch-phase8-5-leaf-finishing/6 {
     hash "sha256:49975e17bd10998d72b08fccfe98fdea9bdf68ef56e4404dd68e94e1e2d75f23"
 }
 
+resolution @jpegxl-rs.work.arch-phase8-5-leaf-finishing/7 {
+    slot depends_on
+    to @jpegxl-rs.work.arch-phase8-4-finalist-token-tape/2
+    hash "sha256:f089bf1069f6a829fdc322819e0609f9431a02420ccf754a7cf1bb2b44279fca"
+}
+
+resolution @jpegxl-rs.work.arch-phase8-5-leaf-finishing/7 {
+    slot part_of
+    to @jpegxl-rs.track.encoder-optimization/1
+    hash "sha256:49975e17bd10998d72b08fccfe98fdea9bdf68ef56e4404dd68e94e1e2d75f23"
+}
+
+resolution @jpegxl-rs.work.arch-phase8-5-leaf-finishing/8 {
+    slot depends_on
+    to @jpegxl-rs.work.arch-phase8-4-finalist-token-tape/2
+    hash "sha256:f089bf1069f6a829fdc322819e0609f9431a02420ccf754a7cf1bb2b44279fca"
+}
+
+resolution @jpegxl-rs.work.arch-phase8-5-leaf-finishing/8 {
+    slot part_of
+    to @jpegxl-rs.track.encoder-optimization/1
+    hash "sha256:49975e17bd10998d72b08fccfe98fdea9bdf68ef56e4404dd68e94e1e2d75f23"
+}
+
 resolution @jpegxl-rs.work.arch-phase8-6-butteraugli-localization/1 {
     slot part_of
     to @jpegxl-rs.track.encoder-optimization/1
@@ -4098,6 +4122,16 @@ seal @jpegxl-rs.evidence.phase8-4-windows-speed/1 {
     hash "sha256:37a90001289c57b6d318a6afd8153f2b9c6d79cc3cc0fae8ff7fa38ec6cc02b8"
 }
 
+seal @jpegxl-rs.evidence.phase8-5-checked-round-correctness-2026-08-15/1 {
+    state verified
+    hash "sha256:072dba47f7a7499c726d27458b67b8c55a8c78b8c5c5ba73a9874670b6769a48"
+}
+
+seal @jpegxl-rs.evidence.phase8-5-checked-round-speed-2026-08-15/1 {
+    state verified
+    hash "sha256:a0c7faf6e774a76ac4f905ff94b5bed94130423012a37a5d52f52e8f9c77f4fe"
+}
+
 seal @jpegxl-rs.evidence.phase8-5-current-libjxl-gap-2026-08-14/1 {
     state verified
     hash "sha256:19289989316d355a8a5bff8f7b82b5ce83f601e587307f61736739994eecff92"
@@ -4116,6 +4150,16 @@ seal @jpegxl-rs.evidence.phase8-5-entropy-candidate-parallelism-2026-08-14/1 {
 seal @jpegxl-rs.evidence.phase8-5-final-pgo-and-gap-2026-08-14/1 {
     state verified
     hash "sha256:5f24eff69a7aa556fc1d53f3a3743ecdbfb5d7d9e25f2ad73434857cbaeb35a0"
+}
+
+seal @jpegxl-rs.evidence.phase8-5-fresh-pgo-scaling-provenance-2026-08-15/1 {
+    state verified
+    hash "sha256:afa94ce2ee4d5c44cfca794d0fd86d9f2565869e1f02e3efe4e5e1e87b96291d"
+}
+
+seal @jpegxl-rs.evidence.phase8-5-jpxl-cjxl-scaling-2026-08-15/1 {
+    state verified
+    hash "sha256:13f15e8e8d7b6a4ce7d148577a7ae17f9c7be950077bc02cf7e01d559935a076"
 }
 
 seal @jpegxl-rs.evidence.phase8-5-linux-leaf-speed-2026-08-14/1 {
@@ -5184,8 +5228,18 @@ seal @jpegxl-rs.work.arch-phase8-5-leaf-finishing/5 {
 }
 
 seal @jpegxl-rs.work.arch-phase8-5-leaf-finishing/6 {
+    state superseded
+    hash "sha256:a4d52fb6c7da475be4c3aedf2fe8367906b10976eda810d98a067bc17beea941"
+}
+
+seal @jpegxl-rs.work.arch-phase8-5-leaf-finishing/7 {
+    state superseded
+    hash "sha256:ba6718456a751ee85d10c20d4b8aa584f628c9e7d4b2e6713825969dafdcdb93"
+}
+
+seal @jpegxl-rs.work.arch-phase8-5-leaf-finishing/8 {
     state active
-    hash "sha256:41512cfd8f0215e96aae9102bd3285e35eff7378ec930eefb7614f672e894230"
+    hash "sha256:66f6d8cbc7b11e24b65f6a2fc2cd2e5fc9b6b5de57aa01c2bd507c3d1b8e7ef8"
 }
 
 seal @jpegxl-rs.work.arch-phase8-6-butteraugli-localization/1 {
