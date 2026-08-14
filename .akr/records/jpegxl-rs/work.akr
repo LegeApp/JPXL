@@ -2968,7 +2968,7 @@ record jpegxl-rs.work.arch-phase8-3-anchor-sketch/1 : work {
 
 record jpegxl-rs.work.arch-phase8-4-finalist-token-tape/1 : work {
     title "Phase 8.4: finalist-only entropy and shared token tape"
-    state active
+    state superseded
     scope [
         path "JPXL/crates/jpxl-encode-policy/**",
         path "JPXL/crates/jpxl-encode/src/vardct/**"
@@ -2992,6 +2992,37 @@ record jpegxl-rs.work.arch-phase8-4-finalist-token-tape/1 : work {
     }
     depends_on [ @jpegxl-rs.work.arch-phase8-3-anchor-sketch ]
     part_of [ @jpegxl-rs.track.encoder-optimization ]
+}
+
+record jpegxl-rs.work.arch-phase8-4-finalist-token-tape/2 : work {
+    title "Phase 8.4: finalist exact-price caching and tape evaluation"
+    state completed
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/**",
+        path "JPXL/crates/jpxl-encode/src/vardct/**"
+    ]
+    intent """
+        Carry exact prices with trained entropy finalists so unchanged winners are never re-emitted for later comparisons. Compare Count-then-Store, Store-every-finalist, and a typed per-pass-group event tape under a preregistered 3% end-to-end adoption gate; retain only variants that clear the gate, and record honest negative results for those that do not.
+        """
+    acceptance {
+        check entropy-amplification {
+            statement """
+                Census, training, and exact writer amplification fall and total encode time improves; Count-then-Store is adopted only if its median win is at least 3%.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.phase8-4-windows-speed/1 ]
+        }
+        check quality-and-target {
+            statement """
+                The Phase 8.3 target and strict per-cell quality gates remain satisfied.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.phase8-4-quality-identity/1 ]
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase8-3-anchor-sketch ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+    supersedes [ @jpegxl-rs.work.arch-phase8-4-finalist-token-tape/1 ]
 }
 
 record jpegxl-rs.work.arch-phase8-5-leaf-finishing/1 : work {

@@ -2210,6 +2210,42 @@ record jpegxl-rs.evidence.phase8-3-windows-speed/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase8-4-correctness/1 : evidence {
+    title "Phase 8.4 release policy and oracle suites pass"
+    state verified
+    result pass
+    method command
+    observed_at git:545724f48888b007ab90defbc96ced06329170fe
+    command "cd JPXL && cargo test -p jpxl-encode-policy --release --features anchor-sketch"
+    summary """
+        The release anchor-sketch policy suite passed, including rate contracts, thread-count byte identity, in-tree roundtrips, djxl, and jxl-oxide oracle tests; cargo fmt --all --check also passed.
+        """
+}
+
+record jpegxl-rs.evidence.phase8-4-quality-identity/1 : evidence {
+    title "Phase 8.4 preserves all Phase 8.3 quality and target cells byte-for-byte"
+    state verified
+    result pass
+    method observation
+    observed_at git:545724f48888b007ab90defbc96ced06329170fe
+    artifact ".agent/scratch/phase8-4-finalist-cache-2026-08-14/SUMMARY.md"
+    summary """
+        All seven canonical 1024x768 1 bpp t4 outputs were byte-identical to the Phase 8.3 anchor7 streams, so achieved sizes, fallback decisions, SSIMULACRA2, Butteraugli, and oracle-decode results are unchanged.
+        """
+}
+
+record jpegxl-rs.evidence.phase8-4-windows-speed/1 : evidence {
+    title "Phase 8.4 cached finalist prices clear the Windows speed gate"
+    state verified
+    result pass
+    method observation
+    observed_at git:545724f48888b007ab90defbc96ced06329170fe
+    artifact ".agent/scratch/phase8-4-finalist-cache-2026-08-14/SUMMARY.md"
+    summary """
+        Five interleaved 2400x1800 1 bpp t4 pairs reduced median end-to-end time 5034.715 ms to 4876.715 ms (3.14%), internal Counts 10 to 6, Full section traversals 1008 to 672, and writer amplification 14 to 10 with identical 535987-byte output; Store-every-finalist was 1.23% slower and the typed event tape improved only 0.28%, so both were removed.
+        """
+}
+
 record jpegxl-rs.evidence.retire-handoff-durable-facts-2026-08-11/1 : evidence {
     title "HANDOFF permanent facts are represented in AKR"
     state verified

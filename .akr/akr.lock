@@ -5,7 +5,7 @@ build {
     tool "akr 0.3.1"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:83b880d6ca8cc29aa43353ce4c09e1ca5b5f5354fb8fed46c982230fa7b52ac5"
+    source_graph "sha256:88c38035f874b47dd1b6e1925afa672f00e482eb55f42de9b967e285af9e84da"
 }
 
 source ".akr/project.akr" {
@@ -29,8 +29,8 @@ source ".akr/records/jpegxl-rs/decisions.akr" {
 }
 
 source ".akr/records/jpegxl-rs/evidence.akr" {
-    hash "sha256:39873f190325eef65ea266596d9f978285b5a92edc6762eb2f3752fa9b9980c5"
-    records 191
+    hash "sha256:5b02468cceb2ac1f31474533f1a7ad8eb39d7bb2c9fa82fcb8ef46abbd358482"
+    records 194
 }
 
 source ".akr/records/jpegxl-rs/milestones.akr" {
@@ -64,8 +64,8 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:2187a0296c133e17c2b8be815b094993334f3017057823383bab39bba4e9ea81"
-    records 85
+    hash "sha256:7535caaec323c5602cfd8276092da7c43eb5f8d5244a47a6d2e9c1387226d945"
+    records 86
 }
 
 resolution @jpegxl-rs.decision.encoder-architecture-phases/1 {
@@ -2762,10 +2762,22 @@ resolution @jpegxl-rs.work.arch-phase8-4-finalist-token-tape/1 {
     hash "sha256:49975e17bd10998d72b08fccfe98fdea9bdf68ef56e4404dd68e94e1e2d75f23"
 }
 
+resolution @jpegxl-rs.work.arch-phase8-4-finalist-token-tape/2 {
+    slot depends_on
+    to @jpegxl-rs.work.arch-phase8-3-anchor-sketch/1
+    hash "sha256:fb4af7068fd0bb27e19596436014eac7447fcc85c204f01bdc91e7428d47e9c3"
+}
+
+resolution @jpegxl-rs.work.arch-phase8-4-finalist-token-tape/2 {
+    slot part_of
+    to @jpegxl-rs.track.encoder-optimization/1
+    hash "sha256:49975e17bd10998d72b08fccfe98fdea9bdf68ef56e4404dd68e94e1e2d75f23"
+}
+
 resolution @jpegxl-rs.work.arch-phase8-5-leaf-finishing/1 {
     slot depends_on
-    to @jpegxl-rs.work.arch-phase8-4-finalist-token-tape/1
-    hash "sha256:8c07f5ad6101e16015a4b27b6c3d4f6ed4143bf1412f4505b354eb8dedac7297"
+    to @jpegxl-rs.work.arch-phase8-4-finalist-token-tape/2
+    hash "sha256:f089bf1069f6a829fdc322819e0609f9431a02420ccf754a7cf1bb2b44279fca"
 }
 
 resolution @jpegxl-rs.work.arch-phase8-5-leaf-finishing/1 {
@@ -3994,6 +4006,21 @@ seal @jpegxl-rs.evidence.phase8-3-windows-speed/1 {
     hash "sha256:dec0edc1765cd571bcea49f3774a4ede1b2c4c1d7121e3166b6432369b57f761"
 }
 
+seal @jpegxl-rs.evidence.phase8-4-correctness/1 {
+    state verified
+    hash "sha256:2a486937a4bd11d0da78b06a9d3102e0ba561465060e207019b8d8a9dab73812"
+}
+
+seal @jpegxl-rs.evidence.phase8-4-quality-identity/1 {
+    state verified
+    hash "sha256:4be727c922332a4463a04e490aafe5d432a90cb208ebcb83d155659a818ec27e"
+}
+
+seal @jpegxl-rs.evidence.phase8-4-windows-speed/1 {
+    state verified
+    hash "sha256:37a90001289c57b6d318a6afd8153f2b9c6d79cc3cc0fae8ff7fa38ec6cc02b8"
+}
+
 seal @jpegxl-rs.evidence.retire-handoff-durable-facts-2026-08-11/1 {
     state verified
     hash "sha256:d5bdf84076bed194a4be6e7e9ea15569dbed84339827e224b936cd8feeb95a65"
@@ -4930,8 +4957,13 @@ seal @jpegxl-rs.work.arch-phase8-3-anchor-sketch/1 {
 }
 
 seal @jpegxl-rs.work.arch-phase8-4-finalist-token-tape/1 {
-    state active
-    hash "sha256:8c07f5ad6101e16015a4b27b6c3d4f6ed4143bf1412f4505b354eb8dedac7297"
+    state superseded
+    hash "sha256:809d672b16de09db8e898a89611d8b2a8f28fefc227886d23c169b5c92955499"
+}
+
+seal @jpegxl-rs.work.arch-phase8-4-finalist-token-tape/2 {
+    state completed
+    hash "sha256:f089bf1069f6a829fdc322819e0609f9431a02420ccf754a7cf1bb2b44279fca"
 }
 
 seal @jpegxl-rs.work.arch-s8-cover-lane-simd/1 {
