@@ -3081,7 +3081,7 @@ record jpegxl-rs.work.arch-phase8-5-leaf-finishing/2 : work {
 
 record jpegxl-rs.work.arch-phase8-5-leaf-finishing/3 : work {
     title "Phase 8.5: profile-guided leaf and build optimization"
-    state active
+    state superseded
     scope [ path "JPXL/Cargo.toml", path "JPXL/crates/**" ]
     intent """
         After structural amplification is removed, reprofile and optimize only leaves at or above 5% of samples, then evaluate native CPU selection, LTO, PGO, allocator behavior, and hardware counters. Preserve scalar fallbacks and clean-room boundaries.
@@ -3106,6 +3106,35 @@ record jpegxl-rs.work.arch-phase8-5-leaf-finishing/3 : work {
     depends_on [ @jpegxl-rs.work.arch-phase8-4-finalist-token-tape ]
     part_of [ @jpegxl-rs.track.encoder-optimization ]
     supersedes [ @jpegxl-rs.work.arch-phase8-5-leaf-finishing/2 ]
+}
+
+record jpegxl-rs.work.arch-phase8-5-leaf-finishing/4 : work {
+    title "Phase 8.5: profile-guided leaf and build optimization"
+    state active
+    scope [ path "JPXL/Cargo.toml", path "JPXL/crates/**" ]
+    intent """
+        After structural amplification is removed, reprofile and optimize only leaves at or above 5% of samples, then evaluate native CPU selection, LTO, PGO, allocator behavior, and hardware counters. Preserve scalar fallbacks and clean-room boundaries.
+        """
+    note """
+        Windows Phase 8.5 now retains Sketch entropy deferral, ordered concurrent Full entropy candidates, and final-HF four-lane quantization at commit 2a788aed5969. The SIMD leaf is byte-identical and reduces the stable 4.3 MP thin median 5.08% (3.921 to 3.722 s); the 12 MP gain is 2.74%. Regenerated PGO gives a 3.501 s 4.3 MP median and the fresh matched-quality black-box gap is 8.59x cjxl; the fresh 12 MP ratio is 7.98x but thermally noisy. Windows stage diagnostics still point first to repeated Fast/navigation quantization, then Full entropy census/training and Count traversal. Linux perf/flamegraph attribution of at least 90% of samples remains required before selecting another leaf; keep the work active.
+        """
+    acceptance {
+        check profile-justified {
+            statement """
+                Every leaf change targets at least 5% of current samples and improves end-to-end production-quality time.
+                """
+            method observation
+        }
+        check quality-preserved {
+            statement """
+                All decoder, target-rate, perceptual, and thread-determinism gates remain satisfied.
+                """
+            method command
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase8-4-finalist-token-tape ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+    supersedes [ @jpegxl-rs.work.arch-phase8-5-leaf-finishing/3 ]
 }
 
 record jpegxl-rs.work.arch-s8-cover-lane-simd/1 : work {

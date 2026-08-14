@@ -2324,6 +2324,45 @@ record jpegxl-rs.evidence.phase8-5-quality-and-correctness-2026-08-14/1 : eviden
         """
 }
 
+record jpegxl-rs.evidence.phase8-5-quant-lane-correctness-2026-08-14/1 : evidence {
+    title "Phase 8.5 final-HF SIMD correctness evidence"
+    state verified
+    result pass
+    method command
+    observed_at git:2a788aed5969ec6426e97b3215aa55020b58e63e
+    command "cargo test -p jpxl-encode-policy --release --features anchor-sketch; cargo check -p jpxl-encode-policy --no-default-features --features anchor-sketch; cargo build --workspace --release --features anchor-sketch; cargo fmt --all --check; SHA-256 comparison against anchor7 and paired outputs"
+    artifact ".agent/scratch/phase8-5-finishing-2026-08-14/SUMMARY.md"
+    summary """
+        The 97-test release policy suite, rate/thread/roundtrip gates, both decoder-oracle suites, scalar check, workspace release build, and formatting passed; all seven canonical streams and both benchmark streams remained byte-identical.
+        """
+}
+
+record jpegxl-rs.evidence.phase8-5-quant-lane-pgo-gap-2026-08-14/1 : evidence {
+    title "Phase 8.5 post-SIMD PGO and matched-quality gap"
+    state verified
+    result pass
+    method command
+    observed_at git:2a788aed5969ec6426e97b3215aa55020b58e63e
+    command "Regenerated instrument/use PGO on seven canonical images plus 2400x1800, paired thin/PGO measurements, and interleaved PGO jpxl versus black-box cjxl effort 7 at matched SSIMULACRA2"
+    artifact ".agent/scratch/phase8-5-finishing-2026-08-14/SUMMARY.md"
+    summary """
+        Post-SIMD PGO cut the stable 2400x1800 thin median 9.55% (3870.700 to 3501.240 ms) with identical output. Fresh matched-quality medians were JPXL/cjxl 3535.080/411.530 ms (8.59x) at 4.3 MP and 9198.280/1152.790 ms (7.98x, thermally noisy) at 12 MP; quality deltas remained under 0.2%.
+        """
+}
+
+record jpegxl-rs.evidence.phase8-5-quant-lane-speed-2026-08-14/1 : evidence {
+    title "Phase 8.5 final-HF SIMD speed evidence"
+    state verified
+    result pass
+    method command
+    observed_at git:2a788aed5969ec6426e97b3215aa55020b58e63e
+    command "Paired target/release controls against target-phase85-quant-lane/release/jpxl encode <input> <output> --bpp 1 --threads 4; five 2400x1800 pairs and three 4000x3000 pairs"
+    artifact ".agent/scratch/phase8-5-finishing-2026-08-14/SUMMARY.md"
+    summary """
+        Four-lane final-HF quantization reduced the 2400x1800 thin-build median 5.08% (3921.098 to 3722.066 ms) and the 4000x3000 median 2.74% (8030.514 to 7810.750 ms); diagnostic Fast quantization fell 1430.5 to 1302.5 ms and Full quantization 156.6 to 141.2 ms.
+        """
+}
+
 record jpegxl-rs.evidence.phase8-5-sketch-speed-2026-08-14/1 : evidence {
     title "Sketch-only rate probes skip discarded entropy training"
     state verified
