@@ -3139,7 +3139,7 @@ record jpegxl-rs.work.arch-phase8-5-leaf-finishing/4 : work {
 
 record jpegxl-rs.work.arch-phase8-5-leaf-finishing/5 : work {
     title "Phase 8.5: profile-guided leaf and build optimization"
-    state active
+    state superseded
     scope [ path "JPXL/Cargo.toml", path "JPXL/crates/**" ]
     intent """
         After structural amplification is removed, reprofile and optimize only leaves at or above 5% of samples, then evaluate native CPU selection, LTO, PGO, allocator behavior, and hardware counters. Preserve scalar fallbacks and clean-room boundaries.
@@ -3169,6 +3169,40 @@ record jpegxl-rs.work.arch-phase8-5-leaf-finishing/5 : work {
     depends_on [ @jpegxl-rs.work.arch-phase8-4-finalist-token-tape ]
     part_of [ @jpegxl-rs.track.encoder-optimization ]
     supersedes [ @jpegxl-rs.work.arch-phase8-5-leaf-finishing/4 ]
+}
+
+record jpegxl-rs.work.arch-phase8-5-leaf-finishing/6 : work {
+    title "Phase 8.5: profile-guided leaf and build optimization"
+    state active
+    scope [ path "JPXL/Cargo.toml", path "JPXL/crates/**" ]
+    intent """
+        After structural amplification is removed, reprofile and optimize only leaves at or above 5% of samples, then evaluate native CPU selection, LTO, PGO, allocator behavior, and hardware counters. Preserve scalar fallbacks and clean-room boundaries.
+        """
+    note """
+        Fresh same-host Linux matched-quality timing replaces the prior cross-host projection. With the current byte-identical PGO binary, five alternating 4.3 MP pairs measure JPXL/cjxl medians 3044.438/505.132 ms (6.027x); three alternating unseen 12 MP pairs measure 5965.845/1305.590 ms (4.569x). SSIMULACRA2 deltas are 0.0979 and 0.1477, but JPXL is 14.69%/7.31% larger and its Butteraugli distance is 5.22%/60.37% worse, so this is primary-metric matching rather than multi-metric parity. The powersave-governor host and larger cjxl variance make this a diagnostic ratio, though alternating order and stable output hashes bound drift. Remaining parity requires 83.41%/78.12% runtime reductions. Keep Phase 8.5 active; the next boundary must be structural repeated-traversal reduction or coarse parallelism justified by a fresh >=5% profile, not another unprofiled leaf tweak.
+        """
+    acceptance {
+        check profile-justified {
+            statement """
+                Every leaf change targets >=5% current samples and improves end-to-end.
+                """
+            method observation
+            verified_by [
+                @jpegxl-rs.evidence.phase8-5-linux-leaf-speed-2026-08-14/1,
+                @jpegxl-rs.evidence.phase8-5-linux-profile-attribution-2026-08-14/1
+            ]
+        }
+        check quality-preserved {
+            statement """
+                All decoder, target-rate, perceptual, thread-determinism gates pass.
+                """
+            method command
+            verified_by [ @jpegxl-rs.evidence.phase8-5-linux-quality-2026-08-14/1 ]
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase8-4-finalist-token-tape ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+    supersedes [ @jpegxl-rs.work.arch-phase8-5-leaf-finishing/5 ]
 }
 
 record jpegxl-rs.work.arch-s8-cover-lane-simd/1 : work {

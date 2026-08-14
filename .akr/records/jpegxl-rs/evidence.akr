@@ -2311,6 +2311,19 @@ record jpegxl-rs.evidence.phase8-5-linux-leaf-speed-2026-08-14/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase8-5-linux-matched-quality-gap-2026-08-14/1 : evidence {
+    title "Fresh Linux matched-quality libjxl speed gap"
+    state verified
+    result pass
+    method command
+    observed_at git:6fd5c6102c0c9ccd9976b8f46f7295b15a4fe153
+    command "taskset -c 0,2,4,6 run-pairs.sh; djxl each stream to PPM; jpxl compare reference decoded"
+    artifact ".agent/scratch/phase8-5-linux-parity-2026-08-14/SUMMARY.md"
+    summary """
+        At SSIMULACRA2 deltas below 0.15, current PGO JPXL is 6.027x slower on 4.3 MP and 4.569x slower on unseen 12 MP; cjxl outputs are 12.81% and 6.81% smaller.
+        """
+}
+
 record jpegxl-rs.evidence.phase8-5-linux-pgo-2026-08-14/1 : evidence {
     title "Linux PGO generalizes beyond its training sizes"
     state verified
