@@ -51,7 +51,7 @@ pub use size::{CodestreamSizing, Emission, SectionSize};
 pub use validate::{ValidatedEmissionPlan, validate};
 pub use walk::{OrderTables, PassGroupWalk, WalkVarblock, pre_context_count, walk_pass_group};
 pub use write::{
-    census_frame, check_supported, emit_codestream, emit_codestream_with,
-    emit_codestream_with_executor, plan_pre_contexts, price_codestream, price_codestream_with,
-    walk_frame, write_codestream, write_codestream_with,
+    census_frame, census_frame_with_executor, check_supported, emit_codestream,
+    emit_codestream_with, emit_codestream_with_executor, plan_pre_contexts, price_codestream,
+    price_codestream_with, walk_frame, write_codestream, write_codestream_with,
 };

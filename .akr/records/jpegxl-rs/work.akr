@@ -2853,7 +2853,7 @@ record jpegxl-rs.work.arch-phase8-1-persistent-executor/1 : work {
 
 record jpegxl-rs.work.arch-phase8-2-dense-group-banks/1 : work {
     title "Phase 8.2: dense LF-group coefficient banks and planning parallelism"
-    state proposed
+    state superseded
     scope [ path "JPXL/crates/jpxl-encode-policy/**" ]
     intent """
         Replace global hash/per-candidate allocation ownership with dense LF-group coefficient banks, then parallelize group-local cover, CfL preparation, quantization, and census with ordered reductions. Do not start without explicit continuation.
@@ -2874,14 +2874,67 @@ record jpegxl-rs.work.arch-phase8-2-dense-group-banks/1 : work {
     }
     depends_on [ @jpegxl-rs.work.arch-phase8-1-persistent-executor ]
     part_of [ @jpegxl-rs.track.encoder-optimization ]
-    source {
-        kind external
-        role rationale
-        path "sources/external/optimize-roadmap-2026-08-13--62242d23.md"
-        use """
-            Adopt the staged target-rate optimization sequence while retaining the exhaustive path and correctness gates.
-            """
+}
+
+record jpegxl-rs.work.arch-phase8-2-dense-group-banks/2 : work {
+    title "Phase 8.2: dense LF-group coefficient banks and planning parallelism"
+    state superseded
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/**",
+        path "JPXL/crates/jpxl-encode/src/resources.rs",
+        path "JPXL/crates/jpxl-encode/src/vardct/**"
+    ]
+    intent """
+        Replace global hash/per-candidate allocation ownership with dense LF-group coefficient banks, then parallelize group-local cover, CfL preparation, quantization, and census with ordered reductions. Do not start without explicit continuation.
+        """
+    acceptance {
+        check contract-a {
+            statement """
+                The refactor is byte-identical across serial and multicore paths.
+                """
+            method command
+        }
+        check ownership-win {
+            statement """
+                Allocation count, peak RSS, and end-to-end fixed/rate wall time improve on the Phase 8.0 baseline.
+                """
+            method observation
+        }
     }
+    depends_on [ @jpegxl-rs.work.arch-phase8-1-persistent-executor ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+    supersedes [ @jpegxl-rs.work.arch-phase8-2-dense-group-banks/1 ]
+}
+
+record jpegxl-rs.work.arch-phase8-2-dense-group-banks/3 : work {
+    title "Phase 8.2: dense LF-group coefficient banks and planning parallelism"
+    state active
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/**",
+        path "JPXL/crates/jpxl-encode/src/resources.rs",
+        path "JPXL/crates/jpxl-encode/src/vardct/**",
+        path "JPXL/crates/jpxl-entropy/src/encode/stream.rs"
+    ]
+    intent """
+        Replace global hash/per-candidate allocation ownership with dense LF-group coefficient banks, then parallelize group-local cover, CfL preparation, quantization, and census with ordered reductions. Do not start without explicit continuation.
+        """
+    acceptance {
+        check contract-a {
+            statement """
+                The refactor is byte-identical across serial and multicore paths.
+                """
+            method command
+        }
+        check ownership-win {
+            statement """
+                Allocation count, peak RSS, and end-to-end fixed/rate wall time improve on the Phase 8.0 baseline.
+                """
+            method observation
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase8-1-persistent-executor ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+    supersedes [ @jpegxl-rs.work.arch-phase8-2-dense-group-banks/2 ]
 }
 
 record jpegxl-rs.work.arch-phase8-3-anchor-sketch/1 : work {

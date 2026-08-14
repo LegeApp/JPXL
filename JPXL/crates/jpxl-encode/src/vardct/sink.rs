@@ -65,19 +65,29 @@ pub struct RawHistogram {
 impl RawHistogram {
     /// Counts one occurrence of `value`.
     pub fn add(&mut self, value: u32) {
+        self.add_count(value, 1);
+    }
+
+    fn add_count(&mut self, value: u32, count: u32) {
         if let Ok(index) = usize::try_from(value)
             && let Some(slot) = self.small.get_mut(index)
         {
-            *slot += 1;
+            *slot = slot.saturating_add(count);
             return;
         }
         match self.tail.binary_search_by_key(&value, |&(v, _)| v) {
             Ok(index) => {
                 if let Some(entry) = self.tail.get_mut(index) {
-                    entry.1 += 1;
+                    entry.1 = entry.1.saturating_add(count);
                 }
             }
-            Err(index) => self.tail.insert(index, (value, 1)),
+            Err(index) => self.tail.insert(index, (value, count)),
+        }
+    }
+
+    fn merge_from(&mut self, other: Self) {
+        for (value, count) in other.iter() {
+            self.add_count(value, count);
         }
     }
 
@@ -152,6 +162,16 @@ impl CensusSink {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.contexts.is_empty()
+    }
+
+    pub(crate) fn merge_from(&mut self, other: Self) -> bool {
+        if self.contexts.len() != other.contexts.len() {
+            return false;
+        }
+        for (target, source) in self.contexts.iter_mut().zip(other.contexts) {
+            target.merge_from(source);
+        }
+        true
     }
 
     fn add(&mut self, context: PreContextId, value: u32) {

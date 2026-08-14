@@ -247,6 +247,34 @@ impl TokenCensus {
     pub fn num_contexts(&self) -> usize {
         self.contexts.len()
     }
+
+    /// Merges an independently collected census into this one.
+    ///
+    /// Counts are integers, so callers may collect independent groups in
+    /// parallel and merge them in their canonical order without changing the
+    /// resulting entropy tables.
+    ///
+    /// # Errors
+    ///
+    /// If the two censuses cover different context counts.
+    pub fn merge_from(&mut self, other: Self) -> Result<()> {
+        if self.contexts.len() != other.contexts.len() || self.tokens.len() != other.tokens.len() {
+            return Err(encode_error!(
+                "C.2.1: cannot merge censuses with different context counts"
+            ));
+        }
+        for (target, source) in self.contexts.iter_mut().zip(other.contexts) {
+            for (value, count) in source.iter() {
+                target.add(value, count);
+            }
+        }
+        for (target, source) in self.tokens.iter_mut().zip(other.tokens) {
+            for (value, count) in source.iter() {
+                target.add(value, count);
+            }
+        }
+        Ok(())
+    }
 }
 
 /// The policy decisions a caller makes before tables can be built.
@@ -1039,5 +1067,25 @@ mod tests {
         assert_eq!(histogram.total(), 9);
         let values: Vec<(u32, u64)> = histogram.iter().collect();
         assert_eq!(values, vec![(0, 1), (31, 1), (32, 2), (1_000_000, 5)]);
+    }
+
+    #[test]
+    fn merged_group_censuses_equal_one_serial_census() {
+        let values = [(0usize, 3u32), (1, 40), (0, 3), (1, 1_000_000)];
+        let mut serial = TokenCensus::new(2).expect("serial census");
+        for &(context, value) in &values {
+            serial.record(context, value).expect("serial record");
+        }
+
+        let mut left = TokenCensus::new(2).expect("left census");
+        let mut right = TokenCensus::new(2).expect("right census");
+        for &(context, value) in &values[..2] {
+            left.record(context, value).expect("left record");
+        }
+        for &(context, value) in &values[2..] {
+            right.record(context, value).expect("right record");
+        }
+        left.merge_from(right).expect("compatible censuses");
+        assert_eq!(left, serial);
     }
 }

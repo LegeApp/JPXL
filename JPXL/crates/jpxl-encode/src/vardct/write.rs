@@ -459,7 +459,7 @@ fn write_frame_body(
             .ok_or_else(|| EncodeError::unsupported("a frame with no pass", "F.6"))?
             .orders,
     );
-    let tables = build_entropy_tables(plan, geometry, &orders)?;
+    let tables = build_entropy_tables(plan, geometry, &orders, executor)?;
 
     let mut store = match mode {
         EmitMode::Store => SectionStore::new(),
@@ -1195,6 +1195,54 @@ pub fn census_frame(plan: &EmissionPlan, geometry: &VardctGeometry) -> Result<Ce
     Ok(census)
 }
 
+/// Counts every I.4 event with pass-group walks scheduled on `executor`.
+///
+/// Group-local histograms contain integers, so merging them in pass-group
+/// index order is byte-deterministic across worker counts.
+///
+/// # Errors
+///
+/// As [`census_frame`].
+pub fn census_frame_with_executor(
+    plan: &EmissionPlan,
+    geometry: &VardctGeometry,
+    executor: &crate::EncodeExecutor,
+) -> Result<CensusSink> {
+    let contexts = usize::try_from(plan_pre_contexts(plan)).unwrap_or(0);
+    let orders = OrderTables::from_order_set(
+        &plan
+            .entropy
+            .passes
+            .first()
+            .ok_or_else(|| EncodeError::unsupported("a frame with no pass", "F.6"))?
+            .orders,
+    );
+    let n_groups = usize::try_from(geometry.num_groups()).unwrap_or(0);
+    let workers = executor.resources().workers_for(n_groups).max(1);
+    let chunk = n_groups.div_ceil(workers);
+    let parts = executor.map_ordered(workers, |worker| {
+        let mut census = CensusSink::new(contexts);
+        let start = worker.saturating_mul(chunk).min(n_groups);
+        let end = start.saturating_add(chunk).min(n_groups);
+        for index in start..end {
+            let group = u64::try_from(index).unwrap_or(u64::MAX);
+            let (walk, varblocks) = pass_group_walk(plan, geometry, &orders, group)?;
+            walk_pass_group(&walk, &varblocks, &mut census).map_err(EncodeError::Plan)?;
+        }
+        Ok::<_, EncodeError>(census)
+    })?;
+    let mut census = CensusSink::new(contexts);
+    for part in parts {
+        if !census.merge_from(part) {
+            return Err(EncodeError::unsupported(
+                "pass-group censuses with different context counts",
+                "I.4",
+            ));
+        }
+    }
+    Ok(census)
+}
+
 /// A [`TokenCensus`] behind the [`HfEventSink`] interface.
 struct TokenCensusSink {
     census: TokenCensus,
@@ -1227,7 +1275,8 @@ impl HfEventSink for TokenCensusSink {
 fn build_entropy_tables(
     plan: &EmissionPlan,
     geometry: &VardctGeometry,
-    _orders: &OrderTables,
+    orders: &OrderTables,
+    executor: &crate::EncodeExecutor,
 ) -> Result<EntropyTables> {
     let pass = plan
         .entropy
@@ -1236,15 +1285,30 @@ fn build_entropy_tables(
         .ok_or_else(|| EncodeError::unsupported("a frame with no pass", "F.6"))?;
 
     let contexts = usize::try_from(plan_pre_contexts(plan)).unwrap_or(0);
-    let mut sink = TokenCensusSink {
-        census: TokenCensus::new(contexts)?,
-        error: None,
-    };
-    walk_frame(plan, geometry, &mut sink)?;
-    if let Some(error) = sink.error {
-        return Err(EncodeError::from(error));
+    let n_groups = usize::try_from(geometry.num_groups()).unwrap_or(0);
+    let workers = executor.resources().workers_for(n_groups).max(1);
+    let chunk = n_groups.div_ceil(workers);
+    let parts = executor.map_ordered(workers, |worker| {
+        let mut sink = TokenCensusSink {
+            census: TokenCensus::new(contexts)?,
+            error: None,
+        };
+        let start = worker.saturating_mul(chunk).min(n_groups);
+        let end = start.saturating_add(chunk).min(n_groups);
+        for index in start..end {
+            let group = u64::try_from(index).unwrap_or(u64::MAX);
+            let (walk, varblocks) = pass_group_walk(plan, geometry, orders, group)?;
+            walk_pass_group(&walk, &varblocks, &mut sink).map_err(EncodeError::Plan)?;
+        }
+        if let Some(error) = sink.error {
+            return Err(EncodeError::from(error));
+        }
+        Ok::<_, EncodeError>(sink.census)
+    })?;
+    let mut counts = TokenCensus::new(contexts)?;
+    for part in parts {
+        counts.merge_from(part)?;
     }
-    let counts = sink.census;
 
     let clusters: Vec<u8> = pass
         .distributions

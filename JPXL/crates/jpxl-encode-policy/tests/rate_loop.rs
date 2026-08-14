@@ -148,6 +148,12 @@ fn target_rate_is_byte_identical_across_executor_widths() {
     assert_eq!(serial.sizing, parallel.sizing);
     assert_eq!(serial.chosen, parallel.chosen);
     assert_eq!(serial.trace, parallel.trace);
+    assert_eq!(
+        serial.stats.candidate_cache_entries,
+        parallel.stats.candidate_cache_entries
+    );
+    assert_eq!(serial.stats.candidate_allocations, 3);
+    assert_eq!(parallel.stats.candidate_allocations, 3);
 }
 
 #[test]

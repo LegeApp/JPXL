@@ -41,7 +41,11 @@ pub struct EncodeDiag {
     /// undercounts total quantization decisions in cover scoring since S8
     /// landed. It still tracks the scalar-remainder fraction accurately; it
     /// is no longer "total decisions," only "decisions that went through
-    /// `choose` specifically." `choose_total()` is affected the same way.
+    /// `choose` specifically." Phase 8.2 also moves group-local cover, CfL-Y
+    /// and final quantization onto executor threads; these thread-local fields
+    /// report only work on the calling thread. `choose_total()` is affected
+    /// the same way. The stage wall timers and `RateProbeStats` cache/writer
+    /// counters remain the authoritative parallel-path diagnostics.
     pub choose_cover: u64,
     pub choose_cfl_y: u64,
     pub choose_cfl_factor: u64,
@@ -423,6 +427,10 @@ pub fn note_choose() {
 
 /// Accumulates wall time for a named plan stage.
 pub fn note_stage_ns(which: StageTimer, ns: u64) {
+    note_stage_ns_with_units(which, 1, ns);
+}
+
+fn note_stage_ns_with_units(which: StageTimer, units: u64, ns: u64) {
     if !enabled() {
         return;
     }
@@ -456,7 +464,8 @@ pub fn note_stage_ns(which: StageTimer, ns: u64) {
             diagnostics.cfl_ns = diagnostics.cfl_ns.saturating_add(ns);
         }
         StageTimer::Quantize => {
-            diagnostics.quantize_group_passes = diagnostics.quantize_group_passes.saturating_add(1);
+            diagnostics.quantize_group_passes =
+                diagnostics.quantize_group_passes.saturating_add(units);
             diagnostics.quantize_ns = diagnostics.quantize_ns.saturating_add(ns);
         }
         StageTimer::Entropy => {
@@ -497,6 +506,25 @@ pub fn time_stage<R>(which: StageTimer, f: impl FnOnce() -> R) -> R {
     let ns = u64::try_from(t0.elapsed().as_nanos()).unwrap_or(u64::MAX);
     note_stage_ns(which, ns);
     out
+}
+
+/// Times one stage while recording an explicit number of independent units.
+///
+/// Used by parallel group quantization: wall time is measured once around the
+/// whole ordered map, while the multiplicity counter still reports how many
+/// LF groups were quantized.
+pub fn time_stage_units<R>(which: StageTimer, units: usize, f: impl FnOnce() -> R) -> R {
+    if !enabled() {
+        return f();
+    }
+    let started = Instant::now();
+    let result = f();
+    note_stage_ns_with_units(
+        which,
+        u64::try_from(units).unwrap_or(u64::MAX),
+        u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX),
+    );
+    result
 }
 
 /// Records one candidate-forward cache insert (`n_f32` coefficients total across channels).

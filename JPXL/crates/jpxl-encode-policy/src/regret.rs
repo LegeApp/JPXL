@@ -32,9 +32,11 @@
 //! bound's safety property (`PruneSummary::safety_violations` must be `0`)
 //! and record its usefulness (`PruneSummary::prune_rate`).
 
+#[cfg(test)]
+use crate::CandidateForwardCache;
 use crate::error::Result;
 use crate::{
-    AqSetup, CandidateForwardCache, ForwardScratch, HfQuantizers, NON_DCT8X8_SIGNAL_BITS,
+    AqSetup, CandidateGroupBank, ForwardScratch, HfQuantizers, NON_DCT8X8_SIGNAL_BITS,
     PER_VARBLOCK_BITS, PreparedFrame, block_cost, mul_signal_bits, square_transform,
 };
 use jpxl_core::varblock::TransformType;
@@ -193,7 +195,7 @@ pub(crate) fn measure_region<S: CoverSurrogate>(
     aq: &AqSetup,
     x0: u32,
     y0: u32,
-    cache: &mut CandidateForwardCache,
+    cache: &mut CandidateGroupBank,
     scratch: &mut ForwardScratch,
     d_y_hf: &mut [f32],
     surrogate: &S,
@@ -373,13 +375,11 @@ fn validate_candidate_prune(
     to_sample_domain: f64,
     side: usize,
     n: usize,
-    fwd: &crate::VarblockForward,
+    fwd: &crate::VarblockForward<'_>,
     cutoff: f64,
 ) -> Result<PruneSample> {
     let cells = side * side;
-    let cy = fwd.coeffs.get(1).map_or(&[][..], Vec::as_slice);
-    let cx = fwd.coeffs.get(0).map_or(&[][..], Vec::as_slice);
-    let cb = fwd.coeffs.get(2).map_or(&[][..], Vec::as_slice);
+    let [cx, cy, cb] = fwd.coeffs;
 
     let mut bits = 0u64;
     let mut weighted_sse = 0.0f64;
@@ -493,7 +493,7 @@ pub(crate) fn measure_prune_safety(
     aq: &AqSetup,
     x0: u32,
     y0: u32,
-    cache: &mut CandidateForwardCache,
+    cache: &mut CandidateGroupBank,
     scratch: &mut ForwardScratch,
     d_y_hf: &mut [f32],
     samples: &mut Vec<PruneSample>,
@@ -559,7 +559,7 @@ pub(crate) fn measure_prune_safety(
                 to_sample_domain,
                 side,
                 transform.block_dims().0,
-                fwd,
+                &fwd,
                 cutoff,
             )?;
             samples.push(sample);
@@ -633,6 +633,7 @@ mod tests {
         };
         let geometry = decision.geometry().expect("geometry");
         let mut cache = CandidateForwardCache::new();
+        cache.prepare(&geometry).expect("cache geometry");
         let mut scratch = ForwardScratch::new();
         let mut samples = Vec::new();
         let mut total = 0.0f64;
@@ -640,6 +641,11 @@ mod tests {
             let id = crate::LfGroupId::new(u32::try_from(index).unwrap_or(u32::MAX));
             let blocks = geometry.lf_group_blocks(id).expect("blocks");
             let rect = geometry.lf_group_rect(id).expect("rect");
+            let mut bank = cache
+                .group(usize::try_from(index).unwrap_or(usize::MAX))
+                .expect("group bank")
+                .lock()
+                .expect("group bank lock");
             let mut d_y_hf = vec![0.0f32; 32 * 32];
             let mut sby = 0u32;
             while sby < blocks.height {
@@ -655,7 +661,7 @@ mod tests {
                         &aq,
                         rect.x0,
                         rect.y0,
-                        &mut cache,
+                        &mut bank,
                         &mut scratch,
                         &mut d_y_hf,
                         surrogate,
@@ -713,12 +719,18 @@ mod tests {
         };
         let geometry = decision.geometry().expect("geometry");
         let mut cache = CandidateForwardCache::new();
+        cache.prepare(&geometry).expect("cache geometry");
         let mut scratch = ForwardScratch::new();
         let mut samples = Vec::new();
         for index in 0..geometry.num_lf_groups() {
             let id = crate::LfGroupId::new(u32::try_from(index).unwrap_or(u32::MAX));
             let blocks = geometry.lf_group_blocks(id).expect("blocks");
             let rect = geometry.lf_group_rect(id).expect("rect");
+            let mut bank = cache
+                .group(usize::try_from(index).unwrap_or(usize::MAX))
+                .expect("group bank")
+                .lock()
+                .expect("group bank lock");
             let mut d_y_hf = vec![0.0f32; 32 * 32];
             let mut sby = 0u32;
             while sby < blocks.height {
@@ -734,7 +746,7 @@ mod tests {
                         &aq,
                         rect.x0,
                         rect.y0,
-                        &mut cache,
+                        &mut bank,
                         &mut scratch,
                         &mut d_y_hf,
                         &mut samples,
@@ -802,12 +814,18 @@ mod tests {
         };
         let geometry = decision.geometry().expect("geometry");
         let mut cache_tr = CandidateForwardCache::new();
+        cache_tr.prepare(&geometry).expect("cache geometry");
         let mut scratch_tr = ForwardScratch::new();
         let mut tile_region_total = 0.0f64;
         for index in 0..geometry.num_lf_groups() {
             let id = crate::LfGroupId::new(u32::try_from(index).unwrap_or(u32::MAX));
             let blocks = geometry.lf_group_blocks(id).expect("blocks");
             let rect = geometry.lf_group_rect(id).expect("rect");
+            let mut bank = cache_tr
+                .group(usize::try_from(index).unwrap_or(usize::MAX))
+                .expect("group bank")
+                .lock()
+                .expect("group bank lock");
             let mut d_y_hf = vec![0.0f32; 32 * 32];
             let mut sby = 0u32;
             while sby < blocks.height {
@@ -823,7 +841,7 @@ mod tests {
                         &aq,
                         rect.x0,
                         rect.y0,
-                        &mut cache_tr,
+                        &mut bank,
                         &mut scratch_tr,
                         &mut d_y_hf,
                     )
@@ -907,12 +925,18 @@ mod tests {
         };
         let geometry = decision.geometry().expect("geometry");
         let mut cache = CandidateForwardCache::new();
+        cache.prepare(&geometry).expect("cache geometry");
         let mut scratch = ForwardScratch::new();
         let mut total = 0.0f64;
         for index in 0..geometry.num_lf_groups() {
             let id = crate::LfGroupId::new(u32::try_from(index).unwrap_or(u32::MAX));
             let blocks = geometry.lf_group_blocks(id).expect("blocks");
             let rect = geometry.lf_group_rect(id).expect("rect");
+            let mut bank = cache
+                .group(usize::try_from(index).unwrap_or(usize::MAX))
+                .expect("group bank")
+                .lock()
+                .expect("group bank lock");
             let mut d_y_hf = vec![0.0f32; 32 * 32];
             let mut sby = 0u32;
             while sby < blocks.height {
@@ -928,7 +952,7 @@ mod tests {
                         &aq,
                         rect.x0,
                         rect.y0,
-                        &mut cache,
+                        &mut bank,
                         &mut scratch,
                         &mut d_y_hf,
                     )

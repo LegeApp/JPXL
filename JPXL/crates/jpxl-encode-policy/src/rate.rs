@@ -268,7 +268,7 @@ pub struct RateProbeStats {
     pub candidate_cache_entries: u64,
     /// Retained f32 coefficient payload, excluding collection metadata.
     pub candidate_payload_bytes: u64,
-    /// Per-channel coefficient allocations made by the current cache.
+    /// Dense coefficient-arena allocations (one per populated transform bank).
     pub candidate_allocations: u64,
     /// Aggregate Fast planning work, including nested entropy passes.
     pub fast: diagnostics::SearchPhaseDiagnostics,

@@ -94,7 +94,9 @@ use jpxl_encode::vardct::plan::{
     LfGroupPlan, LfQuantPlanes, OrderSet, QuantizedFrameIr, QuantizedLfGroup, QuantizerDecision,
     SectionLayout, SharpnessGrid, SpatialPlan, VarblockCoefficients, VarblockDecision,
 };
-use jpxl_encode::vardct::{ValidatedEmissionPlan, VardctGeometry, census_frame, validate};
+use jpxl_encode::vardct::{
+    ValidatedEmissionPlan, VardctGeometry, census_frame, census_frame_with_executor, validate,
+};
 
 use quantize::{
     CflAccumulator, DCT8X8_CELLS, DEFAULT_COLOUR_FACTOR, HfQuantizer, LfQuantizer, NUM_CHANNELS,
@@ -217,6 +219,7 @@ pub(crate) fn plan_at(
     quantizer: QuantizerChoice,
 ) -> Result<ValidatedEmissionPlan> {
     let mut cache = CandidateForwardCache::new();
+    let executor = request.resources.executor();
     plan_at_with_cfl(
         frame,
         atlas,
@@ -226,7 +229,7 @@ pub(crate) fn plan_at(
         None,
         &mut cache,
         EntropySearch::Full,
-        None,
+        Some(&executor),
     )
 }
 
@@ -339,6 +342,7 @@ fn plan_at_with_cfl(
         request.quantizer_choice,
         request.lambda_scale,
     )?;
+    cache.prepare(&geometry)?;
 
     // The cover is selected before chroma-from-luma is estimated: the estimate
     // regresses over the coefficients of the *selected* transforms, so the
@@ -347,19 +351,14 @@ fn plan_at_with_cfl(
     // Cover selection, then one forward transform per *selected* varblock.
     // CfL estimation and HF quantization both consume those coefficients so
     // a selected DCT is not recomputed (Opt-V within-probe cache).
-    let mut fwd_scratch = ForwardScratch::new();
-    // Phase-3 (outside-advice.md §7): two passes so every group's forwards can
-    // be *borrowed* from `cache` instead of cloned into a second owned copy.
-    // Pass A does all cache-mutating work (cover selection, then ensuring
-    // every selected varblock's forward is present) across every group; only
-    // once no group needs `&mut cache` again does pass B hand out `&cache`
-    // borrows. Interleaving the two per group, as before, would need each
-    // group's borrowed forwards to outlive the *next* group's mutable cache
-    // access, which the borrow checker (rightly) refuses.
+    // Phase 8.2: every LF group owns independent dense transform banks. Cover
+    // construction can therefore run on the request executor without a global
+    // hash-table mutation point; fixed-index reduction restores raster order.
     let group_meta = diagnostics::time_stage(diagnostics::StageTimer::Cover, || {
         diagnostics::with_choose_stage(diagnostics::ChooseStage::Cover, || {
-            let mut group_meta = Vec::new();
-            for index in 0..geometry.num_lf_groups() {
+            let n_groups = usize::try_from(geometry.num_lf_groups()).unwrap_or(0);
+            let plan_group = |index_usize: usize| {
+                let index = u64::try_from(index_usize).unwrap_or(u64::MAX);
                 let id = LfGroupId::new(u32::try_from(index).unwrap_or(u32::MAX));
                 let blocks = geometry
                     .lf_group_blocks(id)
@@ -369,6 +368,14 @@ fn plan_at_with_cfl(
                 let rect = geometry.lf_group_rect(id).ok_or(PolicyError::Unsupported {
                     what: "an LF group outside the frame's grid",
                 })?;
+                let mut bank =
+                    cache
+                        .group(index_usize)?
+                        .lock()
+                        .map_err(|_| PolicyError::Unsupported {
+                            what: "a poisoned LF-group forward bank",
+                        })?;
+                let mut fwd_scratch = ForwardScratch::new();
                 let varblocks = match request.budget.cover_mode {
                     CoverMode::FixedDct8x8 => {
                         let mut varblocks = block::fixed_dct8x8(blocks, aq.baseline)?;
@@ -388,7 +395,7 @@ fn plan_at_with_cfl(
                         blocks,
                         (rect.x0, rect.y0),
                         &aq,
-                        cache,
+                        &mut bank,
                         &mut fwd_scratch,
                     )?,
                 };
@@ -396,62 +403,104 @@ fn plan_at_with_cfl(
                     transform_frame,
                     &varblocks,
                     (rect.x0, rect.y0),
-                    cache,
+                    &mut bank,
                     &mut fwd_scratch,
                 )?;
-                group_meta.push((id, blocks, rect, varblocks));
+                Ok::<_, PolicyError>((id, blocks, rect, varblocks))
+            };
+            if let Some(executor) = executor {
+                executor.map_ordered(n_groups, plan_group)
+            } else {
+                (0..n_groups).map(plan_group).collect()
             }
-            Ok::<_, PolicyError>(group_meta)
         })
     })?;
-
-    let groups = group_meta
-        .into_iter()
-        .map(|(id, blocks, rect, varblocks)| {
-            let forwards = gather_forward_refs(&varblocks, (rect.x0, rect.y0), cache)?;
-            Ok::<_, PolicyError>((id, blocks, rect, varblocks, forwards))
-        })
-        .collect::<Result<Vec<_>>>()?;
+    let groups = group_meta;
 
     let maps: Vec<&[VarblockDecision]> = groups
         .iter()
-        .map(|(_, _, _, varblocks, _)| varblocks.as_slice())
-        .collect();
-    let forwards_ref: Vec<&[&VarblockForward]> = groups
-        .iter()
-        .map(|(_, _, _, _, forwards)| forwards.as_slice())
+        .map(|(_, _, _, varblocks)| varblocks.as_slice())
         .collect();
     let cfl = diagnostics::time_stage(diagnostics::StageTimer::Cfl, || {
         estimate_cfl(
             &geometry,
             &maps,
-            &forwards_ref,
+            cache,
             &lf_quant,
             &hf_quants,
             enable_cfl && !frame.is_grayscale(),
+            executor,
         )
     })?;
 
+    let quantized_groups =
+        diagnostics::time_stage_units(diagnostics::StageTimer::Quantize, groups.len(), || {
+            // As with CfL samples, reserve the frame-sized output arenas on
+            // the request thread and transfer ownership to workers only after
+            // allocation. This keeps repeated rate probes from accumulating
+            // large worker-local allocator arenas.
+            let quant_workspaces: Vec<_> = groups
+                .iter()
+                .map(|(_, blocks, _, varblocks)| {
+                    std::sync::Mutex::new(Some(QuantWorkspace::new(varblocks, *blocks)))
+                })
+                .collect();
+            let quantize_one = |index: usize| {
+                let (_, blocks, rect, varblocks) =
+                    groups.get(index).ok_or(PolicyError::Unsupported {
+                        what: "a missing planned LF group before quantization",
+                    })?;
+                let group_cfl = cfl.groups.get(index).ok_or(PolicyError::Unsupported {
+                    what: "a missing CfL grid for an LF group",
+                })?;
+                let bank = cache
+                    .group(index)?
+                    .lock()
+                    .map_err(|_| PolicyError::Unsupported {
+                        what: "a poisoned LF-group forward bank",
+                    })?;
+                let forwards = gather_forward_refs(varblocks, (rect.x0, rect.y0), &bank)?;
+                let workspace = quant_workspaces
+                    .get(index)
+                    .ok_or(PolicyError::Unsupported {
+                        what: "a missing quantization workspace",
+                    })?
+                    .lock()
+                    .map_err(|_| PolicyError::Unsupported {
+                        what: "a poisoned quantization workspace",
+                    })?
+                    .take()
+                    .ok_or(PolicyError::Unsupported {
+                        what: "a quantization workspace used twice",
+                    })?;
+                diagnostics::with_choose_stage(diagnostics::ChooseStage::Final, || {
+                    quantize_group(
+                        &lf_quant,
+                        &hf_quants,
+                        &cfl.correlation,
+                        group_cfl,
+                        varblocks,
+                        &forwards,
+                        *blocks,
+                        workspace,
+                    )
+                })
+            };
+            if let Some(executor) = executor {
+                executor.map_ordered(groups.len(), quantize_one)
+            } else {
+                (0..groups.len()).map(quantize_one).collect()
+            }
+        })?;
+
     let mut lf_groups = Vec::new();
     let mut quantized = Vec::new();
-    for (index, (id, blocks, _rect, varblocks, forwards)) in groups.into_iter().enumerate() {
+    for (index, ((id, blocks, _rect, varblocks), quantized_group)) in
+        groups.into_iter().zip(quantized_groups).enumerate()
+    {
         let group_cfl = cfl.groups.get(index).ok_or(PolicyError::Unsupported {
             what: "a missing CfL grid for an LF group",
         })?;
-        let quantized_group = diagnostics::time_stage(diagnostics::StageTimer::Quantize, || {
-            diagnostics::with_choose_stage(diagnostics::ChooseStage::Final, || {
-                quantize_group(
-                    &lf_quant,
-                    &hf_quants,
-                    &cfl.correlation,
-                    group_cfl,
-                    &varblocks,
-                    &forwards,
-                    blocks,
-                )
-            })
-        })?;
-
         let sharpness = match request.epf_sharpness {
             EpfSharpnessMode::Zero => SharpnessGrid::zeros(blocks),
             EpfSharpnessMode::Uniform7 => {
@@ -646,7 +695,11 @@ fn train_entropy_with_orders(
         .map(|p| p.group_presets.to_vec())
         .unwrap_or_default();
     diagnostics::note_census();
-    let census = census_frame(&provisional, geometry)?;
+    let census = if let Some(executor) = executor {
+        census_frame_with_executor(&provisional, geometry, executor)?
+    } else {
+        census_frame(&provisional, geometry)?
+    };
     diagnostics::note_entropy_training();
     let model = entropy::train(&census)?;
     // Arc-clone spatial/quantized; only entropy is rebuilt.
@@ -677,7 +730,11 @@ fn train_entropy_with_orders(
         pass.orders = orders.clone();
     }
     diagnostics::note_census();
-    let census = census_frame(&reordered_walk, geometry)?;
+    let census = if let Some(executor) = executor {
+        census_frame_with_executor(&reordered_walk, geometry, executor)?
+    } else {
+        census_frame(&reordered_walk, geometry)?
+    };
     diagnostics::note_entropy_training();
     let model = entropy::train(&census)?;
     let reordered = validate(EmissionPlan {
@@ -717,6 +774,12 @@ struct CflSample {
     cell: usize,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct RegressionSample {
+    source: f32,
+    y: f32,
+}
+
 /// Regression sums plus the exact samples needed to score neighbouring wire
 /// factors through the quantizer's decoder-side arithmetic.
 #[derive(Debug, Default)]
@@ -726,14 +789,33 @@ struct CflSamples {
 }
 
 impl CflSamples {
+    fn with_capacity(capacity: usize) -> Self {
+        Self {
+            regression: CflAccumulator::default(),
+            samples: Vec::with_capacity(capacity),
+        }
+    }
+
     fn push(&mut self, source: f32, regression_y: f32, reconstructed_y: f32, cell: usize) {
-        diagnostics::note_cfl_samples(1);
         self.regression.add(regression_y, source);
         self.samples.push(CflSample {
             source,
             reconstructed_y,
             cell,
         });
+    }
+
+    /// Appends a group-local sample stream in its original order.
+    ///
+    /// Replaying the scalar additions, rather than adding already-rounded
+    /// group sums, keeps the pre-parallel floating-point decision bit-exact.
+    fn append_ordered(&mut self, other: Self, regression: Vec<RegressionSample>) {
+        diagnostics::note_cfl_samples(u64::try_from(other.samples.len()).unwrap_or(u64::MAX));
+        self.samples.reserve(other.samples.len());
+        for sample in regression {
+            self.regression.add(sample.y, sample.source);
+        }
+        self.samples.extend(other.samples);
     }
 }
 
@@ -742,6 +824,73 @@ struct HfCflSamples {
     tiles: jpxl_encode::vardct::BlockGrid,
     x: Vec<CflSamples>,
     b: Vec<CflSamples>,
+}
+
+struct GroupCflSamples {
+    lf_x: CflSamples,
+    lf_b: CflSamples,
+    lf_regression_x: Vec<RegressionSample>,
+    lf_regression_b: Vec<RegressionSample>,
+    hf: HfCflSamples,
+}
+
+fn group_cfl_workspace(
+    tiles: jpxl_encode::vardct::BlockGrid,
+    map: &[VarblockDecision],
+) -> Result<GroupCflSamples> {
+    let tile_count = usize::try_from(tiles.area()).unwrap_or(0);
+    let mut hf_capacities = vec![0usize; tile_count];
+    let mut lf_capacity = 0usize;
+    for vb in map {
+        let n = vb.transform.block_dims().0;
+        let cells = vb
+            .transform
+            .sample_cols()
+            .checked_mul(vb.transform.sample_rows())
+            .ok_or(PolicyError::Unsupported {
+                what: "a CfL workspace coefficient count overflow",
+            })?;
+        let lf_cells = n.checked_mul(n).ok_or(PolicyError::Unsupported {
+            what: "a CfL workspace LF count overflow",
+        })?;
+        lf_capacity = lf_capacity
+            .checked_add(lf_cells)
+            .ok_or(PolicyError::Unsupported {
+                what: "a CfL workspace LF capacity overflow",
+            })?;
+        let tile = usize::try_from(
+            u64::from(vb.origin.by() / 8) * u64::from(tiles.width) + u64::from(vb.origin.bx() / 8),
+        )
+        .unwrap_or(usize::MAX);
+        let capacity = hf_capacities
+            .get_mut(tile)
+            .ok_or(PolicyError::Unsupported {
+                what: "a varblock outside its CfL tile grid",
+            })?;
+        *capacity = capacity.checked_add(cells.saturating_sub(lf_cells)).ok_or(
+            PolicyError::Unsupported {
+                what: "a CfL workspace HF capacity overflow",
+            },
+        )?;
+    }
+    Ok(GroupCflSamples {
+        lf_x: CflSamples::with_capacity(lf_capacity),
+        lf_b: CflSamples::with_capacity(lf_capacity),
+        lf_regression_x: Vec::with_capacity(lf_capacity),
+        lf_regression_b: Vec::with_capacity(lf_capacity),
+        hf: HfCflSamples {
+            tiles,
+            x: hf_capacities
+                .iter()
+                .copied()
+                .map(CflSamples::with_capacity)
+                .collect(),
+            b: hf_capacities
+                .into_iter()
+                .map(CflSamples::with_capacity)
+                .collect(),
+        },
+    })
 }
 
 /// Milestone 6's square transform vocabulary: DCT8x8, DCT16x16, DCT32x32.
@@ -1099,38 +1248,259 @@ impl ForwardScratch {
     }
 }
 
-/// Owned forward coefficients for one varblock (Opt-V transform cache).
+/// Borrowed forward coefficients for one varblock.
 ///
-/// Channel order matches [`gather_square`]: 0 = X, 1 = Y, 2 = B.
-#[derive(Clone)]
-struct VarblockForward {
-    coeffs: [Vec<f32>; NUM_CHANNELS],
+/// Channel order matches [`gather_square`]: 0 = X, 1 = Y, 2 = B. The slices
+/// point into one LF-group/transform arena rather than three candidate-owned
+/// vectors.
+#[derive(Clone, Copy)]
+struct VarblockForward<'a> {
+    coeffs: [&'a [f32]; NUM_CHANNELS],
 }
 
-/// Key for a candidate forward: pixel origin + transform type.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-struct ForwardKey {
-    px: u32,
-    py: u32,
-    transform: u8,
+const EMPTY_FORWARD_SLOT: usize = usize::MAX;
+
+/// Dense origin table plus one coefficient arena for one transform family.
+struct DenseForwardBank {
+    step_blocks: u32,
+    slots_w: u32,
+    cells: usize,
+    offsets: Vec<usize>,
+    coefficients: Vec<f32>,
+    entries: u64,
+    hits: u64,
+    misses: u64,
+}
+
+impl DenseForwardBank {
+    fn new(blocks: jpxl_encode::vardct::BlockGrid, transform: TransformType) -> Result<Self> {
+        let step_blocks =
+            u32::try_from(transform.block_dims().0).map_err(|_| PolicyError::Unsupported {
+                what: "a transform block edge outside u32",
+            })?;
+        let slots_w = blocks.width.div_ceil(step_blocks);
+        let slots_h = blocks.height.div_ceil(step_blocks);
+        let slots = usize::try_from(u64::from(slots_w) * u64::from(slots_h)).map_err(|_| {
+            PolicyError::Unsupported {
+                what: "a forward-bank slot count outside usize",
+            }
+        })?;
+        let cells = transform
+            .sample_cols()
+            .checked_mul(transform.sample_rows())
+            .ok_or(PolicyError::Unsupported {
+                what: "a forward-bank coefficient count overflow",
+            })?;
+        let capacity = slots
+            .checked_mul(NUM_CHANNELS)
+            .and_then(|n| n.checked_mul(cells))
+            .ok_or(PolicyError::Unsupported {
+                what: "a forward-bank arena capacity overflow",
+            })?;
+        Ok(Self {
+            step_blocks,
+            slots_w,
+            cells,
+            offsets: vec![EMPTY_FORWARD_SLOT; slots],
+            coefficients: Vec::with_capacity(capacity),
+            entries: 0,
+            hits: 0,
+            misses: 0,
+        })
+    }
+
+    fn slot(&self, bx: u32, by: u32) -> Result<usize> {
+        if !bx.is_multiple_of(self.step_blocks) || !by.is_multiple_of(self.step_blocks) {
+            return Err(PolicyError::Unsupported {
+                what: "an unaligned square-transform forward-cache origin",
+            });
+        }
+        let sx = bx / self.step_blocks;
+        let sy = by / self.step_blocks;
+        let slot = usize::try_from(u64::from(sy) * u64::from(self.slots_w) + u64::from(sx))
+            .unwrap_or(usize::MAX);
+        if slot >= self.offsets.len() {
+            return Err(PolicyError::Unsupported {
+                what: "a forward-cache origin outside its LF-group bank",
+            });
+        }
+        Ok(slot)
+    }
+
+    fn view(&self, offset: usize) -> Result<VarblockForward<'_>> {
+        let x_end = offset
+            .checked_add(self.cells)
+            .ok_or(PolicyError::Unsupported {
+                what: "a forward-bank channel range overflow",
+            })?;
+        let y_end = x_end
+            .checked_add(self.cells)
+            .ok_or(PolicyError::Unsupported {
+                what: "a forward-bank channel range overflow",
+            })?;
+        let b_end = y_end
+            .checked_add(self.cells)
+            .ok_or(PolicyError::Unsupported {
+                what: "a forward-bank channel range overflow",
+            })?;
+        Ok(VarblockForward {
+            coeffs: [
+                self.coefficients
+                    .get(offset..x_end)
+                    .ok_or(PolicyError::Unsupported {
+                        what: "a missing X lane in a forward bank",
+                    })?,
+                self.coefficients
+                    .get(x_end..y_end)
+                    .ok_or(PolicyError::Unsupported {
+                        what: "a missing Y lane in a forward bank",
+                    })?,
+                self.coefficients
+                    .get(y_end..b_end)
+                    .ok_or(PolicyError::Unsupported {
+                        what: "a missing B lane in a forward bank",
+                    })?,
+            ],
+        })
+    }
+}
+
+/// Dense coefficient banks owned by one LF group.
+struct CandidateGroupBank {
+    rect: jpxl_encode::vardct::Rect,
+    blocks: jpxl_encode::vardct::BlockGrid,
+    banks: [Option<DenseForwardBank>; 3],
+}
+
+impl CandidateGroupBank {
+    fn new(
+        rect: jpxl_encode::vardct::Rect,
+        blocks: jpxl_encode::vardct::BlockGrid,
+    ) -> Result<Self> {
+        // Reserve all large coefficient arenas on the request thread before
+        // planning fans out. That keeps their allocator ownership stable
+        // across warm-up and timed rate probes instead of stranding an arena
+        // in whichever worker happened to encounter a transform family first.
+        Ok(Self {
+            rect,
+            blocks,
+            banks: [
+                Some(DenseForwardBank::new(blocks, TransformType::Dct8x8)?),
+                Some(DenseForwardBank::new(blocks, TransformType::Dct16x16)?),
+                Some(DenseForwardBank::new(blocks, TransformType::Dct32x32)?),
+            ],
+        })
+    }
+
+    const fn family(transform: TransformType) -> Option<usize> {
+        match transform {
+            TransformType::Dct8x8 => Some(0),
+            TransformType::Dct16x16 => Some(1),
+            TransformType::Dct32x32 => Some(2),
+            _ => None,
+        }
+    }
+
+    fn local_block(&self, px: u32, py: u32) -> Result<(u32, u32)> {
+        let dx = px
+            .checked_sub(self.rect.x0)
+            .ok_or(PolicyError::Unsupported {
+                what: "a forward-cache X origin before its LF group",
+            })?;
+        let dy = py
+            .checked_sub(self.rect.y0)
+            .ok_or(PolicyError::Unsupported {
+                what: "a forward-cache Y origin before its LF group",
+            })?;
+        if !dx.is_multiple_of(8) || !dy.is_multiple_of(8) {
+            return Err(PolicyError::Unsupported {
+                what: "a forward-cache origin outside the 8x8 block grid",
+            });
+        }
+        Ok((dx / 8, dy / 8))
+    }
+
+    fn get_or_insert(
+        &mut self,
+        frame: &PreparedFrame,
+        transform: TransformType,
+        px: u32,
+        py: u32,
+        scratch: &mut ForwardScratch,
+    ) -> Result<VarblockForward<'_>> {
+        let family = Self::family(transform).ok_or(PolicyError::Unsupported {
+            what: "a non-square transform in the dense forward cache",
+        })?;
+        let (bx, by) = self.local_block(px, py)?;
+        if self.banks.get(family).and_then(Option::as_ref).is_none() {
+            let bank = DenseForwardBank::new(self.blocks, transform)?;
+            if let Some(slot) = self.banks.get_mut(family) {
+                *slot = Some(bank);
+            }
+        }
+        let bank = self.banks.get_mut(family).and_then(Option::as_mut).ok_or(
+            PolicyError::Unsupported {
+                what: "a missing dense forward bank after creation",
+            },
+        )?;
+        let slot = bank.slot(bx, by)?;
+        let offset = bank
+            .offsets
+            .get(slot)
+            .copied()
+            .unwrap_or(EMPTY_FORWARD_SLOT);
+        if offset != EMPTY_FORWARD_SLOT {
+            bank.hits = bank.hits.saturating_add(1);
+            return bank.view(offset);
+        }
+
+        let side = forward_square(frame, transform, px, py, scratch)?;
+        let cells = side * side;
+        if cells != bank.cells {
+            return Err(PolicyError::Unsupported {
+                what: "a forward transform whose size disagrees with its bank",
+            });
+        }
+        let offset = bank.coefficients.len();
+        for channel in 0..NUM_CHANNELS {
+            let lane = scratch
+                .coeffs
+                .get(channel)
+                .and_then(|coefficients| coefficients.get(..cells))
+                .ok_or(PolicyError::Unsupported {
+                    what: "a missing forward-transform scratch lane",
+                })?;
+            bank.coefficients.extend_from_slice(lane);
+        }
+        if let Some(stored) = bank.offsets.get_mut(slot) {
+            *stored = offset;
+        }
+        bank.entries = bank.entries.saturating_add(1);
+        bank.misses = bank.misses.saturating_add(1);
+        diagnostics::note_candidate_forward(cells.saturating_mul(NUM_CHANNELS));
+        bank.view(offset)
+    }
+
+    fn get(&self, transform: TransformType, px: u32, py: u32) -> Option<VarblockForward<'_>> {
+        let family = Self::family(transform)?;
+        let (bx, by) = self.local_block(px, py).ok()?;
+        let bank = self.banks.get(family)?.as_ref()?;
+        let slot = bank.slot(bx, by).ok()?;
+        let offset = bank.offsets.get(slot).copied()?;
+        (offset != EMPTY_FORWARD_SLOT)
+            .then(|| bank.view(offset).ok())
+            .flatten()
+    }
 }
 
 /// Cross-probe / within-probe cache of quantizer-independent forward DCTs.
 ///
 /// Built lazily: cover search and post-cover CfL/quantize all hit the same
-/// map. The rate loop keeps one cache across quantizer probes so a given
-/// (origin, transform) is transformed at most once per request.
+/// group-local banks. The rate loop keeps one cache across quantizer probes so
+/// a given (origin, transform) is transformed at most once per request.
 #[derive(Default)]
 pub(crate) struct CandidateForwardCache {
-    entries: std::collections::HashMap<ForwardKey, VarblockForward>,
-    /// Times a probe reused a previously computed forward.
-    hits: u64,
-    /// Times a forward was computed for the first time.
-    misses: u64,
-    /// Retained coefficient payload, excluding Vec/HashMap metadata.
-    payload_bytes: u64,
-    /// One coefficient allocation per channel of every cached candidate.
-    allocations: u64,
+    groups: Vec<std::sync::Mutex<CandidateGroupBank>>,
 }
 
 impl CandidateForwardCache {
@@ -1140,82 +1510,78 @@ impl CandidateForwardCache {
 
     /// Hit count for Opt-V2 rate-loop telemetry.
     pub(crate) fn hits(&self) -> u64 {
-        self.hits
+        self.bank_stat(|bank| bank.hits)
     }
 
     /// Miss count for Opt-V2 rate-loop telemetry.
     pub(crate) fn misses(&self) -> u64 {
-        self.misses
+        self.bank_stat(|bank| bank.misses)
     }
 
     pub(crate) fn entries(&self) -> u64 {
-        u64::try_from(self.entries.len()).unwrap_or(u64::MAX)
+        self.bank_stat(|bank| bank.entries)
     }
 
     pub(crate) fn payload_bytes(&self) -> u64 {
-        self.payload_bytes
-    }
-
-    pub(crate) fn allocations(&self) -> u64 {
-        self.allocations
-    }
-
-    fn key(transform: TransformType, px: u32, py: u32) -> ForwardKey {
-        ForwardKey {
-            px,
-            py,
-            transform: transform as u8,
-        }
-    }
-
-    /// Returns cached coefficients, computing them on first use.
-    fn get_or_insert(
-        &mut self,
-        frame: &PreparedFrame,
-        transform: TransformType,
-        px: u32,
-        py: u32,
-        scratch: &mut ForwardScratch,
-    ) -> Result<&VarblockForward> {
-        let key = Self::key(transform, px, py);
-        if self.entries.contains_key(&key) {
-            self.hits = self.hits.saturating_add(1);
-        } else {
-            let side = forward_square(frame, transform, px, py, scratch)?;
-            let cells = side * side;
-            let fwd = VarblockForward {
-                coeffs: core::array::from_fn(|channel| {
-                    scratch
-                        .coeffs
-                        .get(channel)
-                        .map(|c| c.get(..cells).unwrap_or(&[]).to_vec())
-                        .unwrap_or_default()
-                }),
-            };
-            let n_f32 = fwd.coeffs.iter().map(Vec::len).sum::<usize>();
-            diagnostics::note_candidate_forward(n_f32);
-            self.payload_bytes = self
-                .payload_bytes
-                .saturating_add(u64::try_from(n_f32).unwrap_or(u64::MAX).saturating_mul(4));
-            self.allocations = self
-                .allocations
-                .saturating_add(u64::try_from(NUM_CHANNELS).unwrap_or(u64::MAX));
-            self.entries.insert(key, fwd);
-            self.misses = self.misses.saturating_add(1);
-        }
-        self.entries.get(&key).ok_or(PolicyError::Unsupported {
-            what: "a missing forward-cache entry after insert",
+        self.bank_stat(|bank| {
+            u64::try_from(bank.coefficients.len())
+                .unwrap_or(u64::MAX)
+                .saturating_mul(4)
         })
     }
 
-    /// Read-only lookup: `None` if `(transform, px, py)` was never inserted.
-    ///
-    /// Phase-3: callers that already know a candidate is cached (every
-    /// selected varblock's forward was inserted by cover scoring, or by
-    /// [`ensure_forwards_cached`]) use this instead of
-    /// [`Self::get_or_insert`] so they can borrow instead of cloning.
-    fn get(&self, transform: TransformType, px: u32, py: u32) -> Option<&VarblockForward> {
-        self.entries.get(&Self::key(transform, px, py))
+    pub(crate) fn allocations(&self) -> u64 {
+        self.bank_stat(|_| 1)
+    }
+
+    fn prepare(&mut self, geometry: &VardctGeometry) -> Result<()> {
+        if !self.groups.is_empty() {
+            if self.groups.len() == usize::try_from(geometry.num_lf_groups()).unwrap_or(usize::MAX)
+            {
+                return Ok(());
+            }
+            return Err(PolicyError::Unsupported {
+                what: "a forward cache reused with different frame geometry",
+            });
+        }
+        let mut groups = Vec::new();
+        for index in 0..geometry.num_lf_groups() {
+            let id = LfGroupId::new(u32::try_from(index).unwrap_or(u32::MAX));
+            let rect = geometry.lf_group_rect(id).ok_or(PolicyError::Unsupported {
+                what: "an LF group outside the frame's grid",
+            })?;
+            let blocks = geometry
+                .lf_group_blocks(id)
+                .ok_or(PolicyError::Unsupported {
+                    what: "an LF group outside the frame's block grid",
+                })?;
+            groups.push(std::sync::Mutex::new(CandidateGroupBank::new(
+                rect, blocks,
+            )?));
+        }
+        self.groups = groups;
+        Ok(())
+    }
+
+    fn group(&self, index: usize) -> Result<&std::sync::Mutex<CandidateGroupBank>> {
+        self.groups.get(index).ok_or(PolicyError::Unsupported {
+            what: "a missing LF-group forward bank",
+        })
+    }
+
+    fn bank_stat(&self, value: impl Fn(&DenseForwardBank) -> u64) -> u64 {
+        self.groups
+            .iter()
+            .filter_map(|group| group.lock().ok())
+            .map(|group| {
+                group
+                    .banks
+                    .iter()
+                    .filter_map(Option::as_ref)
+                    .map(&value)
+                    .fold(0, u64::saturating_add)
+            })
+            .fold(0, u64::saturating_add)
     }
 }
 
@@ -1229,14 +1595,13 @@ impl CandidateForwardCache {
 /// `Vec<VarblockForward>` per group out of the cache (outside-advice.md §7's
 /// "selected-forward clone" — 144 MB at 12 MP). Splitting "ensure computed"
 /// (mutable) from "gather borrows" ([`gather_forward_refs`], immutable) lets
-/// every group's forwards be *borrowed* from `cache` instead, at the cost of
-/// running cover selection for every group before any group's forwards are
-/// gathered — see the two-pass loop in [`plan_at_with_cfl`].
+/// every group's forwards be borrowed directly from its dense bank while that
+/// group's lock is held.
 fn ensure_forwards_cached(
     frame: &PreparedFrame,
     varblocks: &[VarblockDecision],
     origin: (u32, u32),
-    cache: &mut CandidateForwardCache,
+    cache: &mut CandidateGroupBank,
     scratch: &mut ForwardScratch,
 ) -> Result<()> {
     let (x0, y0) = origin;
@@ -1253,8 +1618,8 @@ fn ensure_forwards_cached(
 fn gather_forward_refs<'cache>(
     varblocks: &[VarblockDecision],
     origin: (u32, u32),
-    cache: &'cache CandidateForwardCache,
-) -> Result<Vec<&'cache VarblockForward>> {
+    cache: &'cache CandidateGroupBank,
+) -> Result<Vec<VarblockForward<'cache>>> {
     let (x0, y0) = origin;
     let mut out = Vec::with_capacity(varblocks.len());
     for vb in varblocks {
@@ -1451,7 +1816,7 @@ impl QuantScratch {
 /// X and B decorrelate against the reconstructed `dY` (I.6), never the source Y.
 #[allow(clippy::too_many_arguments)]
 fn quantize_square_varblock(
-    coeffs: &[Vec<f32>; NUM_CHANNELS],
+    coeffs: &[&[f32]; NUM_CHANNELS],
     transform: TransformType,
     lf_quant: &LfQuantizer,
     hf_quant: &HfQuantizer,
@@ -1627,14 +1992,16 @@ fn varblock_cfl(
 /// residual through the exact quantizers (including I.5.3's bias). Grayscale is
 /// a hard source-domain no-op, so its stream is byte-identical to neutral CfL.
 ///
-/// `forwards` must align with `maps` (one forward per selected varblock).
+/// Each dense group bank must contain one forward per selected varblock in
+/// `maps`; cover construction establishes that invariant before this call.
 fn estimate_cfl(
     geometry: &VardctGeometry,
     maps: &[&[VarblockDecision]],
-    forwards: &[&[&VarblockForward]],
+    cache: &CandidateForwardCache,
     lf_quant: &LfQuantizer,
     hf_quants: &HfQuantizers,
     enabled: bool,
+    executor: Option<&jpxl_encode::EncodeExecutor>,
 ) -> Result<CflEstimate> {
     // Grayscale / disabled: no need for the forward cache.
     if !enabled {
@@ -1649,38 +2016,71 @@ fn estimate_cfl(
             groups,
         });
     }
-    // Detect grayscale from empty chroma energy in the first forward sample if
-    // any group is empty; the caller still passes enable_cfl=false for grey.
-    let mut lf_x = CflSamples::default();
-    let mut lf_b = CflSamples::default();
-    let mut hf_groups = Vec::new();
-    let mut llf_scratch = TransformScratch::for_transform(TransformType::Dct32x32);
-
-    for index in 0..geometry.num_lf_groups() {
+    // Each LF group collects independently. Results are returned in raster
+    // order, then the frame-wide LF regression replays every sample in that
+    // same order so worker scheduling cannot perturb floating-point sums.
+    let n_groups = usize::try_from(geometry.num_lf_groups()).unwrap_or(0);
+    // Allocate the large sample vectors on the request thread. Workers fill
+    // them without growing, avoiding one allocator arena retaining a frame's
+    // CfL samples after another thread drops the completed plan.
+    let mut sample_workspaces = Vec::with_capacity(n_groups);
+    for index_usize in 0..n_groups {
+        let index = u64::try_from(index_usize).unwrap_or(u64::MAX);
         let id = LfGroupId::new(u32::try_from(index).unwrap_or(u32::MAX));
         let tiles = geometry
             .lf_group_cfl_tiles(id)
             .ok_or(PolicyError::Unsupported {
                 what: "an LF group outside the frame's grid",
             })?;
-        let tile_count = usize::try_from(tiles.area()).unwrap_or(0);
-        let mut group = HfCflSamples {
-            tiles,
-            x: (0..tile_count).map(|_| CflSamples::default()).collect(),
-            b: (0..tile_count).map(|_| CflSamples::default()).collect(),
-        };
         let map = maps
-            .get(usize::try_from(index).unwrap_or(usize::MAX))
+            .get(index_usize)
             .copied()
             .ok_or(PolicyError::Unsupported {
                 what: "a missing block map for an LF group",
             })?;
-        let group_fwd = forwards
-            .get(usize::try_from(index).unwrap_or(usize::MAX))
+        sample_workspaces.push(std::sync::Mutex::new(Some(group_cfl_workspace(
+            tiles, map,
+        )?)));
+    }
+    let collect_group = |index_usize: usize| {
+        let index = u64::try_from(index_usize).unwrap_or(u64::MAX);
+        let id = LfGroupId::new(u32::try_from(index).unwrap_or(u32::MAX));
+        let tiles = geometry
+            .lf_group_cfl_tiles(id)
+            .ok_or(PolicyError::Unsupported {
+                what: "an LF group outside the frame's grid",
+            })?;
+        let mut workspace = sample_workspaces
+            .get(index_usize)
+            .ok_or(PolicyError::Unsupported {
+                what: "a missing CfL sample workspace",
+            })?
+            .lock()
+            .map_err(|_| PolicyError::Unsupported {
+                what: "a poisoned CfL sample workspace",
+            })?
+            .take()
+            .ok_or(PolicyError::Unsupported {
+                what: "a CfL sample workspace used twice",
+            })?;
+        debug_assert_eq!(workspace.hf.tiles, tiles);
+        let mut llf_scratch = TransformScratch::for_transform(TransformType::Dct32x32);
+        let map = maps
+            .get(index_usize)
             .copied()
             .ok_or(PolicyError::Unsupported {
-                what: "a missing forward cache for an LF group",
+                what: "a missing block map for an LF group",
             })?;
+        let rect = geometry.lf_group_rect(id).ok_or(PolicyError::Unsupported {
+            what: "an LF group outside the frame's grid",
+        })?;
+        let bank = cache
+            .group(index_usize)?
+            .lock()
+            .map_err(|_| PolicyError::Unsupported {
+                what: "a poisoned LF-group forward bank",
+            })?;
+        let group_fwd = gather_forward_refs(map, (rect.x0, rect.y0), &bank)?;
         if map.len() != group_fwd.len() {
             return Err(PolicyError::Unsupported {
                 what: "a forward cache length that does not match the block map",
@@ -1688,6 +2088,7 @@ fn estimate_cfl(
         }
 
         for (vb, fwd) in map.iter().zip(group_fwd.iter()) {
+            let [cx, cy, cb] = fwd.coeffs;
             let transform = vb.transform;
             let n = transform.block_dims().0;
             let side = transform.sample_cols();
@@ -1703,36 +2104,27 @@ fn estimate_cfl(
             let mut y_lf = vec![0.0f32; n * n];
             let mut x_lf = vec![0.0f32; n * n];
             let mut b_lf = vec![0.0f32; n * n];
-            lf_samples_of(
-                fwd.coeffs.get(1).map_or(&[][..], Vec::as_slice),
-                transform,
-                n,
-                side,
-                &mut llf_scratch,
-                &mut y_lf,
-            )?;
-            lf_samples_of(
-                fwd.coeffs.get(0).map_or(&[][..], Vec::as_slice),
-                transform,
-                n,
-                side,
-                &mut llf_scratch,
-                &mut x_lf,
-            )?;
-            lf_samples_of(
-                fwd.coeffs.get(2).map_or(&[][..], Vec::as_slice),
-                transform,
-                n,
-                side,
-                &mut llf_scratch,
-                &mut b_lf,
-            )?;
+            lf_samples_of(cy, transform, n, side, &mut llf_scratch, &mut y_lf)?;
+            lf_samples_of(cx, transform, n, side, &mut llf_scratch, &mut x_lf)?;
+            lf_samples_of(cb, transform, n, side, &mut llf_scratch, &mut b_lf)?;
             for idx in 0..n * n {
                 let y = y_lf.get(idx).copied().unwrap_or(0.0);
                 let q = lf_quant.quantize(y, 1)?;
                 let d_y = lf_quant.reconstruct(q, 1);
-                lf_x.push(x_lf.get(idx).copied().unwrap_or(0.0), y, d_y, 0);
-                lf_b.push(b_lf.get(idx).copied().unwrap_or(0.0), y, d_y, 0);
+                workspace
+                    .lf_x
+                    .push(x_lf.get(idx).copied().unwrap_or(0.0), y, d_y, 0);
+                workspace
+                    .lf_b
+                    .push(b_lf.get(idx).copied().unwrap_or(0.0), y, d_y, 0);
+                workspace.lf_regression_x.push(RegressionSample {
+                    source: x_lf.get(idx).copied().unwrap_or(0.0),
+                    y,
+                });
+                workspace.lf_regression_b.push(RegressionSample {
+                    source: b_lf.get(idx).copied().unwrap_or(0.0),
+                    y,
+                });
             }
 
             // HF: every non-LLF coefficient, into the varblock's tile. The
@@ -1741,9 +2133,6 @@ fn estimate_cfl(
             // the DCT8x8 quantizer as the common scale and its matrix has no
             // entries beyond 8x8.
             let fold = side / 8;
-            let cx = fwd.coeffs.get(0).map_or(&[][..], Vec::as_slice);
-            let cy = fwd.coeffs.get(1).map_or(&[][..], Vec::as_slice);
-            let cb = fwd.coeffs.get(2).map_or(&[][..], Vec::as_slice);
             diagnostics::with_choose_stage(diagnostics::ChooseStage::CflY, || {
                 for cell in 0..cells {
                     if is_llf_cell(cell, side, n) {
@@ -1753,17 +2142,33 @@ fn estimate_cfl(
                     let y = cy.get(cell).copied().unwrap_or(0.0);
                     let q_y = hf_quant.choose(y, 1, cell)?;
                     let d_y = hf_quant.reconstruct(q_y, 1, cell);
-                    if let Some(t) = group.x.get_mut(tile) {
+                    if let Some(t) = workspace.hf.x.get_mut(tile) {
                         t.push(cx.get(cell).copied().unwrap_or(0.0), y, d_y, cell8);
                     }
-                    if let Some(t) = group.b.get_mut(tile) {
+                    if let Some(t) = workspace.hf.b.get_mut(tile) {
                         t.push(cb.get(cell).copied().unwrap_or(0.0), y, d_y, cell8);
                     }
                 }
                 Ok::<(), PolicyError>(())
             })?;
         }
-        hf_groups.push(group);
+        Ok::<_, PolicyError>(workspace)
+    };
+    let group_samples = if let Some(executor) = executor {
+        executor.map_ordered(n_groups, collect_group)?
+    } else {
+        (0..n_groups)
+            .map(collect_group)
+            .collect::<Result<Vec<_>>>()?
+    };
+
+    let mut lf_x = CflSamples::default();
+    let mut lf_b = CflSamples::default();
+    let mut hf_groups = Vec::with_capacity(group_samples.len());
+    for group in group_samples {
+        lf_x.append_ordered(group.lf_x, group.lf_regression_x);
+        lf_b.append_ordered(group.lf_b, group.lf_regression_b);
+        hf_groups.push(group.hf);
     }
 
     let (x_factor, b_factor) = refine_lf_factors(&lf_x, &lf_b, lf_quant)?;
@@ -2036,6 +2441,32 @@ struct QuantizedGroup {
     coefficients: Vec<VarblockCoefficients>,
 }
 
+/// Large quantization buffers reserved by the request thread before fanout.
+struct QuantWorkspace {
+    lf_planes: [Vec<i32>; NUM_CHANNELS],
+    arena: std::sync::Arc<[i32]>,
+    starts: Vec<[usize; NUM_CHANNELS]>,
+    coefficients: Vec<VarblockCoefficients>,
+}
+
+impl QuantWorkspace {
+    fn new(varblocks: &[VarblockDecision], blocks: jpxl_encode::vardct::BlockGrid) -> Self {
+        let cells = usize::try_from(blocks.area()).unwrap_or(0);
+        let mut arena_cap = 0usize;
+        for vb in varblocks {
+            let side = vb.transform.sample_cols();
+            arena_cap =
+                arena_cap.saturating_add(side.saturating_mul(side).saturating_mul(NUM_CHANNELS));
+        }
+        Self {
+            lf_planes: core::array::from_fn(|_| vec![0i32; cells]),
+            arena: vec![0i32; arena_cap].into(),
+            starts: Vec::with_capacity(varblocks.len()),
+            coefficients: Vec::with_capacity(varblocks.len()),
+        }
+    }
+}
+
 /// Quantizes one LF group's **selected** varblocks, in their `BlockInfo` order.
 ///
 /// `forwards` are the precomputed coefficient arrays from
@@ -2050,28 +2481,17 @@ fn quantize_group(
     correlation: &LfCorrelationDecision,
     cfl: &CflGrid,
     varblocks: &[VarblockDecision],
-    forwards: &[&VarblockForward],
+    forwards: &[VarblockForward<'_>],
     blocks: jpxl_encode::vardct::BlockGrid,
+    mut workspace: QuantWorkspace,
 ) -> Result<QuantizedGroup> {
     if varblocks.len() != forwards.len() {
         return Err(PolicyError::Unsupported {
             what: "a forward cache length that does not match the block map",
         });
     }
-    let cells = usize::try_from(blocks.area()).unwrap_or(0);
-    let mut lf_planes: [Vec<i32>; NUM_CHANNELS] = core::array::from_fn(|_| vec![0i32; cells]);
     let mut tscratch = TransformScratch::for_transform(TransformType::Dct32x32);
     let mut qscratch = QuantScratch::new();
-
-    // One arena: for each varblock, three channels of `side*side` i32s.
-    let mut arena_cap = 0usize;
-    for vb in varblocks {
-        let side = vb.transform.sample_cols();
-        arena_cap =
-            arena_cap.saturating_add(side.saturating_mul(side).saturating_mul(NUM_CHANNELS));
-    }
-    let mut arena = vec![0i32; arena_cap];
-    let mut starts: Vec<[usize; NUM_CHANNELS]> = Vec::with_capacity(varblocks.len());
     let mut cursor = 0usize;
 
     for (vb, fwd) in varblocks.iter().zip(forwards.iter()) {
@@ -2080,9 +2500,14 @@ fn quantize_group(
         let ch_cells = side * side;
         let span = ch_cells.saturating_mul(NUM_CHANNELS);
         let end = cursor.saturating_add(span);
-        let slot = arena.get_mut(cursor..end).ok_or(PolicyError::Unsupported {
-            what: "a coefficient arena that ran short of capacity",
-        })?;
+        let slot = std::sync::Arc::get_mut(&mut workspace.arena)
+            .ok_or(PolicyError::Unsupported {
+                what: "a shared coefficient arena before quantization",
+            })?
+            .get_mut(cursor..end)
+            .ok_or(PolicyError::Unsupported {
+                what: "a coefficient arena that ran short of capacity",
+            })?;
         let (bx, by) = (vb.origin.bx(), vb.origin.by());
         let factors = varblock_cfl(correlation, cfl, bx, by);
         quantize_square_varblock(
@@ -2096,27 +2521,29 @@ fn quantize_group(
             bx,
             by,
             blocks.width,
-            &mut lf_planes,
+            &mut workspace.lf_planes,
             slot,
             hf_quants.truncate_trailing,
         )?;
-        starts.push([cursor, cursor + ch_cells, cursor + ch_cells * 2]);
+        workspace
+            .starts
+            .push([cursor, cursor + ch_cells, cursor + ch_cells * 2]);
         cursor = end;
     }
 
-    let arena: std::sync::Arc<[i32]> = arena.into();
-    let mut coefficients = Vec::with_capacity(varblocks.len());
-    for (vb, channel_starts) in varblocks.iter().zip(starts) {
-        coefficients.push(VarblockCoefficients::from_arena(
-            vb.transform,
-            std::sync::Arc::clone(&arena),
-            channel_starts,
-        )?);
+    for (vb, channel_starts) in varblocks.iter().zip(workspace.starts) {
+        workspace
+            .coefficients
+            .push(VarblockCoefficients::from_arena(
+                vb.transform,
+                std::sync::Arc::clone(&workspace.arena),
+                channel_starts,
+            )?);
     }
 
     Ok(QuantizedGroup {
-        lf: LfQuantPlanes::new(blocks, lf_planes)?,
-        coefficients,
+        lf: LfQuantPlanes::new(blocks, workspace.lf_planes)?,
+        coefficients: workspace.coefficients,
     })
 }
 
@@ -2313,7 +2740,7 @@ fn block_cost_bounded(
     hf_mul: HfMul,
     px: u32,
     py: u32,
-    cache: &mut CandidateForwardCache,
+    cache: &mut CandidateGroupBank,
     scratch: &mut ForwardScratch,
     d_y_hf: &mut [f32],
     cutoff: Option<f64>,
@@ -2345,9 +2772,7 @@ fn block_cost_bounded(
     // Phase 6.3: empty under the flat production policy, and `cell_weight`
     // then returns exactly 1.0, so the shipped objective is untouched.
     let freq = hf_quants.frequency_weights(transform);
-    let cy = fwd.coeffs.get(1).map_or(&[][..], Vec::as_slice);
-    let cx = fwd.coeffs.get(0).map_or(&[][..], Vec::as_slice);
-    let cb = fwd.coeffs.get(2).map_or(&[][..], Vec::as_slice);
+    let [cx, cy, cb] = fwd.coeffs;
     let mut bits = 0u64;
     let mut weighted_sse = 0.0f64;
     let check = |bits: u64, weighted_sse: f64| -> bool {
@@ -2471,7 +2896,7 @@ fn block_cost(
     hf_mul: HfMul,
     px: u32,
     py: u32,
-    cache: &mut CandidateForwardCache,
+    cache: &mut CandidateGroupBank,
     scratch: &mut ForwardScratch,
     d_y_hf: &mut [f32],
 ) -> Result<f64> {
@@ -2498,7 +2923,7 @@ fn tile_region(
     aq: &AqSetup,
     x0: u32,
     y0: u32,
-    cache: &mut CandidateForwardCache,
+    cache: &mut CandidateGroupBank,
     scratch: &mut ForwardScratch,
     d_y_hf: &mut [f32],
 ) -> Result<(f64, Vec<VarblockDecision>)> {
@@ -2607,7 +3032,7 @@ fn select_blocks(
     grid: jpxl_encode::vardct::BlockGrid,
     origin: (u32, u32),
     aq: &AqSetup,
-    cache: &mut CandidateForwardCache,
+    cache: &mut CandidateGroupBank,
     scratch: &mut ForwardScratch,
 ) -> Result<Vec<VarblockDecision>> {
     let (x0, y0) = origin;

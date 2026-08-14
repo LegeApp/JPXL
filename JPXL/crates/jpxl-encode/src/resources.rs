@@ -172,6 +172,24 @@ impl EncodeExecutor {
         self.resources
     }
 
+    /// Maps independent work items and returns their results in index order.
+    ///
+    /// This is the shared coarse-grained execution boundary for planning and
+    /// emission. The closure may run concurrently, but reduction is always in
+    /// `0..n` order so worker count and scheduling cannot change the result.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first error in index order.
+    pub fn map_ordered<T, E, F>(&self, n: usize, f: F) -> Result<Vec<T>, E>
+    where
+        T: Send,
+        E: Send,
+        F: Fn(usize) -> Result<T, E> + Sync,
+    {
+        ordered_map_with(n, self, f)
+    }
+
     fn workers_for(&self, ready: usize) -> usize {
         #[cfg(feature = "parallel")]
         if self.pool.is_none() {
