@@ -2259,6 +2259,45 @@ record jpegxl-rs.evidence.phase8-5-current-libjxl-gap-2026-08-14/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase8-5-entropy-candidate-correctness-2026-08-14/1 : evidence {
+    title "Entropy candidate concurrency preserves deterministic output"
+    state verified
+    result pass
+    method command
+    observed_at git:61b81d4483c0197737bc51b1f2dc428ea20cbac5
+    command "cargo test -p jpxl-encode-policy --release --features anchor-sketch; cargo check -p jpxl-encode-policy --no-default-features --features anchor-sketch; canonical SHA-256 comparison"
+    artifact ".agent/scratch/phase8-5-finishing-2026-08-14/SUMMARY.md"
+    summary """
+        Policy, executor-width identity, roundtrip, and both external-oracle suites passed; scalar fallback compiled; all seven canonical streams remained SHA-256 identical.
+        """
+}
+
+record jpegxl-rs.evidence.phase8-5-entropy-candidate-parallelism-2026-08-14/1 : evidence {
+    title "Independent Full entropy candidates train concurrently"
+    state verified
+    result pass
+    method command
+    observed_at git:61b81d4483c0197737bc51b1f2dc428ea20cbac5
+    command "five interleaved 4.3 MP and three interleaved 12 MP vardct-rate pairs, exact-feature control f65f7878 versus 61b81d44, four threads"
+    artifact ".agent/scratch/phase8-5-finishing-2026-08-14/SUMMARY.md"
+    summary """
+        Ordered executor jobs reduced the 4.3 MP median 4205.043 -> 3916.022 ms (6.87%) and the 12 MP median 8635.257 -> 7821.089 ms (9.43%), with byte-identical output.
+        """
+}
+
+record jpegxl-rs.evidence.phase8-5-final-pgo-and-gap-2026-08-14/1 : evidence {
+    title "Final Phase 8.5 PGO and matched-quality gap"
+    state verified
+    result pass
+    method command
+    observed_at git:61b81d4483c0197737bc51b1f2dc428ea20cbac5
+    command "regenerated profile on seven canonical scenes plus 4.3 MP; interleaved thin/PGO and JPXL/cjxl timing on 4.3 MP and unseen 12 MP"
+    artifact ".agent/scratch/phase8-5-finishing-2026-08-14/SUMMARY.md"
+    summary """
+        Final PGO adds 13.27% at 4.3 MP and 11.66% at unseen 12 MP; at matched SSIMULACRA2 the remaining black-box cjxl gap is 8.86x and 6.75x respectively.
+        """
+}
+
 record jpegxl-rs.evidence.phase8-5-pgo-generalizes-2026-08-14/1 : evidence {
     title "Retrained PGO generalizes across size classes"
     state verified
