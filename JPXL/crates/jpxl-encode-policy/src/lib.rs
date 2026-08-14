@@ -801,70 +801,62 @@ fn train_entropy_with_orders(
     entropy_search: EntropySearch,
     executor: Option<&jpxl_encode::EncodeExecutor>,
 ) -> Result<TrainedEntropyCandidate> {
-    let block_context = provisional.entropy.block_context.clone();
-    let num_hf_presets = provisional.entropy.num_hf_presets;
-    let group_presets: Vec<PresetId> = provisional
-        .entropy
-        .passes
-        .first()
-        .map(|p| p.group_presets.to_vec())
-        .unwrap_or_default();
-    diagnostics::note_census();
-    let census = if let Some(executor) = executor {
-        census_frame_with_executor(&provisional, geometry, executor)?
-    } else {
-        census_frame(&provisional, geometry)?
-    };
-    diagnostics::note_entropy_training();
-    let model = entropy::train(&census)?;
-    // Arc-clone spatial/quantized; only entropy is rebuilt.
-    let natural = validate(EmissionPlan {
-        entropy: trained_entropy_plan(
-            geometry,
-            model,
-            OrderSet::natural(),
-            block_context.clone(),
-            num_hf_presets,
-            group_presets.clone(),
-        )?,
-        ..provisional.clone()
-    })?;
     if entropy_search == EntropySearch::Fast {
+        diagnostics::note_census();
+        diagnostics::note_entropy_training();
+        let natural =
+            train_entropy_for_orders(provisional, geometry, OrderSet::natural(), executor)?;
         return Ok(TrainedEntropyCandidate::unpriced(natural));
     }
 
     let orders =
         entropy::candidate_orders(provisional.spatial.as_ref(), provisional.quantized.as_ref())?;
     if orders.overrides().is_empty() {
+        diagnostics::note_census();
+        diagnostics::note_entropy_training();
+        let natural =
+            train_entropy_for_orders(provisional, geometry, OrderSet::natural(), executor)?;
         return Ok(TrainedEntropyCandidate::unpriced(natural));
     }
     diagnostics::note_order_candidate();
-
-    let mut reordered_walk = provisional;
-    if let Some(pass) = reordered_walk.entropy.passes.first_mut() {
-        pass.orders = orders.clone();
-    }
+    // Natural and custom-order models consume the same immutable spatial and
+    // quantized IR. Train them as two ordered executor jobs so their serial
+    // cluster searches overlap, while retaining deterministic reduction and
+    // the existing serial fallback at one worker / without an executor.
     diagnostics::note_census();
-    let census = if let Some(executor) = executor {
-        census_frame_with_executor(&reordered_walk, geometry, executor)?
-    } else {
-        census_frame(&reordered_walk, geometry)?
-    };
     diagnostics::note_entropy_training();
-    let model = entropy::train(&census)?;
-    let reordered = validate(EmissionPlan {
-        entropy: trained_entropy_plan(
-            geometry,
-            model,
-            orders,
-            block_context,
-            num_hf_presets,
-            group_presets,
-        )?,
-        spatial: reordered_walk.spatial,
-        quantized: reordered_walk.quantized,
-        sections: reordered_walk.sections,
-    })?;
+    diagnostics::note_census();
+    diagnostics::note_entropy_training();
+    let (natural, reordered) = if let Some(executor) = executor
+        && executor.resources().parallel_groups()
+    {
+        let candidates = executor.map_ordered(2, |index| {
+            let candidate_orders = if index == 0 {
+                OrderSet::natural()
+            } else {
+                orders.clone()
+            };
+            train_entropy_for_orders(
+                provisional.clone(),
+                geometry,
+                candidate_orders,
+                Some(executor),
+            )
+        })?;
+        let mut candidates = candidates.into_iter();
+        let natural = candidates.next().ok_or(PolicyError::Unsupported {
+            what: "a missing natural-order entropy candidate",
+        })?;
+        let reordered = candidates.next().ok_or(PolicyError::Unsupported {
+            what: "a missing custom-order entropy candidate",
+        })?;
+        (natural, reordered)
+    } else {
+        let natural =
+            train_entropy_for_orders(provisional.clone(), geometry, OrderSet::natural(), executor)?;
+        let reordered = train_entropy_for_orders(provisional, geometry, orders, executor)?;
+        (natural, reordered)
+    };
 
     let natural_size = internal_price_total(&natural, executor)?;
     let reordered_size = internal_price_total(&reordered, executor)?;
@@ -873,6 +865,48 @@ fn train_entropy_with_orders(
     } else {
         TrainedEntropyCandidate::priced(natural, natural_size)
     })
+}
+
+/// Census and train one coefficient-order candidate. The caller owns
+/// candidate-level parallelism and records the diagnostic multiplicity on its
+/// control thread, because those counters are intentionally thread-local.
+fn train_entropy_for_orders(
+    mut provisional: EmissionPlan,
+    geometry: &VardctGeometry,
+    orders: OrderSet,
+    executor: Option<&jpxl_encode::EncodeExecutor>,
+) -> Result<ValidatedEmissionPlan> {
+    if let Some(pass) = provisional.entropy.passes.first_mut() {
+        pass.orders = orders.clone();
+    }
+    let block_context = provisional.entropy.block_context.clone();
+    let num_hf_presets = provisional.entropy.num_hf_presets;
+    let group_presets: Vec<PresetId> = provisional
+        .entropy
+        .passes
+        .first()
+        .map(|p| p.group_presets.to_vec())
+        .unwrap_or_default();
+    let census = if let Some(executor) = executor {
+        census_frame_with_executor(&provisional, geometry, executor)?
+    } else {
+        census_frame(&provisional, geometry)?
+    };
+    let model = entropy::train(&census)?;
+    // Arc-clone spatial/quantized; only entropy is rebuilt.
+    Ok(validate(EmissionPlan {
+        entropy: trained_entropy_plan(
+            geometry,
+            model,
+            orders,
+            block_context,
+            num_hf_presets,
+            group_presets,
+        )?,
+        spatial: provisional.spatial,
+        quantized: provisional.quantized,
+        sections: provisional.sections,
+    })?)
 }
 
 /// The frame-wide LF factors and one HF factor grid per LF group.
