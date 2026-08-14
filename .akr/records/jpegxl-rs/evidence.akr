@@ -2246,6 +2246,58 @@ record jpegxl-rs.evidence.phase8-4-windows-speed/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase8-5-current-libjxl-gap-2026-08-14/1 : evidence {
+    title "Current matched-quality libjxl speed gap"
+    state verified
+    result pass
+    method command
+    observed_at git:f65f7878de7111af6b925fed0ae4ce616aa4ba5c
+    command "interleaved CLI encode timing: JPXL PGO --bpp 1 versus black-box cjxl v0.13.0 -e 7 at SSIMULACRA2-matched distance"
+    artifact ".agent/scratch/phase8-5-finishing-2026-08-14/SUMMARY.md"
+    summary """
+        At matched SSIMULACRA2, JPXL remains 10.22x slower on 4.3 MP and 7.42x slower on 12 MP; cjxl outputs are 12.8% and 6.8% smaller respectively, so the speed-parity goal remains open.
+        """
+}
+
+record jpegxl-rs.evidence.phase8-5-pgo-generalizes-2026-08-14/1 : evidence {
+    title "Retrained PGO generalizes across size classes"
+    state verified
+    result pass
+    method command
+    observed_at git:f65f7878de7111af6b925fed0ae4ce616aa4ba5c
+    command "profile-generate on seven 1024x768 scenes plus 2400x1800; llvm-profdata merge; profile-use; interleaved vardct-rate benchmarks"
+    artifact ".agent/scratch/phase8-5-finishing-2026-08-14/SUMMARY.md"
+    summary """
+        PGO reduced the post-Sketch 4.3 MP median 10.90% and an unseen 12 MP median 10.40%, with byte-identical streams; static fat LTO/native-CPU variants did not produce a portable material win.
+        """
+}
+
+record jpegxl-rs.evidence.phase8-5-quality-and-correctness-2026-08-14/1 : evidence {
+    title "Phase 8.5 preserves codestreams and correctness"
+    state verified
+    result pass
+    method command
+    observed_at git:f65f7878de7111af6b925fed0ae4ce616aa4ba5c
+    command "cargo test -p jpxl-encode-policy --release --features anchor-sketch; cargo build --workspace --release --features anchor-sketch; cargo fmt --all --check"
+    artifact ".agent/scratch/phase8-5-finishing-2026-08-14/SUMMARY.md"
+    summary """
+        All policy, rate-loop, roundtrip, and external-oracle tests passed; all seven canonical outputs were SHA-256 identical to Phase 8.3, so its target and perceptual gates are inherited exactly.
+        """
+}
+
+record jpegxl-rs.evidence.phase8-5-sketch-speed-2026-08-14/1 : evidence {
+    title "Sketch-only rate probes skip discarded entropy training"
+    state verified
+    result pass
+    method command
+    observed_at git:f65f7878de7111af6b925fed0ae4ce616aa4ba5c
+    command "target-phase85-{thin,sketch}/release/jpxl.exe bench vardct-rate --input mid-photo.ppm --bpp 1 --iters 1 --threads 4"
+    artifact ".agent/scratch/phase8-5-finishing-2026-08-14/SUMMARY.md"
+    summary """
+        Five interleaved 4.3 MP pairs measured 4932.425 -> 4332.625 ms median (12.16%); Fast entropy census/training fell 9 -> 2 and the 535987-byte output remained identical.
+        """
+}
+
 record jpegxl-rs.evidence.retire-handoff-durable-facts-2026-08-11/1 : evidence {
     title "HANDOFF permanent facts are represented in AKR"
     state verified
