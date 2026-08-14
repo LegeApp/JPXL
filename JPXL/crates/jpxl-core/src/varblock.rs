@@ -40,6 +40,7 @@
 
 use crate::dct::{coeff_dims, dct_2d_raw, idct_2d_raw};
 use crate::error::{JpxlError, Result};
+use std::sync::OnceLock;
 
 // ---------------------------------------------------------------------------
 // Flip points (18181-1 defects and unstated placements)
@@ -604,15 +605,29 @@ impl SampleBlock {
 // I.3.2 — natural ordering of the DCT coefficients
 // ---------------------------------------------------------------------------
 
+static ORDER_ID_DIMS: OnceLock<[Option<(usize, usize)>; NUM_ORDER_IDS]> = OnceLock::new();
+static NATURAL_COEFF_ORDERS: [OnceLock<Vec<u32>>; NUM_ORDER_IDS] =
+    [const { OnceLock::new() }; NUM_ORDER_IDS];
+
+fn cached_order_id_dims() -> &'static [Option<(usize, usize)>; NUM_ORDER_IDS] {
+    ORDER_ID_DIMS.get_or_init(|| {
+        let mut dims = [None; NUM_ORDER_IDS];
+        for transform in TransformType::ALL {
+            let slot = dims.get_mut(transform.order_id());
+            if let Some(slot) = slot {
+                *slot = Some((transform.coeff_cols(), transform.coeff_rows()));
+            }
+        }
+        dims
+    })
+}
+
 /// `(bwidth, bheight)` for an Order ID, per Table I.7 and I.3.2.
 ///
 /// `None` for an out-of-range ID.
 #[must_use]
 pub fn order_id_dims(order_id: usize) -> Option<(usize, usize)> {
-    TransformType::ALL
-        .iter()
-        .find(|t| t.order_id() == order_id)
-        .map(|t| (t.coeff_cols(), t.coeff_rows()))
+    cached_order_id_dims().get(order_id).copied().flatten()
 }
 
 /// I.3.2's natural coefficient order for a `bwidth x bheight` coefficient
@@ -628,6 +643,25 @@ pub fn order_id_dims(order_id: usize) -> Option<(usize, usize)> {
 // are exact; the table is fixed by Table I.1 and cannot grow at runtime.
 #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
 pub fn natural_coeff_order(bwidth: usize, bheight: usize) -> Vec<u32> {
+    if let Some(order_id) = cached_order_id_dims()
+        .iter()
+        .position(|&dims| dims == Some((bwidth, bheight)))
+    {
+        return NATURAL_COEFF_ORDERS
+            .get(order_id)
+            .map(|order| {
+                order
+                    .get_or_init(|| natural_coeff_order_uncached(bwidth, bheight))
+                    .clone()
+            })
+            .unwrap_or_default();
+    }
+
+    natural_coeff_order_uncached(bwidth, bheight)
+}
+
+#[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
+fn natural_coeff_order_uncached(bwidth: usize, bheight: usize) -> Vec<u32> {
     let cx = bwidth / 8;
     let cy = bheight / 8;
     let scale = cx.max(cy) as i64;

@@ -147,7 +147,12 @@ fn merge_values(a: &[(u32, u64)], b: &[(u32, u64)]) -> Vec<(u32, u64)> {
 /// distribution plus the raw bits every value carries.
 fn data_cost(values: &[(u32, u64)], config: (u32, u32, u32)) -> Option<f64> {
     let config = HybridUintConfig::new(config.0, config.1, config.2).ok()?;
-    let mut token_counts: Vec<(u32, u64)> = Vec::new();
+    // Hybrid-uint tokens have a compact alphabet. Count them directly by
+    // token instead of maintaining a sorted sparse vector with a binary
+    // search and insertion for every raw value. Iterating the dense vector
+    // below still visits populated tokens in the same ascending order, so the
+    // floating-point cost and strict candidate tie rules remain unchanged.
+    let mut token_counts: Vec<u64> = Vec::new();
     let mut raw_bits = 0.0f64;
     for &(value, count) in values {
         let split = config.tokenize(value).ok()?;
@@ -158,16 +163,15 @@ fn data_cost(values: &[(u32, u64)], config: (u32, u32, u32)) -> Option<f64> {
         {
             raw_bits += count as f64 * f64::from(split.extra_bits);
         }
-        match token_counts.binary_search_by_key(&split.token, |&(t, _)| t) {
-            Ok(index) => {
-                if let Some(entry) = token_counts.get_mut(index) {
-                    entry.1 += count;
-                }
-            }
-            Err(index) => token_counts.insert(index, (split.token, count)),
+        let index = usize::try_from(split.token).ok()?;
+        if index >= token_counts.len() {
+            token_counts.resize(index.checked_add(1)?, 0);
+        }
+        if let Some(entry) = token_counts.get_mut(index) {
+            *entry += count;
         }
     }
-    let total: u64 = token_counts.iter().map(|&(_, c)| c).sum();
+    let total: u64 = token_counts.iter().sum();
     if total == 0 {
         return Some(0.0);
     }
@@ -177,13 +181,20 @@ fn data_cost(values: &[(u32, u64)], config: (u32, u32, u32)) -> Option<f64> {
     )]
     let shannon: f64 = token_counts
         .iter()
-        .map(|&(_, c)| {
+        .copied()
+        .filter(|&c| c != 0)
+        .map(|c| {
             let p = c as f64 / total as f64;
             -(c as f64) * p.log2()
         })
         .sum();
     // Alphabet size for the signaling estimate: tokens up to the largest.
-    let alphabet = token_counts.last().map_or(1, |&(t, _)| u64::from(t) + 1);
+    let alphabet = token_counts
+        .iter()
+        .rposition(|&count| count != 0)
+        .map_or(1, |index| {
+            u64::try_from(index).unwrap_or(u64::MAX).saturating_add(1)
+        });
     #[allow(
         clippy::cast_precision_loss,
         reason = "alphabet sizes stay small; tokens are logarithmic in value"
