@@ -624,7 +624,7 @@ fn plan_at_with_cfl(
     // Fast rate probes stop here: default map + natural orders is an upper
     // bound on Full's size (Full only adopts alternatives that strictly win).
     if entropy_search == EntropySearch::Fast {
-        return Ok(with_default);
+        return Ok(with_default.into_plan());
     }
 
     // Slice 18c: a custom I.2.2 block context changes every pre-context id,
@@ -640,11 +640,11 @@ fn plan_at_with_cfl(
         diagnostics::note_block_context_candidate();
         let mut custom_walk = provisional.clone();
         custom_walk.entropy = entropy_plan(&geometry, placeholder_histograms(), candidate_bc)?;
-        let with_custom = diagnostics::time_stage(diagnostics::StageTimer::Entropy, || {
+        let mut with_custom = diagnostics::time_stage(diagnostics::StageTimer::Entropy, || {
             train_entropy_with_orders(custom_walk, &geometry, EntropySearch::Full, executor)
         })?;
-        let best_size = internal_price_total(&best, executor)?;
-        let custom_size = internal_price_total(&with_custom, executor)?;
+        let best_size = best.exact_size(executor)?;
+        let custom_size = with_custom.exact_size(executor)?;
         if custom_size < best_size {
             best = with_custom;
         }
@@ -675,18 +675,62 @@ fn plan_at_with_cfl(
             // Histograms stay the provisional six; train_entropy_with_orders
             // rebuilds them from the multi-offset census.
         }
-        if let Ok(with_presets) = diagnostics::time_stage(diagnostics::StageTimer::Entropy, || {
-            train_entropy_with_orders(multi, &geometry, EntropySearch::Full, executor)
-        }) {
-            let best_size = internal_price_total(&best, executor)?;
-            let multi_size = internal_price_total(&with_presets, executor)?;
+        if let Ok(mut with_presets) =
+            diagnostics::time_stage(diagnostics::StageTimer::Entropy, || {
+                train_entropy_with_orders(multi, &geometry, EntropySearch::Full, executor)
+            })
+        {
+            let best_size = best.exact_size(executor)?;
+            let multi_size = with_presets.exact_size(executor)?;
             if multi_size < best_size {
                 best = with_presets;
             }
         }
     }
 
-    Ok(best)
+    Ok(best.into_plan())
+}
+
+/// A trained entropy finalist together with an exact Count result when its
+/// order comparison already had to emit the plan. Carrying the price across
+/// block-context and preset comparisons avoids re-emitting an unchanged
+/// winner while preserving every existing strict-less-than tie rule.
+struct TrainedEntropyCandidate {
+    plan: ValidatedEmissionPlan,
+    exact_size: Option<u64>,
+}
+
+impl TrainedEntropyCandidate {
+    fn unpriced(plan: ValidatedEmissionPlan) -> Self {
+        Self {
+            plan,
+            exact_size: None,
+        }
+    }
+
+    fn priced(plan: ValidatedEmissionPlan, exact_size: u64) -> Self {
+        Self {
+            plan,
+            exact_size: Some(exact_size),
+        }
+    }
+
+    fn plan(&self) -> &EmissionPlan {
+        self.plan.plan()
+    }
+
+    fn exact_size(&mut self, executor: Option<&jpxl_encode::EncodeExecutor>) -> Result<u64> {
+        if let Some(size) = self.exact_size {
+            return Ok(size);
+        }
+        let size = internal_price_total(&self.plan, executor)?;
+        self.exact_size = Some(size);
+        Ok(size)
+    }
+
+    fn into_plan(self) -> ValidatedEmissionPlan {
+        self.plan
+    }
 }
 
 /// Exact Count price used only to compare alternatives inside one Full plan.
@@ -727,14 +771,15 @@ fn price_default_and_custom(
         )?,
         SectionLayout::for_geometry(geometry),
     );
-    let with_default =
+    let mut with_default =
         train_entropy_with_orders(provisional.clone(), geometry, EntropySearch::Full, None)?;
     let mut custom_walk = provisional;
     custom_walk.entropy = entropy_plan(geometry, placeholder_histograms(), candidate)?;
-    let with_custom = train_entropy_with_orders(custom_walk, geometry, EntropySearch::Full, None)?;
+    let mut with_custom =
+        train_entropy_with_orders(custom_walk, geometry, EntropySearch::Full, None)?;
     Ok((
-        internal_price_total(&with_default, None)?,
-        internal_price_total(&with_custom, None)?,
+        with_default.exact_size(None)?,
+        with_custom.exact_size(None)?,
     ))
 }
 
@@ -745,7 +790,7 @@ fn train_entropy_with_orders(
     geometry: &VardctGeometry,
     entropy_search: EntropySearch,
     executor: Option<&jpxl_encode::EncodeExecutor>,
-) -> Result<ValidatedEmissionPlan> {
+) -> Result<TrainedEntropyCandidate> {
     let block_context = provisional.entropy.block_context.clone();
     let num_hf_presets = provisional.entropy.num_hf_presets;
     let group_presets: Vec<PresetId> = provisional
@@ -775,13 +820,13 @@ fn train_entropy_with_orders(
         ..provisional.clone()
     })?;
     if entropy_search == EntropySearch::Fast {
-        return Ok(natural);
+        return Ok(TrainedEntropyCandidate::unpriced(natural));
     }
 
     let orders =
         entropy::candidate_orders(provisional.spatial.as_ref(), provisional.quantized.as_ref())?;
     if orders.overrides().is_empty() {
-        return Ok(natural);
+        return Ok(TrainedEntropyCandidate::unpriced(natural));
     }
     diagnostics::note_order_candidate();
 
@@ -814,9 +859,9 @@ fn train_entropy_with_orders(
     let natural_size = internal_price_total(&natural, executor)?;
     let reordered_size = internal_price_total(&reordered, executor)?;
     Ok(if reordered_size < natural_size {
-        reordered
+        TrainedEntropyCandidate::priced(reordered, reordered_size)
     } else {
-        natural
+        TrainedEntropyCandidate::priced(natural, natural_size)
     })
 }
 

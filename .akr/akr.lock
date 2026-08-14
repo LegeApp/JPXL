@@ -5,7 +5,7 @@ build {
     tool "akr 0.3.1"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:0e81cf700712609be362aee3f9d7a89fb05f4d30dfbe14c4d06ac0134420c9f7"
+    source_graph "sha256:83b880d6ca8cc29aa43353ce4c09e1ca5b5f5354fb8fed46c982230fa7b52ac5"
 }
 
 source ".akr/project.akr" {
@@ -64,7 +64,7 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:8d1314bac6bc90e44686fdb268f5162afaefc98351f36000a8d9cf7c0cac2175"
+    hash "sha256:2187a0296c133e17c2b8be815b094993334f3017057823383bab39bba4e9ea81"
     records 85
 }
 
@@ -2765,7 +2765,7 @@ resolution @jpegxl-rs.work.arch-phase8-4-finalist-token-tape/1 {
 resolution @jpegxl-rs.work.arch-phase8-5-leaf-finishing/1 {
     slot depends_on
     to @jpegxl-rs.work.arch-phase8-4-finalist-token-tape/1
-    hash "sha256:2227e58df43038ba7baed231e04630e7aa2e980e2aef2b97893cdd28c003152c"
+    hash "sha256:8c07f5ad6101e16015a4b27b6c3d4f6ed4143bf1412f4505b354eb8dedac7297"
 }
 
 resolution @jpegxl-rs.work.arch-phase8-5-leaf-finishing/1 {
@@ -4927,6 +4927,11 @@ seal @jpegxl-rs.work.arch-phase8-2-dense-group-banks/3 {
 seal @jpegxl-rs.work.arch-phase8-3-anchor-sketch/1 {
     state completed
     hash "sha256:fb4af7068fd0bb27e19596436014eac7447fcc85c204f01bdc91e7428d47e9c3"
+}
+
+seal @jpegxl-rs.work.arch-phase8-4-finalist-token-tape/1 {
+    state active
+    hash "sha256:8c07f5ad6101e16015a4b27b6c3d4f6ed4143bf1412f4505b354eb8dedac7297"
 }
 
 seal @jpegxl-rs.work.arch-s8-cover-lane-simd/1 {
