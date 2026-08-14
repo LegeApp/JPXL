@@ -154,6 +154,15 @@ fn target_rate_is_byte_identical_across_executor_widths() {
     );
     assert_eq!(serial.stats.candidate_allocations, 3);
     assert_eq!(parallel.stats.candidate_allocations, 3);
+    #[cfg(feature = "anchor-sketch")]
+    for outcome in [&serial, &parallel] {
+        assert!(outcome.stats.anchor_fallbacks <= 1, "{:?}", outcome.stats);
+        if outcome.stats.anchor_fallbacks == 0 {
+            assert!(outcome.stats.structural_builds <= 2, "{:?}", outcome.stats);
+            assert!(outcome.stats.full_prices <= 2, "{:?}", outcome.stats);
+            assert!(outcome.stats.exact_candidates <= 4, "{:?}", outcome.stats);
+        }
+    }
 }
 
 #[test]

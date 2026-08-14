@@ -980,11 +980,21 @@ fn cmd_bench(args: &[String]) -> u8 {
                             };
                             println!(
                                 "rate_diag=fast_prices={} full_prices={} \
+                                 structural_builds={} sketch_probes={} \
+                                 exact_candidates={} anchor_fallbacks={} \
+                                 anchor_first_finalist_bytes={} \
+                                 anchor_correction_bytes={} \
                                  dct_cache_hits={} dct_cache_misses={} \
                                  dct_cache_hit_rate={hit_rate:.4} candidate_entries={} \
                                  candidate_payload_bytes={} candidate_allocations={}",
                                 s.fast_prices,
                                 s.full_prices,
+                                s.structural_builds,
+                                s.sketch_probes,
+                                s.exact_candidates,
+                                s.anchor_fallbacks,
+                                s.anchor_first_finalist_bytes,
+                                s.anchor_correction_bytes,
                                 s.dct_cache_hits,
                                 s.dct_cache_misses,
                                 s.candidate_cache_entries,

@@ -230,6 +230,8 @@ pub(crate) fn plan_at(
         &mut cache,
         EntropySearch::Full,
         Some(&executor),
+        None,
+        None,
     )
 }
 
@@ -255,6 +257,43 @@ pub(crate) fn plan_at_on(
         cache,
         entropy,
         executor,
+        None,
+        None,
+    )
+}
+
+/// Phase 8.3 planning entry point with an optional reusable spatial anchor.
+///
+/// The first call captures the selected cover and exact CfL decision. Sketch
+/// probes then reuse those structural choices while retargeting their
+/// quantizer-dependent `HfMul` values. The first Full finalist is always
+/// unanchored; a bounded quantizer correction may retain that freshly selected
+/// cover and CfL after its exact size is known.
+#[cfg(feature = "anchor-sketch")]
+pub(crate) fn plan_at_on_anchor(
+    frame: &PreparedFrame,
+    transform_frame: &PreparedFrame,
+    atlas: &AnalysisAtlas,
+    request: &EncodeRequest,
+    quantizer: QuantizerChoice,
+    cache: &mut CandidateForwardCache,
+    entropy: EntropySearch,
+    executor: Option<&jpxl_encode::EncodeExecutor>,
+    anchor: Option<&StructuralAnchor>,
+    capture: Option<&mut Option<StructuralAnchor>>,
+) -> Result<ValidatedEmissionPlan> {
+    plan_at_with_cfl(
+        frame,
+        atlas,
+        request,
+        quantizer,
+        true,
+        Some(transform_frame),
+        cache,
+        entropy,
+        executor,
+        anchor,
+        capture,
     )
 }
 
@@ -280,6 +319,8 @@ fn plan_at_with_cfl(
     cache: &mut CandidateForwardCache,
     entropy_search: EntropySearch,
     executor: Option<&jpxl_encode::EncodeExecutor>,
+    anchor: Option<&StructuralAnchor>,
+    capture: Option<&mut Option<StructuralAnchor>>,
 ) -> Result<ValidatedEmissionPlan> {
     // Phase-0: one clean snapshot per plan_at (rate probes overwrite; last wins).
     diagnostics::reset_encode_diag();
@@ -351,87 +392,106 @@ fn plan_at_with_cfl(
     // Cover selection, then one forward transform per *selected* varblock.
     // CfL estimation and HF quantization both consume those coefficients so
     // a selected DCT is not recomputed (Opt-V within-probe cache).
-    // Phase 8.2: every LF group owns independent dense transform banks. Cover
-    // construction can therefore run on the request executor without a global
-    // hash-table mutation point; fixed-index reduction restores raster order.
-    let group_meta = diagnostics::time_stage(diagnostics::StageTimer::Cover, || {
-        diagnostics::with_choose_stage(diagnostics::ChooseStage::Cover, || {
-            let n_groups = usize::try_from(geometry.num_lf_groups()).unwrap_or(0);
-            let plan_group = |index_usize: usize| {
-                let index = u64::try_from(index_usize).unwrap_or(u64::MAX);
-                let id = LfGroupId::new(u32::try_from(index).unwrap_or(u32::MAX));
-                let blocks = geometry
-                    .lf_group_blocks(id)
-                    .ok_or(PolicyError::Unsupported {
-                        what: "an LF group outside the frame's grid",
-                    })?;
-                let rect = geometry.lf_group_rect(id).ok_or(PolicyError::Unsupported {
-                    what: "an LF group outside the frame's grid",
-                })?;
-                let mut bank =
-                    cache
-                        .group(index_usize)?
-                        .lock()
-                        .map_err(|_| PolicyError::Unsupported {
-                            what: "a poisoned LF-group forward bank",
+    let (groups, cfl) = if let Some(anchor) = anchor {
+        if anchor.groups.len() != usize::try_from(geometry.num_lf_groups()).unwrap_or(usize::MAX) {
+            return Err(PolicyError::Unsupported {
+                what: "a structural anchor whose LF-group count changed",
+            });
+        }
+        let mut groups = anchor.groups.clone();
+        retarget_anchor_groups(&mut groups, &aq)?;
+        (groups, anchor.cfl.clone())
+    } else {
+        // Phase 8.2: every LF group owns independent dense transform banks.
+        // Cover construction can therefore run on the request executor without
+        // a global hash-table mutation point; fixed-index reduction restores
+        // raster order.
+        let groups: Vec<PlannedGroup> =
+            diagnostics::time_stage(diagnostics::StageTimer::Cover, || {
+                diagnostics::with_choose_stage(diagnostics::ChooseStage::Cover, || {
+                    let n_groups = usize::try_from(geometry.num_lf_groups()).unwrap_or(0);
+                    let plan_group = |index_usize: usize| {
+                        let index = u64::try_from(index_usize).unwrap_or(u64::MAX);
+                        let id = LfGroupId::new(u32::try_from(index).unwrap_or(u32::MAX));
+                        let blocks =
+                            geometry
+                                .lf_group_blocks(id)
+                                .ok_or(PolicyError::Unsupported {
+                                    what: "an LF group outside the frame's grid",
+                                })?;
+                        let rect = geometry.lf_group_rect(id).ok_or(PolicyError::Unsupported {
+                            what: "an LF group outside the frame's grid",
                         })?;
-                let mut fwd_scratch = ForwardScratch::new();
-                let varblocks = match request.budget.cover_mode {
-                    CoverMode::FixedDct8x8 => {
-                        let mut varblocks = block::fixed_dct8x8(blocks, aq.baseline)?;
-                        for vb in &mut varblocks {
-                            vb.hf_mul = aq.mul_for_footprint(
-                                rect.x0 / 8 + vb.origin.bx(),
-                                rect.y0 / 8 + vb.origin.by(),
-                                1,
-                                1,
-                            );
-                        }
-                        varblocks
+                        let mut bank = cache.group(index_usize)?.lock().map_err(|_| {
+                            PolicyError::Unsupported {
+                                what: "a poisoned LF-group forward bank",
+                            }
+                        })?;
+                        let mut fwd_scratch = ForwardScratch::new();
+                        let varblocks = match request.budget.cover_mode {
+                            CoverMode::FixedDct8x8 => {
+                                let mut varblocks = block::fixed_dct8x8(blocks, aq.baseline)?;
+                                for vb in &mut varblocks {
+                                    vb.hf_mul = aq.mul_for_footprint(
+                                        rect.x0 / 8 + vb.origin.bx(),
+                                        rect.y0 / 8 + vb.origin.by(),
+                                        1,
+                                        1,
+                                    );
+                                }
+                                varblocks
+                            }
+                            CoverMode::Hierarchical => select_blocks(
+                                transform_frame,
+                                &hf_quants,
+                                blocks,
+                                (rect.x0, rect.y0),
+                                &aq,
+                                &mut bank,
+                                &mut fwd_scratch,
+                            )?,
+                        };
+                        ensure_forwards_cached(
+                            transform_frame,
+                            &varblocks,
+                            (rect.x0, rect.y0),
+                            &mut bank,
+                            &mut fwd_scratch,
+                        )?;
+                        Ok::<_, PolicyError>((id, blocks, rect, varblocks))
+                    };
+                    if let Some(executor) = executor {
+                        executor.map_ordered(n_groups, plan_group)
+                    } else {
+                        (0..n_groups).map(plan_group).collect()
                     }
-                    CoverMode::Hierarchical => select_blocks(
-                        transform_frame,
-                        &hf_quants,
-                        blocks,
-                        (rect.x0, rect.y0),
-                        &aq,
-                        &mut bank,
-                        &mut fwd_scratch,
-                    )?,
-                };
-                ensure_forwards_cached(
-                    transform_frame,
-                    &varblocks,
-                    (rect.x0, rect.y0),
-                    &mut bank,
-                    &mut fwd_scratch,
-                )?;
-                Ok::<_, PolicyError>((id, blocks, rect, varblocks))
-            };
-            if let Some(executor) = executor {
-                executor.map_ordered(n_groups, plan_group)
-            } else {
-                (0..n_groups).map(plan_group).collect()
-            }
-        })
-    })?;
-    let groups = group_meta;
+                })
+            })?;
 
-    let maps: Vec<&[VarblockDecision]> = groups
-        .iter()
-        .map(|(_, _, _, varblocks)| varblocks.as_slice())
-        .collect();
-    let cfl = diagnostics::time_stage(diagnostics::StageTimer::Cfl, || {
-        estimate_cfl(
-            &geometry,
-            &maps,
-            cache,
-            &lf_quant,
-            &hf_quants,
-            enable_cfl && !frame.is_grayscale(),
-            executor,
-        )
-    })?;
+        let maps: Vec<&[VarblockDecision]> = groups
+            .iter()
+            .map(|(_, _, _, varblocks)| varblocks.as_slice())
+            .collect();
+        let cfl = diagnostics::time_stage(diagnostics::StageTimer::Cfl, || {
+            estimate_cfl(
+                &geometry,
+                &maps,
+                cache,
+                &lf_quant,
+                &hf_quants,
+                enable_cfl && !frame.is_grayscale(),
+                executor,
+            )
+        })?;
+        (groups, cfl)
+    };
+
+    if let Some(slot) = capture {
+        *slot = Some(StructuralAnchor {
+            groups: groups.clone(),
+            cfl: cfl.clone(),
+        });
+    }
 
     let quantized_groups =
         diagnostics::time_stage_units(diagnostics::StageTimer::Quantize, groups.len(), || {
@@ -761,9 +821,50 @@ fn train_entropy_with_orders(
 }
 
 /// The frame-wide LF factors and one HF factor grid per LF group.
+#[derive(Clone)]
 struct CflEstimate {
     correlation: LfCorrelationDecision,
     groups: Vec<CflGrid>,
+}
+
+type PlannedGroup = (
+    LfGroupId,
+    jpxl_encode::vardct::BlockGrid,
+    jpxl_encode::vardct::Rect,
+    Vec<VarblockDecision>,
+);
+
+/// Quantizer-independent structure reused by Phase 8.3 sketch probes.
+///
+/// The cover and CfL factors are exact at the anchor quantizer. Reused probes
+/// update every varblock's quantizer-dependent `HfMul`, but deliberately keep
+/// the cover and CfL fixed. Sketches reuse the initial Fast structure; the
+/// exact Full correction, when needed, reuses only the fresh Full finalist.
+#[derive(Clone)]
+pub(crate) struct StructuralAnchor {
+    groups: Vec<PlannedGroup>,
+    cfl: CflEstimate,
+}
+
+fn retarget_anchor_groups(groups: &mut [PlannedGroup], aq: &AqSetup) -> Result<()> {
+    for (_, _, rect, varblocks) in groups {
+        for varblock in varblocks {
+            let (rows, cols) = varblock.transform.block_dims();
+            let rows = u32::try_from(rows).map_err(|_| PolicyError::Unsupported {
+                what: "an anchored transform height outside u32",
+            })?;
+            let cols = u32::try_from(cols).map_err(|_| PolicyError::Unsupported {
+                what: "an anchored transform width outside u32",
+            })?;
+            varblock.hf_mul = aq.mul_for_footprint(
+                rect.x0 / 8 + varblock.origin.bx(),
+                rect.y0 / 8 + varblock.origin.by(),
+                rows,
+                cols,
+            );
+        }
+    }
+    Ok(())
 }
 
 /// One coefficient sample used by the integer refinement.
@@ -3364,6 +3465,8 @@ mod tests {
             &mut cache,
             EntropySearch::Full,
             None,
+            None,
+            None,
         )
         .expect("a legal plan");
         jpxl_encode::vardct::write_codestream(&plan).expect("encodes")
@@ -3458,6 +3561,8 @@ mod tests {
             None,
             &mut cache,
             EntropySearch::Full,
+            None,
+            None,
             None,
         )
         .expect("a legal plan");

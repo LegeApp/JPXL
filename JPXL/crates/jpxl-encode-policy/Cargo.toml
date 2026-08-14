@@ -23,6 +23,9 @@ default = ["parallel", "simd"]
 parallel = ["jpxl-encode/parallel"]
 # Leaf SIMD for HF quantize choose (and transitive DCT/Gaborish).
 simd = ["dep:wide", "jpxl-encode/simd", "jpxl-core/simd"]
+# Phase 8.3 research path: structural-anchor reuse and context-aware rate
+# sketches. Off by default until the target/quality/fallback corpus gate passes.
+anchor-sketch = []
 # S8 Phase D (`sources/outside-advice.md` §8; `jpegxl-rs.work.arch-s8-full-redesign-scoped`):
 # the Phase C-validated (zero safety violations, exhaustively checked)
 # staged cheap lower-bound prune in `block_cost_bounded`. NOT in `default` —

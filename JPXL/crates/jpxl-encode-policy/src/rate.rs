@@ -3,12 +3,12 @@
 //!
 //! # Three properties this loop is built around
 //!
-//! **1. Every candidate is priced exactly.** There is no size model. A
-//! candidate's size is [`jpxl_encode::vardct::price_codestream`], which is the
-//! real writer run into a scratch buffer — see that module for why a second
-//! implementation of "how big would this be" is a paired-bug shape. One
-//! iteration therefore costs one full encode, and the loop is written to spend
-//! as few of them as it can.
+//! **1. Production candidates are priced exactly.** In default builds a
+//! candidate's size is [`jpxl_encode::vardct::price_codestream`], which runs
+//! the real writer into a scratch buffer. The feature-gated Phase 8.3 research
+//! controller uses a context census as a calibrated navigation sketch, then
+//! prices a freshly replanned finalist exactly and falls back to the exhaustive
+//! controller unless it satisfies the byte contract.
 //!
 //! **2. The search moves over wire-legal values only.** I.2.1's `global_scale`
 //! is a `U32()` field with a largest expressible value, `HfMul` is a Modular
@@ -58,12 +58,18 @@
 //! `global_scale` has hit the largest value I.2.1 can express and `HfMul` is
 //! the only way to go finer. Per-varblock `HfMul` is milestone 7.
 
+#[cfg(feature = "anchor-sketch")]
+use jpxl_encode::vardct::census_frame_with_executor;
+#[cfg(feature = "anchor-sketch")]
+use jpxl_encode::vardct::ids::PreContextId;
 use jpxl_encode::vardct::ids::{GlobalScale, HfMul, MAX_GLOBAL_SCALE, QuantLf};
 use jpxl_encode::vardct::size::CodestreamSizing;
 use jpxl_encode::vardct::{
     Emission, ValidatedEmissionPlan, emit_codestream_with_executor, price_codestream_with,
 };
 
+#[cfg(feature = "anchor-sketch")]
+use crate::StructuralAnchor;
 use crate::error::{PolicyError, Result};
 use crate::request::{EncodeRequest, RateSearchBudget, RateTarget, RateTolerance};
 use crate::{CandidateForwardCache, EntropySearch, diagnostics};
@@ -270,6 +276,20 @@ pub struct RateProbeStats {
     pub candidate_payload_bytes: u64,
     /// Dense coefficient-arena allocations (one per populated transform bank).
     pub candidate_allocations: u64,
+    /// Phase 8.3 cover/CfL builds on the anchor path (normal-path cap: two).
+    pub structural_builds: u32,
+    /// Context-aware approximate probes that did not traverse the exact writer.
+    pub sketch_probes: u32,
+    /// Exact Count candidates on the anchor path, excluding the final Store.
+    pub exact_candidates: u32,
+    /// One when the feature-gated anchor path rejected its estimate and used
+    /// the exhaustive exact controller; zero on normal-path success.
+    pub anchor_fallbacks: u32,
+    /// Exact byte size of the first freshly replanned Full finalist.
+    pub anchor_first_finalist_bytes: u64,
+    /// Exact byte size of the one anchored Full correction, or zero when the
+    /// first finalist already satisfied tolerance.
+    pub anchor_correction_bytes: u64,
     /// Aggregate Fast planning work, including nested entropy passes.
     pub fast: diagnostics::SearchPhaseDiagnostics,
     /// Aggregate Full planning work, including nested entropy passes.
@@ -797,6 +817,94 @@ impl<'a> PreparedSearch<'a> {
             })
         })
     }
+
+    #[cfg(feature = "anchor-sketch")]
+    fn plan_anchor(
+        &mut self,
+        quantizer: QuantizerChoice,
+        entropy: EntropySearch,
+        anchor: Option<&StructuralAnchor>,
+        capture: Option<&mut Option<StructuralAnchor>>,
+    ) -> Result<ValidatedEmissionPlan> {
+        let phase = match entropy {
+            EntropySearch::Fast => diagnostics::SearchDiagnosticPhase::Fast,
+            EntropySearch::Full => diagnostics::SearchDiagnosticPhase::Full,
+        };
+        diagnostics::with_search_phase(phase, || {
+            diagnostics::time_search_plan(|| {
+                crate::plan_at_on_anchor(
+                    self.frame,
+                    self.transform_frame,
+                    self.atlas,
+                    self.request,
+                    quantizer,
+                    &mut self.fwd_cache,
+                    entropy,
+                    Some(self.executor),
+                    anchor,
+                    capture,
+                )
+            })
+        })
+    }
+}
+
+#[cfg(feature = "anchor-sketch")]
+#[derive(Debug, Clone, Copy)]
+struct RateSketch {
+    modeled_bits: f64,
+}
+
+#[cfg(feature = "anchor-sketch")]
+fn sketch_plan(
+    plan: &ValidatedEmissionPlan,
+    executor: &jpxl_encode::EncodeExecutor,
+) -> Result<RateSketch> {
+    let geometry = plan.plan().spatial.frame.geometry()?;
+    let census = census_frame_with_executor(plan.plan(), &geometry, executor)?;
+    let mut modeled_bits = 1024.0f64;
+    for index in 0..census.len() {
+        let context = PreContextId::new(u32::try_from(index).unwrap_or(u32::MAX));
+        let Some(histogram) = census.histogram(context) else {
+            continue;
+        };
+        let total = histogram.total();
+        if total == 0 {
+            continue;
+        }
+        #[allow(
+            clippy::cast_precision_loss,
+            reason = "bounded census counts are used only for a research size estimate"
+        )]
+        let total_f = total as f64;
+        modeled_bits += total_f * total_f.log2();
+        let mut distinct = 0u64;
+        let mut max_value = 0u32;
+        for (value, count) in histogram.iter() {
+            #[allow(
+                clippy::cast_precision_loss,
+                reason = "bounded census counts are used only for a research size estimate"
+            )]
+            let count_f = f64::from(count);
+            modeled_bits -= count_f * count_f.log2();
+            distinct = distinct.saturating_add(1);
+            max_value = max_value.max(value);
+        }
+        // Approximate histogram/model description cost. This is calibrated to
+        // exact anchor prices below; its purpose is preserving local curvature,
+        // not predicting standalone codestream bytes.
+        let value_bits = u64::from(u32::BITS - max_value.leading_zeros()).max(1);
+        #[allow(
+            clippy::cast_precision_loss,
+            reason = "small model-description counts are used only for a research estimate"
+        )]
+        {
+            modeled_bits += (distinct.saturating_mul(value_bits.saturating_add(4))) as f64;
+        }
+    }
+    Ok(RateSketch {
+        modeled_bits: modeled_bits.max(1.0),
+    })
 }
 
 /// Whether every G.2.2 `LfQuant` sample fits the legacy signed-16-bit range.
@@ -823,6 +931,364 @@ const fn lf_sample_fits_legacy_16bit(sample: i32) -> bool {
 
 /// Runs the rate loop over a real frame and returns the chosen codestream.
 ///
+/// Default builds retain the exhaustive exact controller. A build with the
+/// research-only `anchor-sketch` feature first attempts the Phase 8.3 bounded
+/// controller and falls back here whenever its freshly replanned finalist does
+/// not satisfy the exact target tolerance.
+pub fn search_frame(
+    frame: &crate::PreparedFrame,
+    atlas: &crate::AnalysisAtlas,
+    request: &EncodeRequest,
+    target: RateTarget,
+) -> Result<RateOutcome> {
+    #[cfg(feature = "anchor-sketch")]
+    {
+        let mut attempted = RateProbeStats::default();
+        match search_frame_anchor_sketch(frame, atlas, request, target, &mut attempted)? {
+            Some(outcome) => Ok(outcome),
+            None => {
+                let mut outcome = search_frame_exhaustive(frame, atlas, request, target)?;
+                outcome.stats.structural_builds = attempted.structural_builds;
+                outcome.stats.sketch_probes = attempted.sketch_probes;
+                outcome.stats.exact_candidates = attempted.exact_candidates;
+                outcome.stats.anchor_fallbacks = 1;
+                outcome.stats.anchor_first_finalist_bytes = attempted.anchor_first_finalist_bytes;
+                outcome.stats.anchor_correction_bytes = attempted.anchor_correction_bytes;
+                Ok(outcome)
+            }
+        }
+    }
+
+    #[cfg(not(feature = "anchor-sketch"))]
+    search_frame_exhaustive(frame, atlas, request, target)
+}
+
+#[cfg(feature = "anchor-sketch")]
+#[derive(Debug, Clone, Copy)]
+struct SketchCalibration {
+    first: (f64, u64),
+    second: (f64, u64),
+}
+
+#[cfg(feature = "anchor-sketch")]
+impl SketchCalibration {
+    fn predict(self, sketch: RateSketch) -> u64 {
+        let (x0, y0) = self.first;
+        let (x1, y1) = self.second;
+        let lx0 = x0.max(1.0).ln();
+        let lx1 = x1.max(1.0).ln();
+        #[allow(
+            clippy::cast_precision_loss,
+            reason = "codestream sizes are far below f64's exact-integer range"
+        )]
+        let (ly0, ly1) = ((y0.max(1) as f64).ln(), (y1.max(1) as f64).ln());
+        let denominator = lx1 - lx0;
+        let slope = if denominator.abs() > 1e-9 {
+            ((ly1 - ly0) / denominator).clamp(0.2, 5.0)
+        } else {
+            1.0
+        };
+        let intercept = ly0 - slope * lx0;
+        let predicted = (intercept + slope * sketch.modeled_bits.max(1.0).ln()).exp();
+        if !predicted.is_finite() || predicted <= 0.0 {
+            return y0;
+        }
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "finite positive estimate is clamped to u64's range"
+        )]
+        {
+            predicted.round().clamp(1.0, u64::MAX as f64) as u64
+        }
+    }
+}
+
+#[cfg(feature = "anchor-sketch")]
+fn second_anchor_rung(start: Rung, anchor_bytes: u64, target: u64) -> Rung {
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "wire-scale and byte counts are far below f64's exact-integer range"
+    )]
+    let ratio = target.max(1) as f64 / anchor_bytes.max(1) as f64;
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "wire-scale is far below f64's exact-integer range"
+    )]
+    let proposed = effective_scale(start) as f64 * ratio * ratio;
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "finite positive scale is clamped through the ladder constructor"
+    )]
+    let mut rung = rung_for_effective_scale(proposed.max(1.0).round() as u64);
+    if rung == start {
+        rung = if anchor_bytes > target {
+            Rung::new(start.get() / 2)
+        } else {
+            Rung::new(start.get().saturating_mul(2).saturating_add(1))
+        };
+    }
+    rung
+}
+
+#[cfg(feature = "anchor-sketch")]
+fn damped_correction_rung(start: Rung, proposed: Rung, bytes: u64, target: u64) -> Rung {
+    let miss = bytes.abs_diff(target);
+    let penalty = u64::try_from(u128::from(miss).saturating_mul(6_000) / u128::from(target.max(1)))
+        .unwrap_or(u64::MAX);
+    let fraction = if miss <= target / 24 {
+        1_000
+    } else {
+        1_200u64.saturating_sub(penalty).clamp(700, 950)
+    };
+    let start_index = u64::from(start.get());
+    let proposed_index = u64::from(proposed.get());
+    let moved = if proposed_index >= start_index {
+        let delta = proposed_index.saturating_sub(start_index);
+        start_index.saturating_add(delta.saturating_mul(fraction).div_ceil(1_000))
+    } else {
+        let delta = start_index.saturating_sub(proposed_index);
+        start_index.saturating_sub(delta.saturating_mul(fraction).div_ceil(1_000))
+    };
+    Rung::new(u32::try_from(moved).unwrap_or(u32::MAX))
+}
+
+#[cfg(feature = "anchor-sketch")]
+fn search_frame_anchor_sketch(
+    frame: &crate::PreparedFrame,
+    atlas: &crate::AnalysisAtlas,
+    request: &EncodeRequest,
+    target: RateTarget,
+    attempted: &mut RateProbeStats,
+) -> Result<Option<RateOutcome>> {
+    diagnostics::reset_search_diag();
+    let target_bytes = target.bytes_for(frame.width(), frame.height());
+    let start = QuantizerChoice::from_request(request).rung;
+
+    let precond_owned;
+    let mut stats = RateProbeStats::default();
+    let transform_frame: &crate::PreparedFrame = if request.restoration.gaborish {
+        precond_owned = crate::prepare_gaborish_frame(frame)?;
+        stats.gaborish_preconditions = 1;
+        &precond_owned
+    } else {
+        frame
+    };
+    let executor = diagnostics::with_search_phase(diagnostics::SearchDiagnosticPhase::Fast, || {
+        request.resources.executor()
+    });
+    let mut prepared = PreparedSearch {
+        frame,
+        transform_frame,
+        atlas,
+        request,
+        executor: &executor,
+        fwd_cache: CandidateForwardCache::new(),
+        stats,
+    };
+
+    let first_quantizer = QuantizerChoice::at(start, request.quant_lf)?;
+    let mut captured = None;
+    let first_plan = prepared.plan_anchor(
+        first_quantizer,
+        EntropySearch::Fast,
+        None,
+        Some(&mut captured),
+    )?;
+    prepared.stats.structural_builds = 1;
+    let anchor = captured.ok_or(PolicyError::Unsupported {
+        what: "an anchor search that failed to capture its structure",
+    })?;
+    let first_sketch = sketch_plan(&first_plan, prepared.executor)?;
+    let first_size =
+        diagnostics::with_search_phase(diagnostics::SearchDiagnosticPhase::Fast, || {
+            diagnostics::with_count_kind(
+                jpxl_encode::vardct::diagnostics::CountEmissionKind::Outer,
+                || price_codestream_with(&first_plan, prepared.executor),
+            )
+        })?;
+    prepared.stats.fast_prices = 1;
+    prepared.stats.exact_candidates = 1;
+
+    let second_rung = second_anchor_rung(start, first_size.total, target_bytes);
+    let second_quantizer = QuantizerChoice::at(second_rung, request.quant_lf)?;
+    let second_plan =
+        prepared.plan_anchor(second_quantizer, EntropySearch::Fast, Some(&anchor), None)?;
+    let second_sketch = sketch_plan(&second_plan, prepared.executor)?;
+    let second_size =
+        diagnostics::with_search_phase(diagnostics::SearchDiagnosticPhase::Fast, || {
+            diagnostics::with_count_kind(
+                jpxl_encode::vardct::diagnostics::CountEmissionKind::Outer,
+                || price_codestream_with(&second_plan, prepared.executor),
+            )
+        })?;
+    prepared.stats.fast_prices = 2;
+    prepared.stats.exact_candidates = 2;
+
+    let calibration = SketchCalibration {
+        first: (first_sketch.modeled_bits, first_size.total),
+        second: (second_sketch.modeled_bits, second_size.total),
+    };
+    let known = [
+        (first_quantizer, first_size.total),
+        (second_quantizer, second_size.total),
+    ];
+    let sketch_budget = RateSearchBudget {
+        max_prices: 8,
+        fill_probes: 2,
+        lf_fill_probes: 0,
+    };
+    let estimated = match search_ladder(
+        second_rung,
+        request.quant_lf,
+        target_bytes,
+        request.tolerance,
+        sketch_budget,
+        |quantizer| {
+            if let Some((_, bytes)) = known.iter().find(|(known_q, _)| *known_q == quantizer) {
+                return Ok(*bytes);
+            }
+            let plan = prepared.plan_anchor(quantizer, EntropySearch::Fast, Some(&anchor), None)?;
+            let sketch = sketch_plan(&plan, prepared.executor)?;
+            prepared.stats.sketch_probes = prepared.stats.sketch_probes.saturating_add(1);
+            Ok(calibration.predict(sketch))
+        },
+    ) {
+        Ok(search) => search,
+        Err(_) => {
+            *attempted = prepared.stats;
+            return Ok(None);
+        }
+    };
+
+    let finalist_quantizer = QuantizerChoice::at(estimated.rung, request.quant_lf)?;
+    let mut finalist_anchor = None;
+    let finalist = prepared.plan_anchor(
+        finalist_quantizer,
+        EntropySearch::Full,
+        None,
+        Some(&mut finalist_anchor),
+    )?;
+    prepared.stats.structural_builds = 2;
+    let finalist_size =
+        diagnostics::with_search_phase(diagnostics::SearchDiagnosticPhase::Full, || {
+            diagnostics::with_count_kind(
+                jpxl_encode::vardct::diagnostics::CountEmissionKind::Outer,
+                || price_codestream_with(&finalist, prepared.executor),
+            )
+        })?;
+    prepared.stats.full_prices = 1;
+    prepared.stats.exact_candidates = 3;
+    prepared.stats.anchor_first_finalist_bytes = finalist_size.total;
+    let slack = request.tolerance.bytes_for(target_bytes);
+    let within_target =
+        |bytes: u64| bytes <= target_bytes && target_bytes.saturating_sub(bytes) <= slack;
+    let mut trace = vec![
+        RateStep {
+            phase: RatePhase::Bracket,
+            quantizer: first_quantizer,
+            bytes: first_size.total,
+            feasible: first_size.total <= target_bytes,
+        },
+        RateStep {
+            phase: RatePhase::Bracket,
+            quantizer: second_quantizer,
+            bytes: second_size.total,
+            feasible: second_size.total <= target_bytes,
+        },
+        RateStep {
+            phase: RatePhase::Final,
+            quantizer: finalist_quantizer,
+            bytes: finalist_size.total,
+            feasible: finalist_size.total <= target_bytes,
+        },
+    ];
+    let (chosen_quantizer, chosen_plan) = if within_target(finalist_size.total) {
+        (finalist_quantizer, finalist)
+    } else {
+        // Fast entropy is an upper-bound navigation mode, so its calibrated
+        // crossing can miss after the fresh Full structural finalist. Spend
+        // the remaining exact candidate on a bounded quantizer correction
+        // while preserving that finalist's cover and CfL decisions.
+        let correction_target = target_bytes.saturating_sub(slack / 2);
+        let proposed_rung = second_anchor_rung(
+            finalist_quantizer.rung,
+            finalist_size.total,
+            correction_target,
+        );
+        let correction_rung = damped_correction_rung(
+            finalist_quantizer.rung,
+            proposed_rung,
+            finalist_size.total,
+            target_bytes,
+        );
+        let correction_quantizer = QuantizerChoice::at(correction_rung, request.quant_lf)?;
+        let anchor = finalist_anchor.as_ref().ok_or(PolicyError::Unsupported {
+            what: "a Full finalist that failed to capture its structure",
+        })?;
+        let correction = prepared.plan_anchor(
+            correction_quantizer,
+            EntropySearch::Full,
+            Some(anchor),
+            None,
+        )?;
+        let correction_size =
+            diagnostics::with_search_phase(diagnostics::SearchDiagnosticPhase::Full, || {
+                diagnostics::with_count_kind(
+                    jpxl_encode::vardct::diagnostics::CountEmissionKind::Outer,
+                    || price_codestream_with(&correction, prepared.executor),
+                )
+            })?;
+        prepared.stats.full_prices = 2;
+        prepared.stats.exact_candidates = 4;
+        prepared.stats.anchor_correction_bytes = correction_size.total;
+        trace.push(RateStep {
+            phase: RatePhase::Final,
+            quantizer: correction_quantizer,
+            bytes: correction_size.total,
+            feasible: correction_size.total <= target_bytes,
+        });
+        if !within_target(correction_size.total) {
+            *attempted = prepared.stats;
+            return Ok(None);
+        }
+        (correction_quantizer, correction)
+    };
+
+    let emission =
+        diagnostics::with_search_phase(diagnostics::SearchDiagnosticPhase::Full, || {
+            emit_codestream_with_executor(&chosen_plan, prepared.executor)
+        })?;
+    if emission.sizing.total != trace.last().map_or(0, |step| step.bytes) {
+        return Err(PolicyError::Unsupported {
+            what: "an anchor finalist whose Count and Store sizes disagree",
+        });
+    }
+    prepared.stats.dct_cache_hits = prepared.fwd_cache.hits();
+    prepared.stats.dct_cache_misses = prepared.fwd_cache.misses();
+    prepared.stats.candidate_cache_entries = prepared.fwd_cache.entries();
+    prepared.stats.candidate_payload_bytes = prepared.fwd_cache.payload_bytes();
+    prepared.stats.candidate_allocations = prepared.fwd_cache.allocations();
+    let aggregate = diagnostics::search_diag();
+    prepared.stats.fast = aggregate.fast;
+    prepared.stats.full = aggregate.full;
+    prepared.stats.writer = jpxl_encode::vardct::diagnostics::snapshot();
+
+    Ok(Some(RateOutcome {
+        codestream: emission.bytes,
+        plan: chosen_plan,
+        sizing: emission.sizing,
+        chosen: chosen_quantizer,
+        target: target_bytes,
+        trace,
+        saturated: chosen_quantizer.rung == Rung::TOP,
+        stats: prepared.stats,
+    }))
+}
+
+/// Exhaustive exact controller retained as the production path and fallback.
+///
 /// Two entropy pricing modes share the price budget:
 ///
 /// 1. **Fast ladder** — default I.2.2 entropy, no alternatives. Exact writer
@@ -840,7 +1306,7 @@ const fn lf_sample_fits_legacy_16bit(sample: i32) -> bool {
 /// # Errors
 ///
 /// As [`search_ladder`], plus anything the planner or writer refuses.
-pub fn search_frame(
+fn search_frame_exhaustive(
     frame: &crate::PreparedFrame,
     atlas: &crate::AnalysisAtlas,
     request: &EncodeRequest,
@@ -1477,5 +1943,59 @@ mod tests {
         assert_eq!(prices, result.trace.len());
         assert!(prices <= 6, "{prices} prices past a cap of 6");
         assert!(result.bytes <= 10_000);
+    }
+
+    #[cfg(feature = "anchor-sketch")]
+    #[test]
+    fn sketch_calibration_reproduces_anchor_points_and_interpolates() {
+        let calibration = SketchCalibration {
+            first: (100.0, 1_000),
+            second: (400.0, 4_000),
+        };
+        assert_eq!(
+            calibration.predict(RateSketch {
+                modeled_bits: 100.0
+            }),
+            1_000
+        );
+        assert_eq!(
+            calibration.predict(RateSketch {
+                modeled_bits: 200.0
+            }),
+            2_000
+        );
+        assert_eq!(
+            calibration.predict(RateSketch {
+                modeled_bits: 400.0
+            }),
+            4_000
+        );
+    }
+
+    #[cfg(feature = "anchor-sketch")]
+    #[test]
+    fn second_anchor_moves_toward_the_target() {
+        let start = Rung::for_global_scale(32_768);
+        let coarser = second_anchor_rung(start, 20_000, 10_000);
+        let finer = second_anchor_rung(start, 5_000, 10_000);
+        assert!(coarser < start);
+        assert!(finer > start);
+    }
+
+    #[cfg(feature = "anchor-sketch")]
+    #[test]
+    fn correction_damping_preserves_small_moves_and_bounds_large_ones() {
+        let start = Rung::new(1_000);
+        let proposed = Rung::new(2_000);
+        assert_eq!(
+            damped_correction_rung(start, proposed, 960, 1_000),
+            proposed,
+            "a miss within 1/24 should not be damped"
+        );
+        assert_eq!(
+            damped_correction_rung(start, proposed, 900, 1_000),
+            Rung::new(1_700),
+            "a large miss should use the conservative floor"
+        );
     }
 }
