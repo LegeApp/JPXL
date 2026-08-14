@@ -3205,6 +3205,96 @@ record jpegxl-rs.work.arch-phase8-5-leaf-finishing/6 : work {
     supersedes [ @jpegxl-rs.work.arch-phase8-5-leaf-finishing/5 ]
 }
 
+record jpegxl-rs.work.arch-phase8-6-butteraugli-localization/1 : work {
+    title "Phase 8.6: localize the matched-SSIMULACRA2 Butteraugli deficit"
+    state superseded
+    scope [
+        path ".agent/scratch/**",
+        path "JPXL/crates/jpxl-cli/**",
+        path "JPXL/crates/jpxl-conformance/**",
+        path "JPXL/crates/jpxl-encode-policy/**"
+    ]
+    intent """
+        Before further speed architecture changes, independently validate and localize the large-image Butteraugli deficit at fixed rate and matched SSIMULACRA2, then select a bounded clean-room quality architecture response without weakening speed or correctness gates.
+        """
+    note """
+        The fresh Linux checkpoint measured Butteraugli 2.3292 for JPXL versus 1.4524 for cjxl on 12 MP at SSIMULACRA2 83.5492 versus 83.6969. Historical three-image evidence already found a 39-53% Butteraugli deficit and attributed the metric split to perceptual bit allocation. This work must distinguish metric artifact, spatial/channel/frequency allocation, and restoration-filter effects before implementation.
+        """
+    acceptance {
+        check architecture-brief {
+            statement """
+                The next implementation brief names its owned files, expected quality mechanism, speed risk, and fixed-rate multi-metric acceptance gate.
+                """
+            method observation
+        }
+        check deficit-localized {
+            statement """
+                Spatial, channel, frequency, and existing policy-control screens identify which error/allocation axes account for the material gap.
+                """
+            method observation
+        }
+        check metric-valid {
+            statement """
+                The large-image Butteraugli gap is reproduced by an independent black-box metric path or any disagreement is explained and bounded.
+                """
+            method command
+        }
+    }
+    derived_from [
+        @jpegxl-rs.evidence.phase8-5-linux-matched-quality-gap-2026-08-14/1,
+        @jpegxl-rs.observation.lossy-perceptual-baseline-2026-08-10/1
+    ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+}
+
+record jpegxl-rs.work.arch-phase8-6-butteraugli-localization/2 : work {
+    title "Phase 8.6: localize the matched-SSIMULACRA2 Butteraugli deficit"
+    state completed
+    scope [
+        path ".agent/scratch/**",
+        path "JPXL/crates/jpxl-cli/**",
+        path "JPXL/crates/jpxl-conformance/**",
+        path "JPXL/crates/jpxl-encode-policy/**"
+    ]
+    intent """
+        Before further speed architecture changes, independently validate and localize the large-image Butteraugli deficit at fixed rate and matched SSIMULACRA2, then select a bounded clean-room quality architecture response without weakening speed or correctness gates.
+        """
+    note """
+        The diagnostic checkpoint corrects the headline interpretation: +60% is the maximum-distance ratio; mean distance is +7.7% and pnorm3 +19.6%. The remaining deficit is concentrated above the 8-pixel scale in red/green detail. Existing activity AQ fails; the next slice should collect finalist quantization residuals and reuse the anchored Full correction pass for measured HF allocation without another DCT, cover or CfL pass.
+        """
+    acceptance {
+        check architecture-brief {
+            statement """
+                A bounded clean-room implementation brief names owned files, mechanism, speed risk and fixed-rate multi-metric promotion gates.
+                """
+            method manual
+            verified_by [ @jpegxl-rs.evidence.phase8-6-architecture-brief-2026-08-14/1 ]
+        }
+        check deficit-localized {
+            statement """
+                Spatial, channel, frequency and fixed-rate policy screens distinguish a broad architectural deficit from a local metric outlier.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.phase8-6-deficit-localization-2026-08-14/1 ]
+        }
+        check metric-valid {
+            statement """
+                An independent black-box libjxl metric implementation reproduces the reported SSIMULACRA2 and Butteraugli values.
+                """
+            method observation
+            verified_by [
+                @jpegxl-rs.evidence.phase8-6-independent-metric-validation-2026-08-14/1
+            ]
+        }
+    }
+    derived_from [
+        @jpegxl-rs.evidence.phase8-5-linux-matched-quality-gap-2026-08-14/1,
+        @jpegxl-rs.observation.lossy-perceptual-baseline-2026-08-10/1
+    ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+    supersedes [ @jpegxl-rs.work.arch-phase8-6-butteraugli-localization/1 ]
+}
+
 record jpegxl-rs.work.arch-s8-cover-lane-simd/1 : work {
     title "outside-advice.md §8 (S8), narrowed per Opus advisor review: bit-identical coefficient-lane SIMD for cover scoring"
     state completed

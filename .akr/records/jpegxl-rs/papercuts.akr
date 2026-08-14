@@ -171,6 +171,18 @@ record jpegxl-rs.papercut.orienting-on-this-project-through-the-knowledge/1 : pa
     created_at 2026-08-12
 }
 
+record jpegxl-rs.papercut.while-checking-an-in-progress-akr-change-akr/1 : papercut {
+    title "While checking an in-progress AKR change, `akr change status` was…"
+    state verified
+    statement """
+        While checking an in-progress AKR change, `akr change status` was rejected because the CLI exposes `change show` instead; a status alias or help hint would make this transition easier to discover.
+        """
+    observed_at git:d0529ded85eb1070a9451d6936c33d29bde2fad9
+    about "akr"
+    author "codex"
+    created_at 2026-08-14
+}
+
 record jpegxl-rs.papercut.while-repairing-phase-4l-evidence-chronology/1 : papercut {
     title "While repairing Phase 4L evidence chronology, knowledge.revise returned…"
     state verified

@@ -2441,6 +2441,43 @@ record jpegxl-rs.evidence.phase8-5-sketch-speed-2026-08-14/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase8-6-architecture-brief-2026-08-14/1 : evidence {
+    title "Phase 8.6 finalist-measured HF allocation brief"
+    state verified
+    result pass
+    method manual
+    observed_at git:d0529ded85eb1070a9451d6936c33d29bde2fad9
+    artifact ".agent/scratch/phase8-6-butteraugli-2026-08-14/SUMMARY.md"
+    summary """
+        Source-verified design reuses cached forward coefficients and the anchored Full correction pass to test measured HF allocation, with explicit file ownership and fixed-rate quality, speed and correctness gates.
+        """
+}
+
+record jpegxl-rs.evidence.phase8-6-deficit-localization-2026-08-14/1 : evidence {
+    title "Phase 8.6 spatial, channel and frequency localization"
+    state verified
+    result pass
+    method observation
+    observed_at git:d0529ded85eb1070a9451d6936c33d29bde2fad9
+    artifact ".agent/scratch/phase8-6-butteraugli-2026-08-14/SUMMARY.md"
+    summary """
+        The 60.4% maximum-distance gap contracts to 19.6% pnorm3 and 7.7% mean distance; almost all remaining gap is high-frequency red/green detail, while low and mid bands are near parity.
+        """
+}
+
+record jpegxl-rs.evidence.phase8-6-independent-metric-validation-2026-08-14/1 : evidence {
+    title "Phase 8.6 independent metric validation"
+    state verified
+    result pass
+    method command
+    observed_at git:d0529ded85eb1070a9451d6936c33d29bde2fad9
+    command "libjxl/build-metrics/tools/ssimulacra2 REF DIST && libjxl/build-metrics/tools/butteraugli_main REF DIST DISTMAP"
+    artifact ".agent/scratch/phase8-6-butteraugli-2026-08-14/official-metrics.txt"
+    summary """
+        Fresh black-box libjxl dev tools exactly reproduced the Rust SSIMULACRA2, Butteraugli maximum and pnorm3 values on both parity fixtures.
+        """
+}
+
 record jpegxl-rs.evidence.retire-handoff-durable-facts-2026-08-11/1 : evidence {
     title "HANDOFF permanent facts are represented in AKR"
     state verified
