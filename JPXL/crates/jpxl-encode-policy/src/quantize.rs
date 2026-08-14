@@ -49,14 +49,6 @@ use jpxl_core::varblock::TransformType;
 
 use crate::error::{PolicyError, Result};
 
-/// Top-left `n×n` LLF cells are not HF-coded (same rule as the planner).
-#[inline]
-const fn is_llf_cell_local(cell: usize, side: usize, n: usize) -> bool {
-    let x = cell % side;
-    let y = cell / side;
-    x < n && y < n
-}
-
 /// Number of coefficient channels.
 pub const NUM_CHANNELS: usize = 3;
 
@@ -493,6 +485,8 @@ impl HfQuantizer {
 
     /// Phase-2: quantize a contiguous coefficient lane (one channel of one
     /// varblock) into `out`, skipping LLF cells when `skip_llf` is set.
+    /// Phase 8.5 batches each row's HF span through [`Self::choose_lane4`]
+    /// with scalar tails, so batches never cross the top-left LLF boundary.
     ///
     /// Same integer rules as [`Self::choose`], applied cell-by-cell.
     ///
@@ -509,16 +503,43 @@ impl HfQuantizer {
         skip_llf: bool,
     ) -> Result<()> {
         let cells = coeffs.len().min(out.len());
-        for cell in 0..cells {
-            if skip_llf && is_llf_cell_local(cell, side, n_blocks) {
-                if let Some(slot) = out.get_mut(cell) {
-                    *slot = 0;
-                }
-                continue;
+        if side == 0 {
+            return Err(PolicyError::Unsupported {
+                what: "a zero-width HF coefficient lane",
+            });
+        }
+        for row_start in (0..cells).step_by(side) {
+            let row = row_start / side;
+            let row_end = row_start.saturating_add(side).min(cells);
+            let first_hf = if skip_llf && row < n_blocks {
+                row_start.saturating_add(n_blocks).min(row_end)
+            } else {
+                row_start
+            };
+            if let Some(llf) = out.get_mut(row_start..first_hf) {
+                llf.fill(0);
             }
-            let q = self.choose(coeffs.get(cell).copied().unwrap_or(0.0), channel, cell)?;
-            if let Some(slot) = out.get_mut(cell) {
-                *slot = q;
+
+            let mut cell = first_hf;
+            while cell.saturating_add(4) <= row_end {
+                let targets = [
+                    coeffs.get(cell).copied().unwrap_or(0.0),
+                    coeffs.get(cell + 1).copied().unwrap_or(0.0),
+                    coeffs.get(cell + 2).copied().unwrap_or(0.0),
+                    coeffs.get(cell + 3).copied().unwrap_or(0.0),
+                ];
+                let (quantized, _) = self.choose_lane4(channel, targets, cell)?;
+                if let Some(slots) = out.get_mut(cell..cell + 4) {
+                    slots.copy_from_slice(&quantized);
+                }
+                cell += 4;
+            }
+            while cell < row_end {
+                let q = self.choose(coeffs.get(cell).copied().unwrap_or(0.0), channel, cell)?;
+                if let Some(slot) = out.get_mut(cell) {
+                    *slot = q;
+                }
+                cell += 1;
             }
         }
         Ok(())
@@ -1135,6 +1156,49 @@ mod tests {
             for cell in 0..DCT8X8_CELLS {
                 assert_eq!(q.choose(0.0, channel, cell).expect("in range"), 0);
                 assert_eq!(q.reconstruct(0, channel, cell), 0.0);
+            }
+        }
+    }
+
+    #[test]
+    fn quantize_lane_matches_scalar_choose_across_llf_edges_and_row_tails() {
+        for transform in [
+            TransformType::Dct8x8,
+            TransformType::Dct16x16,
+            TransformType::Dct32x32,
+        ] {
+            let q = HfQuantizer::new(transform, 4096, 1, 2, 2).expect("defaults");
+            let side = transform.sample_cols();
+            let n = transform.block_dims().0;
+            let cells = side * side;
+            for channel in 0..NUM_CHANNELS {
+                let coeffs: Vec<f32> = (0..cells)
+                    .map(|cell| {
+                        let signed = i32::try_from(cell % 13).unwrap_or(0) - 6;
+                        #[allow(
+                            clippy::cast_precision_loss,
+                            reason = "the test pattern is bounded to -6..=6"
+                        )]
+                        let signed = signed as f32;
+                        q.step(channel, cell) * signed * 0.37
+                    })
+                    .collect();
+                let expected: Vec<i32> = coeffs
+                    .iter()
+                    .enumerate()
+                    .map(|(cell, &target)| {
+                        if cell % side < n && cell / side < n {
+                            Ok(0)
+                        } else {
+                            q.choose(target, channel, cell)
+                        }
+                    })
+                    .collect::<Result<_>>()
+                    .expect("scalar reference");
+                let mut actual = vec![i32::MIN; cells];
+                q.quantize_lane(channel, &coeffs, &mut actual, side, n, true)
+                    .expect("lane quantization");
+                assert_eq!(actual, expected, "{transform:?} channel {channel}");
             }
         }
     }
