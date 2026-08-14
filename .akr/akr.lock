@@ -5,6 +5,7 @@ build {
     tool "akr 0.3.1"
     grammar "0.1"
     vocabulary "0.2"
+    commit git:f14801def8cfe025a443004c63d7496e196a4637
     source_graph "sha256:1818648dfaf60d954b33480d8431d1c62bb2d37236c882a687e8059a7e0e031c"
 }
 

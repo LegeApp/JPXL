@@ -15,12 +15,12 @@ Live work, grouped by parent in `ROADMAP.md` order. Blocked work names its block
 
 After structural amplification is removed, reprofile and optimize only leaves at or above 5% of samples, then evaluate native CPU selection, LTO, PGO, allocator behavior, and hardware counters. Preserve scalar fallbacks and clean-room boundaries.
 
-**Acceptance** — 2 of 2 satisfied
+**Acceptance** — 0 of 2 satisfied
 
 | Check | Method | Verdict |
 | --- | --- | --- |
-| `profile-justified` | observation | **satisfied** by `@jpegxl-rs.evidence.phase8-5-linux-leaf-speed-2026-08-14/1` |
-| `quality-preserved` | command | **satisfied** by `@jpegxl-rs.evidence.phase8-5-linux-quality-2026-08-14/1` |
+| `profile-justified` | observation | not satisfied — `@jpegxl-rs.evidence.phase8-5-linux-profile-attribution-2026-08-14/1` predates the last change |
+| `quality-preserved` | command | not satisfied — `@jpegxl-rs.evidence.phase8-5-linux-quality-2026-08-14/1` predates the last change |
 
 ### Disposition advisor optimization-plan.akr into the ledger
 
