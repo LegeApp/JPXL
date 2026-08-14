@@ -2298,6 +2298,58 @@ record jpegxl-rs.evidence.phase8-5-final-pgo-and-gap-2026-08-14/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase8-5-linux-leaf-speed-2026-08-14/1 : evidence {
+    title "Linux coefficient-order and token-count leaf speed evidence"
+    state verified
+    result pass
+    method command
+    observed_at git:dd4b8dac3dea53a773ca81ce6772068cdbeb4251
+    command "taskset -c 0,2,4,6 jpxl-encode --effort 7 --distance 1 --threads 4 INPUT OUTPUT (interleaved immutable-baseline/candidate pairs)"
+    artifact ".agent/scratch/phase8-5-linux-2026-08-14/SUMMARY.md"
+    summary """
+        Coefficient-order caching improved paired t4 medians 18.14% on 4.3 MP and 23.64% on 12 MP; dense hybrid-token counts added 1.44% on 4.3 MP and 7.08% on noisy 12 MP pairs.
+        """
+}
+
+record jpegxl-rs.evidence.phase8-5-linux-pgo-2026-08-14/1 : evidence {
+    title "Linux PGO generalizes beyond its training sizes"
+    state verified
+    result pass
+    method command
+    observed_at git:dd4b8dac3dea53a773ca81ce6772068cdbeb4251
+    command "llvm-profdata merge -o combined.profdata profiles-combined/*.profraw; taskset -c 0,2,4,6 jpxl-encode ... (interleaved thin/PGO pairs)"
+    artifact ".agent/scratch/phase8-5-linux-2026-08-14/SUMMARY.md"
+    summary """
+        Linux PGO improved the paired 4.3 MP median 12.28% and the unseen 12 MP median 12.42%, with byte-identical output and no LLVM profile warning.
+        """
+}
+
+record jpegxl-rs.evidence.phase8-5-linux-profile-attribution-2026-08-14/1 : evidence {
+    title "Linux perf attribution clears the Phase 8.5 profiling gate"
+    state verified
+    result pass
+    method command
+    observed_at git:dd4b8dac3dea53a773ca81ce6772068cdbeb4251
+    command "perf record -e cycles:u -F 999 --call-graph dwarf -- taskset -c 0,2,4,6 jpxl-encode ...; inferno-collapse-perf; inferno-flamegraph"
+    artifact ".agent/scratch/phase8-5-linux-2026-08-14/SUMMARY.md"
+    summary """
+        Pre/post Linux profiles had 98.3-98.9% symbolized attribution, exact event/folded sums, and zero lost samples; fixed order sorting and entropy best_config costs disappeared after the retained changes.
+        """
+}
+
+record jpegxl-rs.evidence.phase8-5-linux-quality-2026-08-14/1 : evidence {
+    title "Linux leaf optimizations preserve output quality and correctness"
+    state verified
+    result pass
+    method command
+    observed_at git:dd4b8dac3dea53a773ca81ce6772068cdbeb4251
+    command "cargo test --workspace --quiet; cargo test -p jpxl-encode-policy --release --features anchor-sketch; cargo fmt --all --check; cmp Linux baseline/candidate streams"
+    artifact ".agent/scratch/phase8-5-linux-2026-08-14/SUMMARY.md"
+    summary """
+        All workspace, policy, target-rate, determinism, and oracle tests passed; all seven Linux corpus streams and paired photo outputs remained byte-identical.
+        """
+}
+
 record jpegxl-rs.evidence.phase8-5-pgo-generalizes-2026-08-14/1 : evidence {
     title "Retrained PGO generalizes across size classes"
     state verified

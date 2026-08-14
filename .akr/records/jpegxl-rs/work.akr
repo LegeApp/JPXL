@@ -3110,7 +3110,7 @@ record jpegxl-rs.work.arch-phase8-5-leaf-finishing/3 : work {
 
 record jpegxl-rs.work.arch-phase8-5-leaf-finishing/4 : work {
     title "Phase 8.5: profile-guided leaf and build optimization"
-    state active
+    state superseded
     scope [ path "JPXL/Cargo.toml", path "JPXL/crates/**" ]
     intent """
         After structural amplification is removed, reprofile and optimize only leaves at or above 5% of samples, then evaluate native CPU selection, LTO, PGO, allocator behavior, and hardware counters. Preserve scalar fallbacks and clean-room boundaries.
@@ -3135,6 +3135,40 @@ record jpegxl-rs.work.arch-phase8-5-leaf-finishing/4 : work {
     depends_on [ @jpegxl-rs.work.arch-phase8-4-finalist-token-tape ]
     part_of [ @jpegxl-rs.track.encoder-optimization ]
     supersedes [ @jpegxl-rs.work.arch-phase8-5-leaf-finishing/3 ]
+}
+
+record jpegxl-rs.work.arch-phase8-5-leaf-finishing/5 : work {
+    title "Phase 8.5: profile-guided leaf and build optimization"
+    state active
+    scope [ path "JPXL/Cargo.toml", path "JPXL/crates/**" ]
+    intent """
+        After structural amplification is removed, reprofile and optimize only leaves at or above 5% of samples, then evaluate native CPU selection, LTO, PGO, allocator behavior, and hardware counters. Preserve scalar fallbacks and clean-room boundaries.
+        """
+    note """
+        Linux perf/flamegraph attribution is now complete at 98.3-98.9% symbolization with exact folded/event sums and zero lost samples. Retained coefficient-order caching removes an approximately 11% sort stack and improves paired thin t4 medians 18.14% at 4.3 MP and 23.64% at 12 MP; dense hybrid-token counts add 1.44% and 7.08% respectively. Retrained Linux PGO adds 12.28% on 4.3 MP and 12.42% on the unseen 12 MP input, without an LLVM profile warning. All Linux candidates are byte-identical to the immutable Linux baseline and the full workspace, target-rate, determinism, and oracle gates pass. Six of seven Windows anchors differ from Linux before/candidate-independently, so cross-platform byte identity needs separate diagnosis and is not used as this run's quality oracle. Post-PGO leaves are HF quantize_lane/traversal (about 10%/9%), pass-group writing (about 7%), census (about 6.6%), and entropy training (about 6-7%); keep the work active for those profile-qualified leaves.
+        """
+    acceptance {
+        check profile-justified {
+            statement """
+                Every leaf change targets >=5% current samples and improves end-to-end.
+                """
+            method observation
+            verified_by [
+                @jpegxl-rs.evidence.phase8-5-linux-leaf-speed-2026-08-14/1,
+                @jpegxl-rs.evidence.phase8-5-linux-profile-attribution-2026-08-14/1
+            ]
+        }
+        check quality-preserved {
+            statement """
+                All decoder, target-rate, perceptual, thread-determinism gates pass.
+                """
+            method command
+            verified_by [ @jpegxl-rs.evidence.phase8-5-linux-quality-2026-08-14/1 ]
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase8-4-finalist-token-tape ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+    supersedes [ @jpegxl-rs.work.arch-phase8-5-leaf-finishing/4 ]
 }
 
 record jpegxl-rs.work.arch-s8-cover-lane-simd/1 : work {
