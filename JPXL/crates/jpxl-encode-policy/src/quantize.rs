@@ -641,25 +641,32 @@ impl HfQuantizer {
             return Ok(([0i32; 4], [0.0f32; 4]));
         }
 
-        let estimate = (target / step).round();
-        let est_arr = estimate.to_array();
-        #[allow(
-            clippy::cast_precision_loss,
-            reason = "MAX_QUANT == 2^20, exact in f32"
-        )]
-        let max_quant_f = MAX_QUANT as f32;
+        // `wide::f32x4::round` lowers to scalar `roundf` calls on this target.
+        // Convert the four quotients with the same checked round-away-from-zero
+        // rule as scalar `choose`, then keep the exact integers in vector lanes.
+        // This is both cheaper and makes the later candidate conversion a plain
+        // cast: estimate +/- 1 is exactly representable below MAX_QUANT.
+        let quotients = (target / step).to_array();
+        let mut est_arr = [0.0f32; 4];
         for i in 0..4 {
             // A zero-threshold lane never reaches `clamp_round` in the
             // scalar path (it returns before computing `estimate` at all),
             // so an out-of-range speculative estimate there is not an error.
-            if zero_mask_arr.get(i).copied().unwrap_or(0.0) == 0.0
-                && est_arr.get(i).copied().unwrap_or(0.0).abs() > max_quant_f
-            {
-                return Err(PolicyError::Unsupported {
-                    what: "a coefficient outside the quantizer's working range",
-                });
+            if zero_mask_arr.get(i).copied().unwrap_or(0.0) == 0.0 {
+                let quotient = quotients.get(i).copied().unwrap_or(0.0);
+                let estimate = clamp_round(quotient)?;
+                if let Some(slot) = est_arr.get_mut(i) {
+                    #[allow(
+                        clippy::cast_precision_loss,
+                        reason = "MAX_QUANT == 2^20, exact in f32"
+                    )]
+                    {
+                        *slot = estimate as f32;
+                    }
+                }
             }
         }
+        let estimate = f32x4::new(est_arr);
 
         let bias = self.quant_bias.get(channel).copied().unwrap_or(1.0);
         let numerator = self.quant_bias_numerator;
@@ -694,10 +701,9 @@ impl HfQuantizer {
                 let q = q_arr.get(i).copied().unwrap_or(0.0);
                 #[allow(
                     clippy::cast_possible_truncation,
-                    reason = "candidates are exact integers as f32 (well inside \
-                              the 24-bit mantissa range); .round() guards fp noise"
+                    reason = "estimate and estimate +/- 1 are exact integer f32 values below 2^24"
                 )]
-                let qi = q.round() as i32;
+                let qi = q as i32;
                 if qi.unsigned_abs() > MAX_QUANT.unsigned_abs() {
                     continue;
                 }
@@ -1073,18 +1079,25 @@ fn clamp_round(v: f32) -> Result<i32> {
             what: "a non-finite quantization target",
         });
     }
-    let rounded = v.round();
+    // Rust's float-to-int cast truncates toward zero. Moving a finite value by
+    // half a unit first therefore implements `f32::round`'s ties-away rule
+    // without a libm `roundf` call. Around MAX_QUANT (2^20), 0.5 is exactly
+    // representable, so the adjustment and the resulting integer are exact.
+    let adjusted = if v.is_sign_negative() {
+        v - 0.5
+    } else {
+        v + 0.5
+    };
     #[allow(
         clippy::cast_possible_truncation,
-        reason = "the range is checked against MAX_QUANT immediately below"
+        reason = "finite float casts are defined and the result is range-checked immediately below"
     )]
-    let value = if rounded.abs() > MAX_QUANT as f32 {
+    let value = adjusted as i32;
+    if value.unsigned_abs() > MAX_QUANT.unsigned_abs() {
         return Err(PolicyError::Unsupported {
             what: "a coefficient outside the quantizer's working range",
         });
-    } else {
-        rounded as i32
-    };
+    }
     Ok(value)
 }
 
@@ -1124,6 +1137,32 @@ mod tests {
         let coarse = LfQuantizer::new(4096, 16, 0);
         let fine = LfQuantizer::new(4096, 16, 2);
         assert!((coarse.reconstruct(1, 1) / fine.reconstruct(1, 1) - 4.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn checked_round_matches_f32_round_across_ties_and_working_range() {
+        let offsets = [-0.75f32, -0.5, -0.25, 0.0, 0.25, 0.5, 0.75];
+        for integer in (-MAX_QUANT..=MAX_QUANT).step_by(257) {
+            #[allow(
+                clippy::cast_precision_loss,
+                reason = "MAX_QUANT == 2^20, so every sampled integer is exact in f32"
+            )]
+            let base = integer as f32;
+            for offset in offsets {
+                let value = base + offset;
+                #[allow(
+                    clippy::cast_possible_truncation,
+                    reason = "the expected value is range-checked before conversion"
+                )]
+                let expected = value.round() as i32;
+                let actual = clamp_round(value);
+                if expected.unsigned_abs() > MAX_QUANT.unsigned_abs() {
+                    assert!(actual.is_err(), "{value}");
+                } else {
+                    assert_eq!(actual.expect("in range"), expected, "{value}");
+                }
+            }
+        }
     }
 
     #[test]

@@ -149,3 +149,83 @@ record jpegxl-rs.assessment.s8-close-phase4-reorient/1 : assessment {
         See also (precedent/context, cited in prose since assessment cannot target work records via supported_by): jpegxl-rs.work.arch-s8-full-redesign-scoped (the closed S8 line this reorients from), jpegxl-rs.work.arch-phase3-forward-cache (established the 96-97% cross-probe forward reuse this builds on), jpegxl-rs.observation.preopt-flamegraphs-2026-08-06 (pre-opt baseline flamegraphs).
         """
 }
+
+record jpegxl-rs.assessment.semantic-guidance-is-a-quality-prior-not-parity-architecture/1 : assessment {
+    title "Semantic guidance is an optional quality prior, not the parity architecture"
+    state verified
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/src/field.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/rate.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/request.rs",
+        path "JPXL/crates/jpxl-encode/src/**"
+    ]
+    statement """
+        Phase 8.6 rejects raw coefficient-residual allocation as a sufficient perceptual signal: its isolated Butteraugli-max gains traded against SSIMULACRA2 or pnorm3 and its fifth exact candidate was materially slower. The sibling bpg-rs implementation reinforces the distinction: cheap local edge, contrast and noise saliency is a heuristic used for search steering, while its reliable AQ path measures an actual uniform encode and may run a third equal-rate candidate gate because source statistics do not predict the winner. raw-autotune exposes a versioned codec-neutral 8x8 semantic confidence map for sky, vegetation and building or interior uses and explicitly leaves quantizer direction, strength and compensation to the encoder; that can become an optional JPXL quality prior after corpus validation. It does not reduce the current 4.57 to 6.03 times runtime gap and cannot replace structural traversal or parallelism work. Because raw-autotune is AGPL-3.0-or-later while JPXL is MIT OR Apache-2.0, JPXL must not directly depend on or copy its implementation absent an explicit relicensing or legal decision; use an independently authored neutral input contract with adaptation in raw-autotune or a process or sidecar boundary.
+        """
+    claim license-boundary {
+        text """
+            The JPXL side may define and consume its own generic guidance contract but cannot take a direct AGPL implementation dependency under its current licensing.
+            """
+    }
+    claim measured-residual-negative {
+        text """
+            A measured high-frequency residual by itself does not distinguish important structure from expendable texture or noise.
+            """
+    }
+    claim semantic-guidance-role {
+        text """
+            Scene semantics can seed or constrain allocation and candidate search, but promotion still requires equal-rate multi-metric measurements and default byte identity.
+            """
+    }
+    claim speed-track-separate {
+        text """
+            Semantic inference and AQ candidate comparison are outside the encoder speed-parity denominator unless separately reported; the next main checkpoint remains profile-justified structural work.
+            """
+    }
+    supported_by [
+        @jpegxl-rs.evidence.phase8-6-measured-hf-quality-screen-2026-08-14/1,
+        @jpegxl-rs.evidence.phase8-6-measured-hf-removal-2026-08-14/1,
+        @jpegxl-rs.evidence.phase8-6-measured-hf-speed-screen-2026-08-14/1,
+        @jpegxl-rs.observation.bpg-rs-aq-precedent-2026-08-10/2
+    ]
+    source {
+        kind external
+        role rationale
+        path "/mnt/Samsung980_1TB/Rust-projects/bpg-rs/crates/still265/src/encoder/mod.rs"
+        use """
+            Measured AQ uses two encodes and a default third equal-rate candidate comparison because source statistics do not predict whether AQ wins.
+            """
+    }
+    source {
+        kind external
+        role rationale
+        path "/mnt/Samsung980_1TB/Rust-projects/bpg-rs/crates/still265/src/preanalysis.rs"
+        use """
+            Local structure, contextual contrast and noise form a heuristic importance signal.
+            """
+    }
+    source {
+        kind external
+        role constraint
+        path "/mnt/Samsung980_1TB/Rust-projects/raw-autotune/Cargo.toml"
+        use """
+            raw-autotune declares AGPL-3.0-or-later.
+            """
+    }
+    source {
+        kind external
+        role example
+        path "/mnt/Samsung980_1TB/Rust-projects/raw-autotune/src/api.rs"
+        use """
+            RenderReport exposes a JPEG XL 8x8-ready spatial AQ map API.
+            """
+    }
+    source {
+        kind external
+        role rationale
+        path "/mnt/Samsung980_1TB/Rust-projects/raw-autotune/src/encoder_hints.rs"
+        use """
+            The versioned map carries normalized semantic confidence and codec-neutral uses, excluding unvalidated face and person policy.
+            """
+    }
+}

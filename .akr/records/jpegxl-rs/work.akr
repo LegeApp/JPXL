@@ -3295,6 +3295,47 @@ record jpegxl-rs.work.arch-phase8-6-butteraugli-localization/2 : work {
     supersedes [ @jpegxl-rs.work.arch-phase8-6-butteraugli-localization/1 ]
 }
 
+record jpegxl-rs.work.arch-phase8-6-finalist-measured-hf-allocation/1 : work {
+    title "Phase 8.6: prototype finalist-measured HF allocation"
+    state abandoned
+    scope [
+        path ".agent/scratch/**",
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/field.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/rate.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/request.rs"
+    ]
+    intent """
+        Build and evaluate a default-off, speed-compatible measured high-frequency allocator before deciding whether this missing architecture should replace uniform target-rate allocation.
+        """
+    note """
+        Prototype removed after the fixed-rate screen found no multi-metric operating point: isolated Butteraugli-max gains always traded against SSIMULACRA2 or pnorm3, and the fifth exact candidate added material runtime. Evidence: @jpegxl-rs.evidence.phase8-6-measured-hf-quality-screen-2026-08-14/1, @jpegxl-rs.evidence.phase8-6-measured-hf-speed-screen-2026-08-14/1, @jpegxl-rs.evidence.phase8-6-measured-hf-removal-2026-08-14/1.
+        """
+    acceptance {
+        check fixed-rate-quality {
+            statement """
+                A fixed-rate corpus screen reports SSIMULACRA2, Butteraugli maximum and pnorm3 for baseline and measured allocation and reaches an explicit keep/remove decision.
+                """
+            method observation
+        }
+        check prototype-correct {
+            statement """
+                The default-off path is byte-identical, the measured field is deterministic and bounded, decoded outputs are valid, and workspace tests/clippy/fmt pass.
+                """
+            method command
+        }
+        check speed-bounded {
+            statement """
+                The prototype adds no cover, DCT or CfL pass; exact-candidate count and end-to-end overhead are measured and disclosed.
+                """
+            method observation
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase8-6-butteraugli-localization/2 ]
+    part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+}
+
 record jpegxl-rs.work.arch-s8-cover-lane-simd/1 : work {
     title "outside-advice.md §8 (S8), narrowed per Opus advisor review: bit-identical coefficient-lane SIMD for cover scoring"
     state completed
@@ -4360,6 +4401,54 @@ record jpegxl-rs.work.opt-v2-rate-work-sharing/2 : work {
     }
     part_of [ @jpegxl-rs.milestone.m-opt-vardct-rate ]
     supersedes [ @jpegxl-rs.work.opt-v2-rate-work-sharing/1 ]
+}
+
+record jpegxl-rs.work.optional-semantic-guidance-consumer/1 : work {
+    title "Evaluate a license-neutral optional semantic-guidance input"
+    state proposed
+    scope [
+        path ".agent/scratch/**",
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/field.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/request.rs"
+    ]
+    intent """
+        Define and screen an independently authored JPXL-side input for normalized semantic confidence layers, allowing raw-autotune or another external producer to adapt to it without a runtime or source dependency.
+        """
+    note """
+        This is a deferred quality-policy experiment, not the next speed checkpoint. Start only with a scene-labelled fixed-rate corpus. Keep semantic inference time outside encoder timing or report it separately. The absent-guidance path must remain byte-identical.
+        """
+    acceptance {
+        check cost-accounting {
+            statement """
+                Encoder overhead and any external inference overhead are measured and reported separately; promotion does not add another full exact-rate candidate unless it replaces already-paid work.
+                """
+            method observation
+        }
+        check default-byte-identity {
+            statement """
+                Absent guidance is byte-identical to the production encoder and deterministic guidance is bounded and geometry-validated.
+                """
+            method command
+        }
+        check fixed-rate-scene-screen {
+            statement """
+                A preregistered scene-labelled corpus compares absent guidance and semantic guidance at matched achieved rate using SSIMULACRA2, Butteraugli maximum and pnorm3, with per-class and pooled results.
+                """
+            method observation
+        }
+        check license-neutral-boundary {
+            statement """
+                JPXL defines its own versioned, codec-neutral guidance types and has no raw-autotune dependency or copied AGPL implementation; any producer adapter remains outside JPXL.
+                """
+            method manual
+        }
+    }
+    derived_from [
+        @jpegxl-rs.assessment.semantic-guidance-is-a-quality-prior-not-parity-architecture/1
+    ]
+    part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
 }
 
 record jpegxl-rs.work.retire-handoff-ledger/1 : work {

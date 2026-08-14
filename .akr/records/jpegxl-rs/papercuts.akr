@@ -79,6 +79,18 @@ record jpegxl-rs.papercut.fff-grep-transport-closed-while-locating-bench/1 : pap
     created_at 2026-08-11
 }
 
+record jpegxl-rs.papercut.fff-grep-transport-closed-while-verifying-the/1 : papercut {
+    title "FFF grep transport closed while verifying the user-provided bpg-rs…"
+    state verified
+    statement """
+        FFF grep transport closed while verifying the user-provided bpg-rs saliency implementation; precise rg/sed fallback was required.
+        """
+    observed_at git:18f8845e022b0c4fd1d6ea6936a1bb36adcd8346
+    about "fff"
+    author "codex"
+    created_at 2026-08-14
+}
+
 record jpegxl-rs.papercut.hybrid-intel-plain-cycles-u-records-cpu-atom/1 : papercut {
     title "Hybrid Intel: plain cycles:u records cpu_atom+cpu_core; atom samples…"
     state verified

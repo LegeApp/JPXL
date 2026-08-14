@@ -5,7 +5,7 @@ build {
     tool "akr 0.3.1"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:a10e06bf8bd57d0854d9c302b7d3441026b984c419c4f1e9f20684b40f1ff931"
+    source_graph "sha256:51fb57304aae3939abd73610b9b57f9559563a2a64152a0a31bb87f1a485388b"
 }
 
 source ".akr/project.akr" {
@@ -14,8 +14,8 @@ source ".akr/project.akr" {
 }
 
 source ".akr/records/jpegxl-rs/assessments.akr" {
-    hash "sha256:5b1ea8027781b3511ffce014e77cceccf88d7732b5bfdcfe3129fff2665a4125"
-    records 7
+    hash "sha256:05128a4c1d8d8dcf04e375d5337037fa5c11d75dbca7e6da917a6463cbaedf54"
+    records 8
 }
 
 source ".akr/records/jpegxl-rs/constraints.akr" {
@@ -29,8 +29,8 @@ source ".akr/records/jpegxl-rs/decisions.akr" {
 }
 
 source ".akr/records/jpegxl-rs/evidence.akr" {
-    hash "sha256:96b4ad14e7bc465e8d58ff51c233539faafed48317592e9faa947e01dd7dfdff"
-    records 212
+    hash "sha256:e1a24f8537086446c1346e3f805affc9ca7cf57276bda5a023a05bdfd4a7a359"
+    records 215
 }
 
 source ".akr/records/jpegxl-rs/milestones.akr" {
@@ -44,8 +44,8 @@ source ".akr/records/jpegxl-rs/observations.akr" {
 }
 
 source ".akr/records/jpegxl-rs/papercuts.akr" {
-    hash "sha256:9d7be4924da8489446e5d69f4fb7d07483c962fa39c396ee4ec6b998c3cc7050"
-    records 17
+    hash "sha256:8b08b7b74aeaca17b4d2dba36c51467e2c8dc48b48eb37be875b0f0a813c0372"
+    records 18
 }
 
 source ".akr/records/jpegxl-rs/policies.akr" {
@@ -64,8 +64,8 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:190e23cc8a6c3eec45eefd1655612d06cea9036368500e71ad03edabef421e21"
-    records 93
+    hash "sha256:0748bc5624090acf2ebc12202f7fcc0b24f510de3c63cfc7c2b881eb1143f324"
+    records 95
 }
 
 resolution @jpegxl-rs.decision.encoder-architecture-phases/1 {
@@ -3193,6 +3193,11 @@ seal @jpegxl-rs.assessment.s8-close-phase4-reorient/1 {
     hash "sha256:4afa8cac25b3c27e6ff420927a65278983846e3c4bc09e4caaa0f0ede38893e0"
 }
 
+seal @jpegxl-rs.assessment.semantic-guidance-is-a-quality-prior-not-parity-architecture/1 {
+    state verified
+    hash "sha256:2d3758b6952dfee21ca10df51561d6027e33d7a6d19780e6a0f89c09d96f34b9"
+}
+
 seal @jpegxl-rs.decision.encoder-architecture-phases/1 {
     state active
     hash "sha256:bebc6ba8560b5b033c8661d3025f45375dcd7f485639aba3dcc1338c845dcfa4"
@@ -4183,6 +4188,21 @@ seal @jpegxl-rs.evidence.phase8-6-independent-metric-validation-2026-08-14/1 {
     hash "sha256:1339b1dcb144f6fb81e46175f8cecd4467fbd88ac53856cfae99bf8c6847e3ee"
 }
 
+seal @jpegxl-rs.evidence.phase8-6-measured-hf-quality-screen-2026-08-14/1 {
+    state verified
+    hash "sha256:738c188774b0bd17dadff1526e3785a494542288d7c1c058e12289626de28102"
+}
+
+seal @jpegxl-rs.evidence.phase8-6-measured-hf-removal-2026-08-14/1 {
+    state verified
+    hash "sha256:f6b43fb8e3564c8260f1f91c3edb26dd8962fe6bd7acf4cd9e8ffab05f3f1dbc"
+}
+
+seal @jpegxl-rs.evidence.phase8-6-measured-hf-speed-screen-2026-08-14/1 {
+    state verified
+    hash "sha256:66ba312ffc3617a47a0e73b6f3203fcbf8cbf1311271c2554abcf33d9fd0ec3e"
+}
+
 seal @jpegxl-rs.evidence.retire-handoff-durable-facts-2026-08-11/1 {
     state verified
     hash "sha256:d5bdf84076bed194a4be6e7e9ea15569dbed84339827e224b936cd8feeb95a65"
@@ -4743,6 +4763,11 @@ seal @jpegxl-rs.papercut.fff-grep-transport-closed-while-locating-bench/1 {
     hash "sha256:c8cf94354a908019794e68a8095a97ab6c342ab4f53d629fbbe5624ab3cc5569"
 }
 
+seal @jpegxl-rs.papercut.fff-grep-transport-closed-while-verifying-the/1 {
+    state verified
+    hash "sha256:6bd737c9aaab164bd804df849422a0a4715579f34241e869e0a3d6163bdfc5b2"
+}
+
 seal @jpegxl-rs.papercut.hybrid-intel-plain-cycles-u-records-cpu-atom/1 {
     state verified
     hash "sha256:755f6717193aaa3e7db5eb2e80be2bdd5f5a11ad43b8e53f043610578f902256"
@@ -5171,6 +5196,11 @@ seal @jpegxl-rs.work.arch-phase8-6-butteraugli-localization/1 {
 seal @jpegxl-rs.work.arch-phase8-6-butteraugli-localization/2 {
     state completed
     hash "sha256:c950114e0c9741ffc7d403defeaefcd08f0f0b57c9cdec6ff6c19128e0f2819a"
+}
+
+seal @jpegxl-rs.work.arch-phase8-6-finalist-measured-hf-allocation/1 {
+    state abandoned
+    hash "sha256:fd26e1b1ea7df18eec7c776233e5567ce273ef675f80e4dc98e421a564b4af0d"
 }
 
 seal @jpegxl-rs.work.arch-s8-cover-lane-simd/1 {
