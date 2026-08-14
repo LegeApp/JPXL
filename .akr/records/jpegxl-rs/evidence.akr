@@ -2137,6 +2137,42 @@ record jpegxl-rs.evidence.phase8-1-workspace-gates/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase8-2-correctness-2026-08-14/1 : evidence {
+    title "Affected-crate tests passed, including oracle decodes and rate-loop byte identity across executor widths."
+    state verified
+    result pass
+    method command
+    observed_at git:8e8362bdb1b5a476304f189b80d093806f438685
+    command "cd JPXL && cargo test -p jpxl-entropy -p jpxl-encode -p jpxl-encode-policy"
+    summary """
+        Affected-crate tests passed, including oracle decodes and rate-loop byte identity across executor widths.
+        """
+}
+
+record jpegxl-rs.evidence.phase8-2-linux-performance-2026-08-13/1 : evidence {
+    title "Existing Linux matched-output measurements showed byte-identical fixed/rate outputs, up to 2.1x fixed-plan speedup and 6-18% target-rate improvement."
+    state verified
+    result pass
+    method observation
+    observed_at git:8e8362bdb1b5a476304f189b80d093806f438685
+    artifact ".agent/scratch/phase8-2-dense-group-banks-2026-08-13-post-relative.txt"
+    summary """
+        Existing Linux matched-output measurements showed byte-identical fixed/rate outputs, up to 2.1x fixed-plan speedup and 6-18% target-rate improvement.
+        """
+}
+
+record jpegxl-rs.evidence.phase8-2-performance-2026-08-14/1 : evidence {
+    title "Interleaved Windows A/B preserved fingerprints and improved fixed VarDCT 26.8% at 4.3 MP and 56.8% at 12 MP with four threads; target-rate paired median improved 14.3%."
+    state verified
+    result pass
+    method observation
+    observed_at git:8e8362bdb1b5a476304f189b80d093806f438685
+    artifact ".agent/scratch/phase8-2-windows-2026-08-14/SUMMARY.md"
+    summary """
+        Interleaved Windows A/B preserved fingerprints and improved fixed VarDCT 26.8% at 4.3 MP and 56.8% at 12 MP with four threads; target-rate paired median improved 14.3%.
+        """
+}
+
 record jpegxl-rs.evidence.retire-handoff-durable-facts-2026-08-11/1 : evidence {
     title "HANDOFF permanent facts are represented in AKR"
     state verified

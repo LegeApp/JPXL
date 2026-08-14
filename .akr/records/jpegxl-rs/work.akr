@@ -2908,7 +2908,7 @@ record jpegxl-rs.work.arch-phase8-2-dense-group-banks/2 : work {
 
 record jpegxl-rs.work.arch-phase8-2-dense-group-banks/3 : work {
     title "Phase 8.2: dense LF-group coefficient banks and planning parallelism"
-    state active
+    state completed
     scope [
         path "JPXL/crates/jpxl-encode-policy/**",
         path "JPXL/crates/jpxl-encode/src/resources.rs",
@@ -2924,12 +2924,14 @@ record jpegxl-rs.work.arch-phase8-2-dense-group-banks/3 : work {
                 The refactor is byte-identical across serial and multicore paths.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase8-2-correctness-2026-08-14/1 ]
         }
         check ownership-win {
             statement """
                 Allocation count, peak RSS, and end-to-end fixed/rate wall time improve on the Phase 8.0 baseline.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.phase8-2-performance-2026-08-14/1 ]
         }
     }
     depends_on [ @jpegxl-rs.work.arch-phase8-1-persistent-executor ]
