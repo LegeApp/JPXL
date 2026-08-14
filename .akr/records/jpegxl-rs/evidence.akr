@@ -2173,6 +2173,43 @@ record jpegxl-rs.evidence.phase8-2-performance-2026-08-14/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase8-3-correctness/1 : evidence {
+    title "Phase 8.3 default and feature correctness suites"
+    state verified
+    result pass
+    method command
+    observed_at git:5c5a5b8394d41196c68c9d48c8481f7b6336f43a
+    command "cd JPXL && cargo test -p jpxl-encode-policy --release && cargo test -p jpxl-encode-policy --release --features anchor-sketch"
+    artifact ".agent/scratch/phase8-3-anchor-sketch-2026-08-14/SUMMARY.md"
+    summary """
+        Default and anchor-sketch policy suites passed completely, including target contracts, thread-count byte identity, VarDCT roundtrips, and both external decoder oracles.
+        """
+}
+
+record jpegxl-rs.evidence.phase8-3-quality-screen/1 : evidence {
+    title "Phase 8.3 target and perceptual quality screen"
+    state verified
+    result pass
+    method observation
+    observed_at git:5c5a5b8394d41196c68c9d48c8481f7b6336f43a
+    artifact ".agent/scratch/phase8-3-anchor-sketch-2026-08-14/SUMMARY.md"
+    summary """
+        All seven canonical 1 bpp outputs obeyed the never-over 1% target window; SSIMULACRA2 mean delta was +0.0660 and the worst cell was -0.1237 versus the -0.25 gate.
+        """
+}
+
+record jpegxl-rs.evidence.phase8-3-windows-speed/1 : evidence {
+    title "Phase 8.3 Windows speed and search-budget screen"
+    state verified
+    result pass
+    method observation
+    observed_at git:5c5a5b8394d41196c68c9d48c8481f7b6336f43a
+    artifact ".agent/scratch/phase8-3-anchor-sketch-2026-08-14/SUMMARY.md"
+    summary """
+        Seven-scene 1 bpp mean fell from 9621.5 ms to 2443.1 ms (3.94x; -74.61%) with 0/7 fallbacks; paired 4.3 MP fell from 15507.2 ms to 4897.1 ms (3.17x) while the normal path stayed within two structural builds, two Full plans, four exact candidates, and one Store.
+        """
+}
+
 record jpegxl-rs.evidence.retire-handoff-durable-facts-2026-08-11/1 : evidence {
     title "HANDOFF permanent facts are represented in AKR"
     state verified
