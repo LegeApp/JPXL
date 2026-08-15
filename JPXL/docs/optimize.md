@@ -14,19 +14,27 @@ Store emission is now also its size verification, removing a redundant Count
 traversal. Normal builds include Fast, while `quality` remains the exhaustive
 default. Fast permits up to 3% target undershoot but never exceeds the target.
 
-Fresh PGO, four-thread, process-to-process matched-SSIMULACRA2 timing is
-1.14 s versus cjxl 0.39 s on 2400x1800 (2.92x), and 1.93 s versus 1.04 s on
-4000x3000 (1.86x). Against the preceding Phase 10 Fast path, fresh PGO A/B
-improved those JPXL medians by 9.5% and 8.5%. The seven-scene 1 bpp screen had
-zero fallbacks and two corrections; its mean SSIMULACRA2 delta versus Phase 10
-was -0.034 points and the worst was -0.154. Quality remains available for
-callers that do not want the cumulative speed/quality trade.
+The forward 2-D DCT now transposes around each separable pass so its 1-D
+kernels operate on contiguous rows while preserving the original
+column-then-row floating evaluation exactly. Fresh PGO A/B against Phase 11
+improved the 2400x1800 median from 1.14 to 1.10 s (3.5%) and the 4000x3000
+median from 1.93 to 1.91 s (1.0%). The seven canonical Fast codestreams, both
+timing codestreams, and a Quality-preset codestream were byte-identical to
+Phase 11.
 
-The newest 12 MP PGO profile contains 4,061 core-cycle samples with zero lost.
-Its largest self-costs are DCT columns 11.5%, quantization about 14.4% across
-the group closure and lane kernel, cover scoring 16.7% across two hot closures,
-pass-group writing 4.3%, entropy tables 3.5%, CfL 3.0%, census 2.8%, entropy
-configuration 2.6%, and ANS 2.5%.
+Fresh four-thread, process-to-process matched-SSIMULACRA2 timing is 1.09 s
+versus cjxl 0.40 s on 2400x1800 (2.73x), and 1.89 s versus 1.05 s on
+4000x3000 (1.80x). The seven-scene 1 bpp screen still has zero fallbacks and
+two corrections; its mean SSIMULACRA2 delta versus Phase 10 is -0.034 points
+and the worst is -0.154. Quality remains available for callers that do not
+want the cumulative speed/quality trade.
+
+The newest 12 MP PGO profile contains 7,762 core-cycle samples with zero lost.
+Its largest self-costs are cover scoring 19.5% across two hot closures,
+quantization 16.2% across the chunk closure and lane kernel, contiguous DCT
+rows 6.5% (plus 1.3% in DCT16), forward-varblock preparation 6.5%, pass-group
+writing 4.6%, entropy tables 3.8%, ANS 3.5%, CfL 3.3%, and census 3.2%. The
+former column-DCT leaf fell from 11.5% to a 6.5% contiguous-row leaf.
 
 ### Open architectural questions
 
@@ -43,10 +51,13 @@ configuration 2.6%, and ANS 2.5%.
    final Store without becoming another frame-sized allocation? Even the
    default-entropy Fast finalist still spends about 16% across census, table
    construction, ANS, and pass-group writing.
-4. The mid-size frame remains 2.92x slower than cjxl while the 12 MP frame is
-   1.86x slower. Which finer deterministic planning axis is most promising
-   when a frame exposes too few LF groups: cover tree regions, varblock runs,
-   coefficient bands, or stage pipelining?
+4. The mid-size frame remains 2.73x slower than cjxl while the 12 MP frame is
+   1.80x slower. Cover construction currently takes a write lock for one
+   LF-group-wide dense coefficient bank, even though its aligned 32x32 regions
+   are logically independent. Which deterministic ownership model best exposes
+   those regions to work stealing without adding per-region full-bank arenas:
+   partitioned dense banks, a prefilled immutable candidate bank, or staged
+   cover/DCT pipelining?
 5. Can an inexpensive confidence signal identify the one corpus class where
    Fast loses about 0.8 SSIMULACRA2 points and route it to Quality, without
    first doing the exhaustive search that the preset exists to avoid?

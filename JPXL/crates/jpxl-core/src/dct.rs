@@ -880,8 +880,19 @@ pub fn transpose_into(src: &[f32], dst: &mut [f32], rows: usize, cols: usize) {
     }
 }
 
-/// `ColumnDCT` of I.7.3: the 1-D forward DCT down each column of a row-major
-/// `rows x cols` matrix.
+/// Applies the forward 1-D DCT to each contiguous row of a row-major matrix.
+///
+/// Transposing around a pass lets each 1-D kernel borrow its input directly
+/// instead of gathering and scattering a strided column through a temporary
+/// array.
+fn row_dct(m: &mut [f32], rows: usize, cols: usize) {
+    for row in m.chunks_exact_mut(cols).take(rows) {
+        dct_1d(row);
+    }
+}
+
+/// Column-first reference for tests of the contiguous forward pipeline.
+#[cfg(test)]
 fn column_dct(m: &mut [f32], rows: usize, cols: usize) {
     let mut buf = [0.0f32; MAX_TRANSFORM_SIZE];
     for c in 0..cols {
@@ -949,13 +960,15 @@ pub fn dct_2d_in_place(work: &mut [f32], scratch: &mut [f32], rows: usize, cols:
         debug_assert!(false, "bad DCT_2D shape {rows}x{cols}");
         return;
     }
-    column_dct(work, rows, cols);
+    // Keep I.7.3's column-then-row evaluation order, including its floating
+    // rounding, but transpose around each axis so the 1-D kernels operate on
+    // contiguous rows instead of gathering and scattering strided columns.
     transpose_into(work, scratch, rows, cols);
-    // `scratch` is `cols x rows` from here on.
-    column_dct(scratch, cols, rows);
-    if cols > rows {
-        transpose_into(scratch, work, cols, rows);
-    } else {
+    row_dct(scratch, cols, rows);
+    transpose_into(scratch, work, cols, rows);
+    row_dct(work, rows, cols);
+    if cols <= rows {
+        transpose_into(work, scratch, rows, cols);
         work[..n].copy_from_slice(&scratch[..n]);
     }
 }
@@ -1782,6 +1795,36 @@ mod tests {
             assert_eq!(coeffs.len(), cr * cc, "{r}x{c} coefficient count");
             let back = idct_2d_raw(&coeffs, r, c);
             assert_slice_close(&back, &samples, 2e-3, &format!("{r}x{c} round trip"));
+        }
+    }
+
+    /// The contiguous pipeline preserves the original column-first evaluation
+    /// exactly for every Table I.1 shape, including coefficient storage order
+    /// and floating-point rounding.
+    #[test]
+    fn i73_contiguous_forward_matches_column_first_reference() {
+        let mut rng = Lcg::new(0xc017_1d17);
+        for &(rows, cols) in &TABLE_I1_SHAPES {
+            let samples: Vec<f32> = (0..rows * cols).map(|_| rng.next(1.0)).collect();
+            let got = dct_2d_raw(&samples, rows, cols);
+
+            let mut reference = samples;
+            let mut scratch = vec![0.0f32; rows * cols];
+            column_dct(&mut reference, rows, cols);
+            transpose_into(&reference, &mut scratch, rows, cols);
+            column_dct(&mut scratch, cols, rows);
+            if cols > rows {
+                transpose_into(&scratch, &mut reference, cols, rows);
+            } else {
+                reference.copy_from_slice(&scratch);
+            }
+
+            assert_slice_close(
+                &got,
+                &reference,
+                0.0,
+                &format!("{rows}x{cols} contiguous/column-first coefficients"),
+            );
         }
     }
 
