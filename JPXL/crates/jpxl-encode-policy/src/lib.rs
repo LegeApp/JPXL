@@ -126,6 +126,8 @@ pub use source::PreparedFrame;
 // second dependency path into the writer crate's plan module.
 pub use jpxl_encode::vardct::plan::RestorationDecision;
 
+use std::sync::Arc;
+
 /// I.4's per-block-context share of the `non_zeros` contexts.
 const NON_ZEROS_CONTEXTS: u64 = 37;
 
@@ -461,7 +463,7 @@ fn plan_at_with_cfl(
         }
         let mut groups = anchor.groups.clone();
         retarget_anchor_groups(&mut groups, &aq)?;
-        (groups, anchor.cfl.clone())
+        (groups, Arc::clone(&anchor.cfl))
     } else if let AnchorReuse::CoverOnly(anchor) = reuse {
         if anchor.groups.len() != usize::try_from(geometry.num_lf_groups()).unwrap_or(usize::MAX) {
             return Err(PolicyError::Unsupported {
@@ -485,7 +487,7 @@ fn plan_at_with_cfl(
                 executor,
             )
         })?;
-        (groups, cfl)
+        (groups, Arc::new(cfl))
     } else {
         // Phase 8.2: every LF group owns independent dense transform banks.
         // Cover construction can therefore run on the request executor without
@@ -613,13 +615,13 @@ fn plan_at_with_cfl(
                 executor,
             )
         })?;
-        (groups, cfl)
+        (groups, Arc::new(cfl))
     };
 
     if let Some(slot) = capture {
         *slot = Some(StructuralAnchor {
             groups: groups.clone(),
-            cfl: cfl.clone(),
+            cfl: Arc::clone(&cfl),
         });
     }
 
@@ -1120,7 +1122,7 @@ type PlannedGroup = (
 #[derive(Clone)]
 pub(crate) struct StructuralAnchor {
     groups: Vec<PlannedGroup>,
-    cfl: CflEstimate,
+    cfl: Arc<CflEstimate>,
 }
 
 /// Which parts of a captured structural plan a later probe may reuse.

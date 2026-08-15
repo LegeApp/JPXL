@@ -244,6 +244,35 @@ unchanged scoring and wire decisions. The next structural target remains
 immutable geometry plus a small `HfMul` overlay; the raw event tape and fresh
 Anchored Quality spatial refresh stay behind it.
 
+## Phase 22 — shared immutable CfL estimate (2026-08-15)
+
+Anchored probes now share the captured `CflEstimate` through `Arc` instead of
+cloning the frame-wide correlation decision and per-group CfL grids for every
+probe. Fresh plans allocate the estimate once, `CoverAndCfl` reuses the pointer,
+and the validated `LfGroupPlan` still receives its own wire-facing `CflGrid`
+clone. This is intentionally an ownership cleanup: `VarblockDecision`, cover
+selection, quantization, entropy, and emitted syntax are unchanged.
+
+Fast, Balanced, Quality, and masking-AQ canonical streams remain byte-identical
+to Phase 21, as do the representative fallback streams. Candidate Balanced,
+Quality, and Fast streams independently decoded to valid PPM images. The
+candidate policy suite passed all 98 focused tests.
+
+A pinned interleaved four-thread, five-iteration A/B at Balanced 1 bpp measured
+triplet medians of 966.945 ms baseline versus 932.874 ms candidate on the
+2400×1800 input (3.524% faster), and 1863.457 ms versus 1887.425 ms on
+4000×3000 (1.286% slower). The larger result is within host noise, so this is
+recorded as a bounded setup cleanup rather than a general speed or libjxl-parity
+claim. Both arms produced identical short fingerprints and output sizes. Raw
+binary/input hashes, timing order, output comparisons, and decode checks are in
+`.agent/scratch/phase22-cfl-arc/`.
+
+No new flamegraph was warranted (`paranoid=0`): this removes an immutable clone
+and does not move the dominant target-rate stages. The next structural target
+is true immutable geometry with a quantizer-dependent `HfMul` overlay; the raw
+default-entropy event tape and Anchored Quality spatial refresh remain gated by
+their counters and quality checks.
+
 ### Open architectural questions
 
 1. How can the finalist refresh only structurally unstable cover decisions?
