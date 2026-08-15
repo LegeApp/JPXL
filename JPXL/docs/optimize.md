@@ -7,14 +7,17 @@ progress exposes an architectural limit that local profiling does not answer.
 ## Current checkpoint — 2026-08-15
 
 The runtime `fast` lossy preset uses two exact navigation anchors, a fitted
-log-rate prediction, one freshly rebuilt default-entropy finalist, and at most
-one exact correction. Fast probes now use only the legacy hybrid-uint
-configuration, fixed DCT8x8 cover selection, and nearest HF quantization; this
-is an intentional speed tier. Its exact retained Store emission is still its
-size verification, removing a redundant Count traversal. Normal builds include
-Fast, while `quality` remains the exhaustive default with hierarchical cover,
-full hybrid-uint search, and trailing quantization. Fast permits up to 3%
-target undershoot but never exceeds the target.
+log-rate prediction, an anchor-reused default-entropy finalist, and at most one
+exact correction. Fast probes now use only the legacy hybrid-uint
+configuration, fixed DCT8x8 cover selection, nearest HF quantization, and the
+captured anchor's neutral CfL factors; this is an intentional speed tier. The
+prediction is biased by one eighth of Fast's 3% undershoot band, so the common
+near-crossing case pays one finalist instead of a correction while the exact
+never-over check remains in force. Its exact retained Store emission is still
+its size verification, removing a redundant Count traversal. Normal builds
+include Fast, while `quality` remains the exhaustive default with hierarchical
+cover, full hybrid-uint search, and trailing quantization. Fast permits up to
+3% target undershoot but never exceeds the target.
 
 The forward 2-D DCT now transposes around each separable pass so its 1-D
 kernels operate on contiguous rows while preserving the original
@@ -78,6 +81,20 @@ quantization 13.3%, pass-group writing 9.5%, ANS 6.3%, entropy-table building
 DCT 2.7%. A one-cluster static entropy experiment was rejected after it lowered
 Fast SSIMULACRA2 to 64.7/77.0 despite a further speed gain.
 
+Phase 16 then reused the captured neutral-CfL anchor for the Fast finalist and
+reserved 1/8 of the allowed undershoot band in its predicted crossing. Against
+the Phase 15 Fast PGO binary, interleaved four-thread A/B medians improved from
+0.72 to 0.59 s (18.1%) at 2400x1800 and from 1.88 to 1.41 s (25.0%) at
+4000x3000. The candidate emits 537,999 and 1,495,016 bytes at the 1 bpp
+targets; repeated one/four-thread outputs are byte-identical and decode. In a
+separate interleaved process window against cjxl e7, Fast medians were 0.60 s
+versus 0.52 s (1.15x) and 2.85 s versus 2.39 s (1.19x); host variance is high,
+so report the raw log rather than treating one window as a universal baseline.
+The relaxed Fast metrics were SSIMULACRA2 69.4584/80.4677, Butteraugli
+3.6963/2.8693, and pnorm3 1.2352/0.7882. Quality remains unchanged and is the
+high-quality fallback. The neutral-CfL reuse is deliberately not applied to
+Quality/Full.
+
 ### Open architectural questions
 
 1. How can the finalist refresh only structurally unstable cover decisions?
@@ -105,6 +122,10 @@ Fast SSIMULACRA2 to 64.7/77.0 despite a further speed gain.
    intentionally gives up roughly two SSIMULACRA2 points on the mid image.
    Can a cheap variance or cover-margin signal selectively restore larger
    transforms without bringing back the full hierarchical scorer?
+7. The Fast anchor now reaches the relaxed parity band by skipping a finalist
+   CfL rebuild and biasing its predicted rung. Can the same safe margin be
+   learned from a bounded rate-slope confidence signal, so pathological scenes
+   fall back before paying a correction without narrowing the documented band?
 
 ## Original advisor verdict
 

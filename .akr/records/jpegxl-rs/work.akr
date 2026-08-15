@@ -329,6 +329,43 @@ record jpegxl-rs.work.arch-phase15-fast-entropy/1 : work {
     part_of [ @jpegxl-rs.track.encoder-optimization ]
 }
 
+record jpegxl-rs.work.arch-phase16-fast-anchor/1 : work {
+    title "Phase 16: Fast anchor reuse"
+    state proposed
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/rate.rs",
+        path "JPXL/docs/optimize.md"
+    ]
+    intent "Reduce Fast-preset structural multiplicity by reusing its captured neutral-CfL anchor for the final relaxed-quality candidate, while leaving Quality/Full exhaustive and byte-identical. Retain only if Fast remains target-safe, deterministic, decodable, and materially faster without a catastrophic perceptual regression; document the deliberate Fast quality trade and keep the high-quality path available."
+    acceptance {
+        check determinism {
+            statement """
+                Fast outputs are deterministic across repeated one- and four-thread runs and decode successfully on the canonical mid and large photographs; Quality output remains unchanged.
+                """
+            method command
+        }
+        check gates {
+            statement """
+                Workspace build, tests, formatting, no-default-features check, and AKR validation pass; any pre-existing strict Clippy diagnostics are isolated.
+                """
+            method command
+        }
+        check quality {
+            statement """
+                Fast target adherence and SSIMULACRA2, Butteraugli, PSNR, and pnorm3 are recorded against the Phase 15 Fast output, with no catastrophic regression; Quality remains the higher-quality fallback.
+                """
+            method observation
+        }
+        check speed {
+            statement """
+                Interleaved release or PGO timing shows a material Fast speed improvement on both canonical size classes and remains within the stated parity band against cjxl at the same relaxed operating point.
+                """
+            method observation
+        }
+    }
+}
+
 record jpegxl-rs.work.arch-phase1b-opt-in-diagnostics/1 : work {
     title "Phase 1B: make architecture diagnostics opt-in"
     state superseded

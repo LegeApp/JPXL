@@ -1097,24 +1097,39 @@ fn search_frame_two_anchor(
     prepared.stats.fast_prices = 2;
     prepared.stats.exact_candidates = 2;
 
+    // Bias the one-shot prediction a little below the ceiling. Fast already
+    // permits a 3% undershoot, so reserving one eighth of that band avoids a
+    // second full finalist on the common near-crossing case while the exact
+    // over-target check below remains the safety net for steep/non-monotone
+    // curves.
+    let prediction_slack = request
+        .rate_preset
+        .tolerance(request.tolerance)
+        .bytes_for(target_bytes)
+        / 8;
+    let prediction_target = target_bytes.saturating_sub(prediction_slack);
     let Some(finalist_rung) = two_anchor_target_rung(
         (first_quantizer.rung, first_size.total),
         (second_quantizer.rung, second_size.total),
-        target_bytes,
+        prediction_target,
     ) else {
         *attempted = prepared.stats;
         return Ok(None);
     };
     let finalist_quantizer = QuantizerChoice::at(finalist_rung, request.quant_lf)?;
     let mut finalist_anchor = None;
+    // Fast is deliberately a relaxed-quality preset. Reuse the captured
+    // neutral-CfL structure for its finalist instead of rebuilding cover,
+    // forward coefficients and a second CfL estimate. Quality/Full never
+    // enters this controller and therefore retains the exhaustive path.
     let finalist = prepared.plan_anchor(
         finalist_quantizer,
-        true,
+        false,
         EntropySearch::FinalFast,
-        None,
+        Some(&anchor),
         Some(&mut finalist_anchor),
     )?;
-    prepared.stats.structural_builds = 2;
+    prepared.stats.structural_builds = 1;
     let finalist_emission =
         diagnostics::with_search_phase(diagnostics::SearchDiagnosticPhase::Full, || {
             emit_codestream_with_executor(&finalist, prepared.executor)
