@@ -701,6 +701,43 @@ record jpegxl-rs.evidence.phase13-speed-2026-08-15/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase14-determinism-2026-08-15/1 : evidence {
+    title "Fast canonical outputs and the exhaustive Quality output are byte-identical across one/four threads and to Phase 13"
+    state verified
+    result pass
+    method command
+    observed_at git:07bc14d7b38ff860af93acd68a3f551e01b65d0b
+    command "cargo test -p jpxl-encode-policy --test rate_loop target_rate_is_byte_identical_across_executor_widths --quiet; cargo test -p jpxl-encode-policy --lib multi_group_vardct_is_byte_identical_across_thread_counts --quiet; current PGO Fast/Quality hash comparison"
+    artifact ".agent/scratch/phase14-region-cover-2026-08-15/SUMMARY.md"
+    summary """
+        Fast canonical outputs and the exhaustive Quality output are byte-identical across one/four threads and to Phase 13
+        """
+}
+
+record jpegxl-rs.evidence.phase14-gates-2026-08-15/1 : evidence {
+    title "Build, full tests, formatting, no-default check, diff check, and AKR check pass; strict Clippy remains limited to 26 pre-existing policy diagnostics plus 70 dependency diagnostics, with none in changed spans"
+    state verified
+    result pass
+    method command
+    observed_at git:07bc14d7b38ff860af93acd68a3f551e01b65d0b
+    command "cargo build --workspace; cargo test --workspace --quiet; cargo fmt --all --check; cargo check -p jpxl-encode-policy --no-default-features; cargo clippy -p jpxl-encode-policy --lib --no-deps -- -D warnings; akr check"
+    summary """
+        Build, full tests, formatting, no-default check, diff check, and AKR check pass; strict Clippy remains limited to 26 pre-existing policy diagnostics plus 70 dependency diagnostics, with none in changed spans
+        """
+}
+
+record jpegxl-rs.evidence.phase14-speed-2026-08-15/1 : evidence {
+    title "Fresh PGO A/B improves 2400x1800 from 1.27 to 1.10 seconds (13.39%) and holds 4000x3000 at 2.22 seconds with exact outputs"
+    state verified
+    result pass
+    method observation
+    observed_at git:07bc14d7b38ff860af93acd68a3f551e01b65d0b
+    artifact ".agent/scratch/phase14-region-cover-2026-08-15/pgo-ab.log"
+    summary """
+        Fresh PGO A/B improves 2400x1800 from 1.27 to 1.10 seconds (13.39%) and holds 4000x3000 at 2.22 seconds with exact outputs
+        """
+}
+
 record jpegxl-rs.evidence.phase1b-diag-available-2026-08-13/1 : evidence {
     title "Phase 1B opt-in diagnostics remain available"
     state verified
