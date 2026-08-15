@@ -3412,6 +3412,30 @@ record jpegxl-rs.work.arch-phase8-6-finalist-measured-hf-allocation/1 : work {
     part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
 }
 
+record jpegxl-rs.work.arch-phase9-quant-scheduling/1 : work {
+    title "Phase 9: deterministic quantization scheduling"
+    state active
+    intent """
+        Continue the profile-backed quantization architecture work after Phase 8.5 by evaluating finer deterministic scheduling even when LF-group count equals worker count. Retain a scheduling change only if interleaved end-to-end A/B improves production-quality target-rate encoding while every candidate stream remains byte-identical to the immutable baseline.
+        """
+    acceptance {
+        check exactness {
+            statement """
+                Candidate outputs are byte-identical across baseline/candidate and thread counts, and the policy, workspace, oracle, formatting, and lint-delta gates pass.
+                """
+            method command
+        }
+        check speed {
+            statement """
+                Fresh interleaved A/B on the pinned 4.3 MP and 12 MP photographs demonstrates an end-to-end improvement attributable to the current quantization hotspot; neutral or regressing variants are rejected.
+                """
+            method observation
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase8-5-leaf-finishing ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+}
+
 record jpegxl-rs.work.arch-s8-cover-lane-simd/1 : work {
     title "outside-advice.md §8 (S8), narrowed per Opus advisor review: bit-identical coefficient-lane SIMD for cover scoring"
     state completed

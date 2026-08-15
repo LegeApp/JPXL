@@ -103,6 +103,18 @@ record jpegxl-rs.papercut.fff-grep-transport-closed-while-verifying-the/1 : pape
     created_at 2026-08-14
 }
 
+record jpegxl-rs.papercut.fff-multi-grep-again-failed-with-transport/1 : papercut {
+    title "FFF multi_grep again failed with 'Transport closed' while mapping the…"
+    state verified
+    statement """
+        FFF multi_grep again failed with 'Transport closed' while mapping the post-Phase-8.5 quantization/rate-search path, so discovery had to fall back to scoped rg. The repeated disconnect makes the instructed default discovery layer unavailable.
+        """
+    observed_at git:961c7254dd44a02291bad8eea15142e3a5015bce
+    about "fff"
+    author "codex"
+    created_at 2026-08-15
+}
+
 record jpegxl-rs.papercut.hybrid-intel-plain-cycles-u-records-cpu-atom/1 : papercut {
     title "Hybrid Intel: plain cycles:u records cpu_atom+cpu_core; atom samples…"
     state verified

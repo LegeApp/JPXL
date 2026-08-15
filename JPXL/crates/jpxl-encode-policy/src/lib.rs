@@ -500,11 +500,14 @@ fn plan_at_with_cfl(
         diagnostics::time_stage_units(diagnostics::StageTimer::Quantize, groups.len(), || {
             if let Some(executor) = executor
                 && executor.resources().parallel_groups()
-                && executor.resources().threads > groups.len()
+                && executor.resources().threads > 1
             {
-                // Splitting below an LF group pays only when the ordinary
-                // group axis cannot occupy the requested workers. Keep the
-                // lower-overhead whole-group path once it already can.
+                // LF groups can differ substantially in selected transform
+                // mix. Keep sub-group work stealing available even when the
+                // group count happens to equal the worker count: one heavy
+                // group must not pin the request after the other workers have
+                // drained their whole-group jobs. Fixed-index reduction below
+                // preserves the serial coefficient and LF-plane order.
                 return quantize_groups_parallel(
                     &groups, &cfl, cache, &lf_quant, &hf_quants, executor,
                 );

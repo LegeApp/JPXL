@@ -5,7 +5,7 @@ build {
     tool "akr 0.3.0"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:f98c507b65b5414278bb992976f871f8cf9a1bcbcf19e447a2f00a4f75910705"
+    source_graph "sha256:b99b384f51e48c2ea668ca0f933fbfb85c4a130058d5d93f1763973e1502eb8b"
 }
 
 source ".akr/project.akr" {
@@ -44,8 +44,8 @@ source ".akr/records/jpegxl-rs/observations.akr" {
 }
 
 source ".akr/records/jpegxl-rs/papercuts.akr" {
-    hash "sha256:14450d189bf11dc66712f01a725491aea7be43455a640c678ea90305928d4ba7"
-    records 20
+    hash "sha256:bd342d5973a7c894adb0b0f726687ab94399855ed98e448d7eb5852c02043f25"
+    records 21
 }
 
 source ".akr/records/jpegxl-rs/policies.akr" {
@@ -64,8 +64,8 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:4cfef0c723d2e86aa142cd159fee7a1e43b24b2788e553a2e74e1280d1548761"
-    records 97
+    hash "sha256:32bf4e73388159e80e9172a72173bde7757f96bc50c3dc6d27f8ef660812ff41"
+    records 98
 }
 
 resolution @jpegxl-rs.decision.encoder-architecture-phases/1 {
@@ -2882,6 +2882,18 @@ resolution @jpegxl-rs.work.arch-phase8-6-butteraugli-localization/2 {
     hash "sha256:49975e17bd10998d72b08fccfe98fdea9bdf68ef56e4404dd68e94e1e2d75f23"
 }
 
+resolution @jpegxl-rs.work.arch-phase9-quant-scheduling/1 {
+    slot depends_on
+    to @jpegxl-rs.work.arch-phase8-5-leaf-finishing/8
+    hash "sha256:52b42b9fb9421ffa849f71c3cfa052f6ffade0a2895f84563d515790e41a1801"
+}
+
+resolution @jpegxl-rs.work.arch-phase9-quant-scheduling/1 {
+    slot part_of
+    to @jpegxl-rs.track.encoder-optimization/1
+    hash "sha256:49975e17bd10998d72b08fccfe98fdea9bdf68ef56e4404dd68e94e1e2d75f23"
+}
+
 resolution @jpegxl-rs.work.arch-s8-cover-lane-simd/1 {
     slot implements
     to @jpegxl-rs.decision.encoder-architecture-phases/1
@@ -4827,6 +4839,11 @@ seal @jpegxl-rs.papercut.fff-grep-transport-closed-while-verifying-the/1 {
     hash "sha256:6bd737c9aaab164bd804df849422a0a4715579f34241e869e0a3d6163bdfc5b2"
 }
 
+seal @jpegxl-rs.papercut.fff-multi-grep-again-failed-with-transport/1 {
+    state verified
+    hash "sha256:1f69f0a18642cbe67c872b1798198a386d96299d79ac75753c5c40af07a5f5c6"
+}
+
 seal @jpegxl-rs.papercut.hybrid-intel-plain-cycles-u-records-cpu-atom/1 {
     state verified
     hash "sha256:755f6717193aaa3e7db5eb2e80be2bdd5f5a11ad43b8e53f043610578f902256"
@@ -5275,6 +5292,11 @@ seal @jpegxl-rs.work.arch-phase8-6-butteraugli-localization/2 {
 seal @jpegxl-rs.work.arch-phase8-6-finalist-measured-hf-allocation/1 {
     state abandoned
     hash "sha256:fd26e1b1ea7df18eec7c776233e5567ce273ef675f80e4dc98e421a564b4af0d"
+}
+
+seal @jpegxl-rs.work.arch-phase9-quant-scheduling/1 {
+    state active
+    hash "sha256:48ac3a64beb9a1a747208c2fccbafe1d7911eafa3bb574dcdd595c9b7d3d3ab0"
 }
 
 seal @jpegxl-rs.work.arch-s8-cover-lane-simd/1 {
