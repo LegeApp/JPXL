@@ -127,6 +127,7 @@ pub use source::PreparedFrame;
 pub use jpxl_encode::vardct::plan::RestorationDecision;
 
 use std::sync::Arc;
+use std::{ops::Deref, slice};
 
 /// I.4's per-block-context share of the `non_zeros` contexts.
 const NON_ZEROS_CONTEXTS: u64 = 37;
@@ -474,7 +475,7 @@ fn plan_at_with_cfl(
         retarget_anchor_groups(&mut groups, &aq)?;
         let maps: Vec<&[VarblockDecision]> = groups
             .iter()
-            .map(|(_, _, _, varblocks)| varblocks.as_slice())
+            .map(|(_, _, _, varblocks)| &varblocks[..])
             .collect();
         let cfl = diagnostics::time_stage(diagnostics::StageTimer::Cfl, || {
             estimate_cfl(
@@ -590,7 +591,7 @@ fn plan_at_with_cfl(
                                 )?
                             }
                         };
-                        Ok::<_, PolicyError>((id, blocks, rect, varblocks))
+                        Ok::<_, PolicyError>((id, blocks, rect, PlannedVarblocks::owned(varblocks)))
                     };
                     if let Some(executor) = executor {
                         executor.map_ordered(n_groups, plan_group)
@@ -602,7 +603,7 @@ fn plan_at_with_cfl(
 
         let maps: Vec<&[VarblockDecision]> = groups
             .iter()
-            .map(|(_, _, _, varblocks)| varblocks.as_slice())
+            .map(|(_, _, _, varblocks)| &varblocks[..])
             .collect();
         let cfl = diagnostics::time_stage(diagnostics::StageTimer::Cfl, || {
             estimate_cfl(
@@ -620,7 +621,10 @@ fn plan_at_with_cfl(
 
     if let Some(slot) = capture {
         *slot = Some(StructuralAnchor {
-            groups: groups.clone(),
+            groups: groups
+                .iter()
+                .map(|(id, blocks, rect, varblocks)| (*id, *blocks, *rect, varblocks.shared()))
+                .collect(),
             cfl: Arc::clone(&cfl),
         });
     }
@@ -1108,8 +1112,60 @@ type PlannedGroup = (
     LfGroupId,
     jpxl_encode::vardct::BlockGrid,
     jpxl_encode::vardct::Rect,
-    Vec<VarblockDecision>,
+    PlannedVarblocks,
 );
+
+/// Varblocks owned by a fresh plan, or shared immutably by an anchored probe.
+///
+/// Fresh construction keeps its existing `Vec` ownership. Captured anchors
+/// convert that vector to an `Arc<[VarblockDecision]>`; later probes can then
+/// clone the group map without copying the decisions. Retargeting an `HfMul`
+/// converts only the affected group back to an owned vector.
+#[derive(Clone)]
+enum PlannedVarblocks {
+    Owned(Vec<VarblockDecision>),
+    Shared(Arc<[VarblockDecision]>),
+}
+
+impl PlannedVarblocks {
+    fn owned(values: Vec<VarblockDecision>) -> Self {
+        Self::Owned(values)
+    }
+
+    fn shared(&self) -> Self {
+        match self {
+            Self::Owned(values) => Self::Shared(Arc::from(values.clone().into_boxed_slice())),
+            Self::Shared(values) => Self::Shared(Arc::clone(values)),
+        }
+    }
+
+    fn into_boxed_slice(self) -> Box<[VarblockDecision]> {
+        match self {
+            Self::Owned(values) => values.into_boxed_slice(),
+            Self::Shared(values) => values.to_vec().into_boxed_slice(),
+        }
+    }
+}
+
+impl Deref for PlannedVarblocks {
+    type Target = [VarblockDecision];
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Owned(values) => values,
+            Self::Shared(values) => values,
+        }
+    }
+}
+
+impl<'a> IntoIterator for &'a PlannedVarblocks {
+    type Item = &'a VarblockDecision;
+    type IntoIter = slice::Iter<'a, VarblockDecision>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
 
 /// Quantizer-independent structure reused by the anchored rate presets.
 ///
@@ -1148,7 +1204,11 @@ pub(crate) enum AnchorReuse<'a> {
 
 fn retarget_anchor_groups(groups: &mut [PlannedGroup], aq: &AqSetup) -> Result<()> {
     for (_, _, rect, varblocks) in groups {
-        for varblock in varblocks {
+        let mut retargeted = None;
+        for index in 0..varblocks.len() {
+            let varblock = varblocks.get(index).ok_or(PolicyError::Unsupported {
+                what: "an anchored varblock index outside its group",
+            })?;
             let (rows, cols) = varblock.transform.block_dims();
             let rows = u32::try_from(rows).map_err(|_| PolicyError::Unsupported {
                 what: "an anchored transform height outside u32",
@@ -1156,12 +1216,22 @@ fn retarget_anchor_groups(groups: &mut [PlannedGroup], aq: &AqSetup) -> Result<(
             let cols = u32::try_from(cols).map_err(|_| PolicyError::Unsupported {
                 what: "an anchored transform width outside u32",
             })?;
-            varblock.hf_mul = aq.mul_for_footprint(
+            let hf_mul = aq.mul_for_footprint(
                 rect.x0 / 8 + varblock.origin.bx(),
                 rect.y0 / 8 + varblock.origin.by(),
                 rows,
                 cols,
             );
+            if hf_mul != varblock.hf_mul {
+                let values = retargeted.get_or_insert_with(|| varblocks.to_vec());
+                let slot = values.get_mut(index).ok_or(PolicyError::Unsupported {
+                    what: "an anchored retarget vector shorter than its group",
+                })?;
+                slot.hf_mul = hf_mul;
+            }
+        }
+        if let Some(values) = retargeted {
+            *varblocks = PlannedVarblocks::owned(values);
         }
     }
     Ok(())

@@ -798,6 +798,42 @@ record jpegxl-rs.work.arch-phase22-cfl-arc/1 : work {
     part_of [ @jpegxl-rs.track.encoder-optimization ]
 }
 
+record jpegxl-rs.work.arch-phase23-cow-geometry/1 : work {
+    title "Phase 23: copy-on-write anchored geometry"
+    state active
+    scope [ path "JPXL/crates/jpxl-encode-policy/src/lib.rs", path "JPXL/docs/optimize.md" ]
+    intent "Replace deep copies of anchored varblock vectors with immutable shared storage and a copy-on-write HfMul retarget overlay. Fresh plans keep owned vectors; anchored probes share unchanged structural decisions and materialize only groups whose quantizer-dependent HfMul values differ. Preserve output bytes, decoder behavior, thread determinism, and the current AnchorReuse semantics."
+    note "This is the first bounded slice toward immutable structural geometry plus a quantizer-dependent HfMul overlay. It does not yet change cover selection, CfL, quantization rules, entropy choices, or the wire-facing plan."
+    acceptance {
+        check gates {
+            statement """
+                Workspace build, tests, no-default-features check, formatting, and AKR validation pass; strict Clippy remains isolated to pre-existing blockers.
+                """
+            method command
+        }
+        check identity {
+            statement """
+                Canonical Fast, Balanced, Quality, fallback, one-group, and masking-AQ streams remain byte-identical; decoded pixels and fingerprints are unchanged.
+                """
+            method command
+        }
+        check safety {
+            statement """
+                Focused policy tests, workspace tests, and oracle-backed decoder checks pass; shared storage cannot mutate the captured structure through a probe.
+                """
+            method command
+        }
+        check speed {
+            statement """
+                Pinned interleaved Balanced timing measures the anchored copy-on-write path on canonical mid and large inputs with binary/input hashes and dispersion.
+                """
+            method observation
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase22-cfl-arc ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+}
+
 record jpegxl-rs.work.arch-phase3-forward-cache/1 : work {
     title "Phase 3: eliminate the selected-forward clone; borrow from CandidateForwardCache"
     state superseded

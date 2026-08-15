@@ -273,6 +273,35 @@ is true immutable geometry with a quantizer-dependent `HfMul` overlay; the raw
 default-entropy event tape and Anchored Quality spatial refresh remain gated by
 their counters and quality checks.
 
+## Phase 23 — copy-on-write anchored geometry (2026-08-15)
+
+Anchored probes no longer deep-clone every `VarblockDecision` before checking
+whether its `HfMul` changes. Fresh plans retain owned vectors; captured groups
+convert once to immutable `Arc<[VarblockDecision]>` storage. A reused probe
+shallow-clones the group map, compares the desired multipliers, and materializes
+an owned vector only for a group with an actual retarget. The writer-facing
+`LfGroupPlan` remains an owned box, so this changes allocation ownership without
+changing the cover, CfL, quantization, entropy, or wire decisions.
+
+Fast, Balanced, Quality, and masking-AQ canonical streams remain byte-identical
+to Phase 22, and candidate Balanced, Quality, and large Fast streams independently
+decoded to valid PPM images. The focused policy suite passed all 98 tests.
+
+A pinned interleaved four-thread, five-iteration A/B at Balanced 1 bpp measured
+triplet medians of 900.053 ms baseline versus 841.658 ms candidate on the
+2400×1800 input (6.488% faster), and 1707.062 ms versus 1711.443 ms on
+4000×3000 (0.257% slower). The large result is neutral within host noise, while
+the mid-size result is the useful anchored-copy signal; neither is a libjxl
+parity claim. Output sizes and short fingerprints were identical. Raw hashes,
+timings, output comparisons, and decode checks are in
+`.agent/scratch/phase23-cow-geometry/`.
+
+No new flamegraph was warranted (`paranoid=0`): this is a narrow ownership and
+allocation change with unchanged work selection. The next structural step is a
+true immutable transform-geometry representation plus a compact per-probe
+`HfMul` overlay; selective dirty cover refresh, raw event tapes, and Anchored
+Quality remain later phases.
+
 ### Open architectural questions
 
 1. How can the finalist refresh only structurally unstable cover decisions?
