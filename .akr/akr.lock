@@ -5,7 +5,7 @@ build {
     tool "akr 0.3.0"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:0cfd34a6ec690c09a32fd523b77eab4ad58b625820578af75b242d1323485ed8"
+    source_graph "sha256:42ceafe28febe648c62f68a561885963fb77f466a61a3910f36f8c7e86c31006"
 }
 
 source ".akr/project.akr" {
@@ -29,8 +29,8 @@ source ".akr/records/jpegxl-rs/decisions.akr" {
 }
 
 source ".akr/records/jpegxl-rs/evidence.akr" {
-    hash "sha256:aea193d78bd46702605feba197773caf54000f278d77a21b4439471059ca9a62"
-    records 259
+    hash "sha256:2d3916f9dcbdb96e0a7023c1691a68a54792a797aafe5da5d8c8efda553fa30a"
+    records 263
 }
 
 source ".akr/records/jpegxl-rs/milestones.akr" {
@@ -64,7 +64,7 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:8d55b0647cd417748cdea7107ab6785dc0c3873135346bbc61ec837d7165e887"
+    hash "sha256:bdb29d60ba99a788f7b28226492a8e37eb2f93094d3a9ab7da1010ee3e31565b"
     records 109
 }
 
@@ -3760,6 +3760,26 @@ seal @jpegxl-rs.evidence.phase2-safe-window-narrowing-landed-postcommit/1 {
     hash "sha256:ee8a51d694df7dcbfd53c733fb957ca381f8966b610399032fed6cefb3e8051d"
 }
 
+seal @jpegxl-rs.evidence.phase20-gates-2026-08-15/1 {
+    state verified
+    hash "sha256:08e115a7a6cb2b5896dc208a8a0208661240396f1f8036716e189ea55d8164f6"
+}
+
+seal @jpegxl-rs.evidence.phase20-identity-2026-08-15/1 {
+    state verified
+    hash "sha256:ac30835daa086df542ee20591b0ae4beba8135b276c0ba12060f8ab39d176b43"
+}
+
+seal @jpegxl-rs.evidence.phase20-safety-2026-08-15/1 {
+    state verified
+    hash "sha256:9de2de8aa706264bcde767290323523c0e015ca445e1b7fb1d72158cae8156f0"
+}
+
+seal @jpegxl-rs.evidence.phase20-speed-2026-08-15/1 {
+    state verified
+    hash "sha256:c0fbaf3e325b40c0b58fa1a75c221ebf2dcd2aa863fe1bdf75fbb0eba172ad44"
+}
+
 seal @jpegxl-rs.evidence.phase3-forward-cache-rev2-postcommit/1 {
     state verified
     hash "sha256:e3712dcd06771f43a5e4cc39fa291d8b286dd9c7b72de58b09c9cd69e6b1fc9a"
@@ -5281,8 +5301,8 @@ seal @jpegxl-rs.work.arch-phase2-cfl-quant/2 {
 }
 
 seal @jpegxl-rs.work.arch-phase20-fast-dct8-quantizers/1 {
-    state active
-    hash "sha256:520fcd782358ad6356e09f54f74ad4c1bfb8d773a6c714c434e1d539ccbc5592"
+    state completed
+    hash "sha256:d0e57203f4c6313f56a434023390a2bb9b098f5994d8609955fd9d5e368b12d3"
 }
 
 seal @jpegxl-rs.work.arch-phase3-forward-cache/1 {

@@ -1094,6 +1094,57 @@ record jpegxl-rs.evidence.phase2-safe-window-narrowing-landed-postcommit/1 : evi
         """
 }
 
+record jpegxl-rs.evidence.phase20-gates-2026-08-15/1 : evidence {
+    title "Build, full tests, no-default-features check, and formatting passed. Strict Clippy remains blocked by unchanged jpxl-core excessive-precision and existing policy lint debt; raw output is in clippy-workspace.log and clippy-policy-nodeps.log."
+    state verified
+    result pass
+    method command
+    observed_at git:b7b7a824f77aa62f7b31930a83b183c3988fd3fc
+    command "cargo build --workspace; cargo test --workspace --no-fail-fast; cargo check --workspace --no-default-features; cargo fmt --all --check; cargo clippy --workspace --all-targets -- -D warnings"
+    artifact ".agent/scratch/phase20-fast-dct8-quantizers/gates-final.log"
+    summary """
+        Build, full tests, no-default-features check, and formatting passed. Strict Clippy remains blocked by unchanged jpxl-core excessive-precision and existing policy lint debt; raw output is in clippy-workspace.log and clippy-policy-nodeps.log.
+        """
+}
+
+record jpegxl-rs.evidence.phase20-identity-2026-08-15/1 : evidence {
+    title "Fast mid/large, Balanced/Quality mid, and Fast masking-AQ streams are byte-identical to Phase 19; hashes and sizes are recorded in the scratch summary."
+    state verified
+    result pass
+    method command
+    observed_at git:b7b7a824f77aa62f7b31930a83b183c3988fd3fc
+    command "release Fast/Balanced/Quality encodes; cmp against Phase 19 streams; Fast masking-AQ lane check"
+    artifact ".agent/scratch/phase20-fast-dct8-quantizers/SUMMARY.md"
+    summary """
+        Fast mid/large, Balanced/Quality mid, and Fast masking-AQ streams are byte-identical to Phase 19; hashes and sizes are recorded in the scratch summary.
+        """
+}
+
+record jpegxl-rs.evidence.phase20-safety-2026-08-15/1 : evidence {
+    title "The full workspace suite and decoder/oracle checks passed; Fast remains target-safe and deterministic, and the narrowed transform vocabulary is only reachable under fixed DCT8 cover."
+    state verified
+    result pass
+    method command
+    observed_at git:b7b7a824f77aa62f7b31930a83b183c3988fd3fc
+    command "cargo test --workspace --no-fail-fast; decoder/oracle tests; deterministic Fast encodes"
+    artifact ".agent/scratch/phase20-fast-dct8-quantizers/gates-final.log"
+    summary """
+        The full workspace suite and decoder/oracle checks passed; Fast remains target-safe and deterministic, and the narrowed transform vocabulary is only reachable under fixed DCT8 cover.
+        """
+}
+
+record jpegxl-rs.evidence.phase20-speed-2026-08-15/1 : evidence {
+    title "Pinned interleaved five-iteration Fast screen: mid median 485.844 ms baseline versus 497.810 ms candidate; large median 1177.699 ms versus 1134.649 ms. The mixed result and raw hashes are retained without claiming universal speed parity."
+    state verified
+    result pass
+    method observation
+    observed_at git:b7b7a824f77aa62f7b31930a83b183c3988fd3fc
+    artifact ".agent/scratch/phase20-fast-dct8-quantizers/timing-ab.log"
+    summary """
+        Pinned interleaved five-iteration Fast screen: mid median 485.844 ms baseline versus 497.810 ms candidate; large median 1177.699 ms versus 1134.649 ms. The mixed result and raw hashes are retained without claiming universal speed parity.
+        """
+}
+
 record jpegxl-rs.evidence.phase3-forward-cache-rev2-postcommit/1 : evidence {
     title "Phase-3 rev-2 (rate-loop cache note) re-verified against commit 8541961"
     state verified
