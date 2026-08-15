@@ -416,7 +416,7 @@ record jpegxl-rs.work.arch-phase17-quality-speed-preset/1 : work {
 
 record jpegxl-rs.work.arch-phase18-balanced-entropy-reuse/1 : work {
     title "Phase 18: Reuse Balanced anchor entropy model"
-    state active
+    state completed
     scope [
         path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
         path "JPXL/crates/jpxl-encode-policy/src/rate.rs",
@@ -430,24 +430,28 @@ record jpegxl-rs.work.arch-phase18-balanced-entropy-reuse/1 : work {
                 Balanced is deterministic across one/four threads, never exceeds its target, decodes through djxl, and non-photo fallback paths preserve their prior Quality streams; Fast and Quality reference outputs remain byte-identical.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase18-correctness-2026-08-15/1 ]
         }
         check gates {
             statement """
                 Workspace build, tests, formatting, no-default-features check, and AKR validation pass; any unchanged strict Clippy diagnostics remain isolated and documented.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase18-gates-2026-08-15/1 ]
         }
         check quality {
             statement """
                 Balanced is compared with the retained Phase 17 Balanced/Quality references on both canonical photographs and representative fallback corpus inputs using bytes, PSNR, SSIMULACRA2, Butteraugli, pnorm3, and decoded-pixel acceptance; any trade is recorded.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.phase18-quality-2026-08-15/1 ]
         }
         check speed {
             statement """
                 Pinned interleaved four-thread timings and focused diagnostics show the repeated entropy census/training multiplicity removed, with raw logs and binary/input hashes retained under .agent/scratch.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.phase18-speed-2026-08-15/1 ]
         }
     }
 }

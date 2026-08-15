@@ -894,6 +894,56 @@ record jpegxl-rs.evidence.phase17-speed-2026-08-15/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase18-correctness-2026-08-15/1 : evidence {
+    title "Workspace tests passed; Balanced output is deterministic across one/four threads, target-safe, decoder-accepted, and Fast/Quality retained hashes are unchanged."
+    state verified
+    result pass
+    method command
+    observed_at git:94fae3adfca288e92e157725d90827a94e5dba67
+    command "cargo test --workspace --no-fail-fast; deterministic 1/4-thread and decoder checks from Phase 18 harness"
+    artifact ".agent/scratch/phase18-entropy-reuse/SUMMARY.md"
+    summary """
+        Workspace tests passed; Balanced output is deterministic across one/four threads, target-safe, decoder-accepted, and Fast/Quality retained hashes are unchanged.
+        """
+}
+
+record jpegxl-rs.evidence.phase18-gates-2026-08-15/1 : evidence {
+    title "Final build, full workspace tests, no-default-features check, and formatting all passed; strict Clippy remains blocked only by pre-existing diagnostics documented in the scratch logs."
+    state verified
+    result pass
+    method command
+    observed_at git:94fae3adfca288e92e157725d90827a94e5dba67
+    command "cargo build --workspace && cargo test --workspace --no-fail-fast && cargo check --workspace --no-default-features && cargo fmt --all --check"
+    artifact ".agent/scratch/phase18-entropy-reuse/gates-final.log"
+    summary """
+        Final build, full workspace tests, no-default-features check, and formatting all passed; strict Clippy remains blocked only by pre-existing diagnostics documented in the scratch logs.
+        """
+}
+
+record jpegxl-rs.evidence.phase18-quality-2026-08-15/1 : evidence {
+    title "Canonical 1 bpp Balanced reuse streams are 538646 and 1496087 bytes with SSIMULACRA2 72.3798/83.6276, Butteraugli 3.1908/1.9912, pnorm3 1.0932/0.6393, and PSNR 34.1744/37.9729; fallback corpus streams remain byte-identical to retained Quality outputs."
+    state verified
+    result pass
+    method observation
+    observed_at git:94fae3adfca288e92e157725d90827a94e5dba67
+    artifact ".agent/scratch/phase18-entropy-reuse/SUMMARY.md"
+    summary """
+        Canonical 1 bpp Balanced reuse streams are 538646 and 1496087 bytes with SSIMULACRA2 72.3798/83.6276, Butteraugli 3.1908/1.9912, pnorm3 1.0932/0.6393, and PSNR 34.1744/37.9729; fallback corpus streams remain byte-identical to retained Quality outputs.
+        """
+}
+
+record jpegxl-rs.evidence.phase18-speed-2026-08-15/1 : evidence {
+    title "Pinned interleaved four-thread window measured Balanced reuse medians 0.895 s and 1.87 s versus cjxl e7 0.49 s and 1.20 s, narrowing Phase 17 ratios to 1.83x and 1.56x; diagnostics show one entropy training pass and zero fallback on the canonical photos."
+    state verified
+    result pass
+    method observation
+    observed_at git:94fae3adfca288e92e157725d90827a94e5dba67
+    artifact ".agent/scratch/phase18-entropy-reuse/reuse-window.log"
+    summary """
+        Pinned interleaved four-thread window measured Balanced reuse medians 0.895 s and 1.87 s versus cjxl e7 0.49 s and 1.20 s, narrowing Phase 17 ratios to 1.83x and 1.56x; diagnostics show one entropy training pass and zero fallback on the canonical photos.
+        """
+}
+
 record jpegxl-rs.evidence.phase1b-diag-available-2026-08-13/1 : evidence {
     title "Phase 1B opt-in diagnostics remain available"
     state verified

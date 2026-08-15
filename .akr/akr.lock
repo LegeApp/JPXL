@@ -5,7 +5,7 @@ build {
     tool "akr 0.3.0"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:c107cc62aa2d5fa5622802cff28f44739283ab57f59dac8018bd0c862842a567"
+    source_graph "sha256:b43f73d0255d1dbca579caf967a08635aa3ae37b6764d5fa73fd602bdd6cf7a1"
 }
 
 source ".akr/project.akr" {
@@ -29,8 +29,8 @@ source ".akr/records/jpegxl-rs/decisions.akr" {
 }
 
 source ".akr/records/jpegxl-rs/evidence.akr" {
-    hash "sha256:2de4fdd8f768a6b3ef33b820612ae92243317bcb853d707180f71b986265c29a"
-    records 251
+    hash "sha256:1356838abef0e5801dfd90de84d705d35410426622467fffafdf862a20600a35"
+    records 255
 }
 
 source ".akr/records/jpegxl-rs/milestones.akr" {
@@ -64,7 +64,7 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:a960f256b14b4a4cd1e3d4b88fc802f66e834e2865a188b2361c6f73489cd647"
+    hash "sha256:b47dce613b7c9c2658cc7107ac6548a8b67110eb8dea4ab7e8deec3c8cac2e85"
     records 107
 }
 
@@ -3656,6 +3656,26 @@ seal @jpegxl-rs.evidence.phase17-speed-2026-08-15/1 {
     hash "sha256:2355d947934b38831b806f83b56315625a87bc37325f8ed2cd3cd9abbf988827"
 }
 
+seal @jpegxl-rs.evidence.phase18-correctness-2026-08-15/1 {
+    state verified
+    hash "sha256:c3ce204cc43040bedcea429b956787e871c7f4929473decdeab86e955b98e87f"
+}
+
+seal @jpegxl-rs.evidence.phase18-gates-2026-08-15/1 {
+    state verified
+    hash "sha256:2ce36f752e159ff22cdac039fc3c320fd98afb31e2e6bf1596aa418c48054edc"
+}
+
+seal @jpegxl-rs.evidence.phase18-quality-2026-08-15/1 {
+    state verified
+    hash "sha256:7652257f3dbfbdda2a03ded7f9729f834031eb85821be27bdc635ee1387b7944"
+}
+
+seal @jpegxl-rs.evidence.phase18-speed-2026-08-15/1 {
+    state verified
+    hash "sha256:068a3adc9482c561b58d9300eb6ead65d9601b524daa347ca14c509e00906a4c"
+}
+
 seal @jpegxl-rs.evidence.phase1b-diag-available-2026-08-13/1 {
     state verified
     hash "sha256:160331881a2b049c1692d9108a3a59a7f76a604b1da753c78b53a8ac1162ab91"
@@ -5187,8 +5207,8 @@ seal @jpegxl-rs.work.arch-phase17-quality-speed-preset/1 {
 }
 
 seal @jpegxl-rs.work.arch-phase18-balanced-entropy-reuse/1 {
-    state active
-    hash "sha256:e0105bd4c8a444331573436d35e7ef72382f3f96f4059e9f5bc8adc69658469d"
+    state completed
+    hash "sha256:d8b8ad9ceb094327f49d6894d0a40e21af74384395cf2ae1c8688d80252e2460"
 }
 
 seal @jpegxl-rs.work.arch-phase1b-opt-in-diagnostics/1 {
