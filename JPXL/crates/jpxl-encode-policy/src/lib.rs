@@ -2011,14 +2011,14 @@ impl QuantScratch {
     }
 
     fn resize(&mut self, n: usize, cells: usize) {
+        // Every live element is overwritten below before it is read: LF
+        // transforms fill `lf_scratch`, LF quantization fills `d_y_lf`, the Y
+        // reconstruction fills `d_y_hf`, and each chroma row fills
+        // `chroma_targets`. `resize` still initializes newly grown tails.
         self.d_y_lf.resize(n * n, 0.0);
         self.d_y_hf.resize(cells, 0.0);
         self.lf_scratch.resize(n * n, 0.0);
         self.chroma_targets.resize(cells, 0.0);
-        self.d_y_lf.fill(0.0);
-        self.d_y_hf.fill(0.0);
-        self.lf_scratch.fill(0.0);
-        self.chroma_targets.fill(0.0);
     }
 }
 
@@ -2046,7 +2046,6 @@ fn quantize_square_varblock(
             what: "a coefficient arena slice shorter than three full channels",
         });
     }
-    quant[..cells * NUM_CHANNELS].fill(0);
     qscratch.resize(n, cells);
 
     // Channel layout in `quant`: X | Y | B, each `cells` long.
@@ -2087,14 +2086,17 @@ fn quantize_square_varblock(
             y_coeff.get(cell).copied().unwrap_or(0.0)
         });
     }
-    for cell in 0..cells {
-        if is_llf_cell(cell, side, n) {
-            continue;
-        }
-        let q = qy.get(cell).copied().unwrap_or(0);
-        if let Some(slot) = qscratch.d_y_hf.get_mut(cell) {
-            *slot = hf_quant.reconstruct(q, 1, cell);
-        }
+    // `quantize_lane` writes zero to every LLF cell, so reconstructing the
+    // whole lane both preserves those zeros and avoids a modulo/divide pair
+    // per coefficient just to rediscover the top-left LLF rectangle.
+    for (cell, (q, slot)) in qy
+        .iter()
+        .copied()
+        .zip(qscratch.d_y_hf.iter_mut())
+        .take(cells)
+        .enumerate()
+    {
+        *slot = hf_quant.reconstruct(q, 1, cell);
     }
 
     // --- X and B: X = dX + kX*dY, B = dB + kB*dY (I.6) ---
@@ -2114,16 +2116,20 @@ fn quantize_square_varblock(
             let q = lf_quant.quantize(target, channel)?;
             write_lf(channel, idx, q);
         }
-        qscratch.chroma_targets.resize(cells, 0.0);
-        for cell in 0..cells {
-            let t = if is_llf_cell(cell, side, n) {
-                0.0
-            } else {
-                coeff.get(cell).copied().unwrap_or(0.0)
-                    - k_hf * qscratch.d_y_hf.get(cell).copied().unwrap_or(0.0)
-            };
-            if let Some(slot) = qscratch.chroma_targets.get_mut(cell) {
-                *slot = t;
+        for (row, targets) in qscratch
+            .chroma_targets
+            .chunks_exact_mut(side)
+            .take(side)
+            .enumerate()
+        {
+            let first_hf = if row < n { n.min(side) } else { 0 };
+            let (llf, hf) = targets.split_at_mut(first_hf);
+            llf.fill(0.0);
+            let base = row.saturating_mul(side).saturating_add(first_hf);
+            for (offset, slot) in hf.iter_mut().enumerate() {
+                let cell = base.saturating_add(offset);
+                *slot = coeff.get(cell).copied().unwrap_or(0.0)
+                    - k_hf * qscratch.d_y_hf.get(cell).copied().unwrap_or(0.0);
             }
         }
         hf_quant.quantize_lane(channel, &qscratch.chroma_targets, out, side, n, true)?;

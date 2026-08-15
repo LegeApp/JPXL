@@ -22,6 +22,13 @@ median from 1.93 to 1.91 s (1.0%). The seven canonical Fast codestreams, both
 timing codestreams, and a Quality-preset codestream were byte-identical to
 Phase 11.
 
+The following quantization cleanup removes full-lane clears from scratch and
+output arenas that are overwritten by the same call, and walks chroma HF row
+spans directly instead of dividing every coefficient index to rediscover LLF.
+Fresh PGO A/B against the contiguous-DCT checkpoint improved medians by 0.9%
+at 2400x1800 and 1.5% at 4000x3000. Canonical Fast training outputs and a
+Quality-preset output remain byte-identical.
+
 Fresh four-thread, process-to-process matched-SSIMULACRA2 timing is 1.09 s
 versus cjxl 0.40 s on 2400x1800 (2.73x), and 1.89 s versus 1.05 s on
 4000x3000 (1.80x). The seven-scene 1 bpp screen still has zero fallbacks and
@@ -29,7 +36,9 @@ two corrections; its mean SSIMULACRA2 delta versus Phase 10 is -0.034 points
 and the worst is -0.154. Quality remains available for callers that do not
 want the cumulative speed/quality trade.
 
-The newest 12 MP PGO profile contains 7,762 core-cycle samples with zero lost.
+The newest 12 MP PGO profile, captured immediately before the small
+overwrite-only quantization cleanup, contains 7,762 core-cycle samples with
+zero lost.
 Its largest self-costs are cover scoring 19.5% across two hot closures,
 quantization 16.2% across the chunk closure and lane kernel, contiguous DCT
 rows 6.5% (plus 1.3% in DCT16), forward-varblock preparation 6.5%, pass-group
