@@ -644,7 +644,7 @@ mod tests {
             let mut bank = cache
                 .group(usize::try_from(index).unwrap_or(usize::MAX))
                 .expect("group bank")
-                .lock()
+                .write()
                 .expect("group bank lock");
             let mut d_y_hf = vec![0.0f32; 32 * 32];
             let mut sby = 0u32;
@@ -729,7 +729,7 @@ mod tests {
             let mut bank = cache
                 .group(usize::try_from(index).unwrap_or(usize::MAX))
                 .expect("group bank")
-                .lock()
+                .write()
                 .expect("group bank lock");
             let mut d_y_hf = vec![0.0f32; 32 * 32];
             let mut sby = 0u32;
@@ -824,7 +824,7 @@ mod tests {
             let mut bank = cache_tr
                 .group(usize::try_from(index).unwrap_or(usize::MAX))
                 .expect("group bank")
-                .lock()
+                .write()
                 .expect("group bank lock");
             let mut d_y_hf = vec![0.0f32; 32 * 32];
             let mut sby = 0u32;
@@ -935,7 +935,7 @@ mod tests {
             let mut bank = cache
                 .group(usize::try_from(index).unwrap_or(usize::MAX))
                 .expect("group bank")
-                .lock()
+                .write()
                 .expect("group bank lock");
             let mut d_y_hf = vec![0.0f32; 32 * 32];
             let mut sby = 0u32;

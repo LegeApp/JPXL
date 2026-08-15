@@ -425,7 +425,7 @@ fn plan_at_with_cfl(
                         let rect = geometry.lf_group_rect(id).ok_or(PolicyError::Unsupported {
                             what: "an LF group outside the frame's grid",
                         })?;
-                        let mut bank = cache.group(index_usize)?.lock().map_err(|_| {
+                        let mut bank = cache.group(index_usize)?.write().map_err(|_| {
                             PolicyError::Unsupported {
                                 what: "a poisoned LF-group forward bank",
                             }
@@ -498,6 +498,17 @@ fn plan_at_with_cfl(
 
     let quantized_groups =
         diagnostics::time_stage_units(diagnostics::StageTimer::Quantize, groups.len(), || {
+            if let Some(executor) = executor
+                && executor.resources().parallel_groups()
+                && executor.resources().threads > groups.len()
+            {
+                // Splitting below an LF group pays only when the ordinary
+                // group axis cannot occupy the requested workers. Keep the
+                // lower-overhead whole-group path once it already can.
+                return quantize_groups_parallel(
+                    &groups, &cfl, cache, &lf_quant, &hf_quants, executor,
+                );
+            }
             // As with CfL samples, reserve the frame-sized output arenas on
             // the request thread and transfer ownership to workers only after
             // allocation. This keeps repeated rate probes from accumulating
@@ -518,7 +529,7 @@ fn plan_at_with_cfl(
                 })?;
                 let bank = cache
                     .group(index)?
-                    .lock()
+                    .read()
                     .map_err(|_| PolicyError::Unsupported {
                         what: "a poisoned LF-group forward bank",
                     })?;
@@ -1690,7 +1701,7 @@ impl CandidateGroupBank {
 /// a given (origin, transform) is transformed at most once per request.
 #[derive(Default)]
 pub(crate) struct CandidateForwardCache {
-    groups: Vec<std::sync::Mutex<CandidateGroupBank>>,
+    groups: Vec<std::sync::RwLock<CandidateGroupBank>>,
 }
 
 impl CandidateForwardCache {
@@ -1745,7 +1756,7 @@ impl CandidateForwardCache {
                 .ok_or(PolicyError::Unsupported {
                     what: "an LF group outside the frame's block grid",
                 })?;
-            groups.push(std::sync::Mutex::new(CandidateGroupBank::new(
+            groups.push(std::sync::RwLock::new(CandidateGroupBank::new(
                 rect, blocks,
             )?));
         }
@@ -1753,7 +1764,7 @@ impl CandidateForwardCache {
         Ok(())
     }
 
-    fn group(&self, index: usize) -> Result<&std::sync::Mutex<CandidateGroupBank>> {
+    fn group(&self, index: usize) -> Result<&std::sync::RwLock<CandidateGroupBank>> {
         self.groups.get(index).ok_or(PolicyError::Unsupported {
             what: "a missing LF-group forward bank",
         })
@@ -1762,7 +1773,7 @@ impl CandidateForwardCache {
     fn bank_stat(&self, value: impl Fn(&DenseForwardBank) -> u64) -> u64 {
         self.groups
             .iter()
-            .filter_map(|group| group.lock().ok())
+            .filter_map(|group| group.read().ok())
             .map(|group| {
                 group
                     .banks
@@ -2013,10 +2024,7 @@ fn quantize_square_varblock(
     cfl: VarblockCfl,
     scratch: &mut TransformScratch,
     qscratch: &mut QuantScratch,
-    bx: u32,
-    by: u32,
-    lf_width: u32,
-    lf_planes: &mut [Vec<i32>; NUM_CHANNELS],
+    mut write_lf: impl FnMut(usize, usize, i32),
     quant: &mut [i32],
     truncate: bool,
 ) -> Result<()> {
@@ -2049,14 +2057,7 @@ fn quantize_square_varblock(
     )?;
     for idx in 0..n * n {
         let q = lf_quant.quantize(qscratch.lf_scratch.get(idx).copied().unwrap_or(0.0), 1)?;
-        set_lf(
-            lf_planes,
-            1,
-            bx + u32::try_from(idx % n).unwrap_or(0),
-            by + u32::try_from(idx / n).unwrap_or(0),
-            lf_width,
-            q,
-        );
+        write_lf(1, idx, q);
         if let Some(slot) = qscratch.d_y_lf.get_mut(idx) {
             *slot = lf_quant.reconstruct(q, 1);
         }
@@ -2101,14 +2102,7 @@ fn quantize_square_varblock(
             let target = qscratch.lf_scratch.get(idx).copied().unwrap_or(0.0)
                 - k_lf * qscratch.d_y_lf.get(idx).copied().unwrap_or(0.0);
             let q = lf_quant.quantize(target, channel)?;
-            set_lf(
-                lf_planes,
-                channel,
-                bx + u32::try_from(idx % n).unwrap_or(0),
-                by + u32::try_from(idx / n).unwrap_or(0),
-                lf_width,
-                q,
-            );
+            write_lf(channel, idx, q);
         }
         qscratch.chroma_targets.resize(cells, 0.0);
         for cell in 0..cells {
@@ -2266,7 +2260,7 @@ fn estimate_cfl(
         })?;
         let bank = cache
             .group(index_usize)?
-            .lock()
+            .read()
             .map_err(|_| PolicyError::Unsupported {
                 what: "a poisoned LF-group forward bank",
             })?;
@@ -2657,6 +2651,348 @@ impl QuantWorkspace {
     }
 }
 
+/// One deterministic sub-LF-group quantization range.
+#[derive(Clone, Copy)]
+struct QuantChunk {
+    group: usize,
+    start: usize,
+    end: usize,
+}
+
+/// Quantization keeps enough work queued for load balancing without turning
+/// every 8x8 varblock into a separate Rayon job.
+const QUANT_CHUNKS_PER_WORKER: usize = 4;
+
+fn quantization_chunks(groups: &[PlannedGroup], workers: usize) -> Vec<QuantChunk> {
+    let total_weight = groups
+        .iter()
+        .flat_map(|(_, _, _, varblocks)| varblocks)
+        .map(|vb| {
+            let side = vb.transform.sample_cols();
+            side.saturating_mul(side)
+        })
+        .fold(0usize, usize::saturating_add);
+    let target_chunks = workers
+        .max(1)
+        .saturating_mul(QUANT_CHUNKS_PER_WORKER)
+        .max(groups.len())
+        .max(1);
+    let target_weight = total_weight.div_ceil(target_chunks).max(1);
+    let mut chunks = Vec::with_capacity(target_chunks);
+
+    for (group, (_, _, _, varblocks)) in groups.iter().enumerate() {
+        if varblocks.is_empty() {
+            chunks.push(QuantChunk {
+                group,
+                start: 0,
+                end: 0,
+            });
+            continue;
+        }
+        let mut start = 0usize;
+        let mut weight = 0usize;
+        for (index, vb) in varblocks.iter().enumerate() {
+            let side = vb.transform.sample_cols();
+            let vb_weight = side.saturating_mul(side);
+            if index > start && weight.saturating_add(vb_weight) > target_weight {
+                chunks.push(QuantChunk {
+                    group,
+                    start,
+                    end: index,
+                });
+                start = index;
+                weight = 0;
+            }
+            weight = weight.saturating_add(vb_weight);
+        }
+        chunks.push(QuantChunk {
+            group,
+            start,
+            end: varblocks.len(),
+        });
+    }
+    chunks
+}
+
+/// Large buffers for one sub-LF-group quantization job, allocated on the
+/// request thread before the executor starts it.
+struct QuantChunkWorkspace {
+    lf_values: [Vec<i32>; NUM_CHANNELS],
+    arena: std::sync::Arc<[i32]>,
+    starts: Vec<[usize; NUM_CHANNELS]>,
+    coefficients: Vec<VarblockCoefficients>,
+}
+
+impl QuantChunkWorkspace {
+    fn new(varblocks: &[VarblockDecision]) -> Self {
+        let mut lf_cap = 0usize;
+        let mut arena_cap = 0usize;
+        for vb in varblocks {
+            let n = vb.transform.block_dims().0;
+            let side = vb.transform.sample_cols();
+            lf_cap = lf_cap.saturating_add(n.saturating_mul(n));
+            arena_cap =
+                arena_cap.saturating_add(side.saturating_mul(side).saturating_mul(NUM_CHANNELS));
+        }
+        Self {
+            lf_values: core::array::from_fn(|_| Vec::with_capacity(lf_cap)),
+            arena: vec![0i32; arena_cap].into(),
+            starts: Vec::with_capacity(varblocks.len()),
+            coefficients: Vec::with_capacity(varblocks.len()),
+        }
+    }
+}
+
+struct QuantizedChunk {
+    lf_values: [Vec<i32>; NUM_CHANNELS],
+    coefficients: Vec<VarblockCoefficients>,
+}
+
+struct QuantizedGroupBuilder {
+    lf_planes: [Vec<i32>; NUM_CHANNELS],
+    coefficients: Vec<VarblockCoefficients>,
+}
+
+/// Quantizes cost-balanced varblock ranges across the whole frame, then
+/// reduces their LF patches and coefficient handles in group/raster order.
+/// No task crosses an LF-group bank, and the banks are immutable at this
+/// stage, so multiple ranges from the same group can borrow forwards at once.
+fn quantize_groups_parallel(
+    groups: &[PlannedGroup],
+    cfl: &CflEstimate,
+    cache: &CandidateForwardCache,
+    lf_quant: &LfQuantizer,
+    hf_quants: &HfQuantizers,
+    executor: &jpxl_encode::EncodeExecutor,
+) -> Result<Vec<QuantizedGroup>> {
+    let chunks = quantization_chunks(groups, executor.resources().threads);
+    let workspaces: Vec<_> = chunks
+        .iter()
+        .map(|chunk| {
+            let varblocks = groups
+                .get(chunk.group)
+                .and_then(|(_, _, _, varblocks)| varblocks.get(chunk.start..chunk.end))
+                .unwrap_or(&[]);
+            std::sync::Mutex::new(Some(QuantChunkWorkspace::new(varblocks)))
+        })
+        .collect();
+    let quantize_one = |index: usize| {
+        let chunk = chunks.get(index).copied().ok_or(PolicyError::Unsupported {
+            what: "a missing sub-LF-group quantization range",
+        })?;
+        let (_, _, rect, group_varblocks) =
+            groups.get(chunk.group).ok_or(PolicyError::Unsupported {
+                what: "a missing planned LF group before chunk quantization",
+            })?;
+        let varblocks =
+            group_varblocks
+                .get(chunk.start..chunk.end)
+                .ok_or(PolicyError::Unsupported {
+                    what: "a sub-LF-group quantization range outside its block map",
+                })?;
+        let group_cfl = cfl
+            .groups
+            .get(chunk.group)
+            .ok_or(PolicyError::Unsupported {
+                what: "a missing CfL grid for a quantization chunk",
+            })?;
+        let bank = cache
+            .group(chunk.group)?
+            .read()
+            .map_err(|_| PolicyError::Unsupported {
+                what: "a poisoned LF-group forward bank",
+            })?;
+        let forwards = gather_forward_refs(varblocks, (rect.x0, rect.y0), &bank)?;
+        let workspace = workspaces
+            .get(index)
+            .ok_or(PolicyError::Unsupported {
+                what: "a missing sub-LF-group quantization workspace",
+            })?
+            .lock()
+            .map_err(|_| PolicyError::Unsupported {
+                what: "a poisoned sub-LF-group quantization workspace",
+            })?
+            .take()
+            .ok_or(PolicyError::Unsupported {
+                what: "a sub-LF-group quantization workspace used twice",
+            })?;
+        diagnostics::with_choose_stage(diagnostics::ChooseStage::Final, || {
+            quantize_chunk(
+                lf_quant,
+                hf_quants,
+                &cfl.correlation,
+                group_cfl,
+                varblocks,
+                &forwards,
+                workspace,
+            )
+        })
+    };
+    let quantized_chunks = executor.map_ordered(chunks.len(), quantize_one)?;
+
+    let mut merged: Vec<_> = groups
+        .iter()
+        .map(|(_, blocks, _, varblocks)| {
+            let cells = usize::try_from(blocks.area()).unwrap_or(0);
+            QuantizedGroupBuilder {
+                lf_planes: core::array::from_fn(|_| vec![0i32; cells]),
+                coefficients: Vec::with_capacity(varblocks.len()),
+            }
+        })
+        .collect();
+    for (chunk, quantized) in chunks.iter().copied().zip(quantized_chunks) {
+        let (_, blocks, _, group_varblocks) =
+            groups.get(chunk.group).ok_or(PolicyError::Unsupported {
+                what: "a missing planned LF group during chunk reduction",
+            })?;
+        let varblocks =
+            group_varblocks
+                .get(chunk.start..chunk.end)
+                .ok_or(PolicyError::Unsupported {
+                    what: "a quantized chunk outside its block map during reduction",
+                })?;
+        if quantized.coefficients.len() != varblocks.len() {
+            return Err(PolicyError::Unsupported {
+                what: "a quantized chunk whose coefficient count changed",
+            });
+        }
+        let builder = merged
+            .get_mut(chunk.group)
+            .ok_or(PolicyError::Unsupported {
+                what: "a missing LF-group quantization reduction",
+            })?;
+        let mut lf_cursor = 0usize;
+        for vb in varblocks {
+            let n = vb.transform.block_dims().0;
+            let cells = n.saturating_mul(n);
+            let lf_end = lf_cursor
+                .checked_add(cells)
+                .ok_or(PolicyError::Unsupported {
+                    what: "a quantized LF patch range overflow",
+                })?;
+            for channel in 0..NUM_CHANNELS {
+                let values = quantized
+                    .lf_values
+                    .get(channel)
+                    .and_then(|plane| plane.get(lf_cursor..lf_end))
+                    .ok_or(PolicyError::Unsupported {
+                        what: "a quantized LF patch shorter than its varblock",
+                    })?;
+                for (index, value) in values.iter().copied().enumerate() {
+                    set_lf(
+                        &mut builder.lf_planes,
+                        channel,
+                        vb.origin.bx() + u32::try_from(index % n).unwrap_or(0),
+                        vb.origin.by() + u32::try_from(index / n).unwrap_or(0),
+                        blocks.width,
+                        value,
+                    );
+                }
+            }
+            lf_cursor = lf_end;
+        }
+        if quantized
+            .lf_values
+            .iter()
+            .any(|plane| plane.len() != lf_cursor)
+        {
+            return Err(PolicyError::Unsupported {
+                what: "a quantized chunk with trailing LF patch values",
+            });
+        }
+        builder.coefficients.extend(quantized.coefficients);
+    }
+
+    groups
+        .iter()
+        .zip(merged)
+        .map(|((_, blocks, _, varblocks), merged)| {
+            if merged.coefficients.len() != varblocks.len() {
+                return Err(PolicyError::Unsupported {
+                    what: "an LF-group chunk reduction whose coefficient count changed",
+                });
+            }
+            Ok(QuantizedGroup {
+                lf: LfQuantPlanes::new(*blocks, merged.lf_planes)?,
+                coefficients: merged.coefficients,
+            })
+        })
+        .collect()
+}
+
+fn quantize_chunk(
+    lf_quant: &LfQuantizer,
+    hf_quants: &HfQuantizers,
+    correlation: &LfCorrelationDecision,
+    cfl: &CflGrid,
+    varblocks: &[VarblockDecision],
+    forwards: &[VarblockForward<'_>],
+    mut workspace: QuantChunkWorkspace,
+) -> Result<QuantizedChunk> {
+    if varblocks.len() != forwards.len() {
+        return Err(PolicyError::Unsupported {
+            what: "a forward cache length that does not match a quantization chunk",
+        });
+    }
+    let mut tscratch = TransformScratch::for_transform(TransformType::Dct32x32);
+    let mut qscratch = QuantScratch::new();
+    let mut cursor = 0usize;
+
+    for (vb, fwd) in varblocks.iter().zip(forwards.iter()) {
+        let transform = vb.transform;
+        let side = transform.sample_cols();
+        let ch_cells = side.saturating_mul(side);
+        let span = ch_cells.saturating_mul(NUM_CHANNELS);
+        let end = cursor.saturating_add(span);
+        let slot = std::sync::Arc::get_mut(&mut workspace.arena)
+            .ok_or(PolicyError::Unsupported {
+                what: "a shared coefficient arena before chunk quantization",
+            })?
+            .get_mut(cursor..end)
+            .ok_or(PolicyError::Unsupported {
+                what: "a chunk coefficient arena that ran short of capacity",
+            })?;
+        let (bx, by) = (vb.origin.bx(), vb.origin.by());
+        let factors = varblock_cfl(correlation, cfl, bx, by);
+        let lf_values = &mut workspace.lf_values;
+        quantize_square_varblock(
+            &fwd.coeffs,
+            transform,
+            lf_quant,
+            hf_quants.get(transform, vb.hf_mul)?,
+            factors,
+            &mut tscratch,
+            &mut qscratch,
+            |channel, _index, value| {
+                if let Some(plane) = lf_values.get_mut(channel) {
+                    plane.push(value);
+                }
+            },
+            slot,
+            hf_quants.truncate_trailing,
+        )?;
+        workspace
+            .starts
+            .push([cursor, cursor + ch_cells, cursor + ch_cells * 2]);
+        cursor = end;
+    }
+
+    for (vb, channel_starts) in varblocks.iter().zip(workspace.starts) {
+        workspace
+            .coefficients
+            .push(VarblockCoefficients::from_arena(
+                vb.transform,
+                std::sync::Arc::clone(&workspace.arena),
+                channel_starts,
+            )?);
+    }
+
+    Ok(QuantizedChunk {
+        lf_values: workspace.lf_values,
+        coefficients: workspace.coefficients,
+    })
+}
+
 /// Quantizes one LF group's **selected** varblocks, in their `BlockInfo` order.
 ///
 /// `forwards` are the precomputed coefficient arrays from
@@ -2700,6 +3036,7 @@ fn quantize_group(
             })?;
         let (bx, by) = (vb.origin.bx(), vb.origin.by());
         let factors = varblock_cfl(correlation, cfl, bx, by);
+        let lf_planes = &mut workspace.lf_planes;
         quantize_square_varblock(
             &fwd.coeffs,
             transform,
@@ -2708,10 +3045,16 @@ fn quantize_group(
             factors,
             &mut tscratch,
             &mut qscratch,
-            bx,
-            by,
-            blocks.width,
-            &mut workspace.lf_planes,
+            |channel, idx, value| {
+                set_lf(
+                    lf_planes,
+                    channel,
+                    bx + u32::try_from(idx % transform.block_dims().0).unwrap_or(0),
+                    by + u32::try_from(idx / transform.block_dims().0).unwrap_or(0),
+                    blocks.width,
+                    value,
+                );
+            },
             slot,
             hf_quants.truncate_trailing,
         )?;
