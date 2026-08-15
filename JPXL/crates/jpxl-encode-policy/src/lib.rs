@@ -412,7 +412,14 @@ fn plan_at_with_cfl(
         } else {
             request.quantizer_choice
         };
-    let hf_quants = HfQuantizers::new_with_scales(
+    let fast_fixed_cover =
+        request.rate_preset == RateSearchPreset::Fast && entropy_search.uses_fast_entropy();
+    let quantizer_transforms = if fast_fixed_cover {
+        &FAST_TRANSFORMS[..]
+    } else {
+        &SQUARE_TRANSFORMS[..]
+    };
+    let hf_quants = HfQuantizers::new_with_scales_for_transforms(
         aq.global_scale.get(),
         aq.baseline,
         &aq.muls(),
@@ -422,6 +429,7 @@ fn plan_at_with_cfl(
         request.cover_frequency_weight,
         quantizer_choice,
         request.lambda_scale,
+        quantizer_transforms,
     )?;
     cache.prepare(&geometry)?;
 
@@ -1296,6 +1304,9 @@ const SQUARE_TRANSFORMS: [TransformType; 3] = [
     TransformType::Dct32x32,
 ];
 
+/// The transform vocabulary needed by Fast's fixed-DCT8 cover.
+const FAST_TRANSFORMS: [TransformType; 1] = [TransformType::Dct8x8];
+
 /// The square transform whose footprint is `n` atoms per side, or `None`.
 const fn square_transform(n: u32) -> Option<TransformType> {
     match n {
@@ -1455,6 +1466,7 @@ impl HfQuantizers {
         )
     }
 
+    #[cfg(test)]
     fn new_with_scales(
         global_scale: u32,
         baseline: HfMul,
@@ -1466,11 +1478,41 @@ impl HfQuantizers {
         quantizer_choice: QuantizerChoiceMode,
         lambda_scale: f32,
     ) -> Result<Self> {
+        Self::new_with_scales_for_transforms(
+            global_scale,
+            baseline,
+            muls,
+            x_qm_scale,
+            b_qm_scale,
+            size_penalty,
+            frequency_weight,
+            quantizer_choice,
+            lambda_scale,
+            &SQUARE_TRANSFORMS,
+        )
+    }
+
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the transform vocabulary is an explicit bounded construction input"
+    )]
+    fn new_with_scales_for_transforms(
+        global_scale: u32,
+        baseline: HfMul,
+        muls: &[HfMul],
+        x_qm_scale: u32,
+        b_qm_scale: u32,
+        size_penalty: CoverSizePenalty,
+        frequency_weight: CoverFrequencyWeight,
+        quantizer_choice: QuantizerChoiceMode,
+        lambda_scale: f32,
+        transforms: &[TransformType],
+    ) -> Result<Self> {
         let defaults = DequantMatrices::all_default().map_err(|_| PolicyError::Unsupported {
             what: "the I.2.5 default dequantization matrices",
         })?;
-        let mut by_key = Vec::with_capacity(SQUARE_TRANSFORMS.len() * muls.len());
-        for transform in SQUARE_TRANSFORMS {
+        let mut by_key = Vec::with_capacity(transforms.len() * muls.len());
+        for &transform in transforms {
             let matrices: [DequantMatrix; NUM_CHANNELS] = [
                 defaults
                     .for_transform(transform, 0)

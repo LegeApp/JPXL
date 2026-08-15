@@ -681,6 +681,41 @@ record jpegxl-rs.work.arch-phase2-cfl-quant/2 : work {
     supported_by [ @jpegxl-rs.assessment.encoder-architecture-outside-advice ]
 }
 
+record jpegxl-rs.work.arch-phase20-fast-dct8-quantizers/1 : work {
+    title "Phase 20: Fast builds only fixed-DCT8 quantizers"
+    state active
+    scope [ path "JPXL/crates/jpxl-encode-policy/src/lib.rs", path "JPXL/docs/optimize.md" ]
+    intent "Avoid constructing DCT16x16 and DCT32x32 HF quantizer tables on the Fast preset's fixed-DCT8 path. Keep the transform vocabulary and all output decisions unchanged for Fast, while leaving Balanced and Quality on the full square vocabulary. Retain only if canonical Fast streams, Balanced/Quality streams, fallback behavior, decoder acceptance, and deterministic output remain byte-identical with a measurable Fast timing improvement."
+    acceptance {
+        check gates {
+            statement """
+                Workspace build, no-default-features check, formatting, and AKR validation pass; unchanged strict Clippy blockers remain isolated.
+                """
+            method command
+        }
+        check identity {
+            statement """
+                Fast canonical streams remain byte-identical to the Phase 19 release, and Balanced/Quality plus fallback streams remain unchanged.
+                """
+            method command
+        }
+        check safety {
+            statement """
+                Workspace tests and independent decoder/oracle checks pass; Fast remains target-safe and deterministic across one/four threads.
+                """
+            method command
+        }
+        check speed {
+            statement """
+                A pinned interleaved release comparison measures the Fast target-rate path against the Phase 19 baseline on the canonical mid and large photographs.
+                """
+            method observation
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase19-dequant-matrix-reuse ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+}
+
 record jpegxl-rs.work.arch-phase3-forward-cache/1 : work {
     title "Phase 3: eliminate the selected-forward clone; borrow from CandidateForwardCache"
     state superseded

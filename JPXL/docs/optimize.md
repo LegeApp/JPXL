@@ -193,6 +193,29 @@ fixed-DCT8-only quantizer construction, completed-cache scratch removal, and
 immutable structural geometry before the higher-risk raw event tape and
 Anchored Quality spatial refresh.
 
+## Phase 20 — Fast-only DCT8 quantizer construction (2026-08-15)
+
+Fast already forces a fixed DCT8x8 cover, so its planner now builds only the
+DCT8x8 HF quantizer tables. Balanced and Quality still receive the complete
+DCT8/DCT16/DCT32 square vocabulary. The branch is selected from the same
+Fast-plus-fast-entropy condition that selects fixed cover and nearest
+quantization; no transform decision or emitted value changes.
+
+Fast mid and large streams remain byte-identical to Phase 19, as do Balanced
+and Quality. A Fast masking-AQ encode also compares byte-for-byte, covering the
+multiple-`HfMul` construction. In a pinned interleaved five-iteration screen,
+Fast large improved from a 1177.699 ms baseline median to 1134.649 ms (3.7%),
+while mid measured 485.844 ms versus 497.810 ms; the mixed result is retained
+with raw logs rather than treated as a universal speed claim. This is still a
+useful output-preserving Fast-tier cleanup because the unreachable transform
+tables are removed without narrowing Balanced or Quality. Raw hashes, streams,
+and timings are under `.agent/scratch/phase20-fast-dct8-quantizers/`.
+
+No new flamegraph was warranted for this small construction-only change. Next
+items remain completed-cache scratch removal, immutable structural geometry,
+and then the raw default-entropy event tape before the higher-risk Anchored
+Quality spatial refresh.
+
 ### Open architectural questions
 
 1. How can the finalist refresh only structurally unstable cover decisions?
