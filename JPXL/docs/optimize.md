@@ -8,11 +8,13 @@ progress exposes an architectural limit that local profiling does not answer.
 
 The runtime `fast` lossy preset uses two exact navigation anchors, a fitted
 log-rate prediction, one freshly rebuilt default-entropy finalist, and at most
-one exact correction. Navigation retains the production hierarchical cover but
-uses neutral CfL; the finalist restores the full CfL search. Its exact retained
-Store emission is now also its size verification, removing a redundant Count
-traversal. Normal builds include Fast, while `quality` remains the exhaustive
-default. Fast permits up to 3% target undershoot but never exceeds the target.
+one exact correction. Fast probes now use only the legacy hybrid-uint
+configuration, fixed DCT8x8 cover selection, and nearest HF quantization; this
+is an intentional speed tier. Its exact retained Store emission is still its
+size verification, removing a redundant Count traversal. Normal builds include
+Fast, while `quality` remains the exhaustive default with hierarchical cover,
+full hybrid-uint search, and trailing quantization. Fast permits up to 3%
+target undershoot but never exceeds the target.
 
 The forward 2-D DCT now transposes around each separable pass so its 1-D
 kernels operate on contiguous rows while preserving the original
@@ -56,6 +58,26 @@ pass-group writing 4.7%, entropy tables 4.1%, ANS 3.9%, census 3.5%, and CfL
 3.0%. Region parallelism closes the mid-size worker-underfill gap without
 reducing the total cover work.
 
+Phase 15 then made the Fast tier structurally cheaper while leaving Quality
+byte-identical. Against the retained Phase 14 PGO binary, the final interleaved
+screen improved the 2400x1800 median from 1.24 to 0.75 s (39.5%) and the
+4000x3000 median from 2.35 to 1.83 s (22.1%). The Fast outputs are deterministic
+between one and four threads (mid hash
+`9022bd5482e9c9bfb6ace0ce6211c2f1e83e79a82a2849e5a026e94fa7b344b9`) and the
+Quality output remains hash
+`d4b03810d0bcb73981bb559815c8952eda0fbe2b27040abf8c99d4792c98c2fa`.
+
+The matched process window measured Fast at 0.69 s versus cjxl 0.50 s on
+2400x1800 (1.38x), and 1.80 s versus 1.30 s on 4000x3000 (1.38x). This is not
+a matched-quality comparison: the relaxed Fast tier scored SSIMULACRA2
+69.8750/80.3353 and Butteraugli 3.6753/2.8892 at 1 bpp, while Quality remains
+available when that loss is unacceptable. A fresh 2400x1800 Fast profile has
+4,029 core-cycle samples with zero lost; its largest self-costs are SIMD lane
+quantization 13.3%, pass-group writing 9.5%, ANS 6.3%, entropy-table building
+6.2%, census 5.7%, quantization-group orchestration 5.5%, CfL 4.6%, and forward
+DCT 2.7%. A one-cluster static entropy experiment was rejected after it lowered
+Fast SSIMULACRA2 to 64.7/77.0 despite a further speed gain.
+
 ### Open architectural questions
 
 1. How can the finalist refresh only structurally unstable cover decisions?
@@ -79,6 +101,10 @@ reducing the total cover work.
 5. Can an inexpensive confidence signal identify the one corpus class where
    Fast loses about 0.8 SSIMULACRA2 points and route it to Quality, without
    first doing the exhaustive search that the preset exists to avoid?
+6. The fixed-cover Fast tier is now about 1.4x cjxl on the measured window but
+   intentionally gives up roughly two SSIMULACRA2 points on the mid image.
+   Can a cheap variance or cover-margin signal selectively restore larger
+   transforms without bringing back the full hierarchical scorer?
 
 ## Original advisor verdict
 

@@ -389,6 +389,16 @@ fn plan_at_with_cfl(
         aq.quant_lf.get(),
         LfDecision::vardct_neutral().extra_precision,
     );
+    // Trailing-truncation is the target-rate Quality policy, but it requires
+    // a backwards nonzero scan for every selected block. Fast navigation uses
+    // the already-vectorized nearest choice; Quality and Full fallback retain
+    // the promoted truncation policy exactly.
+    let quantizer_choice =
+        if request.rate_preset == RateSearchPreset::Fast && entropy_search.uses_fast_entropy() {
+            QuantizerChoiceMode::Nearest
+        } else {
+            request.quantizer_choice
+        };
     let hf_quants = HfQuantizers::new_with_scales(
         aq.global_scale.get(),
         aq.baseline,
@@ -397,10 +407,23 @@ fn plan_at_with_cfl(
         request.b_qm_scale.get(),
         request.cover_size_penalty,
         request.cover_frequency_weight,
-        request.quantizer_choice,
+        quantizer_choice,
         request.lambda_scale,
     )?;
     cache.prepare(&geometry)?;
+
+    // Fast navigation is deliberately allowed a cheaper structural policy.
+    // Fixed 8x8 blocks avoid the hierarchical cover's transform-bank scoring
+    // throughout Fast navigation and finalist planning. The Quality request
+    // keeps its configured mode. This is a preset-only trade: no Quality/Full
+    // plan can enter this arm because those requests do not carry
+    // `RateSearchPreset::Fast` here.
+    let cover_mode =
+        if request.rate_preset == RateSearchPreset::Fast && entropy_search.uses_fast_entropy() {
+            CoverMode::FixedDct8x8
+        } else {
+            request.budget.cover_mode
+        };
 
     // The cover is selected before chroma-from-luma is estimated: the estimate
     // regresses over the coefficients of the *selected* transforms, so the
@@ -444,7 +467,7 @@ fn plan_at_with_cfl(
                         let rect = geometry.lf_group_rect(id).ok_or(PolicyError::Unsupported {
                             what: "an LF group outside the frame's grid",
                         })?;
-                        let varblocks = match request.budget.cover_mode {
+                        let varblocks = match cover_mode {
                             CoverMode::FixedDct8x8 => {
                                 let mut varblocks = block::fixed_dct8x8(blocks, aq.baseline)?;
                                 for vb in &mut varblocks {
@@ -694,7 +717,13 @@ fn plan_at_with_cfl(
     // Slice 18 / 18b: train under the default I.2.2 map, then optionally
     // adopt custom coefficient orders on an exact price win (Full only).
     let with_default = diagnostics::time_stage(diagnostics::StageTimer::Entropy, || {
-        train_entropy_with_orders(provisional.clone(), &geometry, entropy_search, executor)
+        train_entropy_with_orders(
+            provisional.clone(),
+            &geometry,
+            entropy_search,
+            executor,
+            request.rate_preset == RateSearchPreset::Fast,
+        )
     })?;
 
     // Fast rate probes stop here: default map + natural orders is an upper
@@ -717,7 +746,7 @@ fn plan_at_with_cfl(
         let mut custom_walk = provisional.clone();
         custom_walk.entropy = entropy_plan(&geometry, placeholder_histograms(), candidate_bc)?;
         let mut with_custom = diagnostics::time_stage(diagnostics::StageTimer::Entropy, || {
-            train_entropy_with_orders(custom_walk, &geometry, EntropySearch::Full, executor)
+            train_entropy_with_orders(custom_walk, &geometry, EntropySearch::Full, executor, false)
         })?;
         let best_size = best.exact_size(executor)?;
         let custom_size = with_custom.exact_size(executor)?;
@@ -753,7 +782,7 @@ fn plan_at_with_cfl(
         }
         if let Ok(mut with_presets) =
             diagnostics::time_stage(diagnostics::StageTimer::Entropy, || {
-                train_entropy_with_orders(multi, &geometry, EntropySearch::Full, executor)
+                train_entropy_with_orders(multi, &geometry, EntropySearch::Full, executor, false)
             })
         {
             let best_size = best.exact_size(executor)?;
@@ -847,12 +876,17 @@ fn price_default_and_custom(
         )?,
         SectionLayout::for_geometry(geometry),
     );
-    let mut with_default =
-        train_entropy_with_orders(provisional.clone(), geometry, EntropySearch::Full, None)?;
+    let mut with_default = train_entropy_with_orders(
+        provisional.clone(),
+        geometry,
+        EntropySearch::Full,
+        None,
+        false,
+    )?;
     let mut custom_walk = provisional;
     custom_walk.entropy = entropy_plan(geometry, placeholder_histograms(), candidate)?;
     let mut with_custom =
-        train_entropy_with_orders(custom_walk, geometry, EntropySearch::Full, None)?;
+        train_entropy_with_orders(custom_walk, geometry, EntropySearch::Full, None, false)?;
     Ok((
         with_default.exact_size(None)?,
         with_custom.exact_size(None)?,
@@ -866,12 +900,19 @@ fn train_entropy_with_orders(
     geometry: &VardctGeometry,
     entropy_search: EntropySearch,
     executor: Option<&jpxl_encode::EncodeExecutor>,
+    fast_hybrid_uint: bool,
 ) -> Result<TrainedEntropyCandidate> {
     if entropy_search.uses_fast_entropy() {
         diagnostics::note_census();
         diagnostics::note_entropy_training();
-        let natural =
-            train_entropy_for_orders(provisional, geometry, OrderSet::natural(), executor)?;
+        let natural = train_entropy_for_orders(
+            provisional,
+            geometry,
+            OrderSet::natural(),
+            entropy_search,
+            executor,
+            fast_hybrid_uint,
+        )?;
         return Ok(TrainedEntropyCandidate::unpriced(natural));
     }
 
@@ -880,8 +921,14 @@ fn train_entropy_with_orders(
     if orders.overrides().is_empty() {
         diagnostics::note_census();
         diagnostics::note_entropy_training();
-        let natural =
-            train_entropy_for_orders(provisional, geometry, OrderSet::natural(), executor)?;
+        let natural = train_entropy_for_orders(
+            provisional,
+            geometry,
+            OrderSet::natural(),
+            entropy_search,
+            executor,
+            fast_hybrid_uint,
+        )?;
         return Ok(TrainedEntropyCandidate::unpriced(natural));
     }
     diagnostics::note_order_candidate();
@@ -906,7 +953,9 @@ fn train_entropy_with_orders(
                 provisional.clone(),
                 geometry,
                 candidate_orders,
+                entropy_search,
                 Some(executor),
+                fast_hybrid_uint,
             )
         })?;
         let mut candidates = candidates.into_iter();
@@ -918,9 +967,22 @@ fn train_entropy_with_orders(
         })?;
         (natural, reordered)
     } else {
-        let natural =
-            train_entropy_for_orders(provisional.clone(), geometry, OrderSet::natural(), executor)?;
-        let reordered = train_entropy_for_orders(provisional, geometry, orders, executor)?;
+        let natural = train_entropy_for_orders(
+            provisional.clone(),
+            geometry,
+            OrderSet::natural(),
+            entropy_search,
+            executor,
+            fast_hybrid_uint,
+        )?;
+        let reordered = train_entropy_for_orders(
+            provisional,
+            geometry,
+            orders,
+            entropy_search,
+            executor,
+            fast_hybrid_uint,
+        )?;
         (natural, reordered)
     };
 
@@ -940,7 +1002,9 @@ fn train_entropy_for_orders(
     mut provisional: EmissionPlan,
     geometry: &VardctGeometry,
     orders: OrderSet,
+    entropy_search: EntropySearch,
     executor: Option<&jpxl_encode::EncodeExecutor>,
+    fast_hybrid_uint: bool,
 ) -> Result<ValidatedEmissionPlan> {
     if let Some(pass) = provisional.entropy.passes.first_mut() {
         pass.orders = orders.clone();
@@ -958,7 +1022,11 @@ fn train_entropy_for_orders(
     } else {
         census_frame(&provisional, geometry)?
     };
-    let model = entropy::train(&census)?;
+    let model = if fast_hybrid_uint && entropy_search.uses_fast_entropy() {
+        entropy::train_fast(&census)?
+    } else {
+        entropy::train(&census)?
+    };
     // Arc-clone spatial/quantized; only entropy is rebuilt.
     Ok(validate(EmissionPlan {
         entropy: trained_entropy_plan(

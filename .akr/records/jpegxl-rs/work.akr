@@ -286,6 +286,45 @@ record jpegxl-rs.work.arch-phase14-region-cover-parallel/1 : work {
     part_of [ @jpegxl-rs.track.encoder-optimization ]
 }
 
+record jpegxl-rs.work.arch-phase15-fast-entropy/1 : work {
+    title "Phase 15: Fast entropy and structural speed tier"
+    state proposed
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/src/entropy.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/docs/optimize.md"
+    ]
+    intent "Make the Fast preset a deliberate speed tier: retain deterministic clustered entropy training with only the legacy default hybrid-uint configuration, fixed DCT8x8 cover selection, and nearest HF quantization during Fast probes. Keep Quality and Full entropy, hierarchical cover search, and trailing quantization exhaustive. Retain the change only if Fast codestreams remain valid, target-safe, deterministic, and materially faster while Quality remains byte-identical."
+    acceptance {
+        check determinism {
+            statement """
+                Fast and Quality codestreams remain byte-identical across one and four threads on canonical and multi-group inputs, and every Fast output remains decodable.
+                """
+            method command
+        }
+        check gates {
+            statement """
+                Workspace build, tests, formatting, no-default-features check, lint-delta review, and AKR validation pass or isolate pre-existing blockers.
+                """
+            method command
+        }
+        check quality {
+            statement """
+                Matched-quality Fast output remains target-safe and its SSIMULACRA2/Butteraugli deltas are recorded against the Phase 14 baseline; Quality remains unchanged.
+                """
+            method observation
+        }
+        check speed {
+            statement """
+                Fresh interleaved PGO timing shows a material Fast improvement at 2400x1800 without a material 4000x3000 regression.
+                """
+            method observation
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase14-region-cover-parallel ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+}
+
 record jpegxl-rs.work.arch-phase1b-opt-in-diagnostics/1 : work {
     title "Phase 1B: make architecture diagnostics opt-in"
     state superseded

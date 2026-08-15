@@ -65,6 +65,10 @@ const CANDIDATE_CONFIGS: &[(u32, u32, u32)] = &[
     (6, 2, 0),
 ];
 
+/// The Fast preset keeps the legacy wire configuration and skips the other
+/// hybrid-uint candidates. Full/Quality still search [`CANDIDATE_CONFIGS`].
+const FAST_CANDIDATE_CONFIGS: &[(u32, u32, u32)] = &[(4, 2, 0)];
+
 /// Estimated fixed bits to serialize one histogram (C.2.5 preamble, counts
 /// header, ANS bookkeeping).
 const HISTOGRAM_FIXED_BITS: f64 = 40.0;
@@ -204,9 +208,17 @@ fn data_cost(values: &[(u32, u64)], config: (u32, u32, u32)) -> Option<f64> {
 }
 
 /// The cheapest configuration for `values` and its total cost.
+#[cfg(test)]
 fn best_config(values: &[(u32, u64)]) -> (f64, (u32, u32, u32)) {
+    best_config_with(values, CANDIDATE_CONFIGS)
+}
+
+fn best_config_with(
+    values: &[(u32, u64)],
+    candidates: &[(u32, u32, u32)],
+) -> (f64, (u32, u32, u32)) {
     let mut best = (f64::INFINITY, (4u32, 2u32, 0u32));
-    for &candidate in CANDIDATE_CONFIGS {
+    for &candidate in candidates {
         if let Some(cost) = data_cost(values, candidate)
             && cost < best.0
         {
@@ -512,6 +524,20 @@ fn propose_qf_thresholds(spatial: &SpatialPlan) -> Vec<u32> {
 /// Only [`HistogramPlan::new`]'s own rejection of an empty alphabet, which a
 /// census with at least one counted event cannot produce.
 pub(crate) fn train(census: &CensusSink) -> PlanResult<TrainedModel> {
+    train_with_configs(census, CANDIDATE_CONFIGS)
+}
+
+/// Trains the deterministic cluster map with only the legacy hybrid-uint
+/// configuration. This is used by Fast probes; Full/Quality call [`train`]
+/// and retain the complete configuration search.
+pub(crate) fn train_fast(census: &CensusSink) -> PlanResult<TrainedModel> {
+    train_with_configs(census, FAST_CANDIDATE_CONFIGS)
+}
+
+fn train_with_configs(
+    census: &CensusSink,
+    candidates: &[(u32, u32, u32)],
+) -> PlanResult<TrainedModel> {
     // Step 1: live pre-contexts, one cluster each.
     let mut clusters: Vec<Cluster> = Vec::new();
     let mut context_cluster: Vec<Option<usize>> = vec![None; census.len()];
@@ -525,7 +551,7 @@ pub(crate) fn train(census: &CensusSink) -> PlanResult<TrainedModel> {
         if values.is_empty() {
             continue;
         }
-        let (cost, config) = best_config(&values);
+        let (cost, config) = best_config_with(&values, candidates);
         if let Some(slot) = context_cluster.get_mut(index) {
             *slot = Some(clusters.len());
         }
@@ -571,7 +597,7 @@ pub(crate) fn train(census: &CensusSink) -> PlanResult<TrainedModel> {
             return;
         };
         let merged = merge_values(&ca.values, &cb.values);
-        let (merged_cost, _) = best_config(&merged);
+        let (merged_cost, _) = best_config_with(&merged, candidates);
         let saving = ca.cost + cb.cost + CLUSTER_OVERHEAD_BITS - merged_cost;
         if saving > 0.0 {
             queue.push(((saving * 256.0) as i64, a, b, ca.generation, cb.generation));
@@ -595,7 +621,7 @@ pub(crate) fn train(census: &CensusSink) -> PlanResult<TrainedModel> {
             continue;
         }
         let merged = merge_values(&ca.values, &cb.values);
-        let (merged_cost, merged_config) = best_config(&merged);
+        let (merged_cost, merged_config) = best_config_with(&merged, candidates);
         if ca.cost + cb.cost + CLUSTER_OVERHEAD_BITS - merged_cost <= 0.0 {
             continue;
         }
@@ -650,7 +676,7 @@ pub(crate) fn train(census: &CensusSink) -> PlanResult<TrainedModel> {
                 continue;
             };
             let merged = merge_values(&ca.values, &cb.values);
-            let (merged_cost, _) = best_config(&merged);
+            let (merged_cost, _) = best_config_with(&merged, candidates);
             let loss = merged_cost - ca.cost - cb.cost;
             if best.is_none_or(|(l, _, _)| loss < l) {
                 best = Some((loss, a, b));
@@ -662,7 +688,7 @@ pub(crate) fn train(census: &CensusSink) -> PlanResult<TrainedModel> {
             .zip(clusters.get(b))
             .map(|(ca, cb)| merge_values(&ca.values, &cb.values))
             .unwrap_or_default();
-        let (merged_cost, merged_config) = best_config(&merged);
+        let (merged_cost, merged_config) = best_config_with(&merged, candidates);
         let mut moved = clusters
             .get(b)
             .map(|c| c.contexts.clone())
