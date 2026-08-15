@@ -202,6 +202,11 @@ pub(crate) enum EntropySearch {
     /// orders, attributed to the finalist phase but without Full alternatives.
     #[cfg(feature = "anchor-sketch")]
     FinalFast,
+    /// Reuse an entropy model supplied by the anchored controller. The
+    /// provisional model is retained only until the caller overlays the
+    /// trained model; no census or entropy training is performed here.
+    #[cfg(feature = "anchor-sketch")]
+    Reuse,
     /// Slice-18 alternatives with exact-price adopt gates.
     Full,
 }
@@ -212,6 +217,8 @@ impl EntropySearch {
             Self::Fast => true,
             #[cfg(feature = "anchor-sketch")]
             Self::FinalFast => true,
+            #[cfg(feature = "anchor-sketch")]
+            Self::Reuse => true,
             Self::Full => false,
         }
     }
@@ -246,7 +253,7 @@ pub(crate) fn plan_at(
         &mut cache,
         EntropySearch::Full,
         Some(&executor),
-        None,
+        AnchorReuse::None,
         None,
     )
 }
@@ -273,12 +280,12 @@ pub(crate) fn plan_at_on(
         cache,
         entropy,
         executor,
-        None,
+        AnchorReuse::None,
         None,
     )
 }
 
-/// Fast-preset planning entry point with an optional reusable spatial anchor.
+/// Fast-preset planning entry point with an explicit reusable spatial anchor.
 ///
 /// Navigation captures the selected cover and CfL policy, then reuses those
 /// choices while retargeting quantizer-dependent `HfMul` values. The Fast
@@ -297,7 +304,7 @@ pub(crate) fn plan_at_on_anchor(
     cache: &mut CandidateForwardCache,
     entropy: EntropySearch,
     executor: Option<&jpxl_encode::EncodeExecutor>,
-    anchor: Option<&StructuralAnchor>,
+    reuse: AnchorReuse<'_>,
     capture: Option<&mut Option<StructuralAnchor>>,
 ) -> Result<ValidatedEmissionPlan> {
     plan_at_with_cfl(
@@ -310,7 +317,7 @@ pub(crate) fn plan_at_on_anchor(
         cache,
         entropy,
         executor,
-        anchor,
+        reuse,
         capture,
     )
 }
@@ -337,7 +344,7 @@ fn plan_at_with_cfl(
     cache: &mut CandidateForwardCache,
     entropy_search: EntropySearch,
     executor: Option<&jpxl_encode::EncodeExecutor>,
-    anchor: Option<&StructuralAnchor>,
+    reuse: AnchorReuse<'_>,
     capture: Option<&mut Option<StructuralAnchor>>,
 ) -> Result<ValidatedEmissionPlan> {
     // Phase-0: one clean snapshot per plan_at (rate probes overwrite; last wins).
@@ -347,6 +354,10 @@ fn plan_at_with_cfl(
             what: "epf_iters outside 0..=3",
         });
     }
+    debug_assert!(
+        request.rate_preset != RateSearchPreset::Quality || matches!(reuse, AnchorReuse::None),
+        "Quality must not receive a globally frozen structural anchor"
+    );
 
     let decision = FrameDecision {
         width: frame.width(),
@@ -433,7 +444,7 @@ fn plan_at_with_cfl(
     // Cover selection, then one forward transform per *selected* varblock.
     // CfL estimation and HF quantization both consume those coefficients so
     // a selected DCT is not recomputed (Opt-V within-probe cache).
-    let (groups, cfl) = if let Some(anchor) = anchor {
+    let (groups, cfl) = if let AnchorReuse::CoverAndCfl(anchor) = reuse {
         if anchor.groups.len() != usize::try_from(geometry.num_lf_groups()).unwrap_or(usize::MAX) {
             return Err(PolicyError::Unsupported {
                 what: "a structural anchor whose LF-group count changed",
@@ -442,6 +453,30 @@ fn plan_at_with_cfl(
         let mut groups = anchor.groups.clone();
         retarget_anchor_groups(&mut groups, &aq)?;
         (groups, anchor.cfl.clone())
+    } else if let AnchorReuse::CoverOnly(anchor) = reuse {
+        if anchor.groups.len() != usize::try_from(geometry.num_lf_groups()).unwrap_or(usize::MAX) {
+            return Err(PolicyError::Unsupported {
+                what: "a structural anchor whose LF-group count changed",
+            });
+        }
+        let mut groups = anchor.groups.clone();
+        retarget_anchor_groups(&mut groups, &aq)?;
+        let maps: Vec<&[VarblockDecision]> = groups
+            .iter()
+            .map(|(_, _, _, varblocks)| varblocks.as_slice())
+            .collect();
+        let cfl = diagnostics::time_stage(diagnostics::StageTimer::Cfl, || {
+            estimate_cfl(
+                &geometry,
+                &maps,
+                cache,
+                &lf_quant,
+                &hf_quants,
+                enable_cfl && !frame.is_grayscale(),
+                executor,
+            )
+        })?;
+        (groups, cfl)
     } else {
         // Phase 8.2: every LF group owns independent dense transform banks.
         // Cover construction can therefore run on the request executor without
@@ -906,6 +941,10 @@ fn train_entropy_with_orders(
     executor: Option<&jpxl_encode::EncodeExecutor>,
     fast_hybrid_uint: bool,
 ) -> Result<TrainedEntropyCandidate> {
+    #[cfg(feature = "anchor-sketch")]
+    if matches!(entropy_search, EntropySearch::Reuse) {
+        return Ok(TrainedEntropyCandidate::unpriced(validate(provisional)?));
+    }
     if entropy_search.uses_fast_entropy() {
         diagnostics::note_census();
         diagnostics::note_entropy_training();
@@ -1064,13 +1103,36 @@ type PlannedGroup = (
 /// Quantizer-independent structure reused by the anchored rate presets.
 ///
 /// The cover and CfL factors follow the policy chosen for the captured plan.
-/// Reused probes update every varblock's quantizer-dependent `HfMul`, but keep
-/// the cover and CfL fixed. Navigation captures neutral CfL; an exact
-/// correction, when needed, reuses only the freshly planned full-CfL finalist.
+/// Reused probes update every varblock's quantizer-dependent `HfMul`; the
+/// explicit [`AnchorReuse`] policy decides whether the cover and/or CfL is
+/// refreshed. Navigation captures neutral CfL for Fast and configured CfL for
+/// Balanced. Anchored-Quality experiments can reuse only the cover and
+/// re-estimate CfL at the finalist.
 #[derive(Clone)]
 pub(crate) struct StructuralAnchor {
     groups: Vec<PlannedGroup>,
     cfl: CflEstimate,
+}
+
+/// Which parts of a captured structural plan a later probe may reuse.
+///
+/// The policy is explicit because a globally frozen cover and CfL is a
+/// quality trade, not an implementation detail. `CoverOnly` is the bounded
+/// middle ground for a fresh-CfL finalist; `CoverAndCfl` is reserved for the
+/// current Balanced/fast anchored paths. Quality's exhaustive path always
+/// uses `None`.
+#[derive(Clone, Copy)]
+pub(crate) enum AnchorReuse<'a> {
+    /// Build both cover and CfL for this probe.
+    None,
+    /// Reuse the cover, but estimate fresh CfL factors for this quantizer.
+    #[allow(
+        dead_code,
+        reason = "Anchored Quality will use cover-only reuse after its fresh-CfL gate is measured"
+    )]
+    CoverOnly(&'a StructuralAnchor),
+    /// Reuse both cover and CfL from the captured probe.
+    CoverAndCfl(&'a StructuralAnchor),
 }
 
 fn retarget_anchor_groups(groups: &mut [PlannedGroup], aq: &AqSetup) -> Result<()> {
@@ -4242,7 +4304,7 @@ mod tests {
             &mut cache,
             EntropySearch::Full,
             None,
-            None,
+            AnchorReuse::None,
             None,
         )
         .expect("a legal plan");
@@ -4339,7 +4401,7 @@ mod tests {
             &mut cache,
             EntropySearch::Full,
             None,
-            None,
+            AnchorReuse::None,
             None,
         )
         .expect("a legal plan");

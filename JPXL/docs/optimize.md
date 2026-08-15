@@ -129,6 +129,45 @@ Full-finalist profile is retained beside it for comparison; the next bounded
 optimization target is shared quantization or entropy-table work across the
 two anchors and finalist.
 
+## Phase 18 — entropy-model reuse and review answers (2026-08-15)
+
+The outside review in `optimize-answers.md` confirms that the next useful
+boundary is inside one mostly fixed plan, not another broad rate-loop rewrite.
+Its first priorities are now adopted as constraints: expose real multiplicity,
+separate rate/spatial/quantization/CfL/entropy effort, keep exhaustive Quality
+as the oracle, and make structural reuse explicit. The review also identifies
+the missing middle to investigate next: Anchored Quality should use cheap
+navigation anchors but rebuild a fresh hierarchical cover and fresh CfL at the
+predicted finalist, with one exact correction before exhaustive fallback.
+
+Phase 18 removes one measured repeated pass without changing Fast or Quality.
+Balanced trains its fast default entropy model on the first anchor, then uses a
+validated copy of that model for the second anchor, finalist, and correction;
+the exact writer still prices every candidate and enforces the never-over
+target. The policy now names structural reuse explicitly (`None`, `CoverOnly`,
+or `CoverAndCfl`) so a globally frozen cover/CfL is visible as a deliberate
+trade rather than an optional `Option` detail. Attempted anchored work is also
+merged into fallback telemetry instead of being overwritten by the exhaustive
+result.
+
+The reuse-only probe preserved the Phase 17 Fast hash and the exhaustive
+Quality hashes. On the canonical 1 bpp photos, decoded reuse metrics were
+mid: SSIMULACRA2 72.3798, Butteraugli 3.1908, pnorm3 1.0932, PSNR 34.1744;
+large: SSIMULACRA2 83.6276, Butteraugli 1.9912, pnorm3 0.6393, PSNR 37.9729.
+The corresponding streams were 538,646 and 1,496,087 bytes. A pinned,
+interleaved four-thread window measured reuse medians of 0.895 s and 1.87 s
+versus cjxl e7 at 0.49 s and 1.20 s (1.83x and 1.56x); raw hashes, timings, and
+emissions are retained under `.agent/scratch/phase18-entropy-reuse/`.
+
+Two deliberately temporary probes are recorded as negative guidance. Making
+Balanced use fixed DCT8 cover reduced the photos to about 0.61/1.40 s but
+lowered SSIMULACRA2 to 68.2743/80.4937, so it remains a Fast-tier trade rather
+than a Balanced change. Disabling CfL saved time but cost about 0.60/0.36
+SSIMULACRA2 points; Balanced keeps CfL until a confidence/refresh policy is
+measured. The next implementation work is therefore output-preserving
+construction cleanup, raw default-entropy event tapes, and an Anchored Quality
+fresh-spatial finalist—not global cover freezing.
+
 ### Open architectural questions
 
 1. How can the finalist refresh only structurally unstable cover decisions?
@@ -171,7 +210,19 @@ two anchors and finalist.
    multi-quantizer workspace without changing wire integers or retaining
    three frame-sized coefficient copies?
 
-## Original advisor verdict
+The review answers are retained verbatim in `optimize-answers.md`; the
+questions above remain open until the proposed evidence exists. In particular,
+the two-photo Balanced result is not broad quality validation, and the current
+global `CoverAndCfl` path must not be described as a fresh spatial finalist.
+
+## Superseded historical advisor verdict
+
+The material below predates the Phase 15–18 bounded-anchor work. It remains as
+history and rationale, but its statements that Fast still performs a full
+cover/CfL loop per rung are no longer current. New work should follow the
+current checkpoint and the reviewed answers above; do not use this section as
+an implementation checklist without revalidating it against current
+diagnostics.
 
 The agent’s architectural diagnosis is **directionally correct, but too broad if interpreted as “rewrite the encoder.”**
 

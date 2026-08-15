@@ -5,7 +5,7 @@ build {
     tool "akr 0.3.0"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:a7c6e3c375fabd5feebbbfd09db2b143e49bf7103d7feaa145b629ad691b1850"
+    source_graph "sha256:c107cc62aa2d5fa5622802cff28f44739283ab57f59dac8018bd0c862842a567"
 }
 
 source ".akr/project.akr" {
@@ -64,8 +64,8 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:bd610a19c3e5390e34d55f8a5abeea884a31debb9a4d33ed935921fa94ef00f2"
-    records 106
+    hash "sha256:a960f256b14b4a4cd1e3d4b88fc802f66e834e2865a188b2361c6f73489cd647"
+    records 107
 }
 
 resolution @jpegxl-rs.decision.encoder-architecture-phases/1 {
@@ -5184,6 +5184,11 @@ seal @jpegxl-rs.work.arch-phase16-fast-anchor/1 {
 seal @jpegxl-rs.work.arch-phase17-quality-speed-preset/1 {
     state completed
     hash "sha256:1d3a8ab59ad2c0eb58313adf965ddebf624421b95ca22f74a5e57744c10e9fcd"
+}
+
+seal @jpegxl-rs.work.arch-phase18-balanced-entropy-reuse/1 {
+    state active
+    hash "sha256:e0105bd4c8a444331573436d35e7ef72382f3f96f4059e9f5bc8adc69658469d"
 }
 
 seal @jpegxl-rs.work.arch-phase1b-opt-in-diagnostics/1 {

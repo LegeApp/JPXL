@@ -414,6 +414,44 @@ record jpegxl-rs.work.arch-phase17-quality-speed-preset/1 : work {
     }
 }
 
+record jpegxl-rs.work.arch-phase18-balanced-entropy-reuse/1 : work {
+    title "Phase 18: Reuse Balanced anchor entropy model"
+    state active
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/rate.rs",
+        path "JPXL/crates/jpxl-encode-policy/tests/rate_loop.rs",
+        path "JPXL/docs/optimize.md"
+    ]
+    intent "Reduce repeated Balanced rate-probe work by training one fast entropy model on the first anchored plan and reusing that validated model for the second anchor, finalist, and correction. Keep Fast byte-identical and Quality exhaustive; retain the reuse only if exact writer sizing, target safety, decoder acceptance, deterministic output, and measured perceptual quality remain acceptable while the canonical speed gap materially narrows."
+    acceptance {
+        check correctness {
+            statement """
+                Balanced is deterministic across one/four threads, never exceeds its target, decodes through djxl, and non-photo fallback paths preserve their prior Quality streams; Fast and Quality reference outputs remain byte-identical.
+                """
+            method command
+        }
+        check gates {
+            statement """
+                Workspace build, tests, formatting, no-default-features check, and AKR validation pass; any unchanged strict Clippy diagnostics remain isolated and documented.
+                """
+            method command
+        }
+        check quality {
+            statement """
+                Balanced is compared with the retained Phase 17 Balanced/Quality references on both canonical photographs and representative fallback corpus inputs using bytes, PSNR, SSIMULACRA2, Butteraugli, pnorm3, and decoded-pixel acceptance; any trade is recorded.
+                """
+            method observation
+        }
+        check speed {
+            statement """
+                Pinned interleaved four-thread timings and focused diagnostics show the repeated entropy census/training multiplicity removed, with raw logs and binary/input hashes retained under .agent/scratch.
+                """
+            method observation
+        }
+    }
+}
+
 record jpegxl-rs.work.arch-phase1b-opt-in-diagnostics/1 : work {
     title "Phase 1B: make architecture diagnostics opt-in"
     state superseded

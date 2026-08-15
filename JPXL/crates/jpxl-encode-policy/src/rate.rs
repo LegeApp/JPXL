@@ -6,9 +6,9 @@
 //! **1. Production candidates are priced exactly.** In default builds a
 //! candidate's size is [`jpxl_encode::vardct::price_codestream`], which runs
 //! the real writer into a scratch buffer. The feature-gated Fast preset
-//! controller fits a local rate curve from two exact anchors, then prices a
-//! freshly replanned finalist exactly and falls back to the exhaustive
-//! controller unless it satisfies the preset's byte contract.
+//! controller fits a local rate curve from two exact anchors, then prices an
+//! anchored finalist exactly and falls back to the exhaustive controller
+//! unless it satisfies the preset's byte contract.
 //!
 //! **2. The search moves over wire-legal values only.** I.2.1's `global_scale`
 //! is a `U32()` field with a largest expressible value, `HfMul` is a Modular
@@ -59,17 +59,19 @@
 //! the only way to go finer. Per-varblock `HfMul` is milestone 7.
 
 use jpxl_encode::vardct::ids::{GlobalScale, HfMul, MAX_GLOBAL_SCALE, QuantLf};
+#[cfg(feature = "anchor-sketch")]
+use jpxl_encode::vardct::plan::EntropyPlan;
 use jpxl_encode::vardct::size::CodestreamSizing;
 use jpxl_encode::vardct::{
     Emission, ValidatedEmissionPlan, emit_codestream_with_executor, price_codestream_with,
 };
 
-#[cfg(feature = "anchor-sketch")]
-use crate::StructuralAnchor;
 use crate::error::{PolicyError, Result};
 #[cfg(feature = "anchor-sketch")]
 use crate::request::RateSearchPreset;
 use crate::request::{EncodeRequest, RateSearchBudget, RateTarget, RateTolerance};
+#[cfg(feature = "anchor-sketch")]
+use crate::{AnchorReuse, StructuralAnchor};
 use crate::{CandidateForwardCache, EntropySearch, diagnostics};
 
 /// How many `HfMul` rungs extend the ladder above `global_scale`'s ceiling.
@@ -274,7 +276,8 @@ pub struct RateProbeStats {
     pub candidate_payload_bytes: u64,
     /// Dense coefficient-arena allocations (one per populated transform bank).
     pub candidate_allocations: u64,
-    /// Cover/CfL builds on the anchored path (normal-path cap: two).
+    /// Cover/CfL builds on the anchored path (normal-path cap: two; fallback
+    /// totals include both the attempt and the exhaustive decision path).
     pub structural_builds: u32,
     /// Reserved legacy counter for approximate probes (zero in the two-anchor path).
     pub sketch_probes: u32,
@@ -283,7 +286,7 @@ pub struct RateProbeStats {
     /// One when the feature-gated anchor path rejected its estimate and used
     /// the exhaustive exact controller; zero on normal-path success.
     pub anchor_fallbacks: u32,
-    /// Exact byte size of the first freshly replanned anchored finalist.
+    /// Exact byte size of the first anchored finalist.
     pub anchor_first_finalist_bytes: u64,
     /// Exact byte size of the one anchored correction, or zero when the
     /// first finalist already satisfied tolerance.
@@ -313,6 +316,123 @@ impl RateProbeStats {
     pub fn dct_cache_reused(self) -> bool {
         self.dct_cache_hits > 0 && self.dct_cache_hits >= self.dct_cache_misses
     }
+
+    /// Adds work from an anchored attempt to the exhaustive fallback totals.
+    ///
+    /// Decision fields such as the selected finalist byte count are kept from
+    /// the attempted path separately; these counters describe additive work
+    /// and must not disappear merely because the attempt was rejected.
+    fn add_attempted_work(&mut self, attempted: Self) {
+        self.gaborish_preconditions = self
+            .gaborish_preconditions
+            .saturating_add(attempted.gaborish_preconditions);
+        self.fast_prices = self.fast_prices.saturating_add(attempted.fast_prices);
+        self.full_prices = self.full_prices.saturating_add(attempted.full_prices);
+        self.dct_cache_hits = self.dct_cache_hits.saturating_add(attempted.dct_cache_hits);
+        self.dct_cache_misses = self
+            .dct_cache_misses
+            .saturating_add(attempted.dct_cache_misses);
+        self.candidate_cache_entries = self
+            .candidate_cache_entries
+            .saturating_add(attempted.candidate_cache_entries);
+        self.candidate_payload_bytes = self
+            .candidate_payload_bytes
+            .saturating_add(attempted.candidate_payload_bytes);
+        self.candidate_allocations = self
+            .candidate_allocations
+            .saturating_add(attempted.candidate_allocations);
+        self.structural_builds = self
+            .structural_builds
+            .saturating_add(attempted.structural_builds);
+        self.sketch_probes = self.sketch_probes.saturating_add(attempted.sketch_probes);
+        self.exact_candidates = self
+            .exact_candidates
+            .saturating_add(attempted.exact_candidates);
+        self.fast = add_search_phase(self.fast, attempted.fast);
+        self.full = add_search_phase(self.full, attempted.full);
+        self.writer = add_writer_diagnostics(self.writer, attempted.writer);
+    }
+}
+
+fn add_search_phase(
+    mut total: diagnostics::SearchPhaseDiagnostics,
+    extra: diagnostics::SearchPhaseDiagnostics,
+) -> diagnostics::SearchPhaseDiagnostics {
+    total.plans = total.plans.saturating_add(extra.plans);
+    total.cover_passes = total.cover_passes.saturating_add(extra.cover_passes);
+    total.cfl_searches = total.cfl_searches.saturating_add(extra.cfl_searches);
+    total.quantize_group_passes = total
+        .quantize_group_passes
+        .saturating_add(extra.quantize_group_passes);
+    total.census_passes = total.census_passes.saturating_add(extra.census_passes);
+    total.entropy_trainings = total
+        .entropy_trainings
+        .saturating_add(extra.entropy_trainings);
+    total.order_candidates = total
+        .order_candidates
+        .saturating_add(extra.order_candidates);
+    total.block_context_candidates = total
+        .block_context_candidates
+        .saturating_add(extra.block_context_candidates);
+    total.preset_candidates = total
+        .preset_candidates
+        .saturating_add(extra.preset_candidates);
+    total.plan_ns = total.plan_ns.saturating_add(extra.plan_ns);
+    total.cover_ns = total.cover_ns.saturating_add(extra.cover_ns);
+    total.cfl_ns = total.cfl_ns.saturating_add(extra.cfl_ns);
+    total.quantize_ns = total.quantize_ns.saturating_add(extra.quantize_ns);
+    total.entropy_ns = total.entropy_ns.saturating_add(extra.entropy_ns);
+    total
+}
+
+fn add_writer_diagnostics(
+    mut total: jpxl_encode::vardct::diagnostics::WriterDiagnostics,
+    extra: jpxl_encode::vardct::diagnostics::WriterDiagnostics,
+) -> jpxl_encode::vardct::diagnostics::WriterDiagnostics {
+    total.fast = add_writer_phase(total.fast, extra.fast);
+    total.full = add_writer_phase(total.full, extra.full);
+    total.other = add_writer_phase(total.other, extra.other);
+    total
+}
+
+fn add_writer_phase(
+    mut total: jpxl_encode::vardct::diagnostics::WriterPhaseDiagnostics,
+    extra: jpxl_encode::vardct::diagnostics::WriterPhaseDiagnostics,
+) -> jpxl_encode::vardct::diagnostics::WriterPhaseDiagnostics {
+    total.internal_count_emissions = total
+        .internal_count_emissions
+        .saturating_add(extra.internal_count_emissions);
+    total.outer_count_emissions = total
+        .outer_count_emissions
+        .saturating_add(extra.outer_count_emissions);
+    total.other_count_emissions = total
+        .other_count_emissions
+        .saturating_add(extra.other_count_emissions);
+    total.stored_emissions = total
+        .stored_emissions
+        .saturating_add(extra.stored_emissions);
+    total.section_body_traversals = total
+        .section_body_traversals
+        .saturating_add(extra.section_body_traversals);
+    total.lf_section_encodes = total
+        .lf_section_encodes
+        .saturating_add(extra.lf_section_encodes);
+    total.pass_group_section_encodes = total
+        .pass_group_section_encodes
+        .saturating_add(extra.pass_group_section_encodes);
+    total.executor_pool_builds = total
+        .executor_pool_builds
+        .saturating_add(extra.executor_pool_builds);
+    total.count_emission_ns = total
+        .count_emission_ns
+        .saturating_add(extra.count_emission_ns);
+    total.stored_emission_ns = total
+        .stored_emission_ns
+        .saturating_add(extra.stored_emission_ns);
+    total.executor_pool_build_ns = total
+        .executor_pool_build_ns
+        .saturating_add(extra.executor_pool_build_ns);
+    total
 }
 
 /// What a completed search chose.
@@ -823,12 +943,12 @@ impl<'a> PreparedSearch<'a> {
         quantizer: QuantizerChoice,
         enable_cfl: bool,
         entropy: EntropySearch,
-        anchor: Option<&StructuralAnchor>,
+        reuse: AnchorReuse<'_>,
         capture: Option<&mut Option<StructuralAnchor>>,
     ) -> Result<ValidatedEmissionPlan> {
         let phase = match entropy {
             EntropySearch::Fast => diagnostics::SearchDiagnosticPhase::Fast,
-            EntropySearch::FinalFast | EntropySearch::Full => {
+            EntropySearch::FinalFast | EntropySearch::Reuse | EntropySearch::Full => {
                 diagnostics::SearchDiagnosticPhase::Full
             }
         };
@@ -844,7 +964,7 @@ impl<'a> PreparedSearch<'a> {
                     &mut self.fwd_cache,
                     entropy,
                     Some(self.executor),
-                    anchor,
+                    reuse,
                     capture,
                 )
             })
@@ -878,8 +998,8 @@ const fn lf_sample_fits_legacy_16bit(sample: i32) -> bool {
 ///
 /// Quality requests retain the exhaustive exact controller. Fast and Balanced
 /// requests in a build with the research-only `anchor-sketch` feature attempt
-/// the bounded two-anchor controller and fall back whenever their freshly
-/// replanned finalist does not satisfy the preset's exact target band.
+/// the bounded two-anchor controller and fall back whenever its anchored
+/// finalist does not satisfy the preset's exact target band.
 pub fn search_frame(
     frame: &crate::PreparedFrame,
     atlas: &crate::AnalysisAtlas,
@@ -896,12 +1016,12 @@ pub fn search_frame(
             Some(outcome) => Ok(outcome),
             None => {
                 let mut outcome = search_frame_exhaustive(frame, atlas, request, target)?;
-                outcome.stats.structural_builds = attempted.structural_builds;
-                outcome.stats.sketch_probes = attempted.sketch_probes;
-                outcome.stats.exact_candidates = attempted.exact_candidates;
+                let attempted_first_finalist = attempted.anchor_first_finalist_bytes;
+                let attempted_correction = attempted.anchor_correction_bytes;
+                outcome.stats.add_attempted_work(attempted);
                 outcome.stats.anchor_fallbacks = 1;
-                outcome.stats.anchor_first_finalist_bytes = attempted.anchor_first_finalist_bytes;
-                outcome.stats.anchor_correction_bytes = attempted.anchor_correction_bytes;
+                outcome.stats.anchor_first_finalist_bytes = attempted_first_finalist;
+                outcome.stats.anchor_correction_bytes = attempted_correction;
                 Ok(outcome)
             }
         }
@@ -1025,6 +1145,16 @@ fn second_anchor_rung(start: Rung, anchor_bytes: u64, target: u64) -> Rung {
 }
 
 #[cfg(feature = "anchor-sketch")]
+fn reuse_entropy(
+    plan: ValidatedEmissionPlan,
+    entropy: &EntropyPlan,
+) -> Result<ValidatedEmissionPlan> {
+    let mut inner = plan.into_inner();
+    inner.entropy = entropy.clone();
+    Ok(jpxl_encode::vardct::validate(inner)?)
+}
+
+#[cfg(feature = "anchor-sketch")]
 fn search_frame_two_anchor(
     frame: &crate::PreparedFrame,
     atlas: &crate::AnalysisAtlas,
@@ -1059,9 +1189,9 @@ fn search_frame_two_anchor(
     };
 
     let first_quantizer = QuantizerChoice::at(start, request.quant_lf)?;
-    let (final_entropy, enable_cfl) = match request.rate_preset {
-        RateSearchPreset::Fast => (EntropySearch::FinalFast, false),
-        RateSearchPreset::Balanced => (EntropySearch::FinalFast, true),
+    let (enable_cfl, reuse_entropy_model, final_entropy) = match request.rate_preset {
+        RateSearchPreset::Fast => (false, false, EntropySearch::FinalFast),
+        RateSearchPreset::Balanced => (true, true, EntropySearch::Reuse),
         RateSearchPreset::Quality => return Ok(None),
     };
     let mut captured = None;
@@ -1069,9 +1199,10 @@ fn search_frame_two_anchor(
         first_quantizer,
         enable_cfl,
         EntropySearch::Fast,
-        None,
+        AnchorReuse::None,
         Some(&mut captured),
     )?;
+    let first_entropy = first_plan.plan().entropy.clone();
     prepared.stats.structural_builds = 1;
     let anchor = captured.ok_or(PolicyError::Unsupported {
         what: "an anchor search that failed to capture its structure",
@@ -1088,13 +1219,24 @@ fn search_frame_two_anchor(
 
     let second_rung = second_anchor_rung(start, first_size.total, target_bytes);
     let second_quantizer = QuantizerChoice::at(second_rung, request.quant_lf)?;
-    let second_plan = prepared.plan_anchor(
-        second_quantizer,
-        false,
-        EntropySearch::Fast,
-        Some(&anchor),
-        None,
-    )?;
+    let second_plan = {
+        let plan = prepared.plan_anchor(
+            second_quantizer,
+            false,
+            if reuse_entropy_model {
+                EntropySearch::Reuse
+            } else {
+                EntropySearch::Fast
+            },
+            AnchorReuse::CoverAndCfl(&anchor),
+            None,
+        )?;
+        if reuse_entropy_model {
+            reuse_entropy(plan, &first_entropy)?
+        } else {
+            plan
+        }
+    };
     let second_size =
         diagnostics::with_search_phase(diagnostics::SearchDiagnosticPhase::Fast, || {
             diagnostics::with_count_kind(
@@ -1127,17 +1269,30 @@ fn search_frame_two_anchor(
     let finalist_quantizer = QuantizerChoice::at(finalist_rung, request.quant_lf)?;
     let mut finalist_anchor = None;
     // Reuse the captured structure for the finalist instead of rebuilding
-    // cover, forward coefficients, and CfL. Fast intentionally uses the
-    // cheaper fixed-cover/nearest/fast-entropy policy; Balanced keeps the
-    // request's hierarchical/trailing policy while retaining fast entropy for
-    // the anchored finalist. Quality remains the full-alternative oracle.
-    let finalist = prepared.plan_anchor(
+    // cover, forward coefficients, and (for the current anchored presets)
+    // CfL. Fast intentionally uses the cheaper fixed-cover/nearest/fast-
+    // entropy policy; Balanced keeps the request's hierarchical/trailing
+    // policy while reusing its captured fast-entropy model. Quality remains
+    // the full-alternative oracle.
+    let finalist_entropy = if reuse_entropy_model {
+        EntropySearch::Reuse
+    } else {
+        final_entropy
+    };
+    let finalist_plan = prepared.plan_anchor(
         finalist_quantizer,
         false,
-        final_entropy,
-        Some(&anchor),
+        finalist_entropy,
+        AnchorReuse::CoverAndCfl(&anchor),
         Some(&mut finalist_anchor),
     )?;
+    let finalist = if reuse_entropy_model {
+        reuse_entropy(finalist_plan, &first_entropy)?
+    } else {
+        // Fast trains its own final model; this keeps the pre-Balanced Fast
+        // stream contract unchanged while Balanced banks the repeated walk.
+        finalist_plan
+    };
     prepared.stats.structural_builds = 1;
     let finalist_emission =
         diagnostics::with_search_phase(diagnostics::SearchDiagnosticPhase::Full, || {
@@ -1177,7 +1332,7 @@ fn search_frame_two_anchor(
         (finalist_quantizer, finalist, finalist_emission)
     } else {
         // Fast entropy is an upper-bound navigation mode, so its calibrated
-        // crossing can miss after the fresh structural finalist. Spend
+        // crossing can miss after the anchored structural finalist. Spend
         // the remaining exact candidate on a bounded quantizer correction
         // while preserving that finalist's cover and CfL decisions.
         let correction_target = target_bytes.saturating_sub(slack / 2);
@@ -1194,13 +1349,18 @@ fn search_frame_two_anchor(
         let anchor = finalist_anchor.as_ref().ok_or(PolicyError::Unsupported {
             what: "an anchored finalist that failed to capture its structure",
         })?;
-        let correction = prepared.plan_anchor(
+        let correction_plan = prepared.plan_anchor(
             correction_quantizer,
             true,
-            final_entropy,
-            Some(anchor),
+            finalist_entropy,
+            AnchorReuse::CoverAndCfl(anchor),
             None,
         )?;
+        let correction = if reuse_entropy_model {
+            reuse_entropy(correction_plan, &first_entropy)?
+        } else {
+            correction_plan
+        };
         let correction_emission =
             diagnostics::with_search_phase(diagnostics::SearchDiagnosticPhase::Full, || {
                 emit_codestream_with_executor(&correction, prepared.executor)
