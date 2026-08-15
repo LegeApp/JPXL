@@ -220,7 +220,7 @@ record jpegxl-rs.work.arch-phase12-contiguous-forward-dct/1 : work {
 
 record jpegxl-rs.work.arch-phase13-quant-scratch-overwrite/1 : work {
     title "Phase 13: overwrite-only quantization scratch"
-    state proposed
+    state completed
     scope [ path "JPXL/crates/jpxl-encode-policy/src/lib.rs", path "JPXL/docs/optimize.md" ]
     intent """
         Remove redundant clearing and per-cell LLF coordinate division from the profiled final quantization path. Make every reused scratch lane fully overwritten by construction, retain exact coefficient and LF output, and keep the change only if fresh end-to-end timing improves over Phase 12.
@@ -231,18 +231,21 @@ record jpegxl-rs.work.arch-phase13-quant-scratch-overwrite/1 : work {
                 Focused policy tests and canonical Fast and Quality codestream comparisons are byte-identical to Phase 12.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase13-exactness-2026-08-15/1 ]
         }
         check gates {
             statement """
                 Workspace build, tests, formatting, no-default-features check, lint-delta review, and AKR validation pass or isolate pre-existing blockers.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase13-gates-2026-08-15/1 ]
         }
         check speed {
             statement """
                 Interleaved release or PGO A/B on both pinned timing photographs measures the end-to-end effect against Phase 12.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.phase13-speed-2026-08-15/1 ]
         }
     }
     depends_on [ @jpegxl-rs.work.arch-phase12-contiguous-forward-dct ]

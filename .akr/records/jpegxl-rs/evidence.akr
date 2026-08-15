@@ -663,6 +663,44 @@ record jpegxl-rs.evidence.phase12-transform-2026-08-15/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase13-exactness-2026-08-15/1 : evidence {
+    title "All 98 policy library tests passed. Every PGO training output matched Phase 12 at one and four threads, both timing outputs matched, and the Quality-preset output was byte-identical."
+    state verified
+    result pass
+    method command
+    observed_at git:bb79e3d628f592a4cbcd61be6e5da428a31422c8
+    command "cd JPXL && cargo test -p jpxl-encode-policy --lib --quiet; compare Phase 12 and Phase 13 Fast/Quality codestream hashes"
+    artifact ".agent/scratch/phase13-quant-scratch-2026-08-15/SUMMARY.md"
+    summary """
+        All 98 policy library tests passed. Every PGO training output matched Phase 12 at one and four threads, both timing outputs matched, and the Quality-preset output was byte-identical.
+        """
+}
+
+record jpegxl-rs.evidence.phase13-gates-2026-08-15/1 : evidence {
+    title "Workspace build, tests, formatting, no-default-features check, and diff check passed. Strict policy Clippy still reports 71 pre-existing library diagnostics and none points to the changed quantization span."
+    state verified
+    result pass
+    method command
+    observed_at git:bb79e3d628f592a4cbcd61be6e5da428a31422c8
+    command "cd JPXL && cargo build --workspace && cargo test --workspace --quiet && cargo fmt --all --check && cargo check -p jpxl-encode-policy --no-default-features && git diff --check"
+    artifact ".agent/scratch/phase13-quant-scratch-2026-08-15/SUMMARY.md"
+    summary """
+        Workspace build, tests, formatting, no-default-features check, and diff check passed. Strict policy Clippy still reports 71 pre-existing library diagnostics and none points to the changed quantization span.
+        """
+}
+
+record jpegxl-rs.evidence.phase13-speed-2026-08-15/1 : evidence {
+    title "Fresh PGO interleaved A/B reduced Phase 12 medians from 1.11 to 1.10 s at 2400x1800 (0.90%) and 1.94 to 1.91 s at 4000x3000 (1.55%)."
+    state verified
+    result pass
+    method observation
+    observed_at git:bb79e3d628f592a4cbcd61be6e5da428a31422c8
+    artifact ".agent/scratch/phase13-quant-scratch-2026-08-15/pgo-ab.log"
+    summary """
+        Fresh PGO interleaved A/B reduced Phase 12 medians from 1.11 to 1.10 s at 2400x1800 (0.90%) and 1.94 to 1.91 s at 4000x3000 (1.55%).
+        """
+}
+
 record jpegxl-rs.evidence.phase1b-diag-available-2026-08-13/1 : evidence {
     title "Phase 1B opt-in diagnostics remain available"
     state verified
