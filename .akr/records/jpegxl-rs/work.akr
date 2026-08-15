@@ -138,7 +138,7 @@ record jpegxl-rs.work.arch-phase10-two-anchor-prediction/1 : work {
 
 record jpegxl-rs.work.arch-phase11-cheap-navigation/1 : work {
     title "Phase 11: neutral-CfL anchors and direct finalist Store"
-    state proposed
+    state completed
     scope [
         path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
         path "JPXL/crates/jpxl-encode-policy/src/rate.rs",
@@ -156,18 +156,21 @@ record jpegxl-rs.work.arch-phase11-cheap-navigation/1 : work {
                 Feature/default policy tests, workspace tests, formatting, lint-delta checks and AKR validation pass or pre-existing blockers are explicitly isolated.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase11-gates-2026-08-15/1 ]
         }
         check quality {
             statement """
                 The canonical corpus records achieved sizes, fallback frequency, independent decode results, and SSIMULACRA2/Butteraugli deltas against Phase 10; the finalist continues to use freshly optimized production structure.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.phase11-quality-2026-08-15/1 ]
         }
         check speed {
             statement """
                 Fresh interleaved A/B against the Phase 10 Fast preset shows a material end-to-end improvement on the pinned 4.3 MP and 12 MP photographs, with diagnostics confirming removal of navigation CfL and redundant finalist Count work.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.phase11-speed-2026-08-15/1 ]
         }
     }
     depends_on [ @jpegxl-rs.work.arch-phase10-two-anchor-prediction ]
