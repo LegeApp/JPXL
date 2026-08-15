@@ -944,6 +944,57 @@ record jpegxl-rs.evidence.phase18-speed-2026-08-15/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase19-gates-2026-08-15/1 : evidence {
+    title "Build, full tests, no-default-features check, and formatting passed. Strict Clippy remains blocked by the unchanged jpxl-core excessive-precision diagnostics and existing policy lint debt; raw output is retained in clippy-workspace.log and clippy-policy-nodeps.log."
+    state verified
+    result pass
+    method command
+    observed_at git:dd3d55c8fe53c3c201e66e4e9904ed1619d1d8e0
+    command "cargo build --workspace; cargo test --workspace --no-fail-fast; cargo check --workspace --no-default-features; cargo fmt --all --check; cargo clippy --workspace --all-targets -- -D warnings"
+    artifact ".agent/scratch/phase19-dequant-matrix-reuse/gates-final.log"
+    summary """
+        Build, full tests, no-default-features check, and formatting passed. Strict Clippy remains blocked by the unchanged jpxl-core excessive-precision diagnostics and existing policy lint debt; raw output is retained in clippy-workspace.log and clippy-policy-nodeps.log.
+        """
+}
+
+record jpegxl-rs.evidence.phase19-identity-2026-08-15/1 : evidence {
+    title "Balanced, Fast, Quality, and line/low/noise fallback streams are byte-identical to the retained prior outputs; all canonical SHA-256 values are recorded in the scratch summary."
+    state verified
+    result pass
+    method command
+    observed_at git:dd3d55c8fe53c3c201e66e4e9904ed1619d1d8e0
+    command "release encodes for Balanced/Fast/Quality and fallback corpus; cmp against Phase 18/17 retained streams"
+    artifact ".agent/scratch/phase19-dequant-matrix-reuse/SUMMARY.md"
+    summary """
+        Balanced, Fast, Quality, and line/low/noise fallback streams are byte-identical to the retained prior outputs; all canonical SHA-256 values are recorded in the scratch summary.
+        """
+}
+
+record jpegxl-rs.evidence.phase19-safety-2026-08-15/1 : evidence {
+    title "The full workspace test suite and decoder/oracle checks passed, and the candidate retains the exact target bytes and fingerprints while changing only construction reuse."
+    state verified
+    result pass
+    method command
+    observed_at git:dd3d55c8fe53c3c201e66e4e9904ed1619d1d8e0
+    command "cargo test --workspace --no-fail-fast; independent decoder/oracle tests; deterministic four-thread encodes"
+    artifact ".agent/scratch/phase19-dequant-matrix-reuse/gates-final.log"
+    summary """
+        The full workspace test suite and decoder/oracle checks passed, and the candidate retains the exact target bytes and fingerprints while changing only construction reuse.
+        """
+}
+
+record jpegxl-rs.evidence.phase19-speed-2026-08-15/1 : evidence {
+    title "Interleaved five-iteration Balanced timing screen: mid median 847.557 ms baseline versus 842.154 ms candidate; large median 1897.536 ms versus 1676.179 ms. The earlier three-iteration window is retained separately because host variance was mixed."
+    state verified
+    result pass
+    method observation
+    observed_at git:dd3d55c8fe53c3c201e66e4e9904ed1619d1d8e0
+    artifact ".agent/scratch/phase19-dequant-matrix-reuse/timing-wider.log"
+    summary """
+        Interleaved five-iteration Balanced timing screen: mid median 847.557 ms baseline versus 842.154 ms candidate; large median 1897.536 ms versus 1676.179 ms. The earlier three-iteration window is retained separately because host variance was mixed.
+        """
+}
+
 record jpegxl-rs.evidence.phase1b-diag-available-2026-08-13/1 : evidence {
     title "Phase 1B opt-in diagnostics remain available"
     state verified

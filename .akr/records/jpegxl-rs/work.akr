@@ -458,7 +458,7 @@ record jpegxl-rs.work.arch-phase18-balanced-entropy-reuse/1 : work {
 
 record jpegxl-rs.work.arch-phase19-dequant-matrix-reuse/1 : work {
     title "Phase 19: reuse dequantization matrices across quantizer lanes"
-    state active
+    state completed
     scope [
         path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
         path "JPXL/crates/jpxl-encode-policy/src/quantize.rs",
@@ -471,24 +471,28 @@ record jpegxl-rs.work.arch-phase19-dequant-matrix-reuse/1 : work {
                 Workspace build, no-default-features check, formatting, and AKR validation pass; unchanged strict Clippy blockers remain isolated.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase19-gates-2026-08-15/1 ]
         }
         check identity {
             statement """
                 Canonical Fast, Balanced, and exhaustive Quality streams remain byte-identical to the Phase 18 commit, and the quantizer unit tests continue to prove decoder reconstruction choices.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase19-identity-2026-08-15/1 ]
         }
         check safety {
             statement """
                 Workspace tests, independent decoder/oracle checks, and deterministic one/four-thread encodes remain green with no target-rate regressions.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase19-safety-2026-08-15/1 ]
         }
         check speed {
             statement """
                 A pinned before/after release comparison records the construction change's wall-time effect and diagnostics; retain the change only if it is neutral or improves the measured target-rate path.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.phase19-speed-2026-08-15/1 ]
         }
     }
     depends_on [ @jpegxl-rs.work.arch-phase18-balanced-entropy-reuse ]
