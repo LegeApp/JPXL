@@ -1145,6 +1145,58 @@ record jpegxl-rs.evidence.phase20-speed-2026-08-15/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase21-gates-2026-08-15/1 : evidence {
+    title "Workspace build, full tests, no-default-features check, formatting, and AKR build/check evidence passed. Strict workspace Clippy still reports the unchanged 70 jpxl-core DCT excessive-precision errors and existing policy lint debt; no new warning is attributable to Phase 21."
+    state verified
+    result pass
+    method command
+    observed_at git:ca9c00db70a7beb92b2eb8431a364e2008039c9f
+    command "cargo build --workspace; cargo test --workspace --no-fail-fast; cargo check --workspace --no-default-features; cargo fmt --all --check; AKR build"
+    artifact ".agent/scratch/phase21-cover-complete-scratch/check-nodefault.log"
+    summary """
+        Workspace build, full tests, no-default-features check, formatting, and AKR build/check evidence passed. Strict workspace Clippy still reports the unchanged 70 jpxl-core DCT excessive-precision errors and existing policy lint debt; no new warning is attributable to Phase 21.
+        """
+}
+
+record jpegxl-rs.evidence.phase21-identity-2026-08-15/1 : evidence {
+    title "Canonical Fast, large Fast, Balanced, Quality, and masking-AQ outputs compare byte-for-byte with Phase 20. The completed-cache-specific 512x512 gradient baseline and candidate are both 22,866 bytes with SHA-256 3de70270ebd9e6ef53421f30e8fa9ae5ca95f6f2e8157e2df17a9f2a3f4d5b40."
+    state verified
+    result pass
+    method command
+    observed_at git:ca9c00db70a7beb92b2eb8431a364e2008039c9f
+    command "cmp canonical Fast/Balanced/Quality/masking-AQ streams against Phase 20; compare one-group 512x512 Balanced baseline/candidate"
+    artifact ".agent/scratch/phase21-cover-complete-scratch/SUMMARY.md"
+    summary """
+        Canonical Fast, large Fast, Balanced, Quality, and masking-AQ outputs compare byte-for-byte with Phase 20. The completed-cache-specific 512x512 gradient baseline and candidate are both 22,866 bytes with SHA-256 3de70270ebd9e6ef53421f30e8fa9ae5ca95f6f2e8157e2df17a9f2a3f4d5b40.
+        """
+}
+
+record jpegxl-rs.evidence.phase21-safety-2026-08-15/1 : evidence {
+    title "The full workspace test suite passed, including oracle-backed VarDCT tests. The completed-cache gradient candidate self-decodes, and the lazy path remains covered by the policy and workspace tests."
+    state verified
+    result pass
+    method command
+    observed_at git:ca9c00db70a7beb92b2eb8431a364e2008039c9f
+    command "cargo test --workspace --no-fail-fast; self-decode completed-cache gradient and canonical outputs"
+    artifact ".agent/scratch/phase21-cover-complete-scratch/test-workspace.log"
+    summary """
+        The full workspace test suite passed, including oracle-backed VarDCT tests. The completed-cache gradient candidate self-decodes, and the lazy path remains covered by the policy and workspace tests.
+        """
+}
+
+record jpegxl-rs.evidence.phase21-speed-2026-08-15/1 : evidence {
+    title "Three interleaved process runs on the one-group completed-cache path measured baseline medians 739.651, 816.811, 821.247 ms and candidate medians 774.012, 785.957, 875.589 ms; triplet medians are 816.811 and 785.957 ms, about 3.8% faster with high host variance. Larger Fast timing is diagnostic only because fixed cover bypasses this path."
+    state verified
+    result pass
+    method observation
+    observed_at git:ca9c00db70a7beb92b2eb8431a364e2008039c9f
+    command "taskset -c 0,2,4,6 jpxl bench vardct-rate --width 256 --height 256 --bpp 1 --lossy-preset balanced --iters 10 --threads 4"
+    artifact ".agent/scratch/phase21-cover-complete-scratch/timing-balanced-small.log"
+    summary """
+        Three interleaved process runs on the one-group completed-cache path measured baseline medians 739.651, 816.811, 821.247 ms and candidate medians 774.012, 785.957, 875.589 ms; triplet medians are 816.811 and 785.957 ms, about 3.8% faster with high host variance. Larger Fast timing is diagnostic only because fixed cover bypasses this path.
+        """
+}
+
 record jpegxl-rs.evidence.phase3-forward-cache-rev2-postcommit/1 : evidence {
     title "Phase-3 rev-2 (rate-loop cache note) re-verified against commit 8541961"
     state verified
