@@ -5,7 +5,7 @@ build {
     tool "akr 0.3.0"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:871fdbedcb102b7e9098f4f11340ce84b80ac1432f0be76969a691b631c313b8"
+    source_graph "sha256:f117d1653c230f2ac0a893ac493490ebecabb6432b78ff5c667eb1f36e992bb2"
 }
 
 source ".akr/project.akr" {
@@ -29,8 +29,8 @@ source ".akr/records/jpegxl-rs/decisions.akr" {
 }
 
 source ".akr/records/jpegxl-rs/evidence.akr" {
-    hash "sha256:d6215ebd19e3ee5eaffe14a80d535114f816172c81216cf7b5510d0d2113d269"
-    records 229
+    hash "sha256:10bacee510ab6d86d3c5df3fe0e078f41e0c8d7cd3e4dddce7819dacf4d85f18"
+    records 233
 }
 
 source ".akr/records/jpegxl-rs/milestones.akr" {
@@ -64,7 +64,7 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:a451a5b077cf59ff7d3a853dfa53474b942c5c9fbc57591147f8bc20bc283b1f"
+    hash "sha256:12a74b485f4a2ff017932b2d8d5f9ac6bf7f6a039a4426231e3d70d7d041639a"
     records 101
 }
 
@@ -3510,6 +3510,26 @@ seal @jpegxl-rs.evidence.phase11-speed-2026-08-15/1 {
     hash "sha256:288aaa08156b11081b3a566ac31cb70921b826ecdcd3c4b7b4fc461d1926507d"
 }
 
+seal @jpegxl-rs.evidence.phase12-gates-2026-08-15/1 {
+    state verified
+    hash "sha256:387c54254d599b7528a497339a5e300ea203efff445688ebadcd3024d11b7bb6"
+}
+
+seal @jpegxl-rs.evidence.phase12-quality-2026-08-15/1 {
+    state verified
+    hash "sha256:0920a5ece7182df7feb064729a49f0e181e2181cce386eedb4798183f3f26c03"
+}
+
+seal @jpegxl-rs.evidence.phase12-speed-2026-08-15/1 {
+    state verified
+    hash "sha256:4fec4a372922ee551754a21c831b5ee92c17061e4811c6a14ab99764685094e3"
+}
+
+seal @jpegxl-rs.evidence.phase12-transform-2026-08-15/1 {
+    state verified
+    hash "sha256:4973e47db3b10fc6ebc271fd8241bdbb552e88a8d8cc597f854d573c294436a3"
+}
+
 seal @jpegxl-rs.evidence.phase1b-diag-available-2026-08-13/1 {
     state verified
     hash "sha256:160331881a2b049c1692d9108a3a59a7f76a604b1da753c78b53a8ac1162ab91"
@@ -5008,6 +5028,11 @@ seal @jpegxl-rs.work.arch-phase10-two-anchor-prediction/1 {
 seal @jpegxl-rs.work.arch-phase11-cheap-navigation/1 {
     state completed
     hash "sha256:0aea98ed68f4c5a06648ec500db234ad436f3783ec4f3ee87718103409d4e558"
+}
+
+seal @jpegxl-rs.work.arch-phase12-contiguous-forward-dct/1 {
+    state completed
+    hash "sha256:1451b3127fb3b87d6a5374fccef9bf77406df34f0e82cffa0442c5d347bbce46"
 }
 
 seal @jpegxl-rs.work.arch-phase1b-opt-in-diagnostics/1 {

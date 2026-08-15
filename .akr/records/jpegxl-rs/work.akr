@@ -179,7 +179,7 @@ record jpegxl-rs.work.arch-phase11-cheap-navigation/1 : work {
 
 record jpegxl-rs.work.arch-phase12-contiguous-forward-dct/1 : work {
     title "Phase 12: contiguous forward DCT passes"
-    state proposed
+    state completed
     scope [ path "JPXL/crates/jpxl-core/src/dct.rs", path "JPXL/docs/optimize.md" ]
     intent """
         Screen a contiguous-pass implementation of the separable forward 2-D DCT identified by the Phase 11 profile. Preserve coefficient orientation, supported shapes, decoder validity, and deterministic behavior; retain the change only if focused kernel tests and fresh end-to-end PGO timing show a material gain without an unacceptable quality or size regression.
@@ -190,24 +190,28 @@ record jpegxl-rs.work.arch-phase12-contiguous-forward-dct/1 : work {
                 Workspace build, tests, formatting, no-default-features check, lint-delta review, and AKR validation pass or isolate pre-existing blockers.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase12-gates-2026-08-15/1 ]
         }
         check quality {
             statement """
                 Independent decode and fixed-rate quality checks record any codestream, achieved-size, SSIMULACRA2, or Butteraugli changes caused by floating-point evaluation order.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.phase12-quality-2026-08-15/1 ]
         }
         check speed {
             statement """
                 Fresh interleaved PGO A/B on the pinned 4.3 MP and 12 MP target-rate photographs measures the end-to-end effect against Phase 11.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.phase12-speed-2026-08-15/1 ]
         }
         check transform {
             statement """
                 Focused transform tests cover every supported rectangular shape, roundtrip tolerances, and coefficient orientation.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase12-transform-2026-08-15/1 ]
         }
     }
     depends_on [ @jpegxl-rs.work.arch-phase11-cheap-navigation ]

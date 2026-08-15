@@ -613,6 +613,56 @@ record jpegxl-rs.evidence.phase11-speed-2026-08-15/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase12-gates-2026-08-15/1 : evidence {
+    title "Workspace build, tests, formatting, no-default-features policy check, and diff check passed. Strict Clippy remains blocked by pre-existing core diagnostics; the changed DCT lines introduce none."
+    state verified
+    result pass
+    method command
+    observed_at git:0973f67f829a1e76a7a2cbc381e2173a9ede41e6
+    command "cd JPXL && cargo build --workspace && cargo test --workspace --quiet && cargo fmt --all --check && cargo check -p jpxl-encode-policy --no-default-features && git diff --check"
+    artifact ".agent/scratch/phase12-contiguous-dct-2026-08-15/SUMMARY.md"
+    summary """
+        Workspace build, tests, formatting, no-default-features policy check, and diff check passed. Strict Clippy remains blocked by pre-existing core diagnostics; the changed DCT lines introduce none.
+        """
+}
+
+record jpegxl-rs.evidence.phase12-quality-2026-08-15/1 : evidence {
+    title "All seven canonical Fast codestreams, both timing codestreams, and a Quality-preset codestream were byte-identical to Phase 11; independent matched-quality djxl metrics therefore remain unchanged."
+    state verified
+    result pass
+    method observation
+    observed_at git:0973f67f829a1e76a7a2cbc381e2173a9ede41e6
+    artifact ".agent/scratch/phase12-contiguous-dct-2026-08-15/SUMMARY.md"
+    summary """
+        All seven canonical Fast codestreams, both timing codestreams, and a Quality-preset codestream were byte-identical to Phase 11; independent matched-quality djxl metrics therefore remain unchanged.
+        """
+}
+
+record jpegxl-rs.evidence.phase12-speed-2026-08-15/1 : evidence {
+    title "Fresh PGO A/B reduced Phase 11 medians from 1.14 to 1.10 s at 2400x1800 (3.51%) and 1.93 to 1.91 s at 4000x3000 (1.04%). Matched-quality black-box cjxl ratios are 2.73x and 1.80x."
+    state verified
+    result pass
+    method observation
+    observed_at git:0973f67f829a1e76a7a2cbc381e2173a9ede41e6
+    artifact ".agent/scratch/phase12-contiguous-dct-2026-08-15/pgo-ab.log"
+    summary """
+        Fresh PGO A/B reduced Phase 11 medians from 1.14 to 1.10 s at 2400x1800 (3.51%) and 1.93 to 1.91 s at 4000x3000 (1.04%). Matched-quality black-box cjxl ratios are 2.73x and 1.80x.
+        """
+}
+
+record jpegxl-rs.evidence.phase12-transform-2026-08-15/1 : evidence {
+    title "All 40 focused DCT tests passed. The new all-shape reference test compares the contiguous implementation with the prior column-gather implementation at zero tolerance."
+    state verified
+    result pass
+    method command
+    observed_at git:0973f67f829a1e76a7a2cbc381e2173a9ede41e6
+    command "cd JPXL && cargo test -p jpxl-core dct --quiet"
+    artifact ".agent/scratch/phase12-contiguous-dct-2026-08-15/SUMMARY.md"
+    summary """
+        All 40 focused DCT tests passed. The new all-shape reference test compares the contiguous implementation with the prior column-gather implementation at zero tolerance.
+        """
+}
+
 record jpegxl-rs.evidence.phase1b-diag-available-2026-08-13/1 : evidence {
     title "Phase 1B opt-in diagnostics remain available"
     state verified
