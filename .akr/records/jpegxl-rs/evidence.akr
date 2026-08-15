@@ -539,6 +539,43 @@ record jpegxl-rs.evidence.phase1-plane-clones-current-2026-08-13/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase10-two-anchor-gates-2026-08-15/1 : evidence {
+    title "Workspace build/test/format/diff gates and the no-default-features policy build passed. Strict Clippy remains blocked by 48 pre-existing diagnostics in unchanged CSF, quantization, and planner code; none points to the new rate/request implementation."
+    state verified
+    result pass
+    method command
+    observed_at git:3f137d376307b7fc76a26ef764622d0e7e4fc1fb
+    command "cd JPXL && cargo build --workspace && cargo test --workspace --quiet && cargo fmt --all --check && git diff --check; cargo check -p jpxl-encode-policy --no-default-features"
+    artifact ".agent/scratch/phase10-two-anchor-2026-08-15/SUMMARY.md"
+    summary """
+        Workspace build/test/format/diff gates and the no-default-features policy build passed. Strict Clippy remains blocked by 48 pre-existing diagnostics in unchanged CSF, quantization, and planner code; none points to the new rate/request implementation.
+        """
+}
+
+record jpegxl-rs.evidence.phase10-two-anchor-quality-2026-08-15/1 : evidence {
+    title "Seven canonical 1 bpp scenes had zero Fast fallbacks, stayed below the 98,304-byte ceiling, decoded independently, and measured mean SSIMULACRA2 delta -0.1362 and worst -0.7806 versus unchanged exhaustive Quality."
+    state verified
+    result pass
+    method observation
+    observed_at git:3f137d376307b7fc76a26ef764622d0e7e4fc1fb
+    artifact ".agent/scratch/phase10-two-anchor-2026-08-15/quality.tsv"
+    summary """
+        Seven canonical 1 bpp scenes had zero Fast fallbacks, stayed below the 98,304-byte ceiling, decoded independently, and measured mean SSIMULACRA2 delta -0.1362 and worst -0.7806 versus unchanged exhaustive Quality.
+        """
+}
+
+record jpegxl-rs.evidence.phase10-two-anchor-speed-2026-08-15/1 : evidence {
+    title "Fresh PGO interleaved A/B reduced 2400x1800 target-rate time 36.65% (2.51 s to 1.59 s) and 4000x3000 time 53.48% (5.89 s to 2.74 s); the retained profile confirms navigation probes collapsed and exposes the next cover, DCT, quantization, and writer costs."
+    state verified
+    result pass
+    method observation
+    observed_at git:3f137d376307b7fc76a26ef764622d0e7e4fc1fb
+    artifact ".agent/scratch/phase10-two-anchor-2026-08-15/SUMMARY.md"
+    summary """
+        Fresh PGO interleaved A/B reduced 2400x1800 target-rate time 36.65% (2.51 s to 1.59 s) and 4000x3000 time 53.48% (5.89 s to 2.74 s); the retained profile confirms navigation probes collapsed and exposes the next cover, DCT, quantization, and writer costs.
+        """
+}
+
 record jpegxl-rs.evidence.phase1b-diag-available-2026-08-13/1 : evidence {
     title "Phase 1B opt-in diagnostics remain available"
     state verified

@@ -95,7 +95,7 @@ record jpegxl-rs.work.arch-phase1-output-preserving/1 : work {
 
 record jpegxl-rs.work.arch-phase10-two-anchor-prediction/1 : work {
     title "Phase 10: explicit Fast two-anchor preset"
-    state proposed
+    state completed
     scope [
         path "JPXL/crates/jpxl-cli/Cargo.toml",
         path "JPXL/crates/jpxl-cli/src/main.rs",
@@ -115,18 +115,21 @@ record jpegxl-rs.work.arch-phase10-two-anchor-prediction/1 : work {
                 Policy tests, independent decoder checks, workspace tests, formatting, lint-delta checks, and AKR validation pass or any pre-existing blockers are explicitly isolated.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase10-two-anchor-gates-2026-08-15/1 ]
         }
         check quality {
             statement """
                 Quality remains the unchanged default exhaustive path. Fast's wider rate band, fallback frequency, achieved sizes, and perceptual deltas against Quality are measured on the canonical corpus; the exact final ceiling and independent decoding contract remain mandatory even when quality is traded for speed.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.phase10-two-anchor-quality-2026-08-15/1 ]
         }
         check speed {
             statement """
                 Fresh interleaved A/B on the pinned 4.3 MP and 12 MP photographs shows a material production-style target-rate speed improvement and diagnostics attribute it to fewer navigation quantization and census passes.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.phase10-two-anchor-speed-2026-08-15/1 ]
         }
     }
     depends_on [ @jpegxl-rs.work.arch-phase9-quant-scheduling ]

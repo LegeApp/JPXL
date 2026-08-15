@@ -5,7 +5,7 @@ build {
     tool "akr 0.3.0"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:6c1aad14361346c358c9d6daa526dfbb2670d884ff3a3d0a31c966b37159e996"
+    source_graph "sha256:f89e57e46592bd5df4118361e14767a30c44ed4aed42879190ae3619867c5b66"
 }
 
 source ".akr/project.akr" {
@@ -29,8 +29,8 @@ source ".akr/records/jpegxl-rs/decisions.akr" {
 }
 
 source ".akr/records/jpegxl-rs/evidence.akr" {
-    hash "sha256:e1b8ad994b2692e6d664d061ad9f541432f24f5656a58564b86beffc6aaf1d3e"
-    records 223
+    hash "sha256:624b774adc5c3115fd9689d0ace54d5c713b9dc9611660e9b0d2d515efae86a3"
+    records 226
 }
 
 source ".akr/records/jpegxl-rs/milestones.akr" {
@@ -64,7 +64,7 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:311a5980fda93bdabed148de726f9ba3f2938e2b6d1dba55259d4677f381e3c2"
+    hash "sha256:32245000c8913ac0f4d3d9ce3a86d55555fce9d6c6b7ff89c8559157dfb3e487"
     records 99
 }
 
@@ -3456,6 +3456,21 @@ seal @jpegxl-rs.evidence.phase1-plane-clones-current-2026-08-13/1 {
     hash "sha256:b3d91d5244feed5e06280cc33a273f80a5d05c69f825eb7b1de3ef15fe23fa8c"
 }
 
+seal @jpegxl-rs.evidence.phase10-two-anchor-gates-2026-08-15/1 {
+    state verified
+    hash "sha256:6946d67716dc6578fa601395be1db0de29d9200addc9b8eefddef0f22f43c8de"
+}
+
+seal @jpegxl-rs.evidence.phase10-two-anchor-quality-2026-08-15/1 {
+    state verified
+    hash "sha256:c98ad78c9ddf5df47316eeca33117714ebbf4977174a49baa42721cbed77ffa9"
+}
+
+seal @jpegxl-rs.evidence.phase10-two-anchor-speed-2026-08-15/1 {
+    state verified
+    hash "sha256:29169ced4fc557b1bd64138ce7893c7de0e3ab2d5af8addb562299fc41ce6bdd"
+}
+
 seal @jpegxl-rs.evidence.phase1b-diag-available-2026-08-13/1 {
     state verified
     hash "sha256:160331881a2b049c1692d9108a3a59a7f76a604b1da753c78b53a8ac1162ab91"
@@ -4944,6 +4959,11 @@ seal @jpegxl-rs.work.arch-phase0-instrumentation/1 {
 seal @jpegxl-rs.work.arch-phase1-output-preserving/1 {
     state completed
     hash "sha256:98d5d4ea74f34589b209b410a2072f841a0fab835f87a1a8741583ff9984ae36"
+}
+
+seal @jpegxl-rs.work.arch-phase10-two-anchor-prediction/1 {
+    state completed
+    hash "sha256:b9ca8cac75d6642dd748ab0fa0c5dbae91ff8d5f65cfa77a09435fd5ee360689"
 }
 
 seal @jpegxl-rs.work.arch-phase1b-opt-in-diagnostics/1 {
