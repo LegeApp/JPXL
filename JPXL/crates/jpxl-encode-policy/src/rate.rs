@@ -6,9 +6,9 @@
 //! **1. Production candidates are priced exactly.** In default builds a
 //! candidate's size is [`jpxl_encode::vardct::price_codestream`], which runs
 //! the real writer into a scratch buffer. The feature-gated Fast preset
-//! controller fits a local rate curve from two exact Fast anchors, then prices
-//! a freshly replanned finalist exactly and falls back to the exhaustive
-//! controller unless it satisfies the byte contract.
+//! controller fits a local rate curve from two exact anchors, then prices a
+//! freshly replanned finalist exactly and falls back to the exhaustive
+//! controller unless it satisfies the preset's byte contract.
 //!
 //! **2. The search moves over wire-legal values only.** I.2.1's `global_scale`
 //! is a `U32()` field with a largest expressible value, `HfMul` is a Modular
@@ -254,8 +254,8 @@ pub struct RateStep {
 ///
 /// These are the measured claims behind
 /// `rate-probe-multiplicity-down`: Gaborish and the forward DCT pyramid are
-/// request-scoped, Fast ladder prices skip entropy alternatives, and Full
-/// entropy + kept emissions are limited to the refinement phase.
+/// request-scoped, anchored ladder prices skip entropy alternatives, and
+/// exhaustive Full entropy is limited to the Quality/refinement phase.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct RateProbeStats {
     /// Inverse-Gaborish precondition runs (0 or 1 for a single search).
@@ -274,7 +274,7 @@ pub struct RateProbeStats {
     pub candidate_payload_bytes: u64,
     /// Dense coefficient-arena allocations (one per populated transform bank).
     pub candidate_allocations: u64,
-    /// Cover/CfL builds on the Fast anchor path (normal-path cap: two).
+    /// Cover/CfL builds on the anchored path (normal-path cap: two).
     pub structural_builds: u32,
     /// Reserved legacy counter for approximate probes (zero in the two-anchor path).
     pub sketch_probes: u32,
@@ -283,9 +283,9 @@ pub struct RateProbeStats {
     /// One when the feature-gated anchor path rejected its estimate and used
     /// the exhaustive exact controller; zero on normal-path success.
     pub anchor_fallbacks: u32,
-    /// Exact byte size of the first freshly replanned Fast finalist.
+    /// Exact byte size of the first freshly replanned anchored finalist.
     pub anchor_first_finalist_bytes: u64,
-    /// Exact byte size of the one anchored Fast correction, or zero when the
+    /// Exact byte size of the one anchored correction, or zero when the
     /// first finalist already satisfied tolerance.
     pub anchor_correction_bytes: u64,
     /// Aggregate Fast planning work, including nested entropy passes.
@@ -876,10 +876,10 @@ const fn lf_sample_fits_legacy_16bit(sample: i32) -> bool {
 
 /// Runs the rate loop over a real frame and returns the chosen codestream.
 ///
-/// Quality requests retain the exhaustive exact controller. A Fast request in
-/// a build with the research-only `anchor-sketch` feature attempts the bounded
-/// two-anchor controller and falls back whenever its freshly replanned
-/// finalist does not satisfy the Fast preset's exact target band.
+/// Quality requests retain the exhaustive exact controller. Fast and Balanced
+/// requests in a build with the research-only `anchor-sketch` feature attempt
+/// the bounded two-anchor controller and fall back whenever their freshly
+/// replanned finalist does not satisfy the preset's exact target band.
 pub fn search_frame(
     frame: &crate::PreparedFrame,
     atlas: &crate::AnalysisAtlas,
@@ -909,9 +909,12 @@ pub fn search_frame(
 
     #[cfg(not(feature = "anchor-sketch"))]
     {
-        if request.rate_preset == crate::request::RateSearchPreset::Fast {
+        if matches!(
+            request.rate_preset,
+            crate::request::RateSearchPreset::Fast | crate::request::RateSearchPreset::Balanced
+        ) {
             return Err(PolicyError::Unsupported {
-                what: "the Fast rate preset without the anchor-sketch crate feature",
+                what: "an anchored rate preset without the anchor-sketch crate feature",
             });
         }
         search_frame_exhaustive(frame, atlas, request, target)
@@ -1056,10 +1059,15 @@ fn search_frame_two_anchor(
     };
 
     let first_quantizer = QuantizerChoice::at(start, request.quant_lf)?;
+    let (final_entropy, enable_cfl) = match request.rate_preset {
+        RateSearchPreset::Fast => (EntropySearch::FinalFast, false),
+        RateSearchPreset::Balanced => (EntropySearch::FinalFast, true),
+        RateSearchPreset::Quality => return Ok(None),
+    };
     let mut captured = None;
     let first_plan = prepared.plan_anchor(
         first_quantizer,
-        false,
+        enable_cfl,
         EntropySearch::Fast,
         None,
         Some(&mut captured),
@@ -1118,14 +1126,15 @@ fn search_frame_two_anchor(
     };
     let finalist_quantizer = QuantizerChoice::at(finalist_rung, request.quant_lf)?;
     let mut finalist_anchor = None;
-    // Fast is deliberately a relaxed-quality preset. Reuse the captured
-    // neutral-CfL structure for its finalist instead of rebuilding cover,
-    // forward coefficients and a second CfL estimate. Quality/Full never
-    // enters this controller and therefore retains the exhaustive path.
+    // Reuse the captured structure for the finalist instead of rebuilding
+    // cover, forward coefficients, and CfL. Fast intentionally uses the
+    // cheaper fixed-cover/nearest/fast-entropy policy; Balanced keeps the
+    // request's hierarchical/trailing policy while retaining fast entropy for
+    // the anchored finalist. Quality remains the full-alternative oracle.
     let finalist = prepared.plan_anchor(
         finalist_quantizer,
         false,
-        EntropySearch::FinalFast,
+        final_entropy,
         Some(&anchor),
         Some(&mut finalist_anchor),
     )?;
@@ -1183,12 +1192,12 @@ fn search_frame_two_anchor(
         };
         let correction_quantizer = QuantizerChoice::at(correction_rung, request.quant_lf)?;
         let anchor = finalist_anchor.as_ref().ok_or(PolicyError::Unsupported {
-            what: "a Fast finalist that failed to capture its structure",
+            what: "an anchored finalist that failed to capture its structure",
         })?;
         let correction = prepared.plan_anchor(
             correction_quantizer,
             true,
-            EntropySearch::FinalFast,
+            final_entropy,
             Some(anchor),
             None,
         )?;
@@ -1215,7 +1224,7 @@ fn search_frame_two_anchor(
 
     if emission.sizing.total != trace.last().map_or(0, |step| step.bytes) {
         return Err(PolicyError::Unsupported {
-            what: "a selected Fast emission whose recorded size changed",
+            what: "a selected anchored emission whose recorded size changed",
         });
     }
     prepared.stats.dct_cache_hits = prepared.fwd_cache.hits();

@@ -126,11 +126,11 @@ impl Default for RateTolerance {
 
 /// Target-rate controller preset.
 ///
-/// [`Self::Quality`] retains the exhaustive exact search. [`Self::Fast`]
-/// uses the bounded two-anchor predictor (available in normal builds through
-/// the `anchor-sketch` compatibility feature), verifies the selected stream
-/// exactly, and falls back to Quality when it cannot satisfy its wider rate
-/// band.
+/// [`Self::Quality`] retains the exhaustive exact search. [`Self::Fast`] and
+/// [`Self::Balanced`] use the bounded two-anchor predictor (available in
+/// normal builds through the `anchor-sketch` compatibility feature), verify
+/// the selected stream exactly, and fall back to Quality when they cannot
+/// satisfy their rate bands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RateSearchPreset {
     /// Exhaustive exact rate search, preserving the highest-rate feasible
@@ -140,6 +140,12 @@ pub enum RateSearchPreset {
     /// Two exact anchors, one predicted fast-entropy finalist, and at most one
     /// exact correction before falling back to [`Self::Quality`].
     Fast,
+    /// Two exact anchors with the configured hierarchical cover and trailing
+    /// HF quantizer, followed by one fast-entropy anchored finalist and at
+    /// most one exact correction before falling back to [`Self::Quality`].
+    /// This is the higher-quality speed preset; [`Self::Quality`] remains the
+    /// exhaustive reference path.
+    Balanced,
 }
 
 impl RateSearchPreset {
@@ -151,6 +157,10 @@ impl RateSearchPreset {
             Self::Fast => RateTolerance {
                 bytes: requested.bytes.max(8),
                 fraction: requested.fraction.max(0.03),
+            },
+            Self::Balanced => RateTolerance {
+                bytes: requested.bytes.max(8),
+                fraction: requested.fraction.max(0.02),
             },
         }
     }
@@ -635,6 +645,12 @@ mod tests {
                 .tolerance(requested)
                 .bytes_for(10_000),
             300
+        );
+        assert_eq!(
+            RateSearchPreset::Balanced
+                .tolerance(requested)
+                .bytes_for(10_000),
+            200
         );
     }
 }

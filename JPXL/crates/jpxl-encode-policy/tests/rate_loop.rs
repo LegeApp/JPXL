@@ -171,6 +171,32 @@ fn target_rate_is_byte_identical_across_executor_widths() {
     }
 }
 
+#[cfg(feature = "anchor-sketch")]
+#[test]
+fn balanced_anchor_is_exact_and_decodable() {
+    let (width, height) = (300u32, 260u32);
+    let source = test_image(width, height);
+    let target = RateTarget::BitsPerPixel(1.0);
+    let mut request = EncodeRequest::for_target(target);
+    request.rate_preset = RateSearchPreset::Balanced;
+    request.resources = jpxl_encode::EncodeResources::groups(4);
+
+    let outcome = encode_srgb8_to_target(width, height, &source, &request, target)
+        .expect("balanced target-rate search");
+    assert!(
+        outcome.achieved() <= target.bytes_for(width, height),
+        "balanced stream exceeds its target"
+    );
+    let image = decode(&outcome.codestream, &Limits::default()).expect("balanced stream decodes");
+    assert_eq!((image.width, image.height), (width, height));
+    assert!(outcome.stats.anchor_fallbacks <= 1);
+    if outcome.stats.anchor_fallbacks == 0 {
+        assert!(outcome.stats.structural_builds <= 2);
+        assert!(outcome.stats.full_prices <= 2);
+        assert!(outcome.stats.exact_candidates <= 4);
+    }
+}
+
 #[test]
 fn every_rung_hits_every_target_from_below() {
     for rung in ladder() {

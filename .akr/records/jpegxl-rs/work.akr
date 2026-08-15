@@ -370,6 +370,46 @@ record jpegxl-rs.work.arch-phase16-fast-anchor/1 : work {
     }
 }
 
+record jpegxl-rs.work.arch-phase17-quality-speed-preset/1 : work {
+    title "Phase 17: Hierarchical anchored speed preset"
+    state proposed
+    scope [
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/rate.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/request.rs",
+        path "JPXL/crates/jpxl-encode-policy/tests/rate_loop.rs",
+        path "JPXL/docs/optimize.md"
+    ]
+    intent "Reduce equivalent-quality rate-loop multiplicity by screening a measured hierarchical anchored speed preset. Balanced keeps the configured hierarchical cover, CfL, and trailing quantizer, reuses one structural anchor across bounded navigation/final probes, and uses fast entropy for the anchored finalist; Quality remains the exhaustive full-entropy reference and Fast remains the relaxed fixed-cover tier. Retain only if Balanced stays target-safe, decodable, deterministic, and perceptually near Quality while materially reducing time; otherwise record the negative result."
+    acceptance {
+        check correctness {
+            statement """
+                Balanced remains deterministic across one/four threads, never exceeds target, decodes through djxl, and the exhaustive Quality output remains unchanged. Non-photo corpus classes may fall back, but fallback output must remain the Quality stream.
+                """
+            method command
+        }
+        check gates {
+            statement """
+                Workspace build, tests, formatting, no-default-features check, and AKR validation pass; pre-existing strict Clippy diagnostics remain isolated if unchanged.
+                """
+            method command
+        }
+        check quality {
+            statement """
+                Balanced is compared against exhaustive Quality and cjxl at matched target on both canonical photographs with SSIMULACRA2, Butteraugli, pnorm3, PSNR, bytes, and decoded pixels recorded; the observed metric trade is documented.
+                """
+            method observation
+        }
+        check speed {
+            statement """
+                Four-thread timing records Balanced against exhaustive Quality and cjxl on both canonical size classes, with raw logs, binary hashes, diagnostics, and a flamegraph profile.
+                """
+            method observation
+        }
+    }
+}
+
 record jpegxl-rs.work.arch-phase1b-opt-in-diagnostics/1 : work {
     title "Phase 1B: make architecture diagnostics opt-in"
     state superseded

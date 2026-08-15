@@ -280,11 +280,12 @@ pub(crate) fn plan_at_on(
 
 /// Fast-preset planning entry point with an optional reusable spatial anchor.
 ///
-/// Navigation captures the production cover with neutral CfL, then reuses
-/// those choices while retargeting quantizer-dependent `HfMul` values. The
-/// finalist is always unanchored and restores full CfL search; a bounded
-/// correction may retain that freshly selected cover and CfL after its exact
-/// size is known.
+/// Navigation captures the selected cover and CfL policy, then reuses those
+/// choices while retargeting quantizer-dependent `HfMul` values. The Fast
+/// preset deliberately captures a neutral-CfL/fixed-cover structure; the
+/// Balanced preset captures the configured hierarchical cover with CfL and
+/// uses the fast entropy model only for its anchored finalist. A bounded
+/// correction may retain that finalist structure after its exact size is known.
 #[cfg(feature = "anchor-sketch")]
 pub(crate) fn plan_at_on_anchor(
     frame: &PreparedFrame,
@@ -391,8 +392,8 @@ fn plan_at_with_cfl(
     );
     // Trailing-truncation is the target-rate Quality policy, but it requires
     // a backwards nonzero scan for every selected block. Fast navigation uses
-    // the already-vectorized nearest choice; Quality and Full fallback retain
-    // the promoted truncation policy exactly.
+    // the already-vectorized nearest choice; Balanced and Quality retain the
+    // promoted truncation policy exactly.
     let quantizer_choice =
         if request.rate_preset == RateSearchPreset::Fast && entropy_search.uses_fast_entropy() {
             QuantizerChoiceMode::Nearest
@@ -722,7 +723,10 @@ fn plan_at_with_cfl(
             &geometry,
             entropy_search,
             executor,
-            request.rate_preset == RateSearchPreset::Fast,
+            matches!(
+                request.rate_preset,
+                RateSearchPreset::Fast | RateSearchPreset::Balanced
+            ) && entropy_search.uses_fast_entropy(),
         )
     })?;
 
@@ -1057,7 +1061,7 @@ type PlannedGroup = (
     Vec<VarblockDecision>,
 );
 
-/// Quantizer-independent structure reused by the Fast rate preset.
+/// Quantizer-independent structure reused by the anchored rate presets.
 ///
 /// The cover and CfL factors follow the policy chosen for the captured plan.
 /// Reused probes update every varblock's quantizer-dependent `HfMul`, but keep

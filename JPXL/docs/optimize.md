@@ -95,6 +95,36 @@ The relaxed Fast metrics were SSIMULACRA2 69.4584/80.4677, Butteraugli
 high-quality fallback. The neutral-CfL reuse is deliberately not applied to
 Quality/Full.
 
+Phase 17 adds a retained `balanced` preset rather than changing either
+existing tier. It uses the two-anchor controller, but keeps the request's
+hierarchical cover and trailing HF quantizer, captures CfL once, and runs the
+the fast entropy model only on the anchored finalist (plus one possible
+correction). Its tolerance is 2% undershoot, between Quality's requested band
+and Fast's 3% band; an over-target stream still rejects and falls back to
+Quality. On the 2400x1800 and 4000x3000 photos at 1 bpp, isolated release
+processes measured `balanced` at 0.89 s and 1.65 s versus Quality at 8.91 s and
+13.58 s (10.0x and 8.2x faster). It emitted 538,600 and 1,495,941 bytes,
+compared with Quality's 539,315 and 1,490,235. Decoded metrics were
+SSIMULACRA2 72.5443/83.6424 and Butteraugli 3.1308/2.0041 for Balanced,
+versus Quality's 72.2863/83.5429 and 3.2742/1.9378; the larger image's
+Butteraugli is slightly worse, but the SSIMULACRA2 result remains within the
+observed Quality/cjxl parity band. The Quality hashes remain
+`d4b03810d0bcb73981bb559815c8952eda0fbe2b27040abf8c99d4792c98c2fa` and
+`4baefbd0b8a055bdb01813f1284411cfd06a5d6013b305c392a78eaec486d775`.
+Diagnostics show the intended collapse on both photos: two Fast plans, one
+anchored finalist, one structural build, and no fallback. On the other three
+mid-size corpus classes (line, low-detail, and noise), the anchored result
+misses the requested band or saturates and falls back to Quality; the emitted
+bytes are identical to Quality in each case. Raw outputs and metrics are under
+`.agent/scratch/phase17-balanced/`; this is a preset experiment, not a claim
+that JPXL has reached the overall libjxl speed goal. A fresh Balanced
+fast-finalist flamegraph captured 416 samples with zero lost: lane-4 HF
+quantization (24.2%), entropy-table construction (13.2%), quantization-group
+orchestration (13.0%), and pass-group writing (5.3%) dominate. The earlier
+Full-finalist profile is retained beside it for comparison; the next bounded
+optimization target is shared quantization or entropy-table work across the
+two anchors and finalist.
+
 ### Open architectural questions
 
 1. How can the finalist refresh only structurally unstable cover decisions?
@@ -126,6 +156,16 @@ Quality/Full.
    CfL rebuild and biasing its predicted rung. Can the same safe margin be
    learned from a bounded rate-slope confidence signal, so pathological scenes
    fall back before paying a correction without narrowing the documented band?
+8. Balanced's anchored fast-entropy finalist improves SSIMULACRA2 over exhaustive
+   Quality on both audit photos while slightly worsening large-image
+   Butteraugli. Is that a stable metric trade across the corpus, or should
+   Balanced carry a small distortion guard that routes a Butteraugli outlier
+   to Quality without re-running the full search for every image?
+9. Balanced's fast-finalist path now avoids Full entropy alternatives, but
+   lane-4 HF quantization is still 24% of its mid-image profile. Can two anchor
+   quantizers and the finalist share one coefficient traversal or a compact
+   multi-quantizer workspace without changing wire integers or retaining
+   three frame-sized coefficient copies?
 
 ## Original advisor verdict
 

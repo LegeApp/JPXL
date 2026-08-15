@@ -57,7 +57,8 @@ Lossy options (8-bit RGB only; either one selects the VarDCT path):
     --bpp <f>                     Target bits per pixel
     --target-bytes <n>            Target output size in bytes
     --lossy-preset <mode>         Rate controller: quality (default,
-                                  exhaustive) or fast (bounded two-anchor)
+                                  exhaustive), balanced (anchored fast-final),
+                                  or fast (bounded two-anchor)
     --aq-mode <mode>              Per-block HF allocation: off (target-rate
                                   default), masking, or uniform; research control
     --aq-strength <f>             Activity-field strength; research control
@@ -126,7 +127,7 @@ Options:
     --height <n>          Synthetic frame height (default 256)
     --iters <n>           Timed iterations after one warm-up (default 3)
     --bpp <f>             Target bits/pixel for vardct-rate (default 1.0)
-    --lossy-preset <mode> Rate controller: quality (default) or fast
+    --lossy-preset <mode> Rate controller: quality (default), balanced, or fast
     --threads <n>         Section-parallel workers (default: auto; 1 = serial)
     --input <path.ppm>    Use a real P6 image instead of the synthetic RGB
     --effort <1..9>       Modular search effort (default 1; modular mode only)
@@ -517,14 +518,15 @@ fn cmd_encode(args: &[String]) -> u8 {
             }
             "--lossy-preset" => {
                 let Some(value) = rest.next() else {
-                    fail("`--lossy-preset` needs one of: quality, fast");
+                    fail("`--lossy-preset` needs one of: quality, balanced, fast");
                     return EXIT_ERROR;
                 };
                 rate_preset = Some(match value.as_str() {
                     "quality" => jpxl_encode_policy::RateSearchPreset::Quality,
+                    "balanced" => jpxl_encode_policy::RateSearchPreset::Balanced,
                     "fast" => jpxl_encode_policy::RateSearchPreset::Fast,
                     _ => {
-                        fail("`--lossy-preset` needs one of: quality, fast");
+                        fail("`--lossy-preset` needs one of: quality, balanced, fast");
                         return EXIT_ERROR;
                     }
                 });
@@ -850,14 +852,15 @@ fn cmd_bench(args: &[String]) -> u8 {
             }
             "--lossy-preset" => {
                 let Some(value) = rest.next() else {
-                    fail("`--lossy-preset` needs one of: quality, fast");
+                    fail("`--lossy-preset` needs one of: quality, balanced, fast");
                     return EXIT_ERROR;
                 };
                 rate_preset = match value.as_str() {
                     "quality" => jpxl_encode_policy::RateSearchPreset::Quality,
+                    "balanced" => jpxl_encode_policy::RateSearchPreset::Balanced,
                     "fast" => jpxl_encode_policy::RateSearchPreset::Fast,
                     _ => {
-                        fail("`--lossy-preset` needs one of: quality, fast");
+                        fail("`--lossy-preset` needs one of: quality, balanced, fast");
                         return EXIT_ERROR;
                     }
                 };
