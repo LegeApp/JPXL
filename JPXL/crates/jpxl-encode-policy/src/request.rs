@@ -124,6 +124,38 @@ impl Default for RateTolerance {
     }
 }
 
+/// Target-rate controller preset.
+///
+/// [`Self::Quality`] retains the exhaustive exact search. [`Self::Fast`]
+/// uses the bounded two-anchor predictor (available in normal builds through
+/// the `anchor-sketch` compatibility feature), verifies the selected stream
+/// exactly, and falls back to Quality when it cannot satisfy its wider rate
+/// band.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RateSearchPreset {
+    /// Exhaustive exact rate search, preserving the highest-rate feasible
+    /// candidate found within the request's search budget.
+    #[default]
+    Quality,
+    /// Two exact anchors, one predicted fast-entropy finalist, and at most one
+    /// exact correction before falling back to [`Self::Quality`].
+    Fast,
+}
+
+impl RateSearchPreset {
+    /// Effective target undershoot tolerance for this preset.
+    #[must_use]
+    pub fn tolerance(self, requested: RateTolerance) -> RateTolerance {
+        match self {
+            Self::Quality => requested,
+            Self::Fast => RateTolerance {
+                bytes: requested.bytes.max(8),
+                fraction: requested.fraction.max(0.03),
+            },
+        }
+    }
+}
+
 /// How many exact prices the rate loop may pay.
 ///
 /// Each price is a full encode, so this is the effort knob that matters most
@@ -359,6 +391,9 @@ pub struct EncodeRequest {
     pub target: Option<RateTarget>,
     /// How much of the target the loop may leave unspent.
     pub tolerance: RateTolerance,
+    /// Whether target-rate encoding prioritizes exhaustive rate accuracy or
+    /// bounded search latency.
+    pub rate_preset: RateSearchPreset,
     /// J.1 restoration-filter decisions written into the frame header.
     ///
     /// Default is all off (the unfiltered R-D baseline). When
@@ -439,6 +474,7 @@ impl EncodeRequest {
             budget: SearchBudget::default(),
             target: None,
             tolerance: RateTolerance::default(),
+            rate_preset: RateSearchPreset::default(),
             restoration: RestorationDecision::default(),
             epf_sharpness: EpfSharpnessMode::default(),
             cover_size_penalty: CoverSizePenalty::default(),
@@ -541,6 +577,7 @@ mod tests {
             "production AQ default remains the historical Masking policy"
         );
         assert_eq!(request.target, None, "the default path has no rate loop");
+        assert_eq!(request.rate_preset, RateSearchPreset::Quality);
         assert_eq!(request.x_qm_scale, QmScale::NEUTRAL);
         assert_eq!(request.b_qm_scale, QmScale::NEUTRAL);
         assert!(
@@ -586,6 +623,18 @@ mod tests {
             }
             .bytes_for(10_000),
             0
+        );
+    }
+
+    #[test]
+    fn fast_widens_only_the_undershoot_tolerance() {
+        let requested = RateTolerance::default();
+        assert_eq!(RateSearchPreset::Quality.tolerance(requested), requested);
+        assert_eq!(
+            RateSearchPreset::Fast
+                .tolerance(requested)
+                .bytes_for(10_000),
+            300
         );
     }
 }

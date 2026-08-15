@@ -21,8 +21,8 @@ jpxl-conformance.workspace = true
 default = ["parallel", "simd"]
 parallel = ["jpxl-encode/parallel", "jpxl-encode-policy/parallel"]
 simd = ["jpxl-encode/simd", "jpxl-encode-policy/simd", "jpxl-core/simd"]
-# Research-only target-rate controller. Enabling the CLI feature forwards it to
-# policy; default binaries retain the exhaustive exact search.
+# Compatibility feature for explicitly forwarding Fast rate-preset support.
+# Policy enables it normally; Quality remains the runtime default.
 anchor-sketch = ["jpxl-encode-policy/anchor-sketch"]
 # `jpxl compare` also reports SSIMULACRA2. Off by default so the shipped CLI
 # keeps this workspace's near-zero dependency footprint; build with

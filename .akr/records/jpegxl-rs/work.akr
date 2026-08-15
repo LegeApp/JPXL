@@ -93,6 +93,46 @@ record jpegxl-rs.work.arch-phase1-output-preserving/1 : work {
     }
 }
 
+record jpegxl-rs.work.arch-phase10-two-anchor-prediction/1 : work {
+    title "Phase 10: explicit Fast two-anchor preset"
+    state proposed
+    scope [
+        path "JPXL/crates/jpxl-cli/Cargo.toml",
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/crates/jpxl-encode-policy/Cargo.toml",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/rate.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/request.rs",
+        path "JPXL/crates/jpxl-encode-policy/tests/rate_loop.rs",
+        path "JPXL/docs/optimize.md"
+    ]
+    intent """
+        Add an explicit Fast target-rate preset that uses two exact anchors to predict a default-entropy finalist directly, while preserving the exhaustive controller as the default Quality preset. Fast may trade a wider, documented undershoot band and measured perceptual quality for lower latency, but must verify the final stream exactly, never exceed the target, remain deterministic, and fall back to Quality when its bounded search cannot satisfy its contract.
+        """
+    acceptance {
+        check gates {
+            statement """
+                Policy tests, independent decoder checks, workspace tests, formatting, lint-delta checks, and AKR validation pass or any pre-existing blockers are explicitly isolated.
+                """
+            method command
+        }
+        check quality {
+            statement """
+                Quality remains the unchanged default exhaustive path. Fast's wider rate band, fallback frequency, achieved sizes, and perceptual deltas against Quality are measured on the canonical corpus; the exact final ceiling and independent decoding contract remain mandatory even when quality is traded for speed.
+                """
+            method observation
+        }
+        check speed {
+            statement """
+                Fresh interleaved A/B on the pinned 4.3 MP and 12 MP photographs shows a material production-style target-rate speed improvement and diagnostics attribute it to fewer navigation quantization and census passes.
+                """
+            method observation
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase9-quant-scheduling ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+}
+
 record jpegxl-rs.work.arch-phase1b-opt-in-diagnostics/1 : work {
     title "Phase 1B: make architecture diagnostics opt-in"
     state superseded

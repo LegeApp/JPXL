@@ -56,6 +56,8 @@ Encode options:
 Lossy options (8-bit RGB only; either one selects the VarDCT path):
     --bpp <f>                     Target bits per pixel
     --target-bytes <n>            Target output size in bytes
+    --lossy-preset <mode>         Rate controller: quality (default,
+                                  exhaustive) or fast (bounded two-anchor)
     --aq-mode <mode>              Per-block HF allocation: off (target-rate
                                   default), masking, or uniform; research control
     --aq-strength <f>             Activity-field strength; research control
@@ -124,6 +126,7 @@ Options:
     --height <n>          Synthetic frame height (default 256)
     --iters <n>           Timed iterations after one warm-up (default 3)
     --bpp <f>             Target bits/pixel for vardct-rate (default 1.0)
+    --lossy-preset <mode> Rate controller: quality (default) or fast
     --threads <n>         Section-parallel workers (default: auto; 1 = serial)
     --input <path.ppm>    Use a real P6 image instead of the synthetic RGB
     --effort <1..9>       Modular search effort (default 1; modular mode only)
@@ -324,6 +327,7 @@ fn cmd_boxes(args: &[String]) -> u8 {
 fn cmd_encode(args: &[String]) -> u8 {
     let mut options = jpxl_encode::EncodeOptions::default();
     let mut rate_target: Option<jpxl_encode_policy::RateTarget> = None;
+    let mut rate_preset: Option<jpxl_encode_policy::RateSearchPreset> = None;
     let mut aq_mode: Option<jpxl_encode_policy::AqMode> = None;
     let mut aq_tuning = jpxl_encode_policy::AqTuning::default();
     let mut fixed_quant_lf: Option<u32> = None;
@@ -511,6 +515,20 @@ fn cmd_encode(args: &[String]) -> u8 {
                 };
                 rate_target = Some(jpxl_encode_policy::RateTarget::Bytes(v));
             }
+            "--lossy-preset" => {
+                let Some(value) = rest.next() else {
+                    fail("`--lossy-preset` needs one of: quality, fast");
+                    return EXIT_ERROR;
+                };
+                rate_preset = Some(match value.as_str() {
+                    "quality" => jpxl_encode_policy::RateSearchPreset::Quality,
+                    "fast" => jpxl_encode_policy::RateSearchPreset::Fast,
+                    _ => {
+                        fail("`--lossy-preset` needs one of: quality, fast");
+                        return EXIT_ERROR;
+                    }
+                });
+            }
             "--effort" => {
                 let Some(level) = rest.next().and_then(|v| v.parse::<u8>().ok()) else {
                     fail("`--effort` needs an integer in 1..=9");
@@ -597,6 +615,7 @@ fn cmd_encode(args: &[String]) -> u8 {
                     cover_frequency_weight,
                     quantizer_choice,
                     lambda_scale,
+                    rate_preset,
                 },
             ) {
                 Ok(report) => {
@@ -645,7 +664,7 @@ fn cmd_encode(args: &[String]) -> u8 {
             // means the search ran out of prices short of the target.
             if let Some(report) = lossy {
                 let miss = report.target_bytes.saturating_sub(report.achieved);
-                let slack = report.target_bytes / 100; // the loop's own 1% tolerance
+                let slack = report.allowed_undershoot;
                 if miss > slack {
                     let pct = if report.target_bytes == 0 {
                         0.0
@@ -788,6 +807,7 @@ fn cmd_bench(args: &[String]) -> u8 {
     let mut height = 256u32;
     let mut iters = 3usize;
     let mut bpp = 1.0f64;
+    let mut rate_preset = jpxl_encode_policy::RateSearchPreset::Quality;
     let mut input: Option<&str> = None;
     let mut resources = jpxl_encode::EncodeResources::auto();
     let mut diag = false;
@@ -827,6 +847,20 @@ fn cmd_bench(args: &[String]) -> u8 {
                     return EXIT_ERROR;
                 };
                 bpp = v;
+            }
+            "--lossy-preset" => {
+                let Some(value) = rest.next() else {
+                    fail("`--lossy-preset` needs one of: quality, fast");
+                    return EXIT_ERROR;
+                };
+                rate_preset = match value.as_str() {
+                    "quality" => jpxl_encode_policy::RateSearchPreset::Quality,
+                    "fast" => jpxl_encode_policy::RateSearchPreset::Fast,
+                    _ => {
+                        fail("`--lossy-preset` needs one of: quality, fast");
+                        return EXIT_ERROR;
+                    }
+                };
             }
             "--threads" => {
                 let Some(v) = rest.next().and_then(|s| s.parse::<usize>().ok()) else {
@@ -923,7 +957,7 @@ fn cmd_bench(args: &[String]) -> u8 {
     let timed = match mode {
         "modular" => bench_modular(&rgb, width, height, iters, resources, effort, overrides),
         "vardct-fixed" => bench_vardct_fixed(&rgb, width, height, iters, resources),
-        "vardct-rate" => bench_vardct_rate(&rgb, width, height, bpp, iters, resources),
+        "vardct-rate" => bench_vardct_rate(&rgb, width, height, bpp, iters, resources, rate_preset),
         "vardct-probe" => bench_vardct_probe(&rgb, width, height, iters, resources),
         other => {
             fail(&format!(
@@ -1251,10 +1285,12 @@ fn bench_vardct_rate(
     bpp: f64,
     iters: usize,
     resources: jpxl_encode::EncodeResources,
+    rate_preset: jpxl_encode_policy::RateSearchPreset,
 ) -> Result<BenchReport, String> {
     let target = jpxl_encode_policy::RateTarget::BitsPerPixel(bpp);
     let mut request = jpxl_encode_policy::EncodeRequest::for_target(target);
     request.resources = resources;
+    request.rate_preset = rate_preset;
     let warm = jpxl_encode_policy::encode_srgb8_to_target(width, height, rgb, &request, target)
         .map_err(|e| e.to_string())?;
     let output_bytes = warm.codestream.len();
@@ -1447,6 +1483,7 @@ struct LossyReport {
     codestream: Vec<u8>,
     target_bytes: u64,
     achieved: u64,
+    allowed_undershoot: u64,
     /// The ladder ran out of rungs — the target is finer than the quantizer can
     /// express. More search budget cannot help.
     saturated: bool,
@@ -1467,6 +1504,7 @@ struct LossyOverrides {
     cover_frequency_weight: Option<jpxl_encode_policy::CoverFrequencyWeight>,
     quantizer_choice: Option<jpxl_encode_policy::QuantizerChoiceMode>,
     lambda_scale: Option<f32>,
+    rate_preset: Option<jpxl_encode_policy::RateSearchPreset>,
 }
 
 fn encode_lossy_to_target(
@@ -1495,6 +1533,9 @@ fn encode_lossy_to_target(
         }
     }
     let mut request = jpxl_encode_policy::EncodeRequest::for_target(target);
+    if let Some(preset) = overrides.rate_preset {
+        request.rate_preset = preset;
+    }
     if let Some(mode) = overrides.aq_mode {
         request.budget.aq_mode = mode;
     }
@@ -1546,6 +1587,10 @@ fn encode_lossy_to_target(
     .map(|outcome| LossyReport {
         target_bytes: outcome.target,
         achieved: outcome.achieved(),
+        allowed_undershoot: request
+            .rate_preset
+            .tolerance(request.tolerance)
+            .bytes_for(outcome.target),
         saturated: outcome.saturated,
         fast_prices: outcome.stats.fast_prices,
         full_prices: outcome.stats.full_prices,

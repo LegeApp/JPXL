@@ -19,12 +19,13 @@ jpxl-entropy.workspace = true
 wide = { workspace = true, optional = true }
 
 [features]
-default = ["parallel", "simd"]
+default = ["parallel", "simd", "anchor-sketch"]
 parallel = ["jpxl-encode/parallel"]
 # Leaf SIMD for HF quantize choose (and transitive DCT/Gaborish).
 simd = ["dep:wide", "jpxl-encode/simd", "jpxl-core/simd"]
-# Phase 8.3 research path: structural-anchor reuse and context-aware rate
-# sketches. Off by default until the target/quality/fallback corpus gate passes.
+# Fast runtime rate preset: bounded two-anchor prediction and exact finalist
+# verification. The exhaustive Quality preset remains the behavioral default.
+# Keep the historical feature name so existing research scripts still work.
 anchor-sketch = []
 # S8 Phase D (`sources/outside-advice.md` §8; `jpegxl-rs.work.arch-s8-full-redesign-scoped`):
 # the Phase C-validated (zero safety violations, exhaustively checked)

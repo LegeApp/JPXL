@@ -41,6 +41,8 @@ use jpxl_core::limits::Limits;
 use jpxl_decode::decode::decode;
 use jpxl_encode::vardct::SectionKind;
 use jpxl_encode::vardct::ids::{GlobalScale, QuantLf};
+#[cfg(feature = "anchor-sketch")]
+use jpxl_encode_policy::RateSearchPreset;
 use jpxl_encode_policy::{
     EncodeRequest, PolicyError, RateSearchBudget, RateTarget, RateTolerance, Rung,
     encode_srgb8_to_target, encode_srgb8_vardct, rate,
@@ -136,6 +138,10 @@ fn target_rate_is_byte_identical_across_executor_widths() {
     let source = test_image(width, height);
     let target = RateTarget::BitsPerPixel(1.0);
     let mut serial_request = EncodeRequest::for_target(target);
+    #[cfg(feature = "anchor-sketch")]
+    {
+        serial_request.rate_preset = RateSearchPreset::Fast;
+    }
     serial_request.resources = jpxl_encode::EncodeResources::serial();
     let mut parallel_request = serial_request;
     parallel_request.resources = jpxl_encode::EncodeResources::groups(4);

@@ -117,7 +117,8 @@ pub use rate::{
 };
 pub use request::{
     CoverFrequencyWeight, CoverMode, CoverSizePenalty, EncodeRequest, EpfSharpnessMode,
-    QuantizerChoiceMode, RateSearchBudget, RateTarget, RateTolerance, SearchBudget,
+    QuantizerChoiceMode, RateSearchBudget, RateSearchPreset, RateTarget, RateTolerance,
+    SearchBudget,
 };
 pub use source::PreparedFrame;
 // Re-export so callers can set [`EncodeRequest::restoration`] without a
@@ -195,13 +196,25 @@ pub fn plan_frame_with_atlas(
 /// with Full so intermediate probes skip several full `price_codestream`s.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum EntropySearch {
-    /// Provisional entropy only. The caller may census the quantized plan for
-    /// a rate sketch, but must never ask the exact writer to price it.
-    Sketch,
     /// Default I.2.2 map, natural orders, one census + train.
     Fast,
+    /// The Fast preset's final exact candidate: default I.2.2 map and natural
+    /// orders, attributed to the finalist phase but without Full alternatives.
+    #[cfg(feature = "anchor-sketch")]
+    FinalFast,
     /// Slice-18 alternatives with exact-price adopt gates.
     Full,
+}
+
+impl EntropySearch {
+    const fn uses_fast_entropy(self) -> bool {
+        match self {
+            Self::Fast => true,
+            #[cfg(feature = "anchor-sketch")]
+            Self::FinalFast => true,
+            Self::Full => false,
+        }
+    }
 }
 
 /// Plans one frame at an explicitly chosen, already-representable quantizer.
@@ -265,13 +278,13 @@ pub(crate) fn plan_at_on(
     )
 }
 
-/// Phase 8.3 planning entry point with an optional reusable spatial anchor.
+/// Fast-preset planning entry point with an optional reusable spatial anchor.
 ///
-/// The first call captures the selected cover and exact CfL decision. Sketch
-/// probes then reuse those structural choices while retargeting their
-/// quantizer-dependent `HfMul` values. The first Full finalist is always
-/// unanchored; a bounded quantizer correction may retain that freshly selected
-/// cover and CfL after its exact size is known.
+/// The first anchor captures the selected cover and exact CfL decision. The
+/// second exact anchor reuses those structural choices while retargeting their
+/// quantizer-dependent `HfMul` values. The finalist is always unanchored; a
+/// bounded correction may retain that freshly selected cover and CfL after its
+/// exact size is known.
 #[cfg(feature = "anchor-sketch")]
 pub(crate) fn plan_at_on_anchor(
     frame: &PreparedFrame,
@@ -632,13 +645,6 @@ fn plan_at_with_cfl(
         )?,
         SectionLayout::for_geometry(&geometry),
     );
-    // Phase 8.5: sketch-only navigation consumes the raw coefficient census,
-    // not a trained entropy model. The provisional model is structurally legal
-    // and carries the same default block context / natural orders the sketch
-    // walk needs, so return it before the otherwise-discarded census+training.
-    if entropy_search == EntropySearch::Sketch {
-        return Ok(validate(provisional)?);
-    }
     // Slice 18 / 18b: train under the default I.2.2 map, then optionally
     // adopt custom coefficient orders on an exact price win (Full only).
     let with_default = diagnostics::time_stage(diagnostics::StageTimer::Entropy, || {
@@ -647,7 +653,7 @@ fn plan_at_with_cfl(
 
     // Fast rate probes stop here: default map + natural orders is an upper
     // bound on Full's size (Full only adopts alternatives that strictly win).
-    if entropy_search == EntropySearch::Fast {
+    if entropy_search.uses_fast_entropy() {
         return Ok(with_default.into_plan());
     }
 
@@ -815,7 +821,7 @@ fn train_entropy_with_orders(
     entropy_search: EntropySearch,
     executor: Option<&jpxl_encode::EncodeExecutor>,
 ) -> Result<TrainedEntropyCandidate> {
-    if entropy_search == EntropySearch::Fast {
+    if entropy_search.uses_fast_entropy() {
         diagnostics::note_census();
         diagnostics::note_entropy_training();
         let natural =
@@ -937,12 +943,12 @@ type PlannedGroup = (
     Vec<VarblockDecision>,
 );
 
-/// Quantizer-independent structure reused by Phase 8.3 sketch probes.
+/// Quantizer-independent structure reused by the Fast rate preset.
 ///
 /// The cover and CfL factors are exact at the anchor quantizer. Reused probes
 /// update every varblock's quantizer-dependent `HfMul`, but deliberately keep
-/// the cover and CfL fixed. Sketches reuse the initial Fast structure; the
-/// exact Full correction, when needed, reuses only the fresh Full finalist.
+/// the cover and CfL fixed. The second anchor reuses the initial structure; an
+/// exact correction, when needed, reuses only the freshly planned finalist.
 #[derive(Clone)]
 pub(crate) struct StructuralAnchor {
     groups: Vec<PlannedGroup>,
