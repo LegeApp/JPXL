@@ -5,7 +5,7 @@ build {
     tool "akr 0.3.0"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:b99b384f51e48c2ea668ca0f933fbfb85c4a130058d5d93f1763973e1502eb8b"
+    source_graph "sha256:abdc017a971de15982eaa950dc6165fbea745b0a63b3c6e6f7d2c17d98040522"
 }
 
 source ".akr/project.akr" {
@@ -29,8 +29,8 @@ source ".akr/records/jpegxl-rs/decisions.akr" {
 }
 
 source ".akr/records/jpegxl-rs/evidence.akr" {
-    hash "sha256:facd33f8d0e25e275094239090a6f3c4f6f73e2a3f5d720001d2c6877bf9edf4"
-    records 221
+    hash "sha256:e1b8ad994b2692e6d664d061ad9f541432f24f5656a58564b86beffc6aaf1d3e"
+    records 223
 }
 
 source ".akr/records/jpegxl-rs/milestones.akr" {
@@ -64,7 +64,7 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:32bf4e73388159e80e9172a72173bde7757f96bc50c3dc6d27f8ef660812ff41"
+    hash "sha256:8f20e971ebddf96fe7695c5104c4467552c4d81c4193d5aa89e74eb3c5c332b7"
     records 98
 }
 
@@ -4269,6 +4269,16 @@ seal @jpegxl-rs.evidence.phase8-6-measured-hf-speed-screen-2026-08-14/1 {
     hash "sha256:66ba312ffc3617a47a0e73b6f3203fcbf8cbf1311271c2554abcf33d9fd0ec3e"
 }
 
+seal @jpegxl-rs.evidence.phase9-quant-scheduling-correctness-2026-08-15/1 {
+    state verified
+    hash "sha256:9a6658340f90f80db7ecb96c5472e8b780eacdd6de78248de4c5ea781e3d3cb7"
+}
+
+seal @jpegxl-rs.evidence.phase9-quant-scheduling-speed-2026-08-15/1 {
+    state verified
+    hash "sha256:7465cb9ef80bfd2c124fb45819dcba65dfb302af9ec7d96994a27ed40c0c6c7c"
+}
+
 seal @jpegxl-rs.evidence.retire-handoff-durable-facts-2026-08-11/1 {
     state verified
     hash "sha256:d5bdf84076bed194a4be6e7e9ea15569dbed84339827e224b936cd8feeb95a65"
@@ -5295,8 +5305,8 @@ seal @jpegxl-rs.work.arch-phase8-6-finalist-measured-hf-allocation/1 {
 }
 
 seal @jpegxl-rs.work.arch-phase9-quant-scheduling/1 {
-    state active
-    hash "sha256:48ac3a64beb9a1a747208c2fccbafe1d7911eafa3bb574dcdd595c9b7d3d3ab0"
+    state completed
+    hash "sha256:26fd61d9f0dee81d62264fdbb2b2b308ca960f62f07c693645796c8fdb68e1fa"
 }
 
 seal @jpegxl-rs.work.arch-s8-cover-lane-simd/1 {

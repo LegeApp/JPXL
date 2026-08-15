@@ -3414,7 +3414,7 @@ record jpegxl-rs.work.arch-phase8-6-finalist-measured-hf-allocation/1 : work {
 
 record jpegxl-rs.work.arch-phase9-quant-scheduling/1 : work {
     title "Phase 9: deterministic quantization scheduling"
-    state active
+    state completed
     intent """
         Continue the profile-backed quantization architecture work after Phase 8.5 by evaluating finer deterministic scheduling even when LF-group count equals worker count. Retain a scheduling change only if interleaved end-to-end A/B improves production-quality target-rate encoding while every candidate stream remains byte-identical to the immutable baseline.
         """
@@ -3424,12 +3424,14 @@ record jpegxl-rs.work.arch-phase9-quant-scheduling/1 : work {
                 Candidate outputs are byte-identical across baseline/candidate and thread counts, and the policy, workspace, oracle, formatting, and lint-delta gates pass.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase9-quant-scheduling-correctness-2026-08-15/1 ]
         }
         check speed {
             statement """
                 Fresh interleaved A/B on the pinned 4.3 MP and 12 MP photographs demonstrates an end-to-end improvement attributable to the current quantization hotspot; neutral or regressing variants are rejected.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.phase9-quant-scheduling-speed-2026-08-15/1 ]
         }
     }
     depends_on [ @jpegxl-rs.work.arch-phase8-5-leaf-finishing ]

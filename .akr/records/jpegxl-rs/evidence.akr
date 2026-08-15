@@ -2590,6 +2590,31 @@ record jpegxl-rs.evidence.phase8-6-measured-hf-speed-screen-2026-08-14/1 : evide
         """
 }
 
+record jpegxl-rs.evidence.phase9-quant-scheduling-correctness-2026-08-15/1 : evidence {
+    title "The release policy/oracle suite, scalar feature check, workspace build, complete workspace/corpus suite, and formatting gate passed; every timed and PGO-training stream was byte-identical across candidate/control and thread counts. Workspace clippy remains blocked only by known committed lint debt."
+    state verified
+    result pass
+    method command
+    observed_at git:b713d1e6c8b8ddec111f471b5293bccf601ef924
+    command "cargo test -p jpxl-encode-policy --release --features anchor-sketch; cargo check -p jpxl-encode-policy --no-default-features --features anchor-sketch; cargo build --workspace; cargo test --workspace --quiet; cargo fmt --all --check; SHA-256 A/B comparisons"
+    artifact ".agent/scratch/phase9-quant-scheduling-2026-08-15/SUMMARY.md"
+    summary """
+        The release policy/oracle suite, scalar feature check, workspace build, complete workspace/corpus suite, and formatting gate passed; every timed and PGO-training stream was byte-identical across candidate/control and thread counts. Workspace clippy remains blocked only by known committed lint debt.
+        """
+}
+
+record jpegxl-rs.evidence.phase9-quant-scheduling-speed-2026-08-15/1 : evidence {
+    title "On the pinned unseen 12 MP photo, finer deterministic quantization scheduling reduced the three-pair thin median 3.80% and the freshly retrained PGO median 0.78% with three of three PGO paired wins; fresh sampling attributes 18.91% to the still-hot quantization closure with exact folded/event period sums and zero lost samples."
+    state verified
+    result pass
+    method observation
+    observed_at git:b713d1e6c8b8ddec111f471b5293bccf601ef924
+    artifact ".agent/scratch/phase9-quant-scheduling-2026-08-15/SUMMARY.md"
+    summary """
+        On the pinned unseen 12 MP photo, finer deterministic quantization scheduling reduced the three-pair thin median 3.80% and the freshly retrained PGO median 0.78% with three of three PGO paired wins; fresh sampling attributes 18.91% to the still-hot quantization closure with exact folded/event period sums and zero lost samples.
+        """
+}
+
 record jpegxl-rs.evidence.retire-handoff-durable-facts-2026-08-11/1 : evidence {
     title "HANDOFF permanent facts are represented in AKR"
     state verified
