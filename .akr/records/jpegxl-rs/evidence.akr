@@ -1197,6 +1197,54 @@ record jpegxl-rs.evidence.phase21-speed-2026-08-15/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase22-gates-2026-08-15/1 : evidence {
+    title "Workspace build, full tests, no-default-features check, and fmt check pass. Strict workspace Clippy remains blocked only by the pre-existing jpxl-core precision/indexing errors and existing policy lint debt; no Phase 22 Arc warning appears."
+    state verified
+    result pass
+    method command
+    observed_at git:5ba8890802ddce1334722c0c83e3be72c3f5107a
+    artifact ".agent/scratch/phase22-cfl-arc/build-workspace.log"
+    summary """
+        Workspace build, full tests, no-default-features check, and fmt check pass. Strict workspace Clippy remains blocked only by the pre-existing jpxl-core precision/indexing errors and existing policy lint debt; no Phase 22 Arc warning appears.
+        """
+}
+
+record jpegxl-rs.evidence.phase22-identity-2026-08-15/1 : evidence {
+    title "Phase 22 candidate outputs match the Phase 21 Fast, Balanced, Quality, fallback, and masking-AQ streams byte-for-byte; candidate Balanced, Quality, and Fast streams independently decode to valid PPM images."
+    state verified
+    result pass
+    method observation
+    observed_at git:5ba8890802ddce1334722c0c83e3be72c3f5107a
+    artifact ".agent/scratch/phase22-cfl-arc/SUMMARY.md"
+    summary """
+        Phase 22 candidate outputs match the Phase 21 Fast, Balanced, Quality, fallback, and masking-AQ streams byte-for-byte; candidate Balanced, Quality, and Fast streams independently decode to valid PPM images.
+        """
+}
+
+record jpegxl-rs.evidence.phase22-safety-2026-08-15/1 : evidence {
+    title "The focused policy suite and workspace/oracle tests pass; Arc-backed captured CfL remains immutable and valid through anchored planning, with no unsafe or source-lifetime change."
+    state verified
+    result pass
+    method command
+    observed_at git:5ba8890802ddce1334722c0c83e3be72c3f5107a
+    artifact ".agent/scratch/phase22-cfl-arc/test-workspace.log"
+    summary """
+        The focused policy suite and workspace/oracle tests pass; Arc-backed captured CfL remains immutable and valid through anchored planning, with no unsafe or source-lifetime change.
+        """
+}
+
+record jpegxl-rs.evidence.phase22-speed-2026-08-15/1 : evidence {
+    title "Pinned interleaved Balanced timing is 3.524% faster at 2400x1800 and 1.286% slower at 4000x3000; the mixed large result is retained as a bounded cleanup with host-noise caveat, not a parity claim."
+    state verified
+    result pass
+    method observation
+    observed_at git:5ba8890802ddce1334722c0c83e3be72c3f5107a
+    artifact ".agent/scratch/phase22-cfl-arc/timing-balanced.log"
+    summary """
+        Pinned interleaved Balanced timing is 3.524% faster at 2400x1800 and 1.286% slower at 4000x3000; the mixed large result is retained as a bounded cleanup with host-noise caveat, not a parity claim.
+        """
+}
+
 record jpegxl-rs.evidence.phase3-forward-cache-rev2-postcommit/1 : evidence {
     title "Phase-3 rev-2 (rate-loop cache note) re-verified against commit 8541961"
     state verified

@@ -761,7 +761,7 @@ record jpegxl-rs.work.arch-phase21-cover-complete-scratch/1 : work {
 
 record jpegxl-rs.work.arch-phase22-cfl-arc/1 : work {
     title "Phase 22: share captured CfL estimates across anchored probes"
-    state active
+    state completed
     scope [ path "JPXL/crates/jpxl-encode-policy/src/lib.rs", path "JPXL/docs/optimize.md" ]
     intent "Remove repeated deep cloning of the immutable CflEstimate when an anchored rate probe reuses captured CfL factors. Store the captured estimate behind Arc and borrow it through planning, while preserving the existing wire-facing per-group CfL copies and all structural VarblockDecision behavior. Retain only if canonical Fast, Balanced, Quality, fallback, and one-group anchored streams remain byte-identical and the Balanced anchored timing is neutral or improved."
     acceptance {
@@ -770,24 +770,28 @@ record jpegxl-rs.work.arch-phase22-cfl-arc/1 : work {
                 Workspace build, tests, no-default-features check, formatting, and AKR validation pass; unchanged strict Clippy blockers remain isolated.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase22-gates-2026-08-15/1 ]
         }
         check identity {
             statement """
                 Canonical Fast, Balanced, Quality, fallback, and one-group anchored streams remain byte-identical to Phase 21; CfL factors and decoded pixels are unchanged.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase22-identity-2026-08-15/1 ]
         }
         check safety {
             statement """
                 Workspace tests and independent decoder/oracle checks pass; the Arc-backed estimate cannot be mutated or observed after its source plan is dropped.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase22-safety-2026-08-15/1 ]
         }
         check speed {
             statement """
                 A pinned interleaved release comparison records the Balanced anchored target-rate effect on canonical mid and large photographs, with binary and input hashes.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.phase22-speed-2026-08-15/1 ]
         }
     }
     depends_on [ @jpegxl-rs.work.arch-phase21-cover-complete-scratch ]
