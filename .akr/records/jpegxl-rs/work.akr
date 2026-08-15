@@ -720,6 +720,41 @@ record jpegxl-rs.work.arch-phase20-fast-dct8-quantizers/1 : work {
     part_of [ @jpegxl-rs.track.encoder-optimization ]
 }
 
+record jpegxl-rs.work.arch-phase21-cover-complete-scratch/1 : work {
+    title "Phase 21: remove unused scratch allocation from completed cover scoring"
+    state active
+    scope [ path "JPXL/crates/jpxl-encode-policy/src/lib.rs", path "JPXL/docs/optimize.md" ]
+    intent "Avoid allocating per-region ForwardScratch buffers when the parallel cover scorer reads a completed immutable candidate cache. The lazy hierarchical path must retain its reusable transform buffers; only the completed-cache path may use zero-capacity scratch because CoverForwardBank::Complete never performs a forward transform. Retain only if canonical streams and decoder behavior remain unchanged and a pinned comparison shows neutral or improved target-rate speed."
+    acceptance {
+        check gates {
+            statement """
+                Workspace build, tests, no-default-features check, formatting, and AKR validation pass; unchanged strict Clippy blockers remain isolated.
+                """
+            method command
+        }
+        check identity {
+            statement """
+                Fast, Balanced, and Quality canonical streams remain byte-identical to the Phase 20 release, including the parallel completed-cache path.
+                """
+            method command
+        }
+        check safety {
+            statement """
+                Workspace tests and independent decoder/oracle checks pass; lazy cache scoring still has full scratch capacity and one/four-thread output remains deterministic.
+                """
+            method command
+        }
+        check speed {
+            statement """
+                A pinned interleaved release comparison records the completed-cover-cache allocation change on the canonical mid and large photographs, with binary and input hashes.
+                """
+            method observation
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase20-fast-dct8-quantizers ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+}
+
 record jpegxl-rs.work.arch-phase3-forward-cache/1 : work {
     title "Phase 3: eliminate the selected-forward clone; borrow from CandidateForwardCache"
     state superseded

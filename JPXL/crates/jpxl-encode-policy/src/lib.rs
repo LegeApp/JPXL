@@ -1706,6 +1706,17 @@ impl ForwardScratch {
             coeffs: core::array::from_fn(|_| vec![0.0; max]),
         }
     }
+
+    /// A zero-capacity marker for cache paths that cannot perform a forward
+    /// transform. `CoverForwardBank::Complete` only borrows already cached
+    /// coefficients, so allocating the lazy-path buffers would be wasted.
+    fn empty() -> Self {
+        Self {
+            transform: TransformScratch::with_cells(0),
+            samples: Vec::new(),
+            coeffs: core::array::from_fn(|_| Vec::new()),
+        }
+    }
 }
 
 /// Borrowed forward coefficients for one varblock.
@@ -4041,7 +4052,11 @@ fn select_blocks_cached_parallel(
         let bx = u32::try_from(rx).unwrap_or(u32::MAX).saturating_mul(4);
         let by = u32::try_from(ry).unwrap_or(u32::MAX).saturating_mul(4);
         let mut cache_hits = 0u64;
-        let mut scratch = ForwardScratch::new();
+        // The completed cache path never enters `get_or_insert`, so the
+        // transform/sample/coefficient buffers used by the lazy path would
+        // only be per-region allocation overhead. Keep the scratch marker for
+        // the shared scorer's signature, but give it no backing storage.
+        let mut scratch = ForwardScratch::empty();
         let mut d_y_hf = vec![0.0f32; 32 * 32];
         let blocks = {
             let mut access = CoverForwardBank::Complete {

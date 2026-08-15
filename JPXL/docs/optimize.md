@@ -216,6 +216,34 @@ items remain completed-cache scratch removal, immutable structural geometry,
 and then the raw default-entropy event tape before the higher-risk Anchored
 Quality spatial refresh.
 
+## Phase 21 — completed-cover scratch elimination (2026-08-15)
+
+The parallel completed-cover scorer now uses a zero-capacity `ForwardScratch`
+marker. Its immutable `CoverForwardBank::Complete` access never enters the
+forward-transform insertion path, so constructing the lazy path's DCT32-sized
+transform, sample, and coefficient buffers for every 4×4-atom region was
+unreachable work. The lazy hierarchical path still uses `ForwardScratch::new`
+with full capacity; the luma reconstruction buffer remains unchanged because
+the scorer writes it while pricing chroma residuals.
+
+The completed path is exercised by the one-group parallel case. A pinned,
+interleaved six-run screen on the 256×256 synthetic input (four workers,
+Balanced, 1 bpp) had medians 816.811 ms for the Phase 20 baseline and
+785.957 ms for the candidate (about 3.8% faster), with high host variance.
+The larger Fast screen is retained only as a diagnostic because Fast's fixed
+cover does not enter the completed-cache scorer. A 512×512 gradient that does
+use the completed path produced byte-identical baseline and candidate streams
+(22,866 bytes, SHA-256
+`3de70270ebd9e6ef53421f30e8fa9ae5ca95f6f2e8157e2df17a9f2a3f4d5b40`) and
+self-decoded successfully. Canonical Fast, Balanced, Quality, and masking-AQ
+streams also remain byte-identical to Phase 20. Raw hashes, output checks, and
+both timing windows are under `.agent/scratch/phase21-cover-complete-scratch/`.
+
+No new flamegraph was warranted: this is a path-local allocation removal with
+unchanged scoring and wire decisions. The next structural target remains
+immutable geometry plus a small `HfMul` overlay; the raw event tape and fresh
+Anchored Quality spatial refresh stay behind it.
+
 ### Open architectural questions
 
 1. How can the finalist refresh only structurally unstable cover decisions?
