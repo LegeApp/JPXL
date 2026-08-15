@@ -5,7 +5,7 @@ build {
     tool "akr 0.3.0"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:45f9b36e5a32e92843ae09450f6cc57999c5677708dba11e4558f045d2a85956"
+    source_graph "sha256:9e942005ef439373325252f8fca700c35f32dc6622ad2c4e6911159f7e356110"
 }
 
 source ".akr/project.akr" {
@@ -29,8 +29,8 @@ source ".akr/records/jpegxl-rs/decisions.akr" {
 }
 
 source ".akr/records/jpegxl-rs/evidence.akr" {
-    hash "sha256:550bcdc1a59121d5e41e8428d81b9cb8b435cdb3dde4ea02b534e63ee3c88f02"
-    records 239
+    hash "sha256:f6244ae3c070b724750ef58b50b967f79d5e3742aa8165d61531280b9b0c04a4"
+    records 243
 }
 
 source ".akr/records/jpegxl-rs/milestones.akr" {
@@ -64,7 +64,7 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:cea748b8056c164ad5e53eca5f8ede52550f8ed7f2579bf7ee666ed07fbb259d"
+    hash "sha256:7bc67b565ad2342cae46a3697f823bae67b26c7eb2292f231979e872e5ec49a6"
     records 104
 }
 
@@ -3596,6 +3596,26 @@ seal @jpegxl-rs.evidence.phase14-speed-2026-08-15/1 {
     hash "sha256:b90066869ddb33155a97d7dd058f308ec710bcddccbecf866fd9d2fd1a3eac1f"
 }
 
+seal @jpegxl-rs.evidence.phase15-determinism-2026-08-15/1 {
+    state verified
+    hash "sha256:06f340d2657c574f7f28cf34223f1e0cfc11137db2c0f03e706b45c1a726aba1"
+}
+
+seal @jpegxl-rs.evidence.phase15-gates-2026-08-15/1 {
+    state verified
+    hash "sha256:3063b91cb6f9a390e3d162bd1463315d1fa3d135914fa83ad6f7eb0567d265f3"
+}
+
+seal @jpegxl-rs.evidence.phase15-quality-2026-08-15/1 {
+    state verified
+    hash "sha256:77958685125453ca399a58870709b523aea6badadd2461e69c1132a873ac7ae3"
+}
+
+seal @jpegxl-rs.evidence.phase15-speed-2026-08-15/1 {
+    state verified
+    hash "sha256:7454e98f9bf6ebed8928ecb8227a12054edca2b5c3696230429b5a3bbb14766a"
+}
+
 seal @jpegxl-rs.evidence.phase1b-diag-available-2026-08-13/1 {
     state verified
     hash "sha256:160331881a2b049c1692d9108a3a59a7f76a604b1da753c78b53a8ac1162ab91"
@@ -5109,6 +5129,11 @@ seal @jpegxl-rs.work.arch-phase13-quant-scratch-overwrite/1 {
 seal @jpegxl-rs.work.arch-phase14-region-cover-parallel/1 {
     state completed
     hash "sha256:80faa096cc594b39a4a6a29fa3a0b66425a6064eb2d29f77e4c506976cadd8f5"
+}
+
+seal @jpegxl-rs.work.arch-phase15-fast-entropy/1 {
+    state completed
+    hash "sha256:e0e2a846973810affcc8201bb3383a60abac546af4b1aec1b38e45c73656ce61"
 }
 
 seal @jpegxl-rs.work.arch-phase1b-opt-in-diagnostics/1 {

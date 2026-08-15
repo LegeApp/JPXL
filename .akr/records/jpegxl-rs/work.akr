@@ -288,7 +288,7 @@ record jpegxl-rs.work.arch-phase14-region-cover-parallel/1 : work {
 
 record jpegxl-rs.work.arch-phase15-fast-entropy/1 : work {
     title "Phase 15: Fast entropy and structural speed tier"
-    state proposed
+    state completed
     scope [
         path "JPXL/crates/jpxl-encode-policy/src/entropy.rs",
         path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
@@ -301,24 +301,28 @@ record jpegxl-rs.work.arch-phase15-fast-entropy/1 : work {
                 Fast and Quality codestreams remain byte-identical across one and four threads on canonical and multi-group inputs, and every Fast output remains decodable.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase15-determinism-2026-08-15/1 ]
         }
         check gates {
             statement """
                 Workspace build, tests, formatting, no-default-features check, lint-delta review, and AKR validation pass or isolate pre-existing blockers.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase15-gates-2026-08-15/1 ]
         }
         check quality {
             statement """
                 Matched-quality Fast output remains target-safe and its SSIMULACRA2/Butteraugli deltas are recorded against the Phase 14 baseline; Quality remains unchanged.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.phase15-quality-2026-08-15/1 ]
         }
         check speed {
             statement """
                 Fresh interleaved PGO timing shows a material Fast improvement at 2400x1800 without a material 4000x3000 regression.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.phase15-speed-2026-08-15/1 ]
         }
     }
     depends_on [ @jpegxl-rs.work.arch-phase14-region-cover-parallel ]

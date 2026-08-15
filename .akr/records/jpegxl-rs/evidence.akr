@@ -738,6 +738,58 @@ record jpegxl-rs.evidence.phase14-speed-2026-08-15/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase15-determinism-2026-08-15/1 : evidence {
+    title "Eight canonical Fast training pairs are byte-identical across one and four threads; the 2400x1800 Quality output is byte-identical across threads and matches the prior Quality hash."
+    state verified
+    result pass
+    method observation
+    observed_at git:c8d51a72ee2c305c7e8ccd247387293c0ff9974b
+    command "cmp all 8 Fast training t1/t4 outputs; compare Quality t1/t4; djxl decode parity outputs"
+    artifact ".agent/scratch/phase15-fast-entropy-2026-08-15/SUMMARY.md"
+    summary """
+        Eight canonical Fast training pairs are byte-identical across one and four threads; the 2400x1800 Quality output is byte-identical across threads and matches the prior Quality hash.
+        """
+}
+
+record jpegxl-rs.evidence.phase15-gates-2026-08-15/1 : evidence {
+    title "Build, full workspace tests, formatting, and no-default check pass. Strict workspace Clippy still reports only the pre-existing repository lint backlog (26 policy diagnostics and dependency diagnostics), with no new diagnostics in changed spans."
+    state verified
+    result pass
+    method command
+    observed_at git:c8d51a72ee2c305c7e8ccd247387293c0ff9974b
+    command "cargo build --workspace; cargo test --workspace; cargo fmt --all --check; cargo check -p jpxl-encode-policy --no-default-features; cargo clippy --workspace --all-targets -- -D warnings; akr check"
+    artifact ".agent/scratch/phase15-fast-entropy-2026-08-15/SUMMARY.md"
+    summary """
+        Build, full workspace tests, formatting, and no-default check pass. Strict workspace Clippy still reports only the pre-existing repository lint backlog (26 policy diagnostics and dependency diagnostics), with no new diagnostics in changed spans.
+        """
+}
+
+record jpegxl-rs.evidence.phase15-quality-2026-08-15/1 : evidence {
+    title "Fast target-safe outputs are decodable; relaxed Fast metrics are recorded as mid SSIMULACRA2 69.8750 / Butteraugli 3.6753 and large 80.3353 / 2.8892; Quality remains available and unchanged."
+    state verified
+    result pass
+    method observation
+    observed_at git:c8d51a72ee2c305c7e8ccd247387293c0ff9974b
+    command "run-parity.sh; djxl; jpxl compare"
+    artifact ".agent/scratch/phase15-fast-entropy-2026-08-15/parity.log"
+    summary """
+        Fast target-safe outputs are decodable; relaxed Fast metrics are recorded as mid SSIMULACRA2 69.8750 / Butteraugli 3.6753 and large 80.3353 / 2.8892; Quality remains available and unchanged.
+        """
+}
+
+record jpegxl-rs.evidence.phase15-speed-2026-08-15/1 : evidence {
+    title "Interleaved Phase 14 -> Phase 15 Fast medians improve 1.24s -> 0.75s at 2400x1800 and 2.35s -> 1.83s at 4000x3000; matched process window is 1.38x cjxl on both."
+    state verified
+    result pass
+    method observation
+    observed_at git:c8d51a72ee2c305c7e8ccd247387293c0ff9974b
+    command "run-pgo-ab.sh; run-parity.sh"
+    artifact ".agent/scratch/phase15-fast-entropy-2026-08-15/pgo-ab.log"
+    summary """
+        Interleaved Phase 14 -> Phase 15 Fast medians improve 1.24s -> 0.75s at 2400x1800 and 2.35s -> 1.83s at 4000x3000; matched process window is 1.38x cjxl on both.
+        """
+}
+
 record jpegxl-rs.evidence.phase1b-diag-available-2026-08-13/1 : evidence {
     title "Phase 1B opt-in diagnostics remain available"
     state verified
