@@ -2439,6 +2439,31 @@ record jpegxl-rs.evidence.phase8-5-quality-and-correctness-2026-08-14/1 : eviden
         """
 }
 
+record jpegxl-rs.evidence.phase8-5-quant-chunk-correctness-2026-08-15/1 : evidence {
+    title "The full JPXL workspace test suite passed after deterministic sub-LF-group quantization landed, including target-rate, corpus, external-oracle, thread-count identity, and doctest coverage; build, formatting, no-default-features check, and the focused release identity test also passed."
+    state verified
+    result pass
+    method command
+    observed_at git:3dd42dd4277ba5dc523fcb9a691487c1bf004db4
+    command "cargo test --workspace --quiet"
+    summary """
+        The full JPXL workspace test suite passed after deterministic sub-LF-group quantization landed, including target-rate, corpus, external-oracle, thread-count identity, and doctest coverage; build, formatting, no-default-features check, and the focused release identity test also passed.
+        """
+}
+
+record jpegxl-rs.evidence.phase8-5-quant-chunk-speed-2026-08-15/1 : evidence {
+    title "Sub-LF-group quantization was byte-identical and reduced final five-pair 2400x1800 t4 mean wall time from 2.728 s to 2.306 s (-15.5%); 4000x3000 remained neutral. Fresh P-core profiling attributed 18.38% to the parallel quantization region, lost zero samples, matched event and folded sums at 32192908412, and raised four-thread CPU utilization from the prior 1.450 to 1.778 cores."
+    state verified
+    result pass
+    method observation
+    observed_at git:3dd42dd4277ba5dc523fcb9a691487c1bf004db4
+    command "OUTPUTS=.agent/scratch/phase8-5-quant-chunks-2026-08-15/outputs-ab3 CANDIDATE=.agent/scratch/phase8-5-quant-chunks-2026-08-15/target-pgo3-mixed/release/jpxl .agent/scratch/phase8-5-quant-chunks-2026-08-15/run-ab.sh"
+    artifact ".agent/scratch/phase8-5-quant-chunks-2026-08-15/ab3.log"
+    summary """
+        Sub-LF-group quantization was byte-identical and reduced final five-pair 2400x1800 t4 mean wall time from 2.728 s to 2.306 s (-15.5%); 4000x3000 remained neutral. Fresh P-core profiling attributed 18.38% to the parallel quantization region, lost zero samples, matched event and folded sums at 32192908412, and raised four-thread CPU utilization from the prior 1.450 to 1.778 cores.
+        """
+}
+
 record jpegxl-rs.evidence.phase8-5-quant-lane-correctness-2026-08-14/1 : evidence {
     title "Phase 8.5 final-HF SIMD correctness evidence"
     state verified

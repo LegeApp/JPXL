@@ -3241,7 +3241,7 @@ record jpegxl-rs.work.arch-phase8-5-leaf-finishing/7 : work {
 
 record jpegxl-rs.work.arch-phase8-5-leaf-finishing/8 : work {
     title "Phase 8.5: profile-guided leaf and build optimization"
-    state active
+    state completed
     scope [ path "JPXL/Cargo.toml", path "JPXL/crates/**" ]
     intent """
         After structural amplification is removed, reprofile and optimize only leaves at or above 5% of samples, then evaluate native CPU selection, LTO, PGO, allocator behavior, and hardware counters. Preserve scalar fallbacks and clean-room boundaries.
@@ -3260,7 +3260,8 @@ record jpegxl-rs.work.arch-phase8-5-leaf-finishing/8 : work {
                 @jpegxl-rs.evidence.phase8-5-fresh-pgo-scaling-provenance-2026-08-15/1,
                 @jpegxl-rs.evidence.phase8-5-jpxl-cjxl-scaling-2026-08-15/1,
                 @jpegxl-rs.evidence.phase8-5-linux-leaf-speed-2026-08-14/1,
-                @jpegxl-rs.evidence.phase8-5-linux-profile-attribution-2026-08-14/1
+                @jpegxl-rs.evidence.phase8-5-linux-profile-attribution-2026-08-14/1,
+                @jpegxl-rs.evidence.phase8-5-quant-chunk-speed-2026-08-15/1
             ]
         }
         check quality-preserved {
@@ -3270,7 +3271,8 @@ record jpegxl-rs.work.arch-phase8-5-leaf-finishing/8 : work {
             method command
             verified_by [
                 @jpegxl-rs.evidence.phase8-5-checked-round-correctness-2026-08-15/1,
-                @jpegxl-rs.evidence.phase8-5-linux-quality-2026-08-14/1
+                @jpegxl-rs.evidence.phase8-5-linux-quality-2026-08-14/1,
+                @jpegxl-rs.evidence.phase8-5-quant-chunk-correctness-2026-08-15/1
             ]
         }
     }

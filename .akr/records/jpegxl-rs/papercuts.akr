@@ -67,6 +67,18 @@ record jpegxl-rs.papercut.cargo-fmt-all-check-fails-on-code-committed-at/1 : pap
     created_at 2026-08-12
 }
 
+record jpegxl-rs.papercut.fff-find-files-returned-transport-closed-while/1 : papercut {
+    title "FFF find_files returned `Transport closed` while locating the fresh…"
+    state verified
+    statement """
+        FFF find_files returned `Transport closed` while locating the fresh Phase 8.5 profile and execution-boundary sources, forcing a fallback to precise rg searches. This is a repeat of the earlier Linux optimization-session disconnect.
+        """
+    observed_at git:dffb654baf0cf9971947129bdb0b793f77204f5f
+    about "fff"
+    author "codex"
+    created_at 2026-08-14
+}
+
 record jpegxl-rs.papercut.fff-grep-transport-closed-while-locating-bench/1 : papercut {
     title "FFF grep transport closed while locating bench_vardct_rate; the indexed…"
     state verified
