@@ -280,11 +280,11 @@ pub(crate) fn plan_at_on(
 
 /// Fast-preset planning entry point with an optional reusable spatial anchor.
 ///
-/// The first anchor captures the selected cover and exact CfL decision. The
-/// second exact anchor reuses those structural choices while retargeting their
-/// quantizer-dependent `HfMul` values. The finalist is always unanchored; a
-/// bounded correction may retain that freshly selected cover and CfL after its
-/// exact size is known.
+/// Navigation captures the production cover with neutral CfL, then reuses
+/// those choices while retargeting quantizer-dependent `HfMul` values. The
+/// finalist is always unanchored and restores full CfL search; a bounded
+/// correction may retain that freshly selected cover and CfL after its exact
+/// size is known.
 #[cfg(feature = "anchor-sketch")]
 pub(crate) fn plan_at_on_anchor(
     frame: &PreparedFrame,
@@ -292,6 +292,7 @@ pub(crate) fn plan_at_on_anchor(
     atlas: &AnalysisAtlas,
     request: &EncodeRequest,
     quantizer: QuantizerChoice,
+    enable_cfl: bool,
     cache: &mut CandidateForwardCache,
     entropy: EntropySearch,
     executor: Option<&jpxl_encode::EncodeExecutor>,
@@ -303,7 +304,7 @@ pub(crate) fn plan_at_on_anchor(
         atlas,
         request,
         quantizer,
-        true,
+        enable_cfl,
         Some(transform_frame),
         cache,
         entropy,
@@ -945,10 +946,10 @@ type PlannedGroup = (
 
 /// Quantizer-independent structure reused by the Fast rate preset.
 ///
-/// The cover and CfL factors are exact at the anchor quantizer. Reused probes
-/// update every varblock's quantizer-dependent `HfMul`, but deliberately keep
-/// the cover and CfL fixed. The second anchor reuses the initial structure; an
-/// exact correction, when needed, reuses only the freshly planned finalist.
+/// The cover and CfL factors follow the policy chosen for the captured plan.
+/// Reused probes update every varblock's quantizer-dependent `HfMul`, but keep
+/// the cover and CfL fixed. Navigation captures neutral CfL; an exact
+/// correction, when needed, reuses only the freshly planned full-CfL finalist.
 #[derive(Clone)]
 pub(crate) struct StructuralAnchor {
     groups: Vec<PlannedGroup>,

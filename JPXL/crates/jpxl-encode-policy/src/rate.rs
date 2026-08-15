@@ -278,7 +278,7 @@ pub struct RateProbeStats {
     pub structural_builds: u32,
     /// Reserved legacy counter for approximate probes (zero in the two-anchor path).
     pub sketch_probes: u32,
-    /// Exact Count candidates on the anchor path, excluding the final Store.
+    /// Exact Count candidates on the anchor path, excluding retained Stores.
     pub exact_candidates: u32,
     /// One when the feature-gated anchor path rejected its estimate and used
     /// the exhaustive exact controller; zero on normal-path success.
@@ -821,6 +821,7 @@ impl<'a> PreparedSearch<'a> {
     fn plan_anchor(
         &mut self,
         quantizer: QuantizerChoice,
+        enable_cfl: bool,
         entropy: EntropySearch,
         anchor: Option<&StructuralAnchor>,
         capture: Option<&mut Option<StructuralAnchor>>,
@@ -839,6 +840,7 @@ impl<'a> PreparedSearch<'a> {
                     self.atlas,
                     self.request,
                     quantizer,
+                    enable_cfl,
                     &mut self.fwd_cache,
                     entropy,
                     Some(self.executor),
@@ -1057,6 +1059,7 @@ fn search_frame_two_anchor(
     let mut captured = None;
     let first_plan = prepared.plan_anchor(
         first_quantizer,
+        false,
         EntropySearch::Fast,
         None,
         Some(&mut captured),
@@ -1077,8 +1080,13 @@ fn search_frame_two_anchor(
 
     let second_rung = second_anchor_rung(start, first_size.total, target_bytes);
     let second_quantizer = QuantizerChoice::at(second_rung, request.quant_lf)?;
-    let second_plan =
-        prepared.plan_anchor(second_quantizer, EntropySearch::Fast, Some(&anchor), None)?;
+    let second_plan = prepared.plan_anchor(
+        second_quantizer,
+        false,
+        EntropySearch::Fast,
+        Some(&anchor),
+        None,
+    )?;
     let second_size =
         diagnostics::with_search_phase(diagnostics::SearchDiagnosticPhase::Fast, || {
             diagnostics::with_count_kind(
@@ -1101,21 +1109,20 @@ fn search_frame_two_anchor(
     let mut finalist_anchor = None;
     let finalist = prepared.plan_anchor(
         finalist_quantizer,
+        true,
         EntropySearch::FinalFast,
         None,
         Some(&mut finalist_anchor),
     )?;
     prepared.stats.structural_builds = 2;
-    let finalist_size =
+    let finalist_emission =
         diagnostics::with_search_phase(diagnostics::SearchDiagnosticPhase::Full, || {
-            diagnostics::with_count_kind(
-                jpxl_encode::vardct::diagnostics::CountEmissionKind::Outer,
-                || price_codestream_with(&finalist, prepared.executor),
-            )
+            emit_codestream_with_executor(&finalist, prepared.executor)
         })?;
+    let finalist_bytes = finalist_emission.sizing.total;
     prepared.stats.full_prices = 1;
-    prepared.stats.exact_candidates = 3;
-    prepared.stats.anchor_first_finalist_bytes = finalist_size.total;
+    prepared.stats.exact_candidates = 2;
+    prepared.stats.anchor_first_finalist_bytes = finalist_bytes;
     let slack = request
         .rate_preset
         .tolerance(request.tolerance)
@@ -1138,12 +1145,12 @@ fn search_frame_two_anchor(
         RateStep {
             phase: RatePhase::Final,
             quantizer: finalist_quantizer,
-            bytes: finalist_size.total,
-            feasible: finalist_size.total <= target_bytes,
+            bytes: finalist_bytes,
+            feasible: finalist_bytes <= target_bytes,
         },
     ];
-    let (chosen_quantizer, chosen_plan) = if within_target(finalist_size.total) {
-        (finalist_quantizer, finalist)
+    let (chosen_quantizer, chosen_plan, emission) = if within_target(finalist_bytes) {
+        (finalist_quantizer, finalist, finalist_emission)
     } else {
         // Fast entropy is an upper-bound navigation mode, so its calibrated
         // crossing can miss after the fresh structural finalist. Spend
@@ -1153,7 +1160,7 @@ fn search_frame_two_anchor(
         let Some(correction_rung) = two_anchor_correction_rung(
             (first_quantizer.rung, first_size.total),
             (second_quantizer.rung, second_size.total),
-            (finalist_quantizer.rung, finalist_size.total),
+            (finalist_quantizer.rung, finalist_bytes),
             correction_target,
         ) else {
             *attempted = prepared.stats;
@@ -1165,40 +1172,35 @@ fn search_frame_two_anchor(
         })?;
         let correction = prepared.plan_anchor(
             correction_quantizer,
+            true,
             EntropySearch::FinalFast,
             Some(anchor),
             None,
         )?;
-        let correction_size =
+        let correction_emission =
             diagnostics::with_search_phase(diagnostics::SearchDiagnosticPhase::Full, || {
-                diagnostics::with_count_kind(
-                    jpxl_encode::vardct::diagnostics::CountEmissionKind::Outer,
-                    || price_codestream_with(&correction, prepared.executor),
-                )
+                emit_codestream_with_executor(&correction, prepared.executor)
             })?;
+        let correction_bytes = correction_emission.sizing.total;
         prepared.stats.full_prices = 2;
-        prepared.stats.exact_candidates = 4;
-        prepared.stats.anchor_correction_bytes = correction_size.total;
+        prepared.stats.exact_candidates = 2;
+        prepared.stats.anchor_correction_bytes = correction_bytes;
         trace.push(RateStep {
             phase: RatePhase::Final,
             quantizer: correction_quantizer,
-            bytes: correction_size.total,
-            feasible: correction_size.total <= target_bytes,
+            bytes: correction_bytes,
+            feasible: correction_bytes <= target_bytes,
         });
-        if !within_target(correction_size.total) {
+        if !within_target(correction_bytes) {
             *attempted = prepared.stats;
             return Ok(None);
         }
-        (correction_quantizer, correction)
+        (correction_quantizer, correction, correction_emission)
     };
 
-    let emission =
-        diagnostics::with_search_phase(diagnostics::SearchDiagnosticPhase::Full, || {
-            emit_codestream_with_executor(&chosen_plan, prepared.executor)
-        })?;
     if emission.sizing.total != trace.last().map_or(0, |step| step.bytes) {
         return Err(PolicyError::Unsupported {
-            what: "an anchor finalist whose Count and Store sizes disagree",
+            what: "a selected Fast emission whose recorded size changed",
         });
     }
     prepared.stats.dct_cache_hits = prepared.fwd_cache.hits();

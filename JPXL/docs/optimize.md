@@ -6,24 +6,27 @@ progress exposes an architectural limit that local profiling does not answer.
 
 ## Current checkpoint — 2026-08-15
 
-The runtime `fast` lossy preset now uses two exact Fast anchors, a fitted
+The runtime `fast` lossy preset uses two exact navigation anchors, a fitted
 log-rate prediction, one freshly rebuilt default-entropy finalist, and at most
-one exact correction. Normal builds include it, while the default `quality`
-preset retains the exhaustive controller. Fast permits up to 3% target
-undershoot but never exceeds the target.
+one exact correction. Navigation retains the production hierarchical cover but
+uses neutral CfL; the finalist restores the full CfL search. Its exact retained
+Store emission is now also its size verification, removing a redundant Count
+traversal. Normal builds include Fast, while `quality` remains the exhaustive
+default. Fast permits up to 3% target undershoot but never exceeds the target.
 
 Fresh PGO, four-thread, process-to-process matched-SSIMULACRA2 timing is
-1.61 s versus cjxl 0.50 s on 2400x1800 (3.22x), and 2.80 s versus 1.37 s on
-4000x3000 (2.04x). The seven-scene 1 bpp screen had zero fallbacks. Relative
-to exhaustive Quality, Fast's mean SSIMULACRA2 delta was -0.136 points and the
-worst was -0.781 on the hardest line-art/noisy scene. Quality remains available
-for callers that do not want that trade.
+1.14 s versus cjxl 0.39 s on 2400x1800 (2.92x), and 1.93 s versus 1.04 s on
+4000x3000 (1.86x). Against the preceding Phase 10 Fast path, fresh PGO A/B
+improved those JPXL medians by 9.5% and 8.5%. The seven-scene 1 bpp screen had
+zero fallbacks and two corrections; its mean SSIMULACRA2 delta versus Phase 10
+was -0.034 points and the worst was -0.154. Quality remains available for
+callers that do not want the cumulative speed/quality trade.
 
-The newest 12 MP PGO profile contains 5,782 samples, zero lost samples, and
-an exact event/folded period match of 19,514,437,652. Its largest self-costs
-are DCT columns 11.0%, quantization 10.3%, cover scoring 17.3% across two hot
-closures, CfL 5.6%, pass-group writing 5.1%, entropy tables 4.4%, ANS 3.9%,
-and census 2.6%.
+The newest 12 MP PGO profile contains 4,061 core-cycle samples with zero lost.
+Its largest self-costs are DCT columns 11.5%, quantization about 14.4% across
+the group closure and lane kernel, cover scoring 16.7% across two hot closures,
+pass-group writing 4.3%, entropy tables 3.5%, CfL 3.0%, census 2.8%, entropy
+configuration 2.6%, and ANS 2.5%.
 
 ### Open architectural questions
 
@@ -40,8 +43,8 @@ and census 2.6%.
    final Store without becoming another frame-sized allocation? Even the
    default-entropy Fast finalist still spends about 16% across census, table
    construction, ANS, and pass-group writing.
-4. The mid-size frame remains 3.22x slower than cjxl while the 12 MP frame is
-   2.04x slower. Which finer deterministic planning axis is most promising
+4. The mid-size frame remains 2.92x slower than cjxl while the 12 MP frame is
+   1.86x slower. Which finer deterministic planning axis is most promising
    when a frame exposes too few LF groups: cover tree regions, varblock runs,
    coefficient bands, or stage pipelining?
 5. Can an inexpensive confidence signal identify the one corpus class where

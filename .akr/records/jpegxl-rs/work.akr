@@ -136,6 +136,44 @@ record jpegxl-rs.work.arch-phase10-two-anchor-prediction/1 : work {
     part_of [ @jpegxl-rs.track.encoder-optimization ]
 }
 
+record jpegxl-rs.work.arch-phase11-cheap-navigation/1 : work {
+    title "Phase 11: neutral-CfL anchors and direct finalist Store"
+    state proposed
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/rate.rs",
+        path "JPXL/docs/optimize.md"
+    ]
+    intent """
+        Remove work that cannot affect the Fast preset's returned pixels: keep the production hierarchical cover but use neutral CfL for both navigation anchors, then restore full CfL on the freshly optimized finalist. Verify finalist and correction sizes through their exact retained Store emission so the accepted path does not traverse Count and Store separately. Retain only if the exact ceiling, fallback behavior and perceptual corpus remain sound while fresh interleaved timing improves over Phase 10.
+        """
+    note """
+        Two broader navigation shortcuts were screened and rejected first. Fixed-DCT8x8 anchors improved 4.3 MP by about 4.7% but slowed 12 MP by about 3.8% because merged images paid more quantization and writer work. A single-anchor fixed-slope predictor was fast on the two timing photographs but required correction on six of seven canonical scenes and fell back on one, demonstrating content-dependent rate slopes. Neither rejected variant remains in source.
+        """
+    acceptance {
+        check gates {
+            statement """
+                Feature/default policy tests, workspace tests, formatting, lint-delta checks and AKR validation pass or pre-existing blockers are explicitly isolated.
+                """
+            method command
+        }
+        check quality {
+            statement """
+                The canonical corpus records achieved sizes, fallback frequency, independent decode results, and SSIMULACRA2/Butteraugli deltas against Phase 10; the finalist continues to use freshly optimized production structure.
+                """
+            method observation
+        }
+        check speed {
+            statement """
+                Fresh interleaved A/B against the Phase 10 Fast preset shows a material end-to-end improvement on the pinned 4.3 MP and 12 MP photographs, with diagnostics confirming removal of navigation CfL and redundant finalist Count work.
+                """
+            method observation
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase10-two-anchor-prediction ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+}
+
 record jpegxl-rs.work.arch-phase1b-opt-in-diagnostics/1 : work {
     title "Phase 1B: make architecture diagnostics opt-in"
     state superseded
