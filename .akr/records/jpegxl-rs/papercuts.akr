@@ -195,6 +195,18 @@ record jpegxl-rs.papercut.orienting-on-this-project-through-the-knowledge/1 : pa
     created_at 2026-08-12
 }
 
+record jpegxl-rs.papercut.the-installed-akr-0-3-1-rejected-four-existing/1 : papercut {
+    title "The installed akr 0.3.1 rejected four existing observation records…"
+    state verified
+    statement """
+        The installed akr 0.3.1 rejected four existing observation records because it expected method instrumented, while current official AKR source accepts the documented method observation. A temporary build from official HEAD was required to read context, update evidence, and validate the ledger.
+        """
+    observed_at git:c558c7124db78bff67599fc8603a4e30675b571b
+    about "akr"
+    author "codex"
+    created_at 2026-08-15
+}
+
 record jpegxl-rs.papercut.while-checking-an-in-progress-akr-change-akr/1 : papercut {
     title "While checking an in-progress AKR change, `akr change status` was…"
     state verified

@@ -5,7 +5,7 @@ build {
     tool "akr 0.3.0"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:1846c7dd8ca3d497dc38d2a77c123c21c5df726f060782708e54cb7c222bf453"
+    source_graph "sha256:f98c507b65b5414278bb992976f871f8cf9a1bcbcf19e447a2f00a4f75910705"
 }
 
 source ".akr/project.akr" {
@@ -44,8 +44,8 @@ source ".akr/records/jpegxl-rs/observations.akr" {
 }
 
 source ".akr/records/jpegxl-rs/papercuts.akr" {
-    hash "sha256:6e8aa2ab5aab730bb33e450baca070b4dd20dd6c14423088cb7584ce9da05312"
-    records 19
+    hash "sha256:14450d189bf11dc66712f01a725491aea7be43455a640c678ea90305928d4ba7"
+    records 20
 }
 
 source ".akr/records/jpegxl-rs/policies.akr" {
@@ -4865,6 +4865,11 @@ seal @jpegxl-rs.papercut.opt-f-multiplicity-counters-are-still-only/1 {
 seal @jpegxl-rs.papercut.orienting-on-this-project-through-the-knowledge/1 {
     state verified
     hash "sha256:27a86404e0099e336fc997b06b9ad945925d2e625517ab9207afea6a4f0b62f0"
+}
+
+seal @jpegxl-rs.papercut.the-installed-akr-0-3-1-rejected-four-existing/1 {
+    state verified
+    hash "sha256:afd89dd7ff8b6d1849dd88765b833898038ff37d09b17d51edb174065b593850"
 }
 
 seal @jpegxl-rs.papercut.while-checking-an-in-progress-akr-change-akr/1 {
