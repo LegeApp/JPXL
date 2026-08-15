@@ -331,7 +331,7 @@ record jpegxl-rs.work.arch-phase15-fast-entropy/1 : work {
 
 record jpegxl-rs.work.arch-phase16-fast-anchor/1 : work {
     title "Phase 16: Fast anchor reuse"
-    state proposed
+    state completed
     scope [
         path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
         path "JPXL/crates/jpxl-encode-policy/src/rate.rs",
@@ -344,24 +344,28 @@ record jpegxl-rs.work.arch-phase16-fast-anchor/1 : work {
                 Fast outputs are deterministic across repeated one- and four-thread runs and decode successfully on the canonical mid and large photographs; Quality output remains unchanged.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase16-determinism-2026-08-15/1 ]
         }
         check gates {
             statement """
                 Workspace build, tests, formatting, no-default-features check, and AKR validation pass; any pre-existing strict Clippy diagnostics are isolated.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase16-gates-2026-08-15/1 ]
         }
         check quality {
             statement """
                 Fast target adherence and SSIMULACRA2, Butteraugli, PSNR, and pnorm3 are recorded against the Phase 15 Fast output, with no catastrophic regression; Quality remains the higher-quality fallback.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.phase16-quality-2026-08-15/1 ]
         }
         check speed {
             statement """
                 Interleaved release or PGO timing shows a material Fast speed improvement on both canonical size classes and remains within the stated parity band against cjxl at the same relaxed operating point.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.phase16-speed-2026-08-15/1 ]
         }
     }
 }
