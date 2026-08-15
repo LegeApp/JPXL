@@ -5,7 +5,7 @@ build {
     tool "akr 0.3.0"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:63424b653d0f687da90be2f2395408f4134371430b570373644c525cbad2e5b4"
+    source_graph "sha256:8104efa6a00cab1072d2bb801478dadcf648630e05971f9d9555ab12189ca8c3"
 }
 
 source ".akr/project.akr" {
@@ -64,8 +64,8 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:243d67ea73c4bfd447cfbb89c58272ac83c5f3f7a8666949c80d89e0634d657a"
-    records 102
+    hash "sha256:64be6d93b175280f6e72d085a0dc29fd9adbb7bdca74ed31697a2e2e153a907d"
+    records 103
 }
 
 resolution @jpegxl-rs.decision.encoder-architecture-phases/1 {
@@ -1593,6 +1593,18 @@ resolution @jpegxl-rs.work.arch-phase13-quant-scratch-overwrite/1 {
 }
 
 resolution @jpegxl-rs.work.arch-phase13-quant-scratch-overwrite/1 {
+    slot part_of
+    to @jpegxl-rs.track.encoder-optimization/1
+    hash "sha256:49975e17bd10998d72b08fccfe98fdea9bdf68ef56e4404dd68e94e1e2d75f23"
+}
+
+resolution @jpegxl-rs.work.arch-phase14-region-cover-parallel/1 {
+    slot depends_on
+    to @jpegxl-rs.work.arch-phase13-quant-scratch-overwrite/1
+    hash "sha256:1b9d18b60ec71f05c18cb2c6db8e6cd1354030aa841db506fec874508cc5d7db"
+}
+
+resolution @jpegxl-rs.work.arch-phase14-region-cover-parallel/1 {
     slot part_of
     to @jpegxl-rs.track.encoder-optimization/1
     hash "sha256:49975e17bd10998d72b08fccfe98fdea9bdf68ef56e4404dd68e94e1e2d75f23"

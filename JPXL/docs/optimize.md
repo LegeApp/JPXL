@@ -29,21 +29,32 @@ Fresh PGO A/B against the contiguous-DCT checkpoint improved medians by 0.9%
 at 2400x1800 and 1.5% at 4000x3000. Canonical Fast training outputs and a
 Quality-preset output remain byte-identical.
 
+Frames with fewer LF groups than worker threads now prefill each group's
+complete square-transform candidate bank once and score independent aligned
+32x32 cover regions through immutable reads on the existing executor. Results
+are reduced in raster order; frames whose LF groups already saturate the
+workers retain the lazy per-group path. The latest fresh PGO A/B against the
+overwrite-only quantization checkpoint improved the 2400x1800 median from
+1.27 to 1.10 s (13.4%) and held the 4000x3000 median at 2.22 s. Fast and
+Quality outputs remain byte-identical between one and four threads and to the
+prior checkpoint. An earlier lower-load run measured the same direction at
+1.10 to 0.94 s (14.5%) and 1.88 to 1.87 s (0.5%).
+
 Fresh four-thread, process-to-process matched-SSIMULACRA2 timing is 1.09 s
-versus cjxl 0.40 s on 2400x1800 (2.73x), and 1.89 s versus 1.05 s on
-4000x3000 (1.80x). The seven-scene 1 bpp screen still has zero fallbacks and
+versus cjxl 0.47 s on 2400x1800 (2.32x), and 2.21 s versus 1.21 s on
+4000x3000 (1.83x). The seven-scene 1 bpp screen still has zero fallbacks and
 two corrections; its mean SSIMULACRA2 delta versus Phase 10 is -0.034 points
 and the worst is -0.154. Quality remains available for callers that do not
 want the cumulative speed/quality trade.
 
-The newest 12 MP PGO profile, captured immediately before the small
-overwrite-only quantization cleanup, contains 7,762 core-cycle samples with
-zero lost.
-Its largest self-costs are cover scoring 19.5% across two hot closures,
-quantization 16.2% across the chunk closure and lane kernel, contiguous DCT
-rows 6.5% (plus 1.3% in DCT16), forward-varblock preparation 6.5%, pass-group
-writing 4.6%, entropy tables 3.8%, ANS 3.5%, CfL 3.3%, and census 3.2%. The
-former column-DCT leaf fell from 11.5% to a 6.5% contiguous-row leaf.
+The newest 2400x1800 four-thread PGO profile contains 3,156 core-cycle samples
+with zero lost and reflects the new scheduling topology. Its largest
+self-costs are cover scoring 18.0% across the luma and chroma closures,
+quantization 12.6% across the chunk closure and lane kernel, contiguous DCT
+rows 6.0%, entropy best-config search 5.5%, forward-varblock preparation 5.4%,
+pass-group writing 4.7%, entropy tables 4.1%, ANS 3.9%, census 3.5%, and CfL
+3.0%. Region parallelism closes the mid-size worker-underfill gap without
+reducing the total cover work.
 
 ### Open architectural questions
 
@@ -54,19 +65,17 @@ former column-DCT leaf fell from 11.5% to a 6.5% contiguous-row leaf.
    frontier avoid most of the second cover/DCT pass without that quality loss?
 2. Can the two far-apart anchor quantizers and finalist be quantized from one
    coefficient traversal without tripling result storage? Quantization is
-   still 10.3% self time after probe collapse; the existing advice to batch
-   adjacent rungs does not directly fit this wide two-anchor geometry.
+   still 12.6% self time in the new mid-size profile; the existing advice to
+   batch adjacent rungs does not directly fit this wide two-anchor geometry.
 3. What compact token representation could serve census, exact Count, and
    final Store without becoming another frame-sized allocation? Even the
-   default-entropy Fast finalist still spends about 16% across census, table
-   construction, ANS, and pass-group writing.
-4. The mid-size frame remains 2.73x slower than cjxl while the 12 MP frame is
-   1.80x slower. Cover construction currently takes a write lock for one
-   LF-group-wide dense coefficient bank, even though its aligned 32x32 regions
-   are logically independent. Which deterministic ownership model best exposes
-   those regions to work stealing without adding per-region full-bank arenas:
-   partitioned dense banks, a prefilled immutable candidate bank, or staged
-   cover/DCT pipelining?
+   default-entropy Fast finalist still spends about 22% across best-config
+   search, census, table construction, ANS, and pass-group writing.
+4. Immutable candidate banks and deterministic region work stealing reduce
+   mid-size wall time by 13-15%, but cover scoring still consumes about 18% of
+   core cycles. Can winner/runner-up summaries or another compact intermediate
+   share cover scoring between the two navigation anchors and finalist while
+   still allowing the finalist's structurally unstable regions to change?
 5. Can an inexpensive confidence signal identify the one corpus class where
    Fast loses about 0.8 SSIMULACRA2 points and route it to Quality, without
    first doing the exhaustive search that the preset exists to avoid?

@@ -252,6 +252,37 @@ record jpegxl-rs.work.arch-phase13-quant-scratch-overwrite/1 : work {
     part_of [ @jpegxl-rs.track.encoder-optimization ]
 }
 
+record jpegxl-rs.work.arch-phase14-region-cover-parallel/1 : work {
+    title "Phase 14: intra-group cover region parallelism"
+    state proposed
+    scope [ path "JPXL/crates/jpxl-encode-policy/src/lib.rs", path "JPXL/docs/optimize.md" ]
+    intent """
+        Close the four-thread utilization gap on frames with fewer LF groups than workers. Prefill each underfilled group's complete square-transform candidate cache once, then score its independent aligned 32x32 cover regions through immutable cache reads on the existing request executor and reduce in raster order. Preserve the current lazy group path when LF groups already saturate workers and retain only if output is byte-identical and mid-size speed materially improves without a large-image regression.
+        """
+    acceptance {
+        check determinism {
+            statement """
+                Serial and four-thread cover planning produce byte-identical Fast and Quality codestreams on multi-group and canonical inputs.
+                """
+            method command
+        }
+        check gates {
+            statement """
+                Workspace build, tests, formatting, no-default-features check, lint-delta review, and AKR validation pass or isolate pre-existing blockers.
+                """
+            method command
+        }
+        check speed {
+            statement """
+                Fresh interleaved timing shows a material 2400x1800 improvement and no material 4000x3000 regression against Phase 13.
+                """
+            method observation
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase13-quant-scratch-overwrite ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+}
+
 record jpegxl-rs.work.arch-phase1b-opt-in-diagnostics/1 : work {
     title "Phase 1B: make architecture diagnostics opt-in"
     state superseded

@@ -427,6 +427,11 @@ fn plan_at_with_cfl(
             diagnostics::time_stage(diagnostics::StageTimer::Cover, || {
                 diagnostics::with_choose_stage(diagnostics::ChooseStage::Cover, || {
                     let n_groups = usize::try_from(geometry.num_lf_groups()).unwrap_or(0);
+                    let split_cover = cfg!(feature = "parallel")
+                        && executor.is_some_and(|executor| {
+                            executor.resources().parallel_groups()
+                                && n_groups < executor.resources().threads
+                        });
                     let plan_group = |index_usize: usize| {
                         let index = u64::try_from(index_usize).unwrap_or(u64::MAX);
                         let id = LfGroupId::new(u32::try_from(index).unwrap_or(u32::MAX));
@@ -439,12 +444,6 @@ fn plan_at_with_cfl(
                         let rect = geometry.lf_group_rect(id).ok_or(PolicyError::Unsupported {
                             what: "an LF group outside the frame's grid",
                         })?;
-                        let mut bank = cache.group(index_usize)?.write().map_err(|_| {
-                            PolicyError::Unsupported {
-                                what: "a poisoned LF-group forward bank",
-                            }
-                        })?;
-                        let mut fwd_scratch = ForwardScratch::new();
                         let varblocks = match request.budget.cover_mode {
                             CoverMode::FixedDct8x8 => {
                                 let mut varblocks = block::fixed_dct8x8(blocks, aq.baseline)?;
@@ -456,25 +455,71 @@ fn plan_at_with_cfl(
                                         1,
                                     );
                                 }
+                                let mut bank = cache.group(index_usize)?.write().map_err(|_| {
+                                    PolicyError::Unsupported {
+                                        what: "a poisoned LF-group forward bank",
+                                    }
+                                })?;
+                                ensure_forwards_cached(
+                                    transform_frame,
+                                    &varblocks,
+                                    (rect.x0, rect.y0),
+                                    &mut bank,
+                                    &mut ForwardScratch::new(),
+                                )?;
                                 varblocks
                             }
-                            CoverMode::Hierarchical => select_blocks(
-                                transform_frame,
-                                &hf_quants,
-                                blocks,
-                                (rect.x0, rect.y0),
-                                &aq,
-                                &mut bank,
-                                &mut fwd_scratch,
-                            )?,
+                            CoverMode::Hierarchical if split_cover => {
+                                {
+                                    let mut bank =
+                                        cache.group(index_usize)?.write().map_err(|_| {
+                                            PolicyError::Unsupported {
+                                                what: "a poisoned LF-group forward bank",
+                                            }
+                                        })?;
+                                    ensure_cover_candidates_cached(
+                                        transform_frame,
+                                        blocks,
+                                        (rect.x0, rect.y0),
+                                        &mut bank,
+                                        &mut ForwardScratch::new(),
+                                    )?;
+                                }
+                                let executor = executor.ok_or(PolicyError::Unsupported {
+                                    what: "parallel cover regions without an executor",
+                                })?;
+                                let bank = cache.group(index_usize)?.read().map_err(|_| {
+                                    PolicyError::Unsupported {
+                                        what: "a poisoned LF-group forward bank",
+                                    }
+                                })?;
+                                select_blocks_cached_parallel(
+                                    transform_frame,
+                                    &hf_quants,
+                                    blocks,
+                                    (rect.x0, rect.y0),
+                                    &aq,
+                                    &bank,
+                                    executor,
+                                )?
+                            }
+                            CoverMode::Hierarchical => {
+                                let mut bank = cache.group(index_usize)?.write().map_err(|_| {
+                                    PolicyError::Unsupported {
+                                        what: "a poisoned LF-group forward bank",
+                                    }
+                                })?;
+                                select_blocks(
+                                    transform_frame,
+                                    &hf_quants,
+                                    blocks,
+                                    (rect.x0, rect.y0),
+                                    &aq,
+                                    &mut bank,
+                                    &mut ForwardScratch::new(),
+                                )?
+                            }
                         };
-                        ensure_forwards_cached(
-                            transform_frame,
-                            &varblocks,
-                            (rect.x0, rect.y0),
-                            &mut bank,
-                            &mut fwd_scratch,
-                        )?;
                         Ok::<_, PolicyError>((id, blocks, rect, varblocks))
                     };
                     if let Some(executor) = executor {
@@ -1581,6 +1626,8 @@ struct CandidateGroupBank {
     rect: jpxl_encode::vardct::Rect,
     blocks: jpxl_encode::vardct::BlockGrid,
     banks: [Option<DenseForwardBank>; 3],
+    cover_complete: bool,
+    complete_hits: std::sync::atomic::AtomicU64,
 }
 
 impl CandidateGroupBank {
@@ -1600,6 +1647,8 @@ impl CandidateGroupBank {
                 Some(DenseForwardBank::new(blocks, TransformType::Dct16x16)?),
                 Some(DenseForwardBank::new(blocks, TransformType::Dct32x32)?),
             ],
+            cover_complete: false,
+            complete_hits: std::sync::atomic::AtomicU64::new(0),
         })
     }
 
@@ -1721,7 +1770,18 @@ impl CandidateForwardCache {
 
     /// Hit count for Opt-V2 rate-loop telemetry.
     pub(crate) fn hits(&self) -> u64 {
-        self.bank_stat(|bank| bank.hits)
+        let mutable_hits = self.bank_stat(|bank| bank.hits);
+        let immutable_hits = self
+            .groups
+            .iter()
+            .filter_map(|group| group.read().ok())
+            .map(|group| {
+                group
+                    .complete_hits
+                    .load(std::sync::atomic::Ordering::Relaxed)
+            })
+            .fold(0, u64::saturating_add);
+        mutable_hits.saturating_add(immutable_hits)
     }
 
     /// Miss count for Opt-V2 rate-loop telemetry.
@@ -1821,6 +1881,47 @@ fn ensure_forwards_cached(
         let py = y0 + vb.origin.by() * 8;
         cache.get_or_insert(frame, vb.transform, px, py, scratch)?;
     }
+    Ok(())
+}
+
+/// Completes one LF group's square-transform candidate cache.
+///
+/// A hierarchical cover is a forest of independent aligned 4x4-atom trees.
+/// Once every DCT8x8/DCT16x16/DCT32x32 node is present, later trees can score
+/// through immutable cache reads and therefore fan out within an LF group.
+fn ensure_cover_candidates_cached(
+    frame: &PreparedFrame,
+    grid: jpxl_encode::vardct::BlockGrid,
+    origin: (u32, u32),
+    cache: &mut CandidateGroupBank,
+    scratch: &mut ForwardScratch,
+) -> Result<()> {
+    if cache.cover_complete {
+        return Ok(());
+    }
+    let (x0, y0) = origin;
+    for by in 0..grid.height {
+        for bx in 0..grid.width {
+            let px = x0.saturating_add(bx.saturating_mul(8));
+            let py = y0.saturating_add(by.saturating_mul(8));
+            cache.get_or_insert(frame, TransformType::Dct8x8, px, py, scratch)?;
+            if bx.is_multiple_of(2)
+                && by.is_multiple_of(2)
+                && bx.saturating_add(2) <= grid.width
+                && by.saturating_add(2) <= grid.height
+            {
+                cache.get_or_insert(frame, TransformType::Dct16x16, px, py, scratch)?;
+            }
+            if bx.is_multiple_of(4)
+                && by.is_multiple_of(4)
+                && bx.saturating_add(4) <= grid.width
+                && by.saturating_add(4) <= grid.height
+            {
+                cache.get_or_insert(frame, TransformType::Dct32x32, px, py, scratch)?;
+            }
+        }
+    }
+    cache.cover_complete = true;
     Ok(())
 }
 
@@ -3279,6 +3380,42 @@ fn cheap_stage_would_prune(
     Ok(would_prune)
 }
 
+/// Mutable lazy access for the existing group path, or immutable access after
+/// [`ensure_cover_candidates_cached`] completed every square candidate.
+enum CoverForwardBank<'a> {
+    Lazy(&'a mut CandidateGroupBank),
+    Complete {
+        cache: &'a CandidateGroupBank,
+        hits: &'a mut u64,
+    },
+}
+
+impl CoverForwardBank<'_> {
+    fn get(
+        &mut self,
+        frame: &PreparedFrame,
+        transform: TransformType,
+        px: u32,
+        py: u32,
+        scratch: &mut ForwardScratch,
+    ) -> Result<VarblockForward<'_>> {
+        match self {
+            Self::Lazy(cache) => cache.get_or_insert(frame, transform, px, py, scratch),
+            Self::Complete { cache, hits } => {
+                let result = cache
+                    .get(transform, px, py)
+                    .ok_or(PolicyError::Unsupported {
+                        what: "a completed cover cache missing a square candidate",
+                    });
+                if result.is_ok() {
+                    **hits = hits.saturating_add(1);
+                }
+                result
+            }
+        }
+    }
+}
+
 /// §4.3 objective for one square candidate. When `cutoff` is set, returns
 /// `None` as soon as the partial cost cannot beat the split (ties keep split).
 #[allow(clippy::too_many_arguments)]
@@ -3289,7 +3426,7 @@ fn block_cost_bounded(
     hf_mul: HfMul,
     px: u32,
     py: u32,
-    cache: &mut CandidateGroupBank,
+    cache: &mut CoverForwardBank<'_>,
     scratch: &mut ForwardScratch,
     d_y_hf: &mut [f32],
     cutoff: Option<f64>,
@@ -3298,7 +3435,7 @@ fn block_cost_bounded(
     // scoring against the forward-DCT/cache share, before building any
     // summary-scoring machinery on the assumption that share is large.
     let fwd = diagnostics::time_stage(diagnostics::StageTimer::CoverForward, || {
-        cache.get_or_insert(frame, transform, px, py, scratch)
+        cache.get(frame, transform, px, py, scratch)
     })?;
     let side = transform.sample_cols();
     let n = transform.block_dims().0;
@@ -3438,14 +3575,14 @@ fn block_cost_bounded(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn block_cost(
+fn block_cost_with(
     frame: &PreparedFrame,
     hf_quants: &HfQuantizers,
     transform: TransformType,
     hf_mul: HfMul,
     px: u32,
     py: u32,
-    cache: &mut CandidateGroupBank,
+    cache: &mut CoverForwardBank<'_>,
     scratch: &mut ForwardScratch,
     d_y_hf: &mut [f32],
 ) -> Result<f64> {
@@ -3457,12 +3594,38 @@ fn block_cost(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
+fn block_cost(
+    frame: &PreparedFrame,
+    hf_quants: &HfQuantizers,
+    transform: TransformType,
+    hf_mul: HfMul,
+    px: u32,
+    py: u32,
+    cache: &mut CandidateGroupBank,
+    scratch: &mut ForwardScratch,
+    d_y_hf: &mut [f32],
+) -> Result<f64> {
+    let mut access = CoverForwardBank::Lazy(cache);
+    block_cost_with(
+        frame,
+        hf_quants,
+        transform,
+        hf_mul,
+        px,
+        py,
+        &mut access,
+        scratch,
+        d_y_hf,
+    )
+}
+
 /// The quadtree cover of one aligned `size`-atom region, choosing at each level
 /// between one square transform and four sub-quadrants by exact R-D within the
 /// hierarchy. Clipped and pass-group-straddling regions are forced to split;
 /// aligned placement keeps every block inside one pass group.
 #[allow(clippy::too_many_arguments)]
-fn tile_region(
+fn tile_region_with(
     frame: &PreparedFrame,
     hf_quants: &HfQuantizers,
     grid: jpxl_encode::vardct::BlockGrid,
@@ -3472,7 +3635,7 @@ fn tile_region(
     aq: &AqSetup,
     x0: u32,
     y0: u32,
-    cache: &mut CandidateGroupBank,
+    cache: &mut CoverForwardBank<'_>,
     scratch: &mut ForwardScratch,
     d_y_hf: &mut [f32],
 ) -> Result<(f64, Vec<VarblockDecision>)> {
@@ -3486,7 +3649,7 @@ fn tile_region(
     // rect, so `x0 / 8` is the group's first atom column.
     if size == 1 {
         let hf_mul = aq.mul_for_footprint(x0 / 8 + bx, y0 / 8 + by, 1, 1);
-        let cost = block_cost(
+        let cost = block_cost_with(
             frame,
             hf_quants,
             TransformType::Dct8x8,
@@ -3517,7 +3680,7 @@ fn tile_region(
         (bx, by + half),
         (bx + half, by + half),
     ] {
-        let (c, mut b) = tile_region(
+        let (c, mut b) = tile_region_with(
             frame, hf_quants, grid, qx, qy, half, aq, x0, y0, cache, scratch, d_y_hf,
         )?;
         split_cost += c;
@@ -3573,6 +3736,39 @@ fn tile_region(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
+#[cfg(test)]
+fn tile_region(
+    frame: &PreparedFrame,
+    hf_quants: &HfQuantizers,
+    grid: jpxl_encode::vardct::BlockGrid,
+    bx: u32,
+    by: u32,
+    size: u32,
+    aq: &AqSetup,
+    x0: u32,
+    y0: u32,
+    cache: &mut CandidateGroupBank,
+    scratch: &mut ForwardScratch,
+    d_y_hf: &mut [f32],
+) -> Result<(f64, Vec<VarblockDecision>)> {
+    let mut access = CoverForwardBank::Lazy(cache);
+    tile_region_with(
+        frame,
+        hf_quants,
+        grid,
+        bx,
+        by,
+        size,
+        aq,
+        x0,
+        y0,
+        &mut access,
+        scratch,
+        d_y_hf,
+    )
+}
+
 /// Selects one LF group's varblock tiling by the hierarchical quadtree solver,
 /// returned in `BlockInfo` (greedy earliest-uncovered raster) order.
 fn select_blocks(
@@ -3585,13 +3781,14 @@ fn select_blocks(
     scratch: &mut ForwardScratch,
 ) -> Result<Vec<VarblockDecision>> {
     let (x0, y0) = origin;
+    let mut cache = CoverForwardBank::Lazy(cache);
     let mut d_y_hf = vec![0.0f32; 32 * 32];
     let mut blocks = Vec::new();
     let mut sby = 0u32;
     while sby < grid.height {
         let mut sbx = 0u32;
         while sbx < grid.width {
-            let (_, mut region) = tile_region(
+            let (_, mut region) = tile_region_with(
                 frame,
                 hf_quants,
                 grid,
@@ -3601,7 +3798,7 @@ fn select_blocks(
                 aq,
                 x0,
                 y0,
-                cache,
+                &mut cache,
                 scratch,
                 &mut d_y_hf,
             )?;
@@ -3614,6 +3811,66 @@ fn select_blocks(
     // in raster order; a quadtree's blocks, sorted by their top-left atom's
     // raster index, are exactly that sequence (each origin is the minimum
     // raster atom of its footprint, and the cover is exact and non-overlapping).
+    blocks.sort_by_key(|b| (b.origin.by(), b.origin.bx()));
+    Ok(blocks)
+}
+
+/// Scores the independent aligned 4x4-atom trees of one LF group through a
+/// completed immutable forward cache. Fixed-index reduction followed by the
+/// same raster sort as [`select_blocks`] preserves Contract A.
+fn select_blocks_cached_parallel(
+    frame: &PreparedFrame,
+    hf_quants: &HfQuantizers,
+    grid: jpxl_encode::vardct::BlockGrid,
+    origin: (u32, u32),
+    aq: &AqSetup,
+    cache: &CandidateGroupBank,
+    executor: &jpxl_encode::EncodeExecutor,
+) -> Result<Vec<VarblockDecision>> {
+    let (x0, y0) = origin;
+    let regions_w = usize::try_from(grid.width.div_ceil(4)).unwrap_or(0);
+    let regions_h = usize::try_from(grid.height.div_ceil(4)).unwrap_or(0);
+    let regions = regions_w.saturating_mul(regions_h);
+    let planned = executor.map_ordered(regions, |index| {
+        let rx = index % regions_w.max(1);
+        let ry = index / regions_w.max(1);
+        let bx = u32::try_from(rx).unwrap_or(u32::MAX).saturating_mul(4);
+        let by = u32::try_from(ry).unwrap_or(u32::MAX).saturating_mul(4);
+        let mut cache_hits = 0u64;
+        let mut scratch = ForwardScratch::new();
+        let mut d_y_hf = vec![0.0f32; 32 * 32];
+        let blocks = {
+            let mut access = CoverForwardBank::Complete {
+                cache,
+                hits: &mut cache_hits,
+            };
+            let (_, blocks) = tile_region_with(
+                frame,
+                hf_quants,
+                grid,
+                bx,
+                by,
+                4,
+                aq,
+                x0,
+                y0,
+                &mut access,
+                &mut scratch,
+                &mut d_y_hf,
+            )?;
+            blocks
+        };
+        Ok::<_, PolicyError>((cache_hits, blocks))
+    })?;
+    let mut cache_hits = 0u64;
+    let mut blocks = Vec::new();
+    for (hits, mut region) in planned {
+        cache_hits = cache_hits.saturating_add(hits);
+        blocks.append(&mut region);
+    }
+    cache
+        .complete_hits
+        .fetch_add(cache_hits, std::sync::atomic::Ordering::Relaxed);
     blocks.sort_by_key(|b| (b.origin.by(), b.origin.bx()));
     Ok(blocks)
 }
