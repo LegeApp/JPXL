@@ -111,6 +111,10 @@ Butteraugli is slightly worse, but the SSIMULACRA2 result remains within the
 observed Quality/cjxl parity band. The Quality hashes remain
 `d4b03810d0bcb73981bb559815c8952eda0fbe2b27040abf8c99d4792c98c2fa` and
 `4baefbd0b8a055bdb01813f1284411cfd06a5d6013b305c392a78eaec486d775`.
+In a pinned, interleaved four-thread window, Balanced medians were 1.15 s and
+2.49 s versus cjxl e7 at 0.59 s and 1.51 s (1.95x and 1.65x); the raw window
+also records CPU time and RSS, and is the more reproducible comparison than a
+single unrestricted process run.
 Diagnostics show the intended collapse on both photos: two Fast plans, one
 anchored finalist, one structural build, and no fallback. On the other three
 mid-size corpus classes (line, low-detail, and noise), the anchored result

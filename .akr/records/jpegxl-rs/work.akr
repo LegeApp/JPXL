@@ -372,7 +372,7 @@ record jpegxl-rs.work.arch-phase16-fast-anchor/1 : work {
 
 record jpegxl-rs.work.arch-phase17-quality-speed-preset/1 : work {
     title "Phase 17: Hierarchical anchored speed preset"
-    state proposed
+    state completed
     scope [
         path "JPXL/crates/jpxl-cli/src/main.rs",
         path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
@@ -388,24 +388,28 @@ record jpegxl-rs.work.arch-phase17-quality-speed-preset/1 : work {
                 Balanced remains deterministic across one/four threads, never exceeds target, decodes through djxl, and the exhaustive Quality output remains unchanged. Non-photo corpus classes may fall back, but fallback output must remain the Quality stream.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase17-correctness-2026-08-15/1 ]
         }
         check gates {
             statement """
                 Workspace build, tests, formatting, no-default-features check, and AKR validation pass; pre-existing strict Clippy diagnostics remain isolated if unchanged.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase17-gates-2026-08-15/1 ]
         }
         check quality {
             statement """
                 Balanced is compared against exhaustive Quality and cjxl at matched target on both canonical photographs with SSIMULACRA2, Butteraugli, pnorm3, PSNR, bytes, and decoded pixels recorded; the observed metric trade is documented.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.phase17-quality-2026-08-15/1 ]
         }
         check speed {
             statement """
                 Four-thread timing records Balanced against exhaustive Quality and cjxl on both canonical size classes, with raw logs, binary hashes, diagnostics, and a flamegraph profile.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.phase17-speed-2026-08-15/1 ]
         }
     }
 }

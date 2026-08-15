@@ -842,6 +842,58 @@ record jpegxl-rs.evidence.phase16-speed-2026-08-15/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase17-correctness-2026-08-15/1 : evidence {
+    title "Balanced is target-safe, decodable, and falls back to byte-identical Quality outputs on line, low-detail, and noise inputs; the Quality mid/large hashes remain unchanged."
+    state verified
+    result pass
+    method command
+    observed_at git:f5fd98b3da5892f46eddc5beda96ad77dd7746b8
+    command "cargo test -p jpxl-encode-policy --all-targets; encode Balanced/Quality across one/four threads; djxl decode; sha256sum"
+    artifact ".agent/scratch/phase17-balanced/SUMMARY.md"
+    summary """
+        Balanced is target-safe, decodable, and falls back to byte-identical Quality outputs on line, low-detail, and noise inputs; the Quality mid/large hashes remain unchanged.
+        """
+}
+
+record jpegxl-rs.evidence.phase17-gates-2026-08-15/1 : evidence {
+    title "Workspace build, tests, formatting, and no-default-features check pass. Strict Clippy exits 101 only on the pre-existing jpxl-core dct excessive-precision diagnostics (70); policy no-deps reports the existing 26 diagnostics, with no new warning in the changed paths."
+    state verified
+    result pass
+    method command
+    observed_at git:f5fd98b3da5892f46eddc5beda96ad77dd7746b8
+    command "cargo build --workspace; cargo test --workspace; cargo fmt --all --check; cargo check --workspace --no-default-features; cargo clippy --workspace --all-targets -- -D warnings"
+    artifact ".agent/scratch/phase17-balanced/cargo-test-workspace.log"
+    summary """
+        Workspace build, tests, formatting, and no-default-features check pass. Strict Clippy exits 101 only on the pre-existing jpxl-core dct excessive-precision diagnostics (70); policy no-deps reports the existing 26 diagnostics, with no new warning in the changed paths.
+        """
+}
+
+record jpegxl-rs.evidence.phase17-quality-2026-08-15/1 : evidence {
+    title "At 1 bpp, Balanced decoded to SSIMULACRA2 72.5443/83.6424 and Butteraugli 3.1308/2.0041 versus exhaustive Quality 72.2863/83.5429 and 3.2742/1.9378; cjxl reference SSIMULACRA2 is 72.2041/83.6969. The observed large-image Butteraugli trade is documented."
+    state verified
+    result pass
+    method observation
+    observed_at git:f5fd98b3da5892f46eddc5beda96ad77dd7746b8
+    command "jpxl encode Balanced/Quality; djxl; perceptual jpxl compare"
+    artifact ".agent/scratch/phase17-balanced/SUMMARY.md"
+    summary """
+        At 1 bpp, Balanced decoded to SSIMULACRA2 72.5443/83.6424 and Butteraugli 3.1308/2.0041 versus exhaustive Quality 72.2863/83.5429 and 3.2742/1.9378; cjxl reference SSIMULACRA2 is 72.2041/83.6969. The observed large-image Butteraugli trade is documented.
+        """
+}
+
+record jpegxl-rs.evidence.phase17-speed-2026-08-15/1 : evidence {
+    title "Pinned four-thread medians are Balanced 1.15s/2.49s versus cjxl e7 0.59s/1.51s (1.95x/1.65x) on 2400x1800/4000x3000; isolated Balanced runs are 0.89s/1.65s versus Quality 8.91s/13.58s. The Balanced flamegraph has 416 samples with zero lost; lane-4 quantization 24.2%, entropy tables 13.2%, quantization orchestration 13.0%, writer 5.3%."
+    state verified
+    result pass
+    method observation
+    observed_at git:f5fd98b3da5892f46eddc5beda96ad77dd7746b8
+    command "pinned interleaved run-cjxl-window.sh; perf record/report"
+    artifact ".agent/scratch/phase17-balanced/cjxl-window.log"
+    summary """
+        Pinned four-thread medians are Balanced 1.15s/2.49s versus cjxl e7 0.59s/1.51s (1.95x/1.65x) on 2400x1800/4000x3000; isolated Balanced runs are 0.89s/1.65s versus Quality 8.91s/13.58s. The Balanced flamegraph has 416 samples with zero lost; lane-4 quantization 24.2%, entropy tables 13.2%, quantization orchestration 13.0%, writer 5.3%.
+        """
+}
+
 record jpegxl-rs.evidence.phase1b-diag-available-2026-08-13/1 : evidence {
     title "Phase 1B opt-in diagnostics remain available"
     state verified
