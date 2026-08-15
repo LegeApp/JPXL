@@ -456,6 +456,45 @@ record jpegxl-rs.work.arch-phase18-balanced-entropy-reuse/1 : work {
     }
 }
 
+record jpegxl-rs.work.arch-phase19-dequant-matrix-reuse/1 : work {
+    title "Phase 19: reuse dequantization matrices across quantizer lanes"
+    state active
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/quantize.rs",
+        path "JPXL/docs/optimize.md"
+    ]
+    intent "Remove output-preserving construction work from HfQuantizers: build each default dequantization matrix once per transform and reuse it across the transform's HfMul lanes, while keeping the public single-quantizer constructor and every emitted integer byte-identical. Measure whether this lower-risk cleanup improves the Balanced and Fast target-rate paths before attempting spatial or quality-policy changes."
+    acceptance {
+        check gates {
+            statement """
+                Workspace build, no-default-features check, formatting, and AKR validation pass; unchanged strict Clippy blockers remain isolated.
+                """
+            method command
+        }
+        check identity {
+            statement """
+                Canonical Fast, Balanced, and exhaustive Quality streams remain byte-identical to the Phase 18 commit, and the quantizer unit tests continue to prove decoder reconstruction choices.
+                """
+            method command
+        }
+        check safety {
+            statement """
+                Workspace tests, independent decoder/oracle checks, and deterministic one/four-thread encodes remain green with no target-rate regressions.
+                """
+            method command
+        }
+        check speed {
+            statement """
+                A pinned before/after release comparison records the construction change's wall-time effect and diagnostics; retain the change only if it is neutral or improves the measured target-rate path.
+                """
+            method observation
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase18-balanced-entropy-reuse ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+}
+
 record jpegxl-rs.work.arch-phase1b-opt-in-diagnostics/1 : work {
     title "Phase 1B: make architecture diagnostics opt-in"
     state superseded

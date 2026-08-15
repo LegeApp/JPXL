@@ -76,6 +76,7 @@ pub mod request;
 pub mod source;
 pub mod stability;
 
+use jpxl_core::dequant::{DequantMatrices, DequantMatrix};
 use jpxl_core::forward::{
     CoeffView, CoeffViewMut, SampleView, SampleViewMut, TransformScratch, forward_varblock_into,
     lf_from_llf_into,
@@ -1465,12 +1466,39 @@ impl HfQuantizers {
         quantizer_choice: QuantizerChoiceMode,
         lambda_scale: f32,
     ) -> Result<Self> {
+        let defaults = DequantMatrices::all_default().map_err(|_| PolicyError::Unsupported {
+            what: "the I.2.5 default dequantization matrices",
+        })?;
         let mut by_key = Vec::with_capacity(SQUARE_TRANSFORMS.len() * muls.len());
         for transform in SQUARE_TRANSFORMS {
+            let matrices: [DequantMatrix; NUM_CHANNELS] = [
+                defaults
+                    .for_transform(transform, 0)
+                    .map_err(|_| PolicyError::Unsupported {
+                        what: "a dequantization matrix for this transform",
+                    })?,
+                defaults
+                    .for_transform(transform, 1)
+                    .map_err(|_| PolicyError::Unsupported {
+                        what: "a dequantization matrix for this transform",
+                    })?,
+                defaults
+                    .for_transform(transform, 2)
+                    .map_err(|_| PolicyError::Unsupported {
+                        what: "a dequantization matrix for this transform",
+                    })?,
+            ];
             for &mul in muls {
                 by_key.push((
                     (transform, mul.get()),
-                    HfQuantizer::new(transform, global_scale, mul.get(), x_qm_scale, b_qm_scale)?,
+                    HfQuantizer::new_with_matrices(
+                        transform,
+                        global_scale,
+                        mul.get(),
+                        x_qm_scale,
+                        b_qm_scale,
+                        &matrices,
+                    )?,
                 ));
             }
         }

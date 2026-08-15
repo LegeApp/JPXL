@@ -211,7 +211,31 @@ impl HfQuantizer {
                     what: "a dequantization matrix for this transform",
                 })?,
         ];
+        Self::new_with_matrices(
+            transform,
+            global_scale,
+            hf_mul,
+            x_qm_scale,
+            b_qm_scale,
+            &matrices,
+        )
+    }
 
+    /// Builds one quantizer from matrices already derived for this transform.
+    ///
+    /// `HfQuantizers` crosses each transform with several `HfMul` lanes during
+    /// adaptive quantization. The default matrix depends on the transform and
+    /// channel, not on `HfMul`, so sharing this immutable array avoids
+    /// rebuilding the same derived matrix for every lane without changing any
+    /// floating-point operation in the step table.
+    pub(crate) fn new_with_matrices(
+        transform: TransformType,
+        global_scale: u32,
+        hf_mul: u32,
+        x_qm_scale: u32,
+        b_qm_scale: u32,
+        matrices: &[DequantMatrix; NUM_CHANNELS],
+    ) -> Result<Self> {
         let denom = f64::from(global_scale) * f64::from(hf_mul);
         #[allow(
             clippy::cast_possible_truncation,

@@ -168,6 +168,31 @@ measured. The next implementation work is therefore output-preserving
 construction cleanup, raw default-entropy event tapes, and an Anchored Quality
 fresh-spatial finalist—not global cover freezing.
 
+## Phase 19 — dequantization-matrix construction reuse (2026-08-15)
+
+The first output-preserving item from the review is now implemented. The
+`HfQuantizers` builder derives each transform's three default dequantization
+matrices once and shares them across all of that transform's `HfMul` lanes;
+`HfQuantizer::new` still owns the single-quantizer API and follows the same
+step-table code. This removes repeated matrix construction without changing a
+rate decision, quantizer rule, cover choice, entropy model, or wire integer.
+
+The release candidate is byte-identical to Phase 18 for Balanced, Fast, and
+Quality on both canonical photos, and to the representative Balanced fallback
+streams. A wider pinned A/B screen against the Phase 18 commit measured
+Balanced mid medians of 847.557 ms baseline versus 842.154 ms candidate and
+large medians of 1897.536 ms versus 1676.179 ms (three interleaved processes,
+five timed iterations, four threads). The earlier three-iteration window was
+mixed, so this is retained as a bounded construction win with host-noise
+caveats, not as a new libjxl-parity claim. Raw candidate hashes, streams, and
+timings are under `.agent/scratch/phase19-dequant-matrix-reuse/`.
+
+No new flamegraph was needed: the change only removes setup reconstruction and
+does not alter the dominant target-rate stages. The next low-risk items remain
+fixed-DCT8-only quantizer construction, completed-cache scratch removal, and
+immutable structural geometry before the higher-risk raw event tape and
+Anchored Quality spatial refresh.
+
 ### Open architectural questions
 
 1. How can the finalist refresh only structurally unstable cover decisions?
