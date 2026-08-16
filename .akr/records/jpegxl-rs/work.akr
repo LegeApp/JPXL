@@ -1203,6 +1203,55 @@ record jpegxl-rs.work.arch-phase28-cfl-lf-scratch-reuse/1 : work {
     part_of [ @jpegxl-rs.track.encoder-optimization ]
 }
 
+record jpegxl-rs.work.arch-phase29-srgb-linear-lut/1 : work {
+    title "Phase 29: sRGB-to-linear lookup table"
+    state completed
+    scope [
+        path ".agent/scratch/**",
+        path "JPXL/crates/jpxl-encode-policy/src/source.rs",
+        path "JPXL/docs/optimize.md"
+    ]
+    intent """
+        Replace PreparedFrame::from_srgb8's per-sample call to jpxl_core::color::srgb_to_linear (which evaluates powf(x, 2.4) on its non-linear segment) with a 256-entry lookup table built once per encode, since an 8-bit sample has only 256 distinct byte values. Preserve exact output: the LUT is filled by calling the same srgb_to_linear function on each of the 256 possible byte/255.0 inputs, so every lookup returns the identical f32 a direct call would have returned.
+        """
+    target 2026-08-16
+    note """
+        This session's host had perf_event_paranoid relaxed to 0 (user: `sudo sysctl -w kernel.perf_event_paranoid=0`), unblocking real perf/inferno profiling for the first time in this optimization pass. A DWARF-unwound flamegraph on Balanced mid immediately identified `<f32>::powf` inside `srgb_to_linear`, called only from this one per-pixel call site in `from_srgb8`, as a top self-time leaf (`__powf_fma` was 2.7% of sampled cycles in a shallow frame-pointer profile; `cbrtf`, reached from the same libm powf implementation, was another 1.7%). A post-change profile shows `cbrtf` gone entirely and `__powf_fma` reduced to a small residual. This is the first phase in this pass driven by an instruction-level profile rather than the built-in stage-timer diagnostics, and the first to touch the color-conversion stage rather than the rate/quantization search.
+        """
+    acceptance {
+        check gates {
+            statement """
+                Workspace build, formatting, full test suite, and Clippy on the changed crate pass.
+                """
+            method command
+            verified_by [ @jpegxl-rs.evidence.phase29-gates-2026-08-16/1 ]
+        }
+        check identity {
+            statement """
+                Canonical Fast, Balanced, Quality, and masking-AQ streams on mid and large inputs remain byte-identical to the pre-Phase-29 binary; every candidate output decodes.
+                """
+            method command
+            verified_by [ @jpegxl-rs.evidence.phase29-identity-2026-08-16/1 ]
+        }
+        check profile {
+            statement """
+                A DWARF-unwound profile traces the powf/cbrtf cost to the per-pixel srgb_to_linear call site, and a post-change profile shows it removed.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.phase29-profile-2026-08-16/1 ]
+        }
+        check speed {
+            statement """
+                A pinned five-iteration Fast/Balanced/Quality mid+large timing screen shows every case faster with identical output bytes and fingerprints.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.phase29-speed-2026-08-16/1 ]
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase28-cfl-lf-scratch-reuse ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+}
+
 record jpegxl-rs.work.arch-phase3-forward-cache/1 : work {
     title "Phase 3: eliminate the selected-forward clone; borrow from CandidateForwardCache"
     state superseded

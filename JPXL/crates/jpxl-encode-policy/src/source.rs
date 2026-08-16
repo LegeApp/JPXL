@@ -203,15 +203,21 @@ impl PreparedFrame {
             return Err(PolicyError::SampleCountMismatch { expected, found });
         }
         let pixels = rgb.len() / 3;
+        // Phase 29: an 8-bit sample has only 256 distinct values, so the
+        // `powf`-based transfer curve is evaluated once per byte value here
+        // instead of once per sample. `profile-guided`: a fresh perf/inferno
+        // profile on this session's host found `<f32>::powf` (inside
+        // `srgb_to_linear`) among the top self-time leaves, entirely from
+        // this per-pixel call site. The lookup returns bit-identical values
+        // to calling `srgb_to_linear` directly, since it is the same
+        // function evaluated on the same exact float for each byte.
+        let lut: [f32; 256] =
+            core::array::from_fn(|byte| jpxl_core::color::srgb_to_linear(byte as f32 / 255.0));
         let mut r = Vec::with_capacity(pixels);
         let mut g = Vec::with_capacity(pixels);
         let mut b = Vec::with_capacity(pixels);
         for i in 0..pixels {
-            let code = |c: usize| {
-                jpxl_core::color::srgb_to_linear(
-                    f32::from(rgb.get(i * 3 + c).copied().unwrap_or(0)) / 255.0,
-                )
-            };
+            let code = |c: usize| lut[usize::from(rgb.get(i * 3 + c).copied().unwrap_or(0))];
             r.push(code(0));
             g.push(code(1));
             b.push(code(2));

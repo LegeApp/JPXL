@@ -1601,6 +1601,54 @@ record jpegxl-rs.evidence.phase28-speed-2026-08-16/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase29-gates-2026-08-16/1 : evidence {
+    title "Phase 29 gates pass"
+    state verified
+    result pass
+    method command
+    observed_at git:d114f42d742a198604ae3b30a66370f6f67a84b1
+    command "cargo build --workspace && cargo fmt --all --check && cargo clippy -p jpxl-encode-policy --all-features -- -D warnings && cargo test --workspace"
+    summary """
+        Workspace build, formatting, full test suite, and Clippy on the changed crate all pass; Clippy reports nothing on source.rs.
+        """
+}
+
+record jpegxl-rs.evidence.phase29-identity-2026-08-16/1 : evidence {
+    title "Phase 29 identity confirmed"
+    state verified
+    result pass
+    method command
+    observed_at git:d114f42d742a198604ae3b30a66370f6f67a84b1
+    command "jpxl encode --bpp 1 --lossy-preset {fast,balanced,quality}[,--aq-mode masking] <mid|large>-photo.ppm, compared byte-for-byte against the pre-change binary; jpxl decode on every candidate output"
+    summary """
+        All six canonical Fast/Balanced/Quality mid+large streams and both Balanced masking-AQ mid+large streams stayed byte-identical to the pre-Phase-29 binary; every candidate output decoded successfully.
+        """
+}
+
+record jpegxl-rs.evidence.phase29-profile-2026-08-16/1 : evidence {
+    title "Phase 29 profile confirms the hotspot and its removal"
+    state verified
+    result pass
+    method observation
+    observed_at git:d114f42d742a198604ae3b30a66370f6f67a84b1
+    command "perf record -F 999 --call-graph dwarf,16384 -- jpxl bench vardct-rate --lossy-preset balanced --iters 2 --threads 1; perf script | inferno-collapse-perf"
+    summary """
+        A DWARF-unwound profile on the pre-change binary traced <f32>::powf's entire cost to jpxl_core::color::srgb_to_linear called from PreparedFrame::from_srgb8's per-pixel loop; __powf_fma and cbrtf together were about 4.4% of sampled self-time in a shallow frame-pointer profile of the same binary. A post-change profile of the candidate binary shows cbrtf absent and __powf_fma reduced to a small residual (the remaining calls come from elsewhere, e.g. AQ/CfL refinement). Raw folded profiles under .agent/scratch/phase29-srgb-lut/.
+        """
+}
+
+record jpegxl-rs.evidence.phase29-speed-2026-08-16/1 : evidence {
+    title "Phase 29 pinned timing: faster on all six cases"
+    state verified
+    result pass
+    method observation
+    observed_at git:d114f42d742a198604ae3b30a66370f6f67a84b1
+    command "taskset -c 0,2,4,6 <baseline|candidate>-jpxl bench vardct-rate --input <mid|large>-photo.ppm --bpp 1 --lossy-preset {fast,balanced,quality} --iters 5 --threads 4"
+    summary """
+        Pinned five-iteration medians were faster in all six cases with identical output_bytes and fingerprint: Fast mid 496.134->454.801ms (-8.3%), Fast large 1086.481->1048.599ms (-3.5%), Balanced mid 877.992->852.995ms (-2.8%), Balanced large 1814.148->1712.627ms (-5.6%), Quality mid 6444.107->6102.028ms (-5.3%), Quality large 13825.880->12427.433ms (-10.1%). Raw log under .agent/scratch/phase29-srgb-lut/pinned-timing.log.
+        """
+}
+
 record jpegxl-rs.evidence.phase3-forward-cache-rev2-postcommit/1 : evidence {
     title "Phase-3 rev-2 (rate-loop cache note) re-verified against commit 8541961"
     state verified

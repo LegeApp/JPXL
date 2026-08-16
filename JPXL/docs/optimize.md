@@ -455,6 +455,50 @@ believed to be the search's own arithmetic (forward DCT plus regression), so
 further reduction needs the local dirty-frontier idea in open question 1, not
 more construction reuse.
 
+## Phase 29 — sRGB-to-linear lookup table (2026-08-16)
+
+This session's host had `perf_event_paranoid` relaxed to `0`, unblocking real
+instruction-level profiling for the first time in this pass (prior phases
+relied on the built-in `bench vardct-rate --diag` stage timers because
+`perf record` was refused). A DWARF-unwound `perf`/`inferno` flamegraph on
+Balanced immediately found `<f32>::powf`, called from
+`jpxl_core::color::srgb_to_linear` on its non-linear segment, as a top
+self-time leaf — entirely from one call site, `PreparedFrame::from_srgb8`'s
+per-pixel EOTF loop. `__powf_fma` and `cbrtf` (reached from the same libm
+implementation) together were about 4.4% of sampled self-time in an earlier
+shallow (frame-pointer) profile of the same binary.
+
+An 8-bit sample has only 256 distinct byte values, so `from_srgb8` now builds
+a 256-entry lookup table once per encode — by calling the same
+`srgb_to_linear` function on each possible `byte / 255.0` input — and indexes
+it per pixel instead of calling `srgb_to_linear` directly. Every lookup
+returns the exact `f32` a direct call would have, so this is construction
+reuse, not an approximation.
+
+All six canonical Fast/Balanced/Quality mid/large streams and both Balanced
+masking-AQ mid/large streams stayed byte-identical to the pre-change binary;
+every candidate output decoded. The full workspace test suite passed, and
+Clippy reported nothing on the changed file. A post-change profile shows
+`cbrtf` gone entirely and `__powf_fma` reduced to a small residual from
+elsewhere in the encoder.
+
+The pinned five-iteration timing screen was faster on every one of six
+cases, with identical output bytes and fingerprints throughout: Fast mid
+496.134 to 454.801 ms (8.3% faster), Fast large 1086.481 to 1048.599 ms (3.5%
+faster), Balanced mid 877.992 to 852.995 ms (2.8% faster), Balanced large
+1814.148 to 1712.627 ms (5.6% faster), Quality mid 6444.107 to 6102.028 ms
+(5.3% faster), Quality large 13825.880 to 12427.433 ms (10.1% faster). Unlike
+prior phases' probe-count reductions, this gain applies once per encode
+regardless of search multiplicity, which is why even Fast (the cheapest,
+lowest-multiplicity preset) shows the largest relative improvement. Raw
+folded profiles and the timing log are under
+`.agent/scratch/phase29-srgb-lut/`.
+
+This closes the color-conversion hotspot the profile pointed at. With real
+profiling now available, the next phase should get a fresh flamegraph on
+Quality (still CfL-dominated per Phase 28) before picking the next target,
+rather than continuing to reason from the pre-Phase-28 flamegraph.
+
 ### Open architectural questions
 
 1. How can the finalist refresh only structurally unstable cover decisions?
