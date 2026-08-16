@@ -2085,7 +2085,7 @@ fn greedy_lz77_events_lookback(
             // residual values; extend each candidate. Only distances inside
             // the lookback window are accepted.
             let h = residual_lz77_hash3(events, i);
-            let mut pos = head[h];
+            let mut pos = head.get(h).copied().unwrap_or(NONE);
             while pos != NONE {
                 let start = pos as usize;
                 if start < search_start {
@@ -2115,7 +2115,7 @@ fn greedy_lz77_events_lookback(
                         }
                     }
                 }
-                pos = prev[start];
+                pos = prev.get(start).copied().unwrap_or(NONE);
             }
         } else {
             // Tail / short min_length: linear reverse scan (rare).
@@ -2190,14 +2190,18 @@ fn insert_lz77_chain(
     head: &mut [u32; 4096],
     prev: &mut [u32],
 ) {
+    // Sentinel matching `greedy_lz77_events_lookback`'s chain terminator.
+    const NONE: u32 = u32::MAX;
     if pos + 2 >= events.len() {
         return;
     }
     let h = residual_lz77_hash3(events, pos);
     if let Some(slot) = prev.get_mut(pos) {
-        *slot = head[h];
+        *slot = head.get(h).copied().unwrap_or(NONE);
     }
-    head[h] = pos as u32;
+    if let Some(slot) = head.get_mut(h) {
+        *slot = u32::try_from(pos).unwrap_or(NONE);
+    }
 }
 
 fn seed_empty_contexts(census: &mut TokenCensus, num_contexts: usize, force_all: bool) {

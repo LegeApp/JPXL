@@ -101,7 +101,9 @@ mod tests {
         }
         let mut bytes = vec![0u8; bits.len().div_ceil(8)];
         for (i, bit) in bits.iter().enumerate() {
-            bytes[i / 8] |= bit << (i % 8);
+            if let Some(slot) = bytes.get_mut(i / 8) {
+                *slot |= bit << (i % 8);
+            }
         }
 
         let mut r = BitReader::new(&bytes);

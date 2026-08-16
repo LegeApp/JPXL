@@ -126,8 +126,8 @@ fn gaborish_forward_interior_scalar(
             let mut acc = 0.0f32;
             for dy in -1i32..=1 {
                 for dx in -1i32..=1 {
-                    let sx = (x as i32 + dx) as usize;
-                    let sy = (y as i32 + dy) as usize;
+                    let sx = x.saturating_add_signed(dx as isize);
+                    let sy = y.saturating_add_signed(dy as isize);
                     let sample = input
                         .get(sy.saturating_mul(width).saturating_add(sx))
                         .copied()
@@ -192,8 +192,8 @@ fn gaborish_forward_interior_simd(
             let mut acc = 0.0f32;
             for dy in -1i32..=1 {
                 for dx in -1i32..=1 {
-                    let sx = (x as i32 + dx) as usize;
-                    let sy = (y as i32 + dy) as usize;
+                    let sx = x.saturating_add_signed(dx as isize);
+                    let sy = y.saturating_add_signed(dy as isize);
                     let sample = input
                         .get(sy.saturating_mul(width).saturating_add(sx))
                         .copied()

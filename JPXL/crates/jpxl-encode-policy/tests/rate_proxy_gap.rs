@@ -116,7 +116,11 @@ fn residual_bits_against_the_real_walk() {
     let bytes = std::fs::read(&reference).expect("read reference PPM");
     let img = jpxl_conformance::metrics::Image::from_ppm(&bytes).expect("parse PPM");
     assert_eq!(img.channels, 3, "the harness plans RGB");
-    let rgb: Vec<u8> = img.samples.iter().map(|&s| s as u8).collect();
+    let rgb: Vec<u8> = img
+        .samples
+        .iter()
+        .map(|&s| u8::try_from(s).unwrap_or(0))
+        .collect();
     let frame = PreparedFrame::from_srgb8(img.w, img.h, &rgb).expect("frame");
 
     let request = EncodeRequest::for_target(RateTarget::BitsPerPixel(bpp));

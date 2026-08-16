@@ -12,7 +12,9 @@ fn ramp_grey(w: u32, h: u32) -> Image {
     for y in 0..h {
         for x in 0..w {
             let i = (y * w + x) as usize;
-            plane[i] = i32::try_from((x * 200) / w.max(1)).unwrap_or(0);
+            if let Some(slot) = plane.get_mut(i) {
+                *slot = i32::try_from((x * 200) / w.max(1)).unwrap_or(0);
+            }
         }
     }
     Image::new(w, h, 8, vec![plane]).expect("image")
@@ -23,7 +25,9 @@ fn ramp_source(w: u32, h: u32) -> ModularSource {
     for y in 0..h {
         for x in 0..w {
             let i = (y * w + x) as usize;
-            plane[i] = i32::try_from((x.wrapping_mul(3) + y.wrapping_mul(5)) % 200).unwrap_or(0);
+            if let Some(slot) = plane.get_mut(i) {
+                *slot = i32::try_from((x.wrapping_mul(3) + y.wrapping_mul(5)) % 200).unwrap_or(0);
+            }
         }
     }
     ModularSource::direct(
@@ -84,8 +88,10 @@ fn multi_section_global_tree_beats_local_repay_and_round_trips() {
     let w = 300u32;
     let h = 200u32;
     let image = ramp_grey(w, h);
-    let mut opts = EncodeOptions::default();
-    opts.group_size_shift = Some(0);
+    let opts = EncodeOptions {
+        group_size_shift: Some(0),
+        ..EncodeOptions::default()
+    };
     let global_bytes = encode(&image, &opts).expect("global encode");
 
     let decoded = decode(&global_bytes, &Limits::default()).expect("jpxl-decode");

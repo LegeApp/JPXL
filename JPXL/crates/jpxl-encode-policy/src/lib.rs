@@ -265,6 +265,10 @@ pub(crate) fn plan_at(
 
 /// Like [`plan_at`], but reuses a caller-prepared transform frame and a
 /// cross-probe forward-transform cache (rate loop).
+#[allow(
+    clippy::too_many_arguments,
+    reason = "internal plumbing: the parameter list is the stable bundle \\\n              plan_at_on_with_workspace forwards verbatim; bundling it \\\n              would add a struct used by exactly one call chain"
+)]
 pub(crate) fn plan_at_on(
     frame: &PreparedFrame,
     transform_frame: &PreparedFrame,
@@ -291,6 +295,10 @@ pub(crate) fn plan_at_on(
 
 /// [`plan_at_on`] with request-scoped quantization storage supplied by the
 /// rate controller.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "internal plumbing: every parameter is a distinct capability \\\n              (frame, atlas, request, quantizer, caches, executor, workspace) \\\n              with no cohesive sub-bundle to extract"
+)]
 fn plan_at_on_with_workspace(
     frame: &PreparedFrame,
     transform_frame: &PreparedFrame,
@@ -329,6 +337,10 @@ fn plan_at_on_with_workspace(
 /// Fast-preset planning with rate-search-owned quantization storage and an
 /// explicit reusable spatial anchor.
 #[cfg(feature = "anchor-sketch")]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "internal plumbing: extends plan_at_on_with_workspace with the \\\n              three anchor-reuse parameters; one call chain, no reuse elsewhere"
+)]
 fn plan_at_on_anchor_with_workspace(
     frame: &PreparedFrame,
     transform_frame: &PreparedFrame,
@@ -371,6 +383,10 @@ fn plan_at_on_anchor_with_workspace(
 ///
 /// `cache` holds quantizer-independent forward DCTs so cover search, CfL, and
 /// quantization share them, and so the rate loop reuses them across probes.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "internal plumbing: the rate-loop bundle forwarded verbatim to \\\n              plan_at_with_cfl_workspace; bundling would split parameters \\\n              across two structs for one call chain"
+)]
 fn plan_at_with_cfl(
     frame: &PreparedFrame,
     atlas: &AnalysisAtlas,
@@ -405,6 +421,10 @@ fn plan_at_with_cfl(
 /// storage. A rate search keeps this workspace across its sequential probes;
 /// the plans themselves retain only an `Arc` handle to the arena until their
 /// exact price is complete.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "internal plumbing: every parameter is a distinct capability \\\n              supplied by a different owner (request, rate loop, executor); \\\n              no cohesive sub-bundle to extract"
+)]
 fn plan_at_with_cfl_workspace(
     frame: &PreparedFrame,
     atlas: &AnalysisAtlas,
@@ -1756,6 +1776,10 @@ impl HfQuantizers {
     }
 
     #[cfg(test)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "test helper mirroring the full constructor surface under test"
+    )]
     fn new_with_scales(
         global_scale: u32,
         baseline: HfMul,
@@ -2741,7 +2765,7 @@ fn quantize_square_varblock(
         }
         hf_quant.quantize_lane(channel, &qscratch.chroma_targets, out, side, n, true)?;
         if truncate {
-            hf_quant.truncate_trailing(channel, out, &order, n * n, ZERO_TOKEN_BITS, |cell| {
+            hf_quant.truncate_trailing(channel, out, order, n * n, ZERO_TOKEN_BITS, |cell| {
                 qscratch.chroma_targets.get(cell).copied().unwrap_or(0.0)
             });
         }
@@ -3823,6 +3847,10 @@ fn cell_weight(freq: &[f32], cell: usize) -> f64 {
     freq.get(cell).map_or(1.0, |w| f64::from(*w))
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "internal plumbing: a lane-scoring bundle where the two closures \\\n              and the two accumulators are consumed by exactly two callers \\\n              (block_cost_bounded and the Phase 6.3 weight tests)"
+)]
 fn score_channel_lanes(
     hf_quant: &HfQuantizer,
     channel: usize,
@@ -5011,11 +5039,11 @@ mod tests {
                 // assert it on the table the objective actually reads.
                 let mut sum = 0.0f64;
                 let mut count = 0usize;
-                for cell in 0..side * side {
+                for (cell, &weight) in table.iter().enumerate() {
                     if cell / side < llf && cell % side < llf {
                         continue;
                     }
-                    sum += f64::from(table[cell]);
+                    sum += f64::from(weight);
                     count += 1;
                 }
                 #[allow(clippy::cast_precision_loss, reason = "counts are small")]
@@ -5202,6 +5230,10 @@ mod tests {
                     continue;
                 }
                 for k in 0..24 {
+                    #[allow(
+                        clippy::cast_possible_truncation,
+                        reason = "the probe targets are f32 quantizer inputs by design; \\\n                                  the tested cells sit far from f32 boundaries"
+                    )]
                     let target = (f64::from(k) * 0.25 * step) as f32;
                     let a = qn.choose(target, 1, cell).expect("nearest choice");
                     let b = qr.choose(target, 1, cell).expect("rd choice");

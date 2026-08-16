@@ -217,7 +217,11 @@ impl PreparedFrame {
         let mut g = Vec::with_capacity(pixels);
         let mut b = Vec::with_capacity(pixels);
         for i in 0..pixels {
-            let code = |c: usize| lut[usize::from(rgb.get(i * 3 + c).copied().unwrap_or(0))];
+            let code = |c: usize| {
+                lut.get(usize::from(rgb.get(i * 3 + c).copied().unwrap_or(0)))
+                    .copied()
+                    .unwrap_or(0.0)
+            };
             r.push(code(0));
             g.push(code(1));
             b.push(code(2));

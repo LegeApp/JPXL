@@ -54,7 +54,7 @@ fn mixed_rgb(width: u32, height: u32) -> Vec<u8> {
     let mut out = Vec::with_capacity((width * height * 3) as usize);
     for y in 0..height {
         for x in 0..width {
-            let smooth = ((x * 255) / width.max(1)) as u8;
+            let smooth = u8::try_from((x * 255) / width.max(1)).unwrap_or(u8::MAX);
             let textured = if x > width / 2 && y > height / 2 {
                 let mut h =
                     (x as u64).wrapping_mul(0x9E37_79B9) ^ (y as u64).wrapping_mul(0x85EB_CA6B);
@@ -64,7 +64,7 @@ fn mixed_rgb(width: u32, height: u32) -> Vec<u8> {
                 0
             };
             out.push(smooth.saturating_add(textured));
-            out.push(((y * 255) / height.max(1)) as u8);
+            out.push(u8::try_from((y * 255) / height.max(1)).unwrap_or(u8::MAX));
             out.push(smooth.wrapping_sub(textured));
         }
     }

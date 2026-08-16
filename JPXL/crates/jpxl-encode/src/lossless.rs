@@ -1342,7 +1342,7 @@ mod tests {
         let with = modular::ModularSource::direct(
             width,
             height,
-            &[plane.clone()],
+            std::slice::from_ref(&plane),
             false,
             tree.clone(),
             true,

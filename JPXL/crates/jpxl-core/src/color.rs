@@ -195,14 +195,14 @@ fn linear_srgb_to_xyb_planes_simd(r: &mut [f32], g: &mut [f32], b: &mut [f32]) {
         let ya = y.to_array();
         let sa = sg.to_array();
         for j in 0..4 {
-            if let Some(slot) = r.get_mut(i + j) {
-                *slot = xa[j];
+            if let (Some(slot), Some(&v)) = (r.get_mut(i + j), xa.get(j)) {
+                *slot = v;
             }
-            if let Some(slot) = g.get_mut(i + j) {
-                *slot = ya[j];
+            if let (Some(slot), Some(&v)) = (g.get_mut(i + j), ya.get(j)) {
+                *slot = v;
             }
-            if let Some(slot) = b.get_mut(i + j) {
-                *slot = sa[j];
+            if let (Some(slot), Some(&v)) = (b.get_mut(i + j), sa.get(j)) {
+                *slot = v;
             }
         }
         i += 4;
@@ -296,14 +296,14 @@ fn xyb_to_linear_srgb_planes_simd(x: &mut [f32], y: &mut [f32], b: &mut [f32]) {
         let ga = g.to_array();
         let ba = bb.to_array();
         for j in 0..4 {
-            if let Some(slot) = x.get_mut(i + j) {
-                *slot = ra[j];
+            if let (Some(slot), Some(&v)) = (x.get_mut(i + j), ra.get(j)) {
+                *slot = v;
             }
-            if let Some(slot) = y.get_mut(i + j) {
-                *slot = ga[j];
+            if let (Some(slot), Some(&v)) = (y.get_mut(i + j), ga.get(j)) {
+                *slot = v;
             }
-            if let Some(slot) = b.get_mut(i + j) {
-                *slot = ba[j];
+            if let (Some(slot), Some(&v)) = (b.get_mut(i + j), ba.get(j)) {
+                *slot = v;
             }
         }
         i += 4;

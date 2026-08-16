@@ -558,7 +558,7 @@ impl VarblockCoefficients {
         arena: std::sync::Arc<[i32]>,
         starts: [usize; NUM_CHANNELS],
     ) -> PlanResult<Self> {
-        let expected = (transform.num_blocks() * 64) as usize;
+        let expected = transform.num_blocks() * 64;
         let mut channels = [
             ChannelStorage::Owned(Box::new([])),
             ChannelStorage::Owned(Box::new([])),

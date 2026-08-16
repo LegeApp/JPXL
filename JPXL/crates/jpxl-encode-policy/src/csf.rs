@@ -131,14 +131,14 @@ pub fn square_weights(side: usize, llf: usize) -> Vec<f32> {
     let mut raw = vec![0.0f64; cells];
     let mut sum = 0.0f64;
     let mut count = 0usize;
-    for cell in 0..cells {
+    for (cell, slot) in raw.iter_mut().enumerate() {
         let (u, v) = (cell / side, cell % side);
         if u < llf && v < llf {
             continue;
         }
         let a = mannos_sakrison(cell_cycles_per_degree(u, v, side));
         let w = a * a;
-        raw[cell] = w;
+        *slot = w;
         sum += w;
         count += 1;
     }
@@ -150,7 +150,7 @@ pub fn square_weights(side: usize, llf: usize) -> Vec<f32> {
         reason = "cell counts are at most 1024; exact in f64"
     )]
     let mean = sum / count as f64;
-    for cell in 0..cells {
+    for (cell, (raw_w, weight)) in raw.iter().zip(weights.iter_mut()).enumerate() {
         let (u, v) = (cell / side, cell % side);
         if u < llf && v < llf {
             continue;
@@ -159,8 +159,8 @@ pub fn square_weights(side: usize, llf: usize) -> Vec<f32> {
             clippy::cast_possible_truncation,
             reason = "a normalised sensitivity ratio is well inside f32"
         )]
-        let w = (raw[cell] / mean) as f32;
-        weights[cell] = w;
+        let w = (raw_w / mean) as f32;
+        *weight = w;
     }
     weights
 }
@@ -231,13 +231,13 @@ pub fn quant_donor_weights(side: usize, llf: usize) -> Vec<f32> {
     let mut raw = vec![0.0f64; cells];
     let mut sum = 0.0f64;
     let mut count = 0usize;
-    for cell in 0..cells {
+    for (cell, slot) in raw.iter_mut().enumerate() {
         let (u, v) = (cell / side, cell % side);
         if u < llf && v < llf {
             continue;
         }
         let w = sample_curve(&curve, radial_frequency(u, v, side));
-        raw[cell] = w;
+        *slot = w;
         sum += w;
         count += 1;
     }
@@ -249,7 +249,7 @@ pub fn quant_donor_weights(side: usize, llf: usize) -> Vec<f32> {
         reason = "cell counts are at most 1024; exact in f64"
     )]
     let mean = sum / count as f64;
-    for cell in 0..cells {
+    for (cell, (raw_w, weight)) in raw.iter().zip(weights.iter_mut()).enumerate() {
         let (u, v) = (cell / side, cell % side);
         if u < llf && v < llf {
             continue;
@@ -258,8 +258,8 @@ pub fn quant_donor_weights(side: usize, llf: usize) -> Vec<f32> {
             clippy::cast_possible_truncation,
             reason = "a normalised weight ratio is well inside f32"
         )]
-        let w = (raw[cell] / mean) as f32;
-        weights[cell] = w;
+        let w = (raw_w / mean) as f32;
+        *weight = w;
     }
     weights
 }
@@ -303,7 +303,9 @@ fn sample_curve(curve: &[(f64, f64)], f: f64) -> f64 {
         return last.1;
     }
     for pair in curve.windows(2) {
-        let [(f0, w0), (f1, w1)] = [pair[0], pair[1]];
+        let (Some(&(f0, w0)), Some(&(f1, w1))) = (pair.first(), pair.get(1)) else {
+            continue;
+        };
         if f1 >= f {
             if f1 == f0 {
                 return w1;
@@ -355,11 +357,12 @@ mod tests {
             let mut count = 0usize;
             for cell in 0..side * side {
                 let (u, v) = (cell / side, cell % side);
+                let weight = w.get(cell).copied().unwrap_or(1.0);
                 if u < llf && v < llf {
-                    assert_eq!(w[cell], 1.0, "LLF cells keep weight 1");
+                    assert_eq!(weight, 1.0, "LLF cells keep weight 1");
                     continue;
                 }
-                sum += f64::from(w[cell]);
+                sum += f64::from(weight);
                 count += 1;
             }
             #[allow(clippy::cast_precision_loss, reason = "counts are small")]
@@ -378,10 +381,10 @@ mod tests {
         let curve = donor_curve().expect("the I.2.5 defaults build");
         assert!(curve.len() >= 60, "expected the 63 non-LLF cells");
         for pair in curve.windows(2) {
-            assert!(
-                pair[0].0 <= pair[1].0,
-                "the curve must be sorted by frequency"
-            );
+            let (Some(a), Some(b)) = (pair.first(), pair.get(1)) else {
+                continue;
+            };
+            assert!(a.0 <= b.0, "the curve must be sorted by frequency");
         }
         let first = curve.first().expect("non-empty").1;
         let last = curve.last().expect("non-empty").1;
@@ -390,11 +393,8 @@ mod tests {
             "the donor must fall substantially across its support, {first} -> {last}"
         );
         // The stated support, so the flat-extrapolation limitation stays true.
-        assert!(
-            (curve[0].0 - 0.0884).abs() < 1e-3,
-            "lowest f {}",
-            curve[0].0
-        );
+        let lowest = curve.first().map_or(0.0, |p| p.0);
+        assert!((lowest - 0.0884).abs() < 1e-3, "lowest f {}", lowest);
         let top = curve.last().expect("non-empty").0;
         assert!((top - 0.875).abs() < 1e-3, "highest f {top}");
     }
@@ -407,11 +407,12 @@ mod tests {
             let mut count = 0usize;
             for cell in 0..side * side {
                 let (u, v) = (cell / side, cell % side);
+                let weight = w.get(cell).copied().unwrap_or(1.0);
                 if u < llf && v < llf {
-                    assert_eq!(w[cell], 1.0, "LLF cells keep weight 1");
+                    assert_eq!(weight, 1.0, "LLF cells keep weight 1");
                     continue;
                 }
-                sum += f64::from(w[cell]);
+                sum += f64::from(weight);
                 count += 1;
             }
             #[allow(clippy::cast_precision_loss, reason = "counts are small")]
@@ -420,8 +421,8 @@ mod tests {
                 (mean - 1.0).abs() < 1e-5,
                 "DCT{side}x{side} donor mean is {mean}, not 1 — lambda would decalibrate"
             );
-            let corner = w[side * side - 1];
-            let low = w[llf * side + llf];
+            let corner = w.get(side * side - 1).copied().unwrap_or(1.0);
+            let low = w.get(llf * side + llf).copied().unwrap_or(1.0);
             assert!(
                 corner < low,
                 "DCT{side}x{side}: corner {corner} should sit below low-frequency {low}"
@@ -452,8 +453,8 @@ mod tests {
         // relative to the low band on every size.
         for (side, llf) in [(8usize, 1usize), (16, 2), (32, 4)] {
             let w = square_weights(side, llf);
-            let corner = w[side * side - 1];
-            let low = w[llf * side + llf];
+            let corner = w.get(side * side - 1).copied().unwrap_or(1.0);
+            let low = w.get(llf * side + llf).copied().unwrap_or(1.0);
             assert!(
                 corner < low,
                 "DCT{side}x{side}: corner weight {corner} should be below the \

@@ -262,14 +262,21 @@ impl HfQuantizer {
         for channel in 0..NUM_CHANNELS {
             let sc = scale.get(channel).copied().unwrap_or(0.0);
             let bias = quant_bias.get(channel).copied().unwrap_or(1.0);
-            let matrix = &matrices[channel];
+            let Some(matrix) = matrices.get(channel) else {
+                continue;
+            };
+            let (Some(step_row), Some(thr_row)) =
+                (steps.get_mut(channel), zero_threshold.get_mut(channel))
+            else {
+                continue;
+            };
             for cell in 0..cells {
                 let (x, y) = (cell % cols.max(1), cell / cols.max(1));
                 let step = sc * matrix.at(x, y);
-                if let Some(slot) = steps[channel].get_mut(cell) {
+                if let Some(slot) = step_row.get_mut(cell) {
                     *slot = step;
                 }
-                if let Some(slot) = zero_threshold[channel].get_mut(cell) {
+                if let Some(slot) = thr_row.get_mut(cell) {
                     // |recon(±1)| = bias * step; ties prefer smaller |q|, so
                     // zero wins when |target| <= 0.5 * |recon(±1)|.
                     *slot = 0.5 * bias * step;
@@ -864,13 +871,16 @@ impl HfQuantizer {
             use wide::f32x4;
             let mut recon = [0.0f32; 4];
             let mut legal = [false; 4];
-            for (i, &q) in candidates.iter().enumerate() {
+            for (&q, (rec, leg)) in candidates
+                .iter()
+                .zip(recon.iter_mut().zip(legal.iter_mut()))
+            {
                 if q.abs() > MAX_QUANT {
-                    recon[i] = f32::INFINITY;
-                    legal[i] = false;
+                    *rec = f32::INFINITY;
+                    *leg = false;
                 } else {
-                    recon[i] = self.bias_adjust(q, channel) * step;
-                    legal[i] = true;
+                    *rec = self.bias_adjust(q, channel) * step;
+                    *leg = true;
                 }
             }
             let r = f32x4::new(recon);
@@ -878,17 +888,16 @@ impl HfQuantizer {
             let err = (r - t).abs().to_array();
             let mut best = 0i32;
             let mut best_error = f32::INFINITY;
-            for (i, &q) in candidates.iter().enumerate() {
-                if !legal[i] {
+            for ((&q, &error), &legal_flag) in candidates.iter().zip(err.iter()).zip(legal.iter()) {
+                if !legal_flag {
                     continue;
                 }
-                let error = err[i];
                 if error < best_error || (error == best_error && q.abs() < best.abs()) {
                     best = q;
                     best_error = error;
                 }
             }
-            return Ok(best);
+            Ok(best)
         }
 
         #[cfg(not(feature = "simd"))]
@@ -1387,24 +1396,23 @@ mod tests {
                                         .get(i)
                                         .and_then(|r| r.as_ref().ok())
                                         .copied()
-                                        .unwrap();
+                                        .expect("scalar results checked all-ok above");
                                     let lq = qs.get(i).copied().unwrap_or(i32::MIN);
                                     let lr = recons.get(i).copied().unwrap_or(f32::NAN);
+                                    let t = targets.get(i).copied().unwrap_or(0.0);
                                     assert_eq!(
                                         sq,
                                         lq,
-                                        "channel {channel} cell {} target {}: scalar q={sq} \
+                                        "channel {channel} cell {} target {t}: scalar q={sq} \
                                          lane q={lq}",
-                                        cell_base + i,
-                                        targets[i]
+                                        cell_base + i
                                     );
                                     assert_eq!(
                                         sr.to_bits(),
                                         lr.to_bits(),
-                                        "channel {channel} cell {} target {}: scalar recon={sr} \
+                                        "channel {channel} cell {} target {t}: scalar recon={sr} \
                                          lane recon={lr}",
-                                        cell_base + i,
-                                        targets[i]
+                                        cell_base + i
                                     );
                                 }
                             }
