@@ -1306,6 +1306,18 @@ record jpegxl-rs.evidence.phase24-gates-2026-08-16/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase24-gates-recommit-2026-08-16/1 : evidence {
+    title "Phase 24 gates re-verified post-commit"
+    state verified
+    result pass
+    method command
+    observed_at git:68078b5588335bd398b70072ef4f5c18131d85eb
+    command "cargo build --workspace && cargo fmt --all --check && cargo test --workspace"
+    summary """
+        Re-verified after committing Phase 24 rev/3 alongside Phase 25-27 (commit 68078b5): workspace build, formatting, and full test suite all pass unchanged.
+        """
+}
+
 record jpegxl-rs.evidence.phase24-identity-2026-08-16/1 : evidence {
     title "Phase 24 candidate outputs match the Phase 23 Fast, Balanced, Quality, and masking-AQ streams byte-for-byte; decoded pixels are bit-identical."
     state verified
@@ -1319,6 +1331,17 @@ record jpegxl-rs.evidence.phase24-identity-2026-08-16/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase24-identity-recommit-2026-08-16/1 : evidence {
+    title "Phase 24 identity re-affirmed post-commit"
+    state verified
+    result pass
+    method observation
+    observed_at git:68078b5588335bd398b70072ef4f5c18131d85eb
+    summary """
+        No source content changed for the Phase 24 HfMul overlay between the original identity check and commit 68078b5 (only ledger bookkeeping moved with it); the original byte/decode identity result against Phase 23 still holds.
+        """
+}
+
 record jpegxl-rs.evidence.phase24-safety-2026-08-16/1 : evidence {
     title "The focused policy suite (98 tests) and full workspace tests pass; the overlay cannot mutate the captured base decisions and length mismatches are rejected, not truncated."
     state verified
@@ -1329,6 +1352,18 @@ record jpegxl-rs.evidence.phase24-safety-2026-08-16/1 : evidence {
     artifact ".agent/scratch/phase24-hfmul-overlay/test-workspace.log"
     summary """
         The focused policy suite passed all 98 tests and the full workspace suite passed; the retarget overlay cannot mutate the captured base decisions and length mismatches are rejected, not truncated; decoded outputs unchanged.
+        """
+}
+
+record jpegxl-rs.evidence.phase24-safety-recommit-2026-08-16/1 : evidence {
+    title "Phase 24 safety re-verified post-commit"
+    state verified
+    result pass
+    method command
+    observed_at git:68078b5588335bd398b70072ef4f5c18131d85eb
+    command "cargo test --workspace"
+    summary """
+        Re-verified after commit 68078b5: focused policy and full workspace test suites pass, confirming the overlay safety properties are unchanged since the original check.
         """
 }
 

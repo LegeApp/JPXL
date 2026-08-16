@@ -992,21 +992,30 @@ record jpegxl-rs.work.arch-phase24-hfmul-overlay/3 : work {
                 Workspace build, tests, no-default-features check, formatting, and AKR validation pass; strict Clippy remains isolated to pre-existing blockers.
                 """
             method command
-            verified_by [ @jpegxl-rs.evidence.phase24-gates-2026-08-16/1 ]
+            verified_by [
+                @jpegxl-rs.evidence.phase24-gates-2026-08-16/1,
+                @jpegxl-rs.evidence.phase24-gates-recommit-2026-08-16/1
+            ]
         }
         check identity {
             statement """
                 Canonical Fast, Balanced, Quality, and masking-AQ streams remain byte-identical to Phase 23; decoded pixels and fingerprints are unchanged.
                 """
             method command
-            verified_by [ @jpegxl-rs.evidence.phase24-identity-2026-08-16/1 ]
+            verified_by [
+                @jpegxl-rs.evidence.phase24-identity-2026-08-16/1,
+                @jpegxl-rs.evidence.phase24-identity-recommit-2026-08-16/1
+            ]
         }
         check safety {
             statement """
                 Focused policy tests, workspace tests, and oracle-backed decoder checks pass; the overlay cannot mutate the captured base decisions and length mismatches are rejected, not truncated.
                 """
             method command
-            verified_by [ @jpegxl-rs.evidence.phase24-safety-2026-08-16/1 ]
+            verified_by [
+                @jpegxl-rs.evidence.phase24-safety-2026-08-16/1,
+                @jpegxl-rs.evidence.phase24-safety-recommit-2026-08-16/1
+            ]
         }
         check speed {
             statement """

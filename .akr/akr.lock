@@ -5,7 +5,7 @@ build {
     tool "akr 0.3.1"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:3dfe7a508a989d130fada5ff3ec44b0b8a83784cd5834ef744f03e6cfdf98d8d"
+    source_graph "sha256:2f026c2ac9871faacaddbe4e2db2a9f0f835414380b17f8720fc95c3f32db47b"
 }
 
 source ".akr/project.akr" {
@@ -29,8 +29,8 @@ source ".akr/records/jpegxl-rs/decisions.akr" {
 }
 
 source ".akr/records/jpegxl-rs/evidence.akr" {
-    hash "sha256:ad5299a0ddd04c86fe7e1e2da7eaa828c4c0674b68f75c74593ed3b0c90b3a66"
-    records 293
+    hash "sha256:9d4c0c904f8a9fab799fa5c1866826517f1dbc3214f72d572621390c5bba1dce"
+    records 296
 }
 
 source ".akr/records/jpegxl-rs/milestones.akr" {
@@ -64,7 +64,7 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:4632d604778b6a5247b15124647501469254b8c8c2dfe9e7e51dd2a37065d345"
+    hash "sha256:323bb083de4bf06ad82846f883141df6f3cad30e78c8754891d62da2abfe6424"
     records 117
 }
 
@@ -3923,14 +3923,29 @@ seal @jpegxl-rs.evidence.phase24-gates-2026-08-16/1 {
     hash "sha256:9108c0c83f918991eaddc45322018bb5c6f51ece6f920df0995901e34f612e11"
 }
 
+seal @jpegxl-rs.evidence.phase24-gates-recommit-2026-08-16/1 {
+    state verified
+    hash "sha256:55fd4fbf12e8f5689cf83dc56fe2e3ed88dfe26571c3e748a1c635d2c0f3e275"
+}
+
 seal @jpegxl-rs.evidence.phase24-identity-2026-08-16/1 {
     state verified
     hash "sha256:21f7916fa309816b3790766d9b678be4e60994f02ab182d77273529b64e98a30"
 }
 
+seal @jpegxl-rs.evidence.phase24-identity-recommit-2026-08-16/1 {
+    state verified
+    hash "sha256:ed9481ea43e066f257bafe334fc711bbc9d3edc719eeb55fbe39cac07e7ed341"
+}
+
 seal @jpegxl-rs.evidence.phase24-safety-2026-08-16/1 {
     state verified
     hash "sha256:5b96656fd104dfda43b1a3b7c9cef05321c27cec899a0c0ba355941f5d7e36c6"
+}
+
+seal @jpegxl-rs.evidence.phase24-safety-recommit-2026-08-16/1 {
+    state verified
+    hash "sha256:a142eb35b4cb63e82c9975f6cc06d437a030dca43e9c84bad8c9ec8881252e61"
 }
 
 seal @jpegxl-rs.evidence.phase24-speed-2026-08-16/1 {
@@ -5575,7 +5590,7 @@ seal @jpegxl-rs.work.arch-phase24-hfmul-overlay/2 {
 
 seal @jpegxl-rs.work.arch-phase24-hfmul-overlay/3 {
     state completed
-    hash "sha256:1b4e6c5cfe5dc041aaa7c1e65f545a4bce134631ab795339b84886e5c2254875"
+    hash "sha256:3bbc58e255ce959c3964266995fe939733b3c2a20e3cf35029a297e9345719e6"
 }
 
 seal @jpegxl-rs.work.arch-phase25-multi-quantizer-workspace/1 {
