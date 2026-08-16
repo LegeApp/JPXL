@@ -207,6 +207,29 @@ record jpegxl-rs.papercut.orienting-on-this-project-through-the-knowledge/1 : pa
     created_at 2026-08-12
 }
 
+record jpegxl-rs.papercut.the-first-phase-25-work-proposal-was-rejected/1 : papercut {
+    title "The first Phase 25 work proposal was rejected because the work intent…"
+    state verified
+    statement """
+        The first Phase 25 work proposal was rejected because the work intent was supplied at the top level with an invalid topic slot; retrying with the documented slots.intent form succeeded.
+        """
+    observed_at git:61330eae78ef84e6c1fce88266ed1ddc99f42f82
+    about "akr"
+    author "codex"
+    created_at 2026-08-16
+}
+
+record jpegxl-rs.papercut.the-first-phase-26-diagnostic-harness-run/1 : papercut {
+    title "The first Phase 26 diagnostic harness run resolved its repository root…"
+    state verified
+    statement """
+        The first Phase 26 diagnostic harness run resolved its repository root two levels too shallow and pointed at an obsolete input path. I corrected it to ../../.. and the pinned Phase 8 aggregate-instrumentation inputs before rerunning successfully.
+        """
+    observed_at git:61330eae78ef84e6c1fce88266ed1ddc99f42f82
+    author "codex"
+    created_at 2026-08-16
+}
+
 record jpegxl-rs.papercut.the-installed-akr-0-3-1-rejected-four-existing/1 : papercut {
     title "The installed akr 0.3.1 rejected four existing observation records…"
     state verified
@@ -217,6 +240,18 @@ record jpegxl-rs.papercut.the-installed-akr-0-3-1-rejected-four-existing/1 : pap
     about "akr"
     author "codex"
     created_at 2026-08-15
+}
+
+record jpegxl-rs.papercut.the-repository-root-and-the-jpxl-crate-root-use/1 : papercut {
+    title "The repository root and the JPXL crate root use different relative…"
+    state verified
+    statement """
+        The repository root and the JPXL crate root use different relative paths; two verification invocations initially targeted the release binary/input paths from the wrong root and failed with 'No such file or directory'. Running the same commands from JPXL with ../.agent paths resolved it.
+        """
+    observed_at git:61330eae78ef84e6c1fce88266ed1ddc99f42f82
+    about "cargo"
+    author "codex"
+    created_at 2026-08-16
 }
 
 record jpegxl-rs.papercut.while-checking-an-in-progress-akr-change-akr/1 : papercut {

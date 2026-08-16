@@ -319,14 +319,99 @@ Balanced/Quality/large decodes are bit-identical to the Phase 23 PPMs. The
 focused policy suite passed all 98 tests and the workspace gates match HEAD
 (fmt clean, policy clippy clean, `jpxl-core` clippy blockers pre-existing).
 
-**No timing claim.** The timed Balanced path never exercises the overlay —
-under the neutral production AQ the desired multipliers already match, so
-Phase 23's CoW path is taken — and both pinned A/B attempts on 2026-08-16 ran
-against heavy competing host load, so the recorded runs are noise. The
-definitive pinned pass (Balanced plus a masking-AQ stream, which is what
-actually exercises the overlay) is deferred to a quiet host; the work record's
-speed check stays open until then. Raw hashes, identity logs, decode checks,
-and the contaminated timing logs are in `.agent/scratch/phase24-hfmul-overlay/`.
+**Timing result.** The pinned interleaved image pass used the hashed candidate
+and pre-Phase-24 binaries, the 2400x1800 and 4000x3000 PPMs, four workers on
+CPUs 0,2,4,6, and five timed iterations per `bench` invocation. Balanced
+medians were 821.823 ms candidate vs 801.560 ms baseline at 2400x1800, and
+1689.535 ms candidate vs 1710.202 ms baseline at 4000x3000. The masking-AQ
+encode path, which exercises the overlay, measured 527 ms vs 560 ms at
+2400x1800 and 1233 ms vs 1235 ms at 4000x3000. Every pair kept the same output
+size and SHA-256/fingerprint. The mixed small positive and negative deltas are
+within the observed run-to-run spread, so this closes the speed check as a
+neutral result rather than a promoted performance baseline. Raw logs remain in
+`.agent/scratch/phase24-hfmul-overlay/`.
+
+## Phase 25 — reusable multi-quantizer coefficient workspace (2026-08-16)
+
+The anchored rate controller now owns a request-scoped HF coefficient-arena
+workspace. Each quantized plan keeps immutable `Arc` views into the arena; the
+first and second exact-price plans are explicitly released before the next
+probe, and the finalist is released before a correction. If a plan is still
+live, the workspace allocates a separate arena rather than mutating data that
+the earlier plan can observe. This removes repeated HF-arena allocation and
+keeps the normal anchored path from retaining three frame-sized coefficient
+copies without changing the quantizer arithmetic, entropy walk, or wire
+integers.
+
+Fast, Balanced, Quality, large Fast, and masking-AQ canonical streams remained
+byte-identical to the pre-Phase-25 binary. Candidate and baseline decodes were
+also byte-identical on the same mid/large checks. The focused policy suite
+passed 100 unit tests plus the feature-gated rate, truncation, oracle, and
+roundtrip suites.
+
+The pinned interleaved image screen used the same four-worker affinity and
+hashed inputs as Phase 24. Balanced medians were 807.379 ms candidate versus
+792.170 ms baseline on 2400x1800 (within the observed host spread), and
+1706.301 ms versus 1767.633 ms on 4000x3000 (3.5% faster). Masking-AQ direct
+encodes measured 530 ms versus 559 ms on 2400x1800 (5.2% faster), and 1204 ms
+versus 1296 ms on 4000x3000 (7.1% faster). The targeted AQ gain is useful, but
+the mixed Balanced result is not promoted as a general baseline. Raw hashes,
+identity checks, timings, and decode comparisons are under
+`.agent/scratch/phase25-multi-quantizer-workspace/`.
+
+This is the safe workspace half of open question 9. A single coefficient
+traversal for far-apart anchors and an unknown finalist still needs a compact
+batched representation; retaining all candidate outputs would violate the
+storage constraint, so that higher-risk step remains open.
+
+## Phase 26 — nested rate-search multiplicity screen (2026-08-16)
+
+The existing opt-in `bench vardct-rate --diag` counters were rerun on the
+hashed 2400x1800 and 4000x3000 inputs with four workers at 1 bpp. This was a
+measurement-only pass; it did not change the codestream path. It establishes
+that the persistent executor is already doing its job: every search built one
+pool, so pool construction is not the next pre-SIMD target.
+
+Fast and Balanced stayed on the shallow path: two outer Count emissions and
+one Store emission for Fast, with Balanced using one or two planning passes
+depending on the image, and no nested internal entropy Count alternatives.
+Quality is different. On both images its six Full plans generated 36 census
+passes, 36 entropy trainings, 18 order candidates, six block-context
+candidates, six preset candidates, and 36 internal exact Count emissions.
+The resulting writer amplification was about 50x on the mid image and 49x on
+the large image; search amplification was 250.5x and 218.2x respectively,
+relative to the selected final Store emission. The forward DCT cache was
+already about 93% hit-rate on these Quality runs, so cache reuse is not the
+dominant missing piece either.
+
+This closes the aggregate-multiplicity step. The next pre-SIMD mechanism
+should reduce the Full-path entropy/candidate work— finalist-only entropy,
+RateSketch, or a similarly bounded token/census representation—before any
+leaf SIMD or ANS/bit-writer tuning. Raw command output and hashes are under
+`.agent/scratch/phase26-rate-multiplicity/`.
+
+## Phase 27 — finalist-only entropy refinement (2026-08-16)
+
+Quality refinement now navigates with exact Counts from the trained default
+entropy model (`FinalFast`) and pays for the slice-18 alternative search only
+on the selected finalist and a bounded exact correction window when its
+undershoot exceeds tolerance. The final codestream always comes from an
+exact Full-entropy Store; the change is a bounded search-policy change, so
+large-image byte identity with the former Quality path is not assumed.
+
+On the same four-worker screen, Quality fell from 9.654 s to 5.545 s on the
+2400x1800 image and from 18.229 s to 11.213 s on the 4000x3000 image. Internal
+Full Counts fell from 36 to six on both images; writer amplification fell from
+50x to 21x and from 49x to 20x. Mid remained byte-identical at 539,315 bytes.
+Large changed from 1,490,235 to 1,490,211 bytes. The in-tree decoder accepted
+both streams; under the current decoder the large candidate moved RMSE from
+3.206970 to 3.206832, SSIMULACRA2 from 83.5266 to 83.5149, and Butteraugli
+from 1.9526 to 1.9513. That small SSIMULACRA2 trade is recorded rather than
+hidden and needs a wider corpus screen before treating the change as a final
+Quality promotion.
+
+Raw diagnostics, encoded streams, decoded pixels, hashes, and metric output
+are under `.agent/scratch/phase27-finalist-only-entropy/`.
 
 ### Open architectural questions
 

@@ -840,7 +840,7 @@ record jpegxl-rs.work.arch-phase23-cow-geometry/1 : work {
 
 record jpegxl-rs.work.arch-phase24-hfmul-overlay/1 : work {
     title "Phase 24: compact per-probe HfMul overlay"
-    state active
+    state superseded
     scope [
         path "JPXL/Cargo.toml",
         path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
@@ -898,6 +898,252 @@ record jpegxl-rs.work.arch-phase24-hfmul-overlay/1 : work {
     }
     depends_on [ @jpegxl-rs.work.arch-phase23-cow-geometry ]
     part_of [ @jpegxl-rs.track.encoder-optimization ]
+}
+
+record jpegxl-rs.work.arch-phase24-hfmul-overlay/2 : work {
+    title "Phase 24: compact per-probe HfMul overlay"
+    state superseded
+    scope [
+        path "JPXL/Cargo.toml",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/docs/optimize.md"
+    ]
+    intent """
+        Replace Phase 23's copy-on-write HfMul retarget (which materialized an
+        owned copy of a whole group's VarblockDecision vector when any multiplier
+        moved) with a dense Box<[HfMul]> overlay layered over the shared immutable
+        decisions. Geometry reads keep using the base decisions; multiplier reads
+        resolve through hf_mul_at / PlannedVarblockRange. Groups whose multipliers
+        did not move keep their shared storage untouched, and capturing an anchor
+        applies the overlay before freezing the base. Also carries the workspace
+        version bump to 0.3.0. Preserve output bytes, decoder behavior, thread
+        determinism, and AnchorReuse semantics.
+        """
+    note """
+        Bounded slice: no change to cover selection, CfL, quantization rules,
+        entropy choices, or the wire-facing plan beyond ownership of the HfMul
+        values. The speed check is the only open acceptance item: both pinned
+        A/B attempts on 2026-08-16 ran against heavy competing host load, and
+        the Balanced path never exercises the overlay anyway (neutral AQ keeps
+        the desired multipliers equal, so Phase 23's CoW path is taken). The
+        definitive pass must also time a masking-AQ stream, which is what
+        actually exercises the overlay, on a quiet host.
+        """
+    acceptance {
+        check gates {
+            statement """
+                Workspace build, tests, no-default-features check, formatting, and AKR validation pass; strict Clippy remains isolated to pre-existing blockers.
+                """
+            method command
+            verified_by [ @jpegxl-rs.evidence.phase24-gates-2026-08-16/1 ]
+        }
+        check identity {
+            statement """
+                Canonical Fast, Balanced, Quality, and masking-AQ streams remain byte-identical to Phase 23; decoded pixels and fingerprints are unchanged.
+                """
+            method command
+            verified_by [ @jpegxl-rs.evidence.phase24-identity-2026-08-16/1 ]
+        }
+        check safety {
+            statement """
+                Focused policy tests, workspace tests, and oracle-backed decoder checks pass; the overlay cannot mutate the captured base decisions and length mismatches are rejected, not truncated.
+                """
+            method command
+            verified_by [ @jpegxl-rs.evidence.phase24-safety-2026-08-16/1 ]
+        }
+        check speed {
+            statement """
+                Pinned interleaved Balanced timing measures the overlay retarget path on canonical mid and large inputs with binary/input hashes and dispersion, run without competing benchmark load; masking-AQ timing exercises the overlay directly.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.phase24-speed-2026-08-16/1 ]
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase23-cow-geometry ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+    supersedes [ @jpegxl-rs.work.arch-phase24-hfmul-overlay/1 ]
+}
+
+record jpegxl-rs.work.arch-phase24-hfmul-overlay/3 : work {
+    title "Phase 24: compact per-probe HfMul overlay"
+    state completed
+    scope [
+        path "JPXL/Cargo.toml",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/docs/optimize.md"
+    ]
+    intent """
+        Replace Phase 23's copy-on-write HfMul retarget (which materialized an
+        owned copy of a whole group's VarblockDecision vector when any multiplier
+        moved) with a dense Box<[HfMul]> overlay layered over the shared immutable
+        decisions. Geometry reads keep using the base decisions; multiplier reads
+        resolve through hf_mul_at / PlannedVarblockRange. Groups whose multipliers
+        did not move keep their shared storage untouched, and capturing an anchor
+        applies the overlay before freezing the base. Also carries the workspace
+        version bump to 0.3.0. Preserve output bytes, decoder behavior, thread
+        determinism, and AnchorReuse semantics.
+        """
+    note """
+        Bounded slice: no change to cover selection, CfL, quantization rules, entropy choices, or the wire-facing plan beyond ownership of the HfMul values. The pinned interleaved image timing is complete: Balanced does not exercise the overlay under neutral AQ, while masking-AQ does; both paths produced identical outputs and mixed deltas within observed run-to-run spread. No promoted performance baseline is claimed. Raw logs remain under .agent/scratch/phase24-hfmul-overlay/.
+        """
+    acceptance {
+        check gates {
+            statement """
+                Workspace build, tests, no-default-features check, formatting, and AKR validation pass; strict Clippy remains isolated to pre-existing blockers.
+                """
+            method command
+            verified_by [ @jpegxl-rs.evidence.phase24-gates-2026-08-16/1 ]
+        }
+        check identity {
+            statement """
+                Canonical Fast, Balanced, Quality, and masking-AQ streams remain byte-identical to Phase 23; decoded pixels and fingerprints are unchanged.
+                """
+            method command
+            verified_by [ @jpegxl-rs.evidence.phase24-identity-2026-08-16/1 ]
+        }
+        check safety {
+            statement """
+                Focused policy tests, workspace tests, and oracle-backed decoder checks pass; the overlay cannot mutate the captured base decisions and length mismatches are rejected, not truncated.
+                """
+            method command
+            verified_by [ @jpegxl-rs.evidence.phase24-safety-2026-08-16/1 ]
+        }
+        check speed {
+            statement """
+                Pinned interleaved Balanced timing measures the overlay retarget path on canonical mid and large inputs with binary/input hashes and dispersion, run without competing benchmark load; masking-AQ timing exercises the overlay directly.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.phase24-speed-2026-08-16/1 ]
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase23-cow-geometry ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+    supersedes [ @jpegxl-rs.work.arch-phase24-hfmul-overlay/2 ]
+}
+
+record jpegxl-rs.work.arch-phase25-multi-quantizer-workspace/1 : work {
+    title "Phase 25: reusable multi-quantizer coefficient workspace"
+    state completed
+    scope [
+        path ".agent/scratch/**",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/rate.rs",
+        path "JPXL/docs/optimize.md"
+    ]
+    intent """
+        Share the physical HF coefficient arena across sequential rate-probe quantizers through a request-scoped reusable workspace. Anchor plans must be released after their exact price, and the finalist must be released before a correction plan is built. The change must preserve quantization arithmetic, entropy choices, deterministic output, decoder behavior, and the single retained final emission; it must not retain three frame-sized coefficient copies.
+        """
+    note """
+        The reusable HF arena passed byte and decoded-image identity. The timing screen is mixed for general Balanced but positive on the targeted masking-AQ path; the higher-risk single-traversal representation remains a separate open question.
+        """
+    acceptance {
+        check decoded-identity {
+            statement """
+                Candidate-decoded mid and large canonical PPMs remain byte-identical to baseline decodes.
+                """
+            method command
+            command "bash .agent/scratch/phase25-multi-quantizer-workspace/identity.sh"
+            verified_by [ @jpegxl-rs.evidence.phase25-identity-2026-08-16/1 ]
+        }
+        check focused-policy-tests {
+            statement """
+                The focused all-features policy tests and the workspace-arena invariant pass.
+                """
+            method command
+            command "cargo test -p jpxl-encode-policy --all-features"
+            verified_by [ @jpegxl-rs.evidence.phase25-policy-tests-2026-08-16/1 ]
+        }
+        check timing-screen {
+            statement """
+                The pinned image timing screen classifies general Balanced as mixed/neutral and masking-AQ as a targeted positive, without promoting a general baseline.
+                """
+            method command
+            command "bash .agent/scratch/phase25-multi-quantizer-workspace/timing-balanced.sh; bash .agent/scratch/phase25-multi-quantizer-workspace/timing-masking-aq.sh"
+            verified_by [ @jpegxl-rs.evidence.phase25-timing-2026-08-16/1 ]
+        }
+        check wire-identity {
+            statement """
+                Fast, Balanced, Quality, large Fast, and masking-AQ codestream bytes remain identical to the baseline.
+                """
+            method command
+            command "bash .agent/scratch/phase25-multi-quantizer-workspace/identity.sh"
+            verified_by [ @jpegxl-rs.evidence.phase25-identity-2026-08-16/1 ]
+        }
+        check workspace-safety {
+            statement """
+                The workspace tests, build, and formatting gates pass.
+                """
+            method command
+            command "cargo test --workspace; cargo build --workspace; cargo fmt --all --check"
+            verified_by [
+                @jpegxl-rs.evidence.phase25-build-2026-08-16/1,
+                @jpegxl-rs.evidence.phase25-format-2026-08-16/1,
+                @jpegxl-rs.evidence.phase25-workspace-tests-2026-08-16/1
+            ]
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase24-hfmul-overlay/3 ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+}
+
+record jpegxl-rs.work.arch-phase27-finalist-only-entropy/1 : work {
+    title "Phase 27: finalist-only entropy refinement"
+    state completed
+    scope [
+        path ".agent/scratch/**",
+        path "JPXL/crates/jpxl-encode-policy/src/**/tests/**",
+        path "JPXL/crates/jpxl-encode-policy/src/diagnostics.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/rate.rs",
+        path "JPXL/docs/optimize.md"
+    ]
+    intent """
+        Reduce the repeated Quality Full-path entropy candidate work identified by Phase 26. Navigate the refinement ladder with the existing exact Fast entropy model, then run the expensive Full entropy alternatives only for the selected finalist and any bounded exact correction required by the target contract. Keep the final emission exact, wire-valid, and guarded by the in-tree decode/target gate; do not introduce SIMD or approximate codestream sizing in this work.
+        """
+    note """
+        The change is a search-policy optimization, so byte identity with the prior Quality stream is not assumed. The acceptance gate is exact final pricing, never-over target adherence, decode validity, and measured quality/rate comparison on the pinned corpus.
+        """
+    acceptance {
+        check final-exact-price {
+            statement """
+                The selected finalist is emitted from an exact Full entropy plan and its recorded size equals the emitted codestream size.
+                """
+            method command
+            verified_by [
+                @jpegxl-rs.evidence.phase27-finalist-only-entropy-correctness-2026-08-16/1
+            ]
+        }
+        check multiplicity-reduction {
+            statement """
+                Quality reduces Full-path internal Count/census/training multiplicity relative to the Phase 26 screen while retaining a bounded exact correction path.
+                """
+            method command
+            verified_by [
+                @jpegxl-rs.evidence.phase27-finalist-only-entropy-screen-2026-08-16/1
+            ]
+        }
+        check quality-target-screen {
+            statement """
+                The pinned mid and large image screen completes for Quality without target errors, over-target output, or decoder rejection.
+                """
+            method command
+            verified_by [
+                @jpegxl-rs.evidence.phase27-finalist-only-entropy-screen-2026-08-16/1
+            ]
+        }
+        check workspace-validation {
+            statement """
+                The focused policy tests, workspace tests, formatting, and lint gates pass or their pre-existing failures are explicitly recorded.
+                """
+            method command
+            verified_by [
+                @jpegxl-rs.evidence.phase27-finalist-only-entropy-workspace-2026-08-16/1
+            ]
+        }
+    }
+    depends_on [ @jpegxl-rs.evidence.phase26-rate-multiplicity-2026-08-16/1 ]
+    implements [ @jpegxl-rs.policy.optimization-correctness-gates/1 ]
+    part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
 }
 
 record jpegxl-rs.work.arch-phase3-forward-cache/1 : work {

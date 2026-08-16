@@ -196,15 +196,17 @@ pub fn plan_frame_with_atlas(
 /// **Fast** trains default block-context + natural coefficient orders only.
 /// Its coded size is an **upper bound** on **Full**, because Full only adopts
 /// custom orders / block contexts / multi-presets when they strictly shrink
-/// the exact price. The rate loop prices with Fast and re-plans the winner
-/// with Full so intermediate probes skip several full `price_codestream`s.
+/// the exact price. The rate loop uses that default model for navigation and
+/// re-plans only the finalist with Full, so intermediate probes skip several
+/// full `price_codestream`s.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum EntropySearch {
     /// Default I.2.2 map, natural orders, one census + train.
     Fast,
-    /// The Fast preset's final exact candidate: default I.2.2 map and natural
-    /// orders, attributed to the finalist phase but without Full alternatives.
-    #[cfg(feature = "anchor-sketch")]
+    /// A finalist-navigation candidate: default I.2.2 map and natural orders,
+    /// attributed to the finalist phase but without Full alternatives. This
+    /// is also used by Quality to choose the quantizer before paying for the
+    /// expensive alternative search on the finalist itself.
     FinalFast,
     /// Reuse an entropy model supplied by the anchored controller. The
     /// provisional model is retained only until the caller overlays the
@@ -219,7 +221,6 @@ impl EntropySearch {
     const fn uses_fast_entropy(self) -> bool {
         match self {
             Self::Fast => true,
-            #[cfg(feature = "anchor-sketch")]
             Self::FinalFast => true,
             #[cfg(feature = "anchor-sketch")]
             Self::Reuse => true,
@@ -274,7 +275,34 @@ pub(crate) fn plan_at_on(
     entropy: EntropySearch,
     executor: Option<&jpxl_encode::EncodeExecutor>,
 ) -> Result<ValidatedEmissionPlan> {
-    plan_at_with_cfl(
+    let mut quant_workspace = QuantizationWorkspace::new();
+    plan_at_on_with_workspace(
+        frame,
+        transform_frame,
+        atlas,
+        request,
+        quantizer,
+        cache,
+        entropy,
+        executor,
+        &mut quant_workspace,
+    )
+}
+
+/// [`plan_at_on`] with request-scoped quantization storage supplied by the
+/// rate controller.
+fn plan_at_on_with_workspace(
+    frame: &PreparedFrame,
+    transform_frame: &PreparedFrame,
+    atlas: &AnalysisAtlas,
+    request: &EncodeRequest,
+    quantizer: QuantizerChoice,
+    cache: &mut CandidateForwardCache,
+    entropy: EntropySearch,
+    executor: Option<&jpxl_encode::EncodeExecutor>,
+    quant_workspace: &mut QuantizationWorkspace,
+) -> Result<ValidatedEmissionPlan> {
+    plan_at_with_cfl_workspace(
         frame,
         atlas,
         request,
@@ -286,6 +314,7 @@ pub(crate) fn plan_at_on(
         executor,
         AnchorReuse::None,
         None,
+        quant_workspace,
     )
 }
 
@@ -297,8 +326,10 @@ pub(crate) fn plan_at_on(
 /// Balanced preset captures the configured hierarchical cover with CfL and
 /// uses the fast entropy model only for its anchored finalist. A bounded
 /// correction may retain that finalist structure after its exact size is known.
+/// Fast-preset planning with rate-search-owned quantization storage and an
+/// explicit reusable spatial anchor.
 #[cfg(feature = "anchor-sketch")]
-pub(crate) fn plan_at_on_anchor(
+fn plan_at_on_anchor_with_workspace(
     frame: &PreparedFrame,
     transform_frame: &PreparedFrame,
     atlas: &AnalysisAtlas,
@@ -310,8 +341,9 @@ pub(crate) fn plan_at_on_anchor(
     executor: Option<&jpxl_encode::EncodeExecutor>,
     reuse: AnchorReuse<'_>,
     capture: Option<&mut Option<StructuralAnchor>>,
+    quant_workspace: &mut QuantizationWorkspace,
 ) -> Result<ValidatedEmissionPlan> {
-    plan_at_with_cfl(
+    plan_at_with_cfl_workspace(
         frame,
         atlas,
         request,
@@ -323,6 +355,7 @@ pub(crate) fn plan_at_on_anchor(
         executor,
         reuse,
         capture,
+        quant_workspace,
     )
 }
 
@@ -350,6 +383,41 @@ fn plan_at_with_cfl(
     executor: Option<&jpxl_encode::EncodeExecutor>,
     reuse: AnchorReuse<'_>,
     capture: Option<&mut Option<StructuralAnchor>>,
+) -> Result<ValidatedEmissionPlan> {
+    let mut quant_workspace = QuantizationWorkspace::new();
+    plan_at_with_cfl_workspace(
+        frame,
+        atlas,
+        request,
+        quantizer,
+        enable_cfl,
+        transform_override,
+        cache,
+        entropy_search,
+        executor,
+        reuse,
+        capture,
+        &mut quant_workspace,
+    )
+}
+
+/// The rate-loop form of [`plan_at_with_cfl`] with caller-owned coefficient
+/// storage. A rate search keeps this workspace across its sequential probes;
+/// the plans themselves retain only an `Arc` handle to the arena until their
+/// exact price is complete.
+fn plan_at_with_cfl_workspace(
+    frame: &PreparedFrame,
+    atlas: &AnalysisAtlas,
+    request: &EncodeRequest,
+    quantizer: QuantizerChoice,
+    enable_cfl: bool,
+    transform_override: Option<&PreparedFrame>,
+    cache: &mut CandidateForwardCache,
+    entropy_search: EntropySearch,
+    executor: Option<&jpxl_encode::EncodeExecutor>,
+    reuse: AnchorReuse<'_>,
+    capture: Option<&mut Option<StructuralAnchor>>,
+    quant_workspace: &mut QuantizationWorkspace,
 ) -> Result<ValidatedEmissionPlan> {
     // Phase-0: one clean snapshot per plan_at (rate probes overwrite; last wins).
     diagnostics::reset_encode_diag();
@@ -642,7 +710,13 @@ fn plan_at_with_cfl(
                 // drained their whole-group jobs. Fixed-index reduction below
                 // preserves the serial coefficient and LF-plane order.
                 return quantize_groups_parallel(
-                    &groups, &cfl, cache, &lf_quant, &hf_quants, executor,
+                    &groups,
+                    &cfl,
+                    cache,
+                    &lf_quant,
+                    &hf_quants,
+                    executor,
+                    quant_workspace,
                 );
             }
             // As with CfL samples, reserve the frame-sized output arenas on
@@ -651,8 +725,11 @@ fn plan_at_with_cfl(
             // large worker-local allocator arenas.
             let quant_workspaces: Vec<_> = groups
                 .iter()
-                .map(|(_, blocks, _, varblocks)| {
-                    std::sync::Mutex::new(Some(QuantWorkspace::new(varblocks, *blocks)))
+                .enumerate()
+                .map(|(index, (_, blocks, _, varblocks))| {
+                    let arena =
+                        quant_workspace.take_arena(index, coefficient_arena_capacity(varblocks));
+                    std::sync::Mutex::new(Some(QuantWorkspace::new(varblocks, *blocks, arena)))
                 })
                 .collect();
             let quantize_one = |index: usize| {
@@ -710,6 +787,9 @@ fn plan_at_with_cfl(
     for (index, ((id, blocks, _rect, varblocks), quantized_group)) in
         groups.into_iter().zip(quantized_groups).enumerate()
     {
+        if let Some(arena) = quantized_group.arena {
+            quant_workspace.put_arena(index, arena);
+        }
         let group_cfl = cfl.groups.get(index).ok_or(PolicyError::Unsupported {
             what: "a missing CfL grid for an LF group",
         })?;
@@ -3159,6 +3239,56 @@ fn refine_hf_factor(
 struct QuantizedGroup {
     lf: LfQuantPlanes,
     coefficients: Vec<VarblockCoefficients>,
+    /// The reusable backing arena retained by the request-scoped workspace.
+    /// The coefficient handles in `coefficients` keep their own `Arc` clones
+    /// while this value is lowered into an emission plan.
+    arena: Option<Arc<[i32]>>,
+}
+
+fn coefficient_arena_capacity(varblocks: &[VarblockDecision]) -> usize {
+    varblocks.iter().fold(0usize, |capacity, vb| {
+        let side = vb.transform.sample_cols();
+        capacity.saturating_add(side.saturating_mul(side).saturating_mul(NUM_CHANNELS))
+    })
+}
+
+/// Reusable backing storage for sequential rate-probe quantizers.
+///
+/// Quantized plans retain immutable `Arc` views into these arenas. Once an
+/// anchor has been priced and dropped, the workspace is the sole owner again
+/// and the next probe can overwrite the same allocation. If a caller violates
+/// that lifetime (for example by trying to build a correction while its
+/// finalist is still live), `take_arena` allocates a second arena rather than
+/// mutating coefficients that an earlier plan can still observe.
+struct QuantizationWorkspace {
+    arenas: Vec<Arc<[i32]>>,
+}
+
+impl QuantizationWorkspace {
+    fn new() -> Self {
+        Self { arenas: Vec::new() }
+    }
+
+    fn take_arena(&mut self, slot: usize, capacity: usize) -> Arc<[i32]> {
+        let previous = self
+            .arenas
+            .get_mut(slot)
+            .map(|arena| std::mem::replace(arena, Arc::<[i32]>::from(Vec::new())));
+        match previous {
+            Some(arena) if arena.len() >= capacity && Arc::strong_count(&arena) == 1 => arena,
+            _ => vec![0i32; capacity].into(),
+        }
+    }
+
+    fn put_arena(&mut self, slot: usize, arena: Arc<[i32]>) {
+        if self.arenas.len() <= slot {
+            self.arenas
+                .resize_with(slot.saturating_add(1), || Arc::<[i32]>::from(Vec::new()));
+        }
+        if let Some(destination) = self.arenas.get_mut(slot) {
+            *destination = arena;
+        }
+    }
 }
 
 /// Large quantization buffers reserved by the request thread before fanout.
@@ -3170,17 +3300,15 @@ struct QuantWorkspace {
 }
 
 impl QuantWorkspace {
-    fn new(varblocks: &[VarblockDecision], blocks: jpxl_encode::vardct::BlockGrid) -> Self {
+    fn new(
+        varblocks: &[VarblockDecision],
+        blocks: jpxl_encode::vardct::BlockGrid,
+        arena: Arc<[i32]>,
+    ) -> Self {
         let cells = usize::try_from(blocks.area()).unwrap_or(0);
-        let mut arena_cap = 0usize;
-        for vb in varblocks {
-            let side = vb.transform.sample_cols();
-            arena_cap =
-                arena_cap.saturating_add(side.saturating_mul(side).saturating_mul(NUM_CHANNELS));
-        }
         Self {
             lf_planes: core::array::from_fn(|_| vec![0i32; cells]),
-            arena: vec![0i32; arena_cap].into(),
+            arena,
             starts: Vec::with_capacity(varblocks.len()),
             coefficients: Vec::with_capacity(varblocks.len()),
         }
@@ -3260,19 +3388,15 @@ struct QuantChunkWorkspace {
 }
 
 impl QuantChunkWorkspace {
-    fn new(varblocks: &[VarblockDecision]) -> Self {
+    fn new(varblocks: &[VarblockDecision], arena: Arc<[i32]>) -> Self {
         let mut lf_cap = 0usize;
-        let mut arena_cap = 0usize;
         for vb in varblocks {
             let n = vb.transform.block_dims().0;
-            let side = vb.transform.sample_cols();
             lf_cap = lf_cap.saturating_add(n.saturating_mul(n));
-            arena_cap =
-                arena_cap.saturating_add(side.saturating_mul(side).saturating_mul(NUM_CHANNELS));
         }
         Self {
             lf_values: core::array::from_fn(|_| Vec::with_capacity(lf_cap)),
-            arena: vec![0i32; arena_cap].into(),
+            arena,
             starts: Vec::with_capacity(varblocks.len()),
             coefficients: Vec::with_capacity(varblocks.len()),
         }
@@ -3282,6 +3406,7 @@ impl QuantChunkWorkspace {
 struct QuantizedChunk {
     lf_values: [Vec<i32>; NUM_CHANNELS],
     coefficients: Vec<VarblockCoefficients>,
+    arena: Arc<[i32]>,
 }
 
 struct QuantizedGroupBuilder {
@@ -3300,16 +3425,19 @@ fn quantize_groups_parallel(
     lf_quant: &LfQuantizer,
     hf_quants: &HfQuantizers,
     executor: &jpxl_encode::EncodeExecutor,
+    quant_workspace: &mut QuantizationWorkspace,
 ) -> Result<Vec<QuantizedGroup>> {
     let chunks = quantization_chunks(groups, executor.resources().threads);
     let workspaces: Vec<_> = chunks
         .iter()
-        .map(|chunk| {
+        .enumerate()
+        .map(|(index, chunk)| {
             let varblocks = groups
                 .get(chunk.group)
                 .and_then(|(_, _, _, varblocks)| varblocks.get(chunk.start..chunk.end))
                 .unwrap_or(&[]);
-            std::sync::Mutex::new(Some(QuantChunkWorkspace::new(varblocks)))
+            let arena = quant_workspace.take_arena(index, coefficient_arena_capacity(varblocks));
+            std::sync::Mutex::new(Some(QuantChunkWorkspace::new(varblocks, arena)))
         })
         .collect();
     let quantize_one = |index: usize| {
@@ -3375,7 +3503,8 @@ fn quantize_groups_parallel(
             }
         })
         .collect();
-    for (chunk, quantized) in chunks.iter().copied().zip(quantized_chunks) {
+    for (index, (chunk, quantized)) in chunks.iter().copied().zip(quantized_chunks).enumerate() {
+        quant_workspace.put_arena(index, quantized.arena);
         let (_, blocks, _, group_varblocks) =
             groups.get(chunk.group).ok_or(PolicyError::Unsupported {
                 what: "a missing planned LF group during chunk reduction",
@@ -3450,6 +3579,9 @@ fn quantize_groups_parallel(
             Ok(QuantizedGroup {
                 lf: LfQuantPlanes::new(*blocks, merged.lf_planes)?,
                 coefficients: merged.coefficients,
+                // Chunk arenas are returned to the request workspace as soon
+                // as their deterministic reduction is complete.
+                arena: None,
             })
         })
         .collect()
@@ -3525,6 +3657,7 @@ fn quantize_chunk(
     Ok(QuantizedChunk {
         lf_values: workspace.lf_values,
         coefficients: workspace.coefficients,
+        arena: workspace.arena,
     })
 }
 
@@ -3612,6 +3745,7 @@ fn quantize_group(
     Ok(QuantizedGroup {
         lf: LfQuantPlanes::new(blocks, workspace.lf_planes)?,
         coefficients: workspace.coefficients,
+        arena: Some(workspace.arena),
     })
 }
 
@@ -4619,6 +4753,23 @@ mod tests {
             sum + error * error
         });
         sum / a.len().max(1) as f64
+    }
+
+    #[test]
+    fn quantization_workspace_reuses_only_unshared_arenas() {
+        let mut workspace = QuantizationWorkspace::new();
+        let first = workspace.take_arena(0, 32);
+        let first_ptr = Arc::as_ptr(&first);
+        workspace.put_arena(0, first);
+
+        let reused = workspace.take_arena(0, 16);
+        assert_eq!(Arc::as_ptr(&reused), first_ptr);
+
+        let held_by_plan = Arc::clone(&reused);
+        workspace.put_arena(0, reused);
+        let replacement = workspace.take_arena(0, 16);
+        assert_ne!(Arc::as_ptr(&replacement), first_ptr);
+        drop(held_by_plan);
     }
 
     #[test]

@@ -186,18 +186,19 @@ pub enum RatePhase {
     Fill,
     /// Secondary fill over legal `quant_lf` at the winning rung (LF cliffs).
     LfFill,
-    /// Full-entropy refinement after the Fast ladder: re-price the Fast
-    /// incumbent and climb/bisect/fill with the real entropy alternatives so
-    /// the achieved size is not an overestimate-guided undershoot.
+    /// Finalist refinement after the Fast ladder: navigate with the trained
+    /// default model, then pay for real entropy alternatives at the finalist
+    /// and in a bounded exact correction window.
     Final,
 }
 
-/// How many prices to hold back from the Fast ladder for Full refinement.
+/// How many prices to hold back from the Fast ladder for finalist refinement.
 ///
 /// Fast entropy overestimates size (it skips alternatives that shrink the
-/// stream). The Fast ladder therefore lands coarser than Full would, and the
-/// Full pass must be allowed a geometric climb + bisect — not a one-notch
-/// walk — or the residual undershoot blows the 1% contract.
+/// stream). The Fast ladder therefore lands coarser than Full would. The
+/// refinement reserve must cover cheap default-model navigation plus an exact
+/// Full finalist and bounded corrections — not a one-notch walk — or the
+/// residual undershoot blows the 1% contract.
 fn full_refinement_reserve(max_prices: u32) -> u32 {
     if max_prices <= 6 {
         // Tiny budgets: one Full re-plan of the Fast winner; undershoot is
@@ -257,14 +258,15 @@ pub struct RateStep {
 /// These are the measured claims behind
 /// `rate-probe-multiplicity-down`: Gaborish and the forward DCT pyramid are
 /// request-scoped, anchored ladder prices skip entropy alternatives, and
-/// exhaustive Full entropy is limited to the Quality/refinement phase.
+/// finalist-only Full entropy is limited to the Quality/refinement phase.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct RateProbeStats {
     /// Inverse-Gaborish precondition runs (0 or 1 for a single search).
     pub gaborish_preconditions: u32,
     /// Writer prices under [`crate::EntropySearch::Fast`] (ladder + LF fill).
     pub fast_prices: u32,
-    /// Exact writer prices attributed to the finalist/correction phase.
+    /// Exact writer prices attributed to finalist refinement, including its
+    /// cheap default-model navigation and Full finalist/correction stores.
     pub full_prices: u32,
     /// Forward-DCT cache hits across every probe.
     pub dct_cache_hits: u64,
@@ -305,7 +307,7 @@ impl RateProbeStats {
     /// The Fast ladder owns most of a default 40-price budget; Full refinement
     /// is reserved at most [`full_refinement_reserve`] (≤20). Full may briefly
     /// outnumber Fast on a short ladder that then climbs with Full — that is
-    /// still "finalist-only Full", not a full-price loop.
+    /// still "finalist-only Full", not a full-alternative price loop.
     #[must_use]
     pub fn full_confined_to_refinement(self) -> bool {
         self.full_prices > 0 && self.fast_prices > 0 && self.full_prices <= 20
@@ -652,6 +654,65 @@ fn interpolated_rung(lo: (Rung, u64), hi: (Rung, u64), target: u64) -> Option<Ru
     Some(Rung::new(guess.clamp(low, high)))
 }
 
+/// Aim a bounded exact correction from the default-model navigation bracket.
+///
+/// The Full finalist can be materially smaller than the default plan even at
+/// the same rung. A one-notch correction therefore wastes the exact slot on
+/// the flat part of the ladder. Treat the Full/default ratio at the finalist
+/// as locally stable, inflate the target in the cheap model's byte space, and
+/// interpolate through the already-priced navigation bracket. The candidate
+/// is still gated by the exact writer; this only chooses where to spend the
+/// bounded correction prices.
+fn correction_rung_from_navigation(
+    navigation: &LadderSearch,
+    finalist: Rung,
+    finalist_bytes: u64,
+    target: u64,
+) -> Rung {
+    let minimum = finalist.get().saturating_add(1).min(Rung::TOP.get());
+    if finalist == Rung::TOP || finalist_bytes == 0 || navigation.bytes == 0 {
+        return Rung::new(minimum);
+    }
+
+    let inflate_once = |value: u64| {
+        u64::try_from(
+            u128::from(value)
+                .saturating_mul(u128::from(navigation.bytes))
+                .saturating_add(u128::from(finalist_bytes.saturating_sub(1)))
+                / u128::from(finalist_bytes),
+        )
+        .unwrap_or(u64::MAX)
+    };
+    // The alternative search tends to save a little more at finer rungs than
+    // it saves at the finalist. Apply one and a fifth times the observed
+    // shrink allowance: one factor accounts for the measured saving, and a
+    // small fifth-factor allowance covers local drift without routinely
+    // jumping past the target. The exact gate below still rejects any
+    // over-target correction.
+    let once = inflate_once(target);
+    let estimated_default_target = once
+        .saturating_add(once.saturating_sub(target) / 5)
+        .max(navigation.bytes);
+
+    let upper = navigation
+        .trace
+        .iter()
+        .filter(|step| step.quantizer.rung > finalist && step.bytes >= estimated_default_target)
+        .min_by_key(|step| step.quantizer.rung)
+        .map(|step| (step.quantizer.rung, step.bytes));
+    let Some(upper) = upper else {
+        return Rung::new(minimum);
+    };
+    interpolated_rung(
+        (finalist, navigation.bytes),
+        upper,
+        estimated_default_target,
+    )
+    .map_or(Rung::new(minimum), |rung| {
+        Rung::new(rung.get().max(minimum))
+    })
+}
+
 /// The search's mutable state; a struct because the price counter, the trace
 /// and the incumbent are all updated by the same one place.
 struct Search<F> {
@@ -907,6 +968,7 @@ struct PreparedSearch<'a> {
     request: &'a EncodeRequest,
     executor: &'a jpxl_encode::EncodeExecutor,
     fwd_cache: CandidateForwardCache,
+    quant_workspace: crate::QuantizationWorkspace,
     stats: RateProbeStats,
 }
 
@@ -923,7 +985,7 @@ impl<'a> PreparedSearch<'a> {
         };
         diagnostics::with_search_phase(phase, || {
             diagnostics::time_search_plan(|| {
-                crate::plan_at_on(
+                crate::plan_at_on_with_workspace(
                     self.frame,
                     self.transform_frame,
                     self.atlas,
@@ -932,6 +994,7 @@ impl<'a> PreparedSearch<'a> {
                     &mut self.fwd_cache,
                     entropy,
                     Some(self.executor),
+                    &mut self.quant_workspace,
                 )
             })
         })
@@ -954,7 +1017,7 @@ impl<'a> PreparedSearch<'a> {
         };
         diagnostics::with_search_phase(phase, || {
             diagnostics::time_search_plan(|| {
-                crate::plan_at_on_anchor(
+                crate::plan_at_on_anchor_with_workspace(
                     self.frame,
                     self.transform_frame,
                     self.atlas,
@@ -966,10 +1029,30 @@ impl<'a> PreparedSearch<'a> {
                     Some(self.executor),
                     reuse,
                     capture,
+                    &mut self.quant_workspace,
                 )
             })
         })
     }
+}
+
+/// Builds and stores one exact Full-entropy finalist.
+///
+/// The Quality refinement navigator uses the same trained default model as a
+/// Full plan, but does not search the alternative orders, block contexts, or
+/// preset assignments. Only this bounded finalist/correction path pays for
+/// those alternatives and retains a Store emission.
+fn emit_exact_full_candidate(
+    prepared: &mut PreparedSearch<'_>,
+    quantizer: QuantizerChoice,
+) -> Result<(ValidatedEmissionPlan, Emission)> {
+    let plan = prepared.plan(quantizer, EntropySearch::Full)?;
+    let emission =
+        diagnostics::with_search_phase(diagnostics::SearchDiagnosticPhase::Full, || {
+            emit_codestream_with_executor(&plan, prepared.executor)
+        })?;
+    prepared.stats.full_prices = prepared.stats.full_prices.saturating_add(1);
+    Ok((plan, emission))
 }
 
 /// Whether every G.2.2 `LfQuant` sample fits the legacy signed-16-bit range.
@@ -996,8 +1079,9 @@ const fn lf_sample_fits_legacy_16bit(sample: i32) -> bool {
 
 /// Runs the rate loop over a real frame and returns the chosen codestream.
 ///
-/// Quality requests retain the exhaustive exact controller. Fast and Balanced
-/// requests in a build with the research-only `anchor-sketch` feature attempt
+/// Quality requests retain the exact final-price controller and use the
+/// default entropy model for refinement navigation. Fast and Balanced requests
+/// in a build with the research-only `anchor-sketch` feature attempt
 /// the bounded two-anchor controller and fall back whenever its anchored
 /// finalist does not satisfy the preset's exact target band.
 pub fn search_frame(
@@ -1185,6 +1269,7 @@ fn search_frame_two_anchor(
         request,
         executor: &executor,
         fwd_cache: CandidateForwardCache::new(),
+        quant_workspace: crate::QuantizationWorkspace::new(),
         stats,
     };
 
@@ -1216,6 +1301,10 @@ fn search_frame_two_anchor(
         })?;
     prepared.stats.fast_prices = 1;
     prepared.stats.exact_candidates = 1;
+    // The first anchor has done its only job. Release its quantized views so
+    // the request-scoped workspace can reuse the same HF arena for the next
+    // probe instead of retaining another frame-sized coefficient payload.
+    drop(first_plan);
 
     let second_rung = second_anchor_rung(start, first_size.total, target_bytes);
     let second_quantizer = QuantizerChoice::at(second_rung, request.quant_lf)?;
@@ -1246,6 +1335,7 @@ fn search_frame_two_anchor(
         })?;
     prepared.stats.fast_prices = 2;
     prepared.stats.exact_candidates = 2;
+    drop(second_plan);
 
     // Bias the one-shot prediction a little below the ceiling. Fast already
     // permits a 3% undershoot, so reserving one eighth of that band avoids a
@@ -1349,6 +1439,10 @@ fn search_frame_two_anchor(
         let anchor = finalist_anchor.as_ref().ok_or(PolicyError::Unsupported {
             what: "an anchored finalist that failed to capture its structure",
         })?;
+        // The finalist is not the selected result on this branch. Drop its
+        // coefficient views before building the correction so that the same
+        // reusable arena can serve the final probe.
+        drop(finalist);
         let correction_plan = prepared.plan_anchor(
             correction_quantizer,
             true,
@@ -1409,21 +1503,23 @@ fn search_frame_two_anchor(
     }))
 }
 
-/// Exhaustive exact controller retained as the production path and fallback.
+/// Exact target controller retained as the production path and fallback.
 ///
 /// Two entropy pricing modes share the price budget:
 ///
 /// 1. **Fast ladder** — default I.2.2 entropy, no alternatives. Exact writer
 ///    sizes, but an *upper bound* on the Full plan at the same quantizer.
 ///    Geometric bracket / bisect / fill find an approximate incumbent cheaply.
-/// 2. **Full refinement** — re-runs the same ladder control flow from the Fast
-///    incumbent with Full entropy (slice-18 alternatives). Because Full only
-///    shrinks, the Fast feasible set is a lower bound on the Full feasible
-///    set; the refinement climbs/bisects to spend residual undershoot.
+/// 2. **Finalist refinement** — re-runs the same ladder control flow from the
+///    Fast incumbent with the trained default model, then pays for slice-18
+///    Full alternatives only at the finalist and a bounded exact correction
+///    window.
+///    Because Full only shrinks, the default-model feasible set is a safe
+///    navigation lower bound and the final exact gate never crosses the target.
 ///
-/// The returned codestream is a Full emission kept during refinement, so the
-/// winner is not encoded twice. Fast probe sizes stay in the trace as ladder
-/// guidance; only [`RatePhase::Final`] steps are Full-priced.
+/// The returned codestream is a Full emission from the finalist path. Fast
+/// probe sizes stay in the trace as ladder guidance; refinement navigation and
+/// exact finalist/correction steps are [`RatePhase::Final`].
 ///
 /// # Errors
 ///
@@ -1458,6 +1554,7 @@ fn search_frame_exhaustive(
         request,
         executor: &executor,
         fwd_cache: CandidateForwardCache::new(),
+        quant_workspace: crate::QuantizationWorkspace::new(),
         stats,
     };
 
@@ -1568,63 +1665,166 @@ fn search_frame_exhaustive(
         });
     }
 
-    // Full refinement: same ladder control flow from the Fast incumbent, with
-    // remaining budget. Fast overestimates, so Full at that rung is still
-    // under target and the geometric climb reclaims undershoot.
+    // Full refinement: use the default trained model to navigate the same
+    // ladder, then pay for the expensive Full alternatives only at the
+    // finalist. Full only adopts alternatives that strictly shrink the
+    // default plan, so a feasible navigator finalist remains feasible after
+    // the exact Full gate. A bounded correction window is reserved when the
+    // first exact finalist leaves too much of the target unspent.
     let used = u32::try_from(search.trace.len()).unwrap_or(u32::MAX);
-    // The reserve is a CAP on Full refinement, not a floor. Before aimed
-    // stepping the Fast ladder nearly always spent its whole allowance, so
-    // `max_prices - used` was already about the reserve and the distinction
-    // never showed. Now that Fast can finish in a handful of prices, handing
-    // Full everything Fast did not use would spend the saving on more
-    // expensive-entropy probes instead of banking it — and would break
-    // `full_confined_to_refinement`'s "finalist-only Full" invariant.
+    // The reserve is a CAP on refinement, not a floor. Keep a small exact
+    // correction window when the budget permits: one finalist gate and up to
+    // three follow-up candidates.
+    // The remaining slots navigate with FinalFast, which still runs an exact
+    // writer Count but avoids every nested entropy alternative.
     let remaining = max_prices.saturating_sub(used).min(full_reserve).max(1);
-    let mut full_budget = request.budget.rate;
-    full_budget.max_prices = remaining;
-    full_budget.lf_fill_probes = 0;
+    let exact_slots = remaining.min(4);
+    let navigation_budget = remaining.saturating_sub(exact_slots);
+    let navigation = if navigation_budget > 0 {
+        let mut navigation_budget_request = request.budget.rate;
+        navigation_budget_request.max_prices = navigation_budget;
+        navigation_budget_request.lf_fill_probes = 0;
+        Some(search_ladder(
+            rung,
+            quant_lf,
+            target_bytes,
+            request.tolerance,
+            navigation_budget_request,
+            |quantizer| {
+                let plan = prepared.plan(quantizer, EntropySearch::FinalFast)?;
+                let sizing = diagnostics::with_search_phase(
+                    diagnostics::SearchDiagnosticPhase::Full,
+                    || {
+                        diagnostics::with_count_kind(
+                            jpxl_encode::vardct::diagnostics::CountEmissionKind::Outer,
+                            || price_codestream_with(&plan, prepared.executor),
+                        )
+                    },
+                )?;
+                prepared.stats.full_prices = prepared.stats.full_prices.saturating_add(1);
+                Ok(sizing.total)
+            },
+        )?)
+    } else {
+        None
+    };
 
-    let mut full_best: Option<(QuantizerChoice, ValidatedEmissionPlan, Emission)> = None;
-    let full = search_ladder(
-        rung,
-        quant_lf,
-        target_bytes,
-        request.tolerance,
-        full_budget,
-        |quantizer| {
-            let plan = prepared.plan(quantizer, EntropySearch::Full)?;
-            // Keep the emission of the incumbent so the winner is not re-encoded.
-            // Finalist Full emits use the request's EncodeResources (parallel groups).
-            let emission =
-                diagnostics::with_search_phase(diagnostics::SearchDiagnosticPhase::Full, || {
-                    emit_codestream_with_executor(&plan, prepared.executor)
-                })?;
-            prepared.stats.full_prices = prepared.stats.full_prices.saturating_add(1);
-            let bytes = emission.sizing.total;
-            let better = full_best.as_ref().is_none_or(|(prev_q, _, prev)| {
-                bytes > prev.sizing.total
-                    || (bytes == prev.sizing.total && quantizer.rung > prev_q.rung)
+    if let Some(navigation) = navigation.as_ref() {
+        for step in &navigation.trace {
+            search.trace.push(RateStep {
+                phase: RatePhase::Final,
+                quantizer: step.quantizer,
+                bytes: step.bytes,
+                feasible: step.feasible,
             });
-            if bytes <= target_bytes && better {
-                full_best = Some((quantizer, plan, emission));
-            }
-            Ok(bytes)
-        },
-    )?;
+        }
+    }
 
-    for step in full.trace {
-        search.trace.push(RateStep {
-            phase: RatePhase::Final,
-            quantizer: step.quantizer,
-            bytes: step.bytes,
-            feasible: step.feasible,
+    let finalist_rung = navigation.as_ref().map_or(rung, |result| result.rung);
+    let finalist = QuantizerChoice::at(finalist_rung, quant_lf)?;
+    let (finalist_plan, finalist_emission) = emit_exact_full_candidate(&mut prepared, finalist)?;
+    let finalist_bytes = finalist_emission.sizing.total;
+    search.trace.push(RateStep {
+        phase: RatePhase::Final,
+        quantizer: finalist,
+        bytes: finalist_bytes,
+        feasible: finalist_bytes <= target_bytes,
+    });
+    if finalist_bytes > target_bytes {
+        return Err(PolicyError::TargetUnreachable {
+            target: target_bytes,
+            floor: finalist_bytes,
         });
     }
 
-    let (chosen, plan, emission) = full_best.ok_or(PolicyError::TargetUnreachable {
-        target: target_bytes,
-        floor: full.bytes,
-    })?;
+    let slack = request.tolerance.bytes_for(target_bytes);
+    let mut chosen = finalist;
+    let mut plan = finalist_plan;
+    let mut emission = finalist_emission;
+    if exact_slots >= 2
+        && finalist.rung < Rung::TOP
+        && target_bytes.saturating_sub(finalist_bytes) > slack
+    {
+        // Full alternatives can only shrink the default navigation price, so
+        // aim through the already-priced navigation bracket after accounting
+        // for the finalist's observed shrink ratio. Corrections then narrow
+        // an exact feasible/infeasible pair when the first aim crosses the
+        // target, or re-aim from the new exact point when it does not. The
+        // window is bounded by the shared price budget.
+        let mut lower_rung = finalist.rung;
+        let mut lower_bytes = finalist_bytes;
+        let mut upper = None;
+        let mut correction_rung = navigation.as_ref().map_or(
+            Rung::new(finalist.rung.get().saturating_add(1)),
+            |navigation| {
+                correction_rung_from_navigation(
+                    navigation,
+                    finalist.rung,
+                    finalist_bytes,
+                    target_bytes,
+                )
+            },
+        );
+        for _ in 0..exact_slots.saturating_sub(1) {
+            if correction_rung <= lower_rung
+                || search
+                    .trace
+                    .iter()
+                    .any(|step| step.quantizer.rung == correction_rung)
+            {
+                break;
+            }
+            let correction = QuantizerChoice::at(correction_rung, quant_lf)?;
+            let (correction_plan, correction_emission) =
+                emit_exact_full_candidate(&mut prepared, correction)?;
+            let correction_bytes = correction_emission.sizing.total;
+            search.trace.push(RateStep {
+                phase: RatePhase::Final,
+                quantizer: correction,
+                bytes: correction_bytes,
+                feasible: correction_bytes <= target_bytes,
+            });
+            if correction_bytes <= target_bytes {
+                if correction_bytes > emission.sizing.total
+                    || (correction_bytes == emission.sizing.total && correction.rung > chosen.rung)
+                {
+                    chosen = correction;
+                    plan = correction_plan;
+                    emission = correction_emission;
+                }
+                lower_rung = correction.rung;
+                lower_bytes = correction_bytes;
+            } else {
+                drop(correction_plan);
+                drop(correction_emission);
+                upper = Some((correction.rung, correction_bytes));
+            }
+
+            if target_bytes.saturating_sub(emission.sizing.total) <= slack {
+                break;
+            }
+            correction_rung = if let Some(upper) = upper {
+                let gap = upper.0.get().saturating_sub(lower_rung.get());
+                if gap <= 1 {
+                    break;
+                }
+                interpolated_rung((lower_rung, lower_bytes), upper, target_bytes)
+                    .unwrap_or_else(|| Rung::new(lower_rung.get() + gap / 2))
+            } else {
+                navigation.as_ref().map_or(
+                    Rung::new(lower_rung.get().saturating_add(1)),
+                    |navigation| {
+                        correction_rung_from_navigation(
+                            navigation,
+                            lower_rung,
+                            lower_bytes,
+                            target_bytes,
+                        )
+                    },
+                )
+            };
+        }
+    }
 
     prepared.stats.dct_cache_hits = prepared.fwd_cache.hits();
     prepared.stats.dct_cache_misses = prepared.fwd_cache.misses();
@@ -1643,7 +1843,7 @@ fn search_frame_exhaustive(
         plan,
         target: target_bytes,
         trace: search.trace,
-        saturated: full.saturated || chosen.rung == Rung::TOP,
+        saturated: navigation.is_some_and(|result| result.saturated) || chosen.rung == Rung::TOP,
         stats: prepared.stats,
     })
 }

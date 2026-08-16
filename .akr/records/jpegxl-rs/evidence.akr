@@ -1332,6 +1332,192 @@ record jpegxl-rs.evidence.phase24-safety-2026-08-16/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase24-speed-2026-08-16/1 : evidence {
+    title "Pinned image timing covers Balanced and overlay-exercising masking-AQ paths with identical outputs."
+    state verified
+    result pass
+    method observation
+    observed_at git:61330eae78ef84e6c1fce88266ed1ddc99f42f82
+    command "bash .agent/scratch/phase24-hfmul-overlay/timing-balanced-final.sh; bash .agent/scratch/phase24-hfmul-overlay/timing-masking-aq.sh; decode and cmp the baseline/candidate canonical streams"
+    artifact ".agent/scratch/phase24-hfmul-overlay"
+    summary """
+        Pinned interleaved 2400x1800 and 4000x3000 image runs used hashed baseline/candidate binaries and inputs, four workers on CPUs 0,2,4,6, and three arm samples with five timed iterations each. Balanced medians were candidate 821.823 ms vs baseline 801.560 ms mid and candidate 1689.535 ms vs baseline 1710.202 ms large; masking-AQ medians were candidate 527 ms vs baseline 560 ms mid and candidate 1233 ms vs baseline 1235 ms large. Output sizes, fingerprints, and SHA-256s matched; decoded canonical PPMs were byte-identical. The mixed deltas are neutral within observed run-to-run spread.
+        """
+}
+
+record jpegxl-rs.evidence.phase25-build-2026-08-16/1 : evidence {
+    title "Phase 25 workspace build passes"
+    state verified
+    result pass
+    method command
+    observed_at git:61330eae78ef84e6c1fce88266ed1ddc99f42f82
+    command "cargo build --workspace"
+    summary """
+        The complete workspace debug build finished successfully.
+        """
+}
+
+record jpegxl-rs.evidence.phase25-clippy-2026-08-16/1 : evidence {
+    title "Phase 25 strict Clippy gate remains blocked by baseline lint debt"
+    state verified
+    result inconclusive
+    method command
+    observed_at git:61330eae78ef84e6c1fce88266ed1ddc99f42f82
+    command "cargo clippy --workspace --all-targets -- -D warnings"
+    summary """
+        The workspace command exits nonzero on pre-existing strict-deny diagnostics, primarily jpxl-core indexing/precision lints; a no-deps policy run also reports existing policy indexing, argument-count, and other lint debt, so this gate does not isolate a Phase 25 regression.
+        """
+}
+
+record jpegxl-rs.evidence.phase25-format-2026-08-16/1 : evidence {
+    title "Phase 25 formatting check passes"
+    state verified
+    result pass
+    method command
+    observed_at git:61330eae78ef84e6c1fce88266ed1ddc99f42f82
+    command "cargo fmt --all --check"
+    summary """
+        All workspace Rust files are rustfmt-clean.
+        """
+}
+
+record jpegxl-rs.evidence.phase25-identity-2026-08-16/1 : evidence {
+    title "Phase 25 codestream and decoded-image identity"
+    state verified
+    result pass
+    method command
+    observed_at git:61330eae78ef84e6c1fce88266ed1ddc99f42f82
+    command "bash .agent/scratch/phase25-multi-quantizer-workspace/identity.sh"
+    artifact ".agent/scratch/phase25-multi-quantizer-workspace/identity.log"
+    summary """
+        Fast, Balanced, Quality, large Fast, and masking-AQ canonical cases all matched baseline codestream bytes and candidate-decoded PPM bytes; no cmp failure occurred.
+        """
+}
+
+record jpegxl-rs.evidence.phase25-policy-tests-2026-08-16/1 : evidence {
+    title "Phase 25 focused policy tests pass"
+    state verified
+    result pass
+    method command
+    observed_at git:61330eae78ef84e6c1fce88266ed1ddc99f42f82
+    command "cargo test -p jpxl-encode-policy --all-features"
+    artifact ".agent/scratch/phase25-multi-quantizer-workspace/identity.log"
+    summary """
+        The focused all-features policy suite passed: 100 unit tests, rate-loop, truncation, VarDCT oracle, and VarDCT roundtrip suites.
+        """
+}
+
+record jpegxl-rs.evidence.phase25-timing-2026-08-16/1 : evidence {
+    title "Phase 25 image timing screen"
+    state verified
+    result pass
+    method command
+    observed_at git:61330eae78ef84e6c1fce88266ed1ddc99f42f82
+    command "bash .agent/scratch/phase25-multi-quantizer-workspace/timing-balanced.sh && bash .agent/scratch/phase25-multi-quantizer-workspace/timing-masking-aq.sh"
+    artifact ".agent/scratch/phase25-multi-quantizer-workspace/"
+    summary """
+        Interleaved Balanced medians were 807.379 ms candidate vs 792.170 ms baseline at 2400x1800 and 1706.301 vs 1767.633 ms at 4000x3000; masking-AQ was 530 vs 559 ms and 1204 vs 1296 ms. General Balanced is neutral/mixed, while the targeted AQ path is faster.
+        """
+}
+
+record jpegxl-rs.evidence.phase25-workspace-tests-2026-08-16/1 : evidence {
+    title "Phase 25 workspace tests pass"
+    state verified
+    result pass
+    method command
+    observed_at git:61330eae78ef84e6c1fce88266ed1ddc99f42f82
+    command "cargo test --workspace"
+    summary """
+        The complete workspace test suite passed, including all crate tests and doctests.
+        """
+}
+
+record jpegxl-rs.evidence.phase26-rate-multiplicity-2026-08-16/1 : evidence {
+    title "Phase 26 nested rate-search multiplicity screen"
+    state verified
+    result pass
+    method command
+    observed_at git:61330eae78ef84e6c1fce88266ed1ddc99f42f82
+    command "bash .agent/scratch/phase26-rate-multiplicity/run-diag.sh"
+    artifact ".agent/scratch/phase26-rate-multiplicity/diag.log"
+    summary """
+        The pinned 2400x1800 and 4000x3000 inputs ran at 1 bpp with four workers in Fast, Balanced, and Quality modes. Quality produced six Full plans on each image with 36 census passes, 36 entropy trainings, 18 order candidates, six block-context candidates, six preset candidates, and 36 internal exact Count emissions; writer amplification was about 50x/49x and search amplification 250.5x/218.2x. Every search built one executor pool, confirming pool construction is not the next pre-SIMD target.
+        """
+}
+
+record jpegxl-rs.evidence.phase27-finalist-only-entropy-build-2026-08-16/1 : evidence {
+    title "Phase 27 build and formatting gates"
+    state verified
+    result pass
+    method command
+    observed_at git:61330eae78ef84e6c1fce88266ed1ddc99f42f82
+    command "cargo build --workspace && cargo fmt --all --check && git diff --check"
+    summary """
+        The workspace build, all-files rustfmt check, and whitespace/error diff check passed after the finalist correction-window change.
+        """
+}
+
+record jpegxl-rs.evidence.phase27-finalist-only-entropy-clippy-2026-08-16/1 : evidence {
+    title "Phase 27 strict clippy status"
+    state verified
+    result inconclusive
+    method command
+    observed_at git:61330eae78ef84e6c1fce88266ed1ddc99f42f82
+    command "cargo clippy -p jpxl-encode-policy --all-targets --no-deps -- -D warnings"
+    summary """
+        Strict clippy remains blocked by pre-existing diagnostics in csf.rs, quantize.rs, and lib.rs (indexing, needless loops, argument count, and test unwraps); no diagnostic pointed at the Phase 27 rate.rs correction-window code.
+        """
+}
+
+record jpegxl-rs.evidence.phase27-finalist-only-entropy-correctness-2026-08-16/1 : evidence {
+    title "Phase 27 exact-final and decode checks"
+    state verified
+    result pass
+    method observation
+    observed_at git:61330eae78ef84e6c1fce88266ed1ddc99f42f82
+    artifact ".agent/scratch/phase27-finalist-only-entropy/outputs"
+    summary """
+        Quality mid and large streams encoded and decoded successfully. Current-decoder comparisons were mid RMSE 4.961744 / SSIMULACRA2 72.1255 / Butteraugli 3.2240 and large RMSE 3.206832 / SSIMULACRA2 83.5149 / Butteraugli 1.9513; threads 1 and 4 were byte-identical with hashes d4b03810d0bcb73981bb559815c8952eda0fbe2b27040abf8c99d4792c98c2fa and c3321262010e37f6a2874bed91aca8a90480ae3e1572179b3bcc3510976bf495.
+        """
+}
+
+record jpegxl-rs.evidence.phase27-finalist-only-entropy-rate-tests-2026-08-16/1 : evidence {
+    title "Phase 27 rate-loop contracts"
+    state verified
+    result pass
+    method command
+    observed_at git:61330eae78ef84e6c1fce88266ed1ddc99f42f82
+    command "cargo test -p jpxl-encode-policy --test rate_loop"
+    summary """
+        The focused real-writer rate-loop suite passed: 13 tests and 1 ignored, including target adherence for bits-per-pixel, LF/HF ratios, trace accounting, multiplicity, and thread determinism.
+        """
+}
+
+record jpegxl-rs.evidence.phase27-finalist-only-entropy-screen-2026-08-16/1 : evidence {
+    title "Phase 27 six-case image screen"
+    state verified
+    result pass
+    method command
+    observed_at git:61330eae78ef84e6c1fce88266ed1ddc99f42f82
+    command "bash .agent/scratch/phase27-finalist-only-entropy/run-diag.sh > .agent/scratch/phase27-finalist-only-entropy/diag.log 2>&1"
+    artifact ".agent/scratch/phase27-finalist-only-entropy/diag.log"
+    summary """
+        Pinned 2400x1800 and 4000x3000 Fast/Balanced/Quality screen completed with no target or encode errors. Quality was 5.545 s / 539315 bytes and 11.213 s / 1490211 bytes; internal Full Counts were 6 on both images, writer amplification 21x and 20x, and all outputs stayed below the 1 bpp targets.
+        """
+}
+
+record jpegxl-rs.evidence.phase27-finalist-only-entropy-workspace-2026-08-16/1 : evidence {
+    title "Phase 27 workspace validation"
+    state verified
+    result pass
+    method command
+    observed_at git:61330eae78ef84e6c1fce88266ed1ddc99f42f82
+    command "cargo test --workspace"
+    summary """
+        The full workspace test run passed, including all unit, integration, oracle, roundtrip, rate-loop, and doctest suites.
+        """
+}
+
 record jpegxl-rs.evidence.phase3-forward-cache-rev2-postcommit/1 : evidence {
     title "Phase-3 rev-2 (rate-loop cache note) re-verified against commit 8541961"
     state verified
