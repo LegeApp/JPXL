@@ -840,8 +840,12 @@ record jpegxl-rs.work.arch-phase23-cow-geometry/1 : work {
 
 record jpegxl-rs.work.arch-phase24-hfmul-overlay/1 : work {
     title "Phase 24: compact per-probe HfMul overlay"
-    state proposed
-    scope [ path "JPXL/crates/jpxl-encode-policy/src/lib.rs", path "JPXL/docs/optimize.md" ]
+    state active
+    scope [
+        path "JPXL/Cargo.toml",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/docs/optimize.md"
+    ]
     intent """
         Replace Phase 23's copy-on-write HfMul retarget (which materialized an
         owned copy of a whole group's VarblockDecision vector when any multiplier
@@ -856,7 +860,12 @@ record jpegxl-rs.work.arch-phase24-hfmul-overlay/1 : work {
     note """
         Bounded slice: no change to cover selection, CfL, quantization rules,
         entropy choices, or the wire-facing plan beyond ownership of the HfMul
-        values.
+        values. The speed check is the only open acceptance item: both pinned
+        A/B attempts on 2026-08-16 ran against heavy competing host load, and
+        the Balanced path never exercises the overlay anyway (neutral AQ keeps
+        the desired multipliers equal, so Phase 23's CoW path is taken). The
+        definitive pass must also time a masking-AQ stream, which is what
+        actually exercises the overlay, on a quiet host.
         """
     acceptance {
         check gates {
@@ -864,18 +873,21 @@ record jpegxl-rs.work.arch-phase24-hfmul-overlay/1 : work {
                 Workspace build, tests, no-default-features check, formatting, and AKR validation pass; strict Clippy remains isolated to pre-existing blockers.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase24-gates-2026-08-16/1 ]
         }
         check identity {
             statement """
                 Canonical Fast, Balanced, Quality, and masking-AQ streams remain byte-identical to Phase 23; decoded pixels and fingerprints are unchanged.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase24-identity-2026-08-16/1 ]
         }
         check safety {
             statement """
                 Focused policy tests, workspace tests, and oracle-backed decoder checks pass; the overlay cannot mutate the captured base decisions and length mismatches are rejected, not truncated.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase24-safety-2026-08-16/1 ]
         }
         check speed {
             statement """

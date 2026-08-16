@@ -1293,6 +1293,45 @@ record jpegxl-rs.evidence.phase23-speed-2026-08-15/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase24-gates-2026-08-16/1 : evidence {
+    title "Formatting, no-default-features check, policy Clippy, and AKR build/check pass; strict-Clippy blockers remain the pre-existing jpxl-core ones."
+    state verified
+    result pass
+    method command
+    observed_at git:55e04ee0bcc0806b34efa59b6c8cc119dabcd4f7
+    command "cargo fmt --all --check; cargo check -p jpxl-encode-policy --no-default-features; cargo clippy -p jpxl-encode-policy --all-targets; akr build; akr check"
+    artifact ".agent/scratch/phase24-hfmul-overlay/gates.log"
+    summary """
+        Formatting, no-default-features check, policy Clippy, and AKR build/check pass; remaining strict-Clippy blockers are the pre-existing jpxl-core ones.
+        """
+}
+
+record jpegxl-rs.evidence.phase24-identity-2026-08-16/1 : evidence {
+    title "Phase 24 candidate outputs match the Phase 23 Fast, Balanced, Quality, and masking-AQ streams byte-for-byte; decoded pixels are bit-identical."
+    state verified
+    result pass
+    method command
+    observed_at git:55e04ee0bcc0806b34efa59b6c8cc119dabcd4f7
+    command "sha256sum of five canonical streams encoded by the candidate release binary, compared to the Phase 23 outputs; cmp of decoded PPMs"
+    artifact ".agent/scratch/phase24-hfmul-overlay/identity-final.log"
+    summary """
+        All five canonical streams (Fast/Balanced/Quality mid, Fast large, Fast masking-AQ mid) match Phase 23 byte-for-byte with the Phase 24 candidate binary; candidate Balanced/Quality/large decodes are bit-identical to the Phase 23 PPMs.
+        """
+}
+
+record jpegxl-rs.evidence.phase24-safety-2026-08-16/1 : evidence {
+    title "The focused policy suite (98 tests) and full workspace tests pass; the overlay cannot mutate the captured base decisions and length mismatches are rejected, not truncated."
+    state verified
+    result pass
+    method command
+    observed_at git:55e04ee0bcc0806b34efa59b6c8cc119dabcd4f7
+    command "cargo test -p jpxl-encode-policy; cargo test --workspace; decoder checks on candidate streams"
+    artifact ".agent/scratch/phase24-hfmul-overlay/test-workspace.log"
+    summary """
+        The focused policy suite passed all 98 tests and the full workspace suite passed; the retarget overlay cannot mutate the captured base decisions and length mismatches are rejected, not truncated; decoded outputs unchanged.
+        """
+}
+
 record jpegxl-rs.evidence.phase3-forward-cache-rev2-postcommit/1 : evidence {
     title "Phase-3 rev-2 (rate-loop cache note) re-verified against commit 8541961"
     state verified
