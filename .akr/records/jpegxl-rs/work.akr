@@ -1498,6 +1498,45 @@ record jpegxl-rs.work.arch-phase30-natural-order-ref/1 : work {
     part_of [ @jpegxl-rs.track.encoder-optimization ]
 }
 
+record jpegxl-rs.work.arch-phase31-lane4-vector-select/1 : work {
+    title "Phase 31: lane-parallel candidate scoring in choose_lane4"
+    state completed
+    scope [
+        path ".agent/scratch/**",
+        path "JPXL/crates/jpxl-encode-policy/src/quantize.rs",
+        path "JPXL/docs/optimize.md"
+    ]
+    intent """
+        A fresh DWARF-unwound profile of the Quality-mid scenario (post Phase 30) moved the leaf encoder cost to HfQuantizer::choose_lane4: 12.7% self time plus ~10% more in the bounds-check helpers its candidate-scoring loop de-vectorized into (a quantize-loop family of 34.8% of samples). The SIMD choose_lane4 built reconstructions as f32x4 but then spilled every candidate lane back to scalar arrays and re-selected winners with sixteen bounds-checked .get() updates per call. Rewrite the candidate loop lane-parallel: keep best_q/best_err/best_recon in registers as f32x4, express the scalar update rule (first legal candidate with strictly smaller error, else equal error and strictly smaller magnitude, in choose's [0, estimate-1, estimate, estimate+1] order) as comparison masks and blends, turn the |q| > MAX_QUANT legality skip into a float cmp_le against splat(MAX_QUANT) (exact at 2^20), and force zero-threshold lanes to zero after the search. Also hoist the per-channel step/threshold row lookups out of the lane loop and convert remaining scalar tails to zip iteration. Results must stay bit-identical to four scalar choose calls -- same comparisons on the same values in the same order, lane-parallel.
+        """
+    note """
+        Found via a fresh DWARF-unwound perf/inferno profile on Quality mid (threads=4), taken after Phase 30 shifted the write/entropy cost: choose_lane4 at 12.7% self, with the de-vectorized selection helpers (SliceIndex::get for [i32]/[f32], Option::copied, wrapping_abs, range/comparison glue) pushing the quantize-loop family to 34.8% of samples. Fix: candidate scoring stays in f32x4 registers end to end (comparison masks + blend), the MAX_QUANT legality skip becomes a float cmp_le against splat(MAX_QUANT) (exact at 2^20 in f32), zero-threshold lanes are forced after the search exactly as the scalar shortcut would have returned early, and the per-channel step/threshold row lookups leave the lane loop. Post-change profile of the same scenario: family at 27.2% (choose_lane4 self 10.5%), a ~22% relative reduction. Pinned wall-clock screen: 4 of 6 cases in the predicted direction (Quality mid -6.4% median with tight mad, Fast large -31%, Balanced large -2.5% total, Balanced mid flat); Fast mid and Quality large slower/noisier -- the same host-contamination signature Phase 30 hit, so the profile delta again carries the cost claim and no formal speed check is asserted. Gates: workspace build and build --tests warning-free, fmt --all --check clean, full workspace test suite (40 suites) passes. PRE-EXISTING, NOT THIS CHANGE: workspace cargo clippy --all-targets -- -D warnings fails at HEAD on 70 indexing_slicing hits in jpxl-core/src/color.rs (introduced by f3be8b8; verified present on the clean tree by stashing this change). color.rs is outside this brief, so it is reported, not opportunistically fixed. Raw folded profiles and timing log under .agent/scratch/phase31/.
+        """
+    acceptance {
+        check gates {
+            statement """
+                Workspace build (with and without --tests) is warning-free, formatting is clean, and the full test suite passes. Workspace clippy is documented as failing at HEAD on pre-existing jpxl-core/src/color.rs indexing_slicing hits (f3be8b8), outside this brief.
+                """
+            method command
+            verified_by [ @jpegxl-rs.evidence.phase31-gates-2026-08-16/1 ]
+        }
+        check identity {
+            statement """
+                Canonical Fast, Balanced, Quality, and masking-AQ streams on mid and large inputs remain byte-identical to the pre-Phase-31 binary; every candidate output decodes.
+                """
+            method command
+            verified_by [ @jpegxl-rs.evidence.phase31-identity-2026-08-16/1 ]
+        }
+        check profile {
+            statement """
+                A DWARF-unwound profile traces the candidate-selection cost inside choose_lane4, and a post-change profile shows the quantize-loop family reduced (34.8% -> 27.2% of samples). A pinned wall-clock screen was recorded but is mixed/noise-dominated (as in Phase 30); the profile delta carries the cost claim.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.phase31-profile-2026-08-16/1 ]
+        }
+    }
+}
+
 record jpegxl-rs.work.arch-phase4-0b-density-gate/1 : work {
     title "Phase 4.0b: pinned real-corpus density + decode-validity gate (prerequisite for 4A/4C)"
     state completed

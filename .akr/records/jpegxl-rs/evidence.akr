@@ -1745,6 +1745,44 @@ record jpegxl-rs.evidence.phase30-speed-2026-08-16/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase31-gates-2026-08-16/1 : evidence {
+    title "Workspace build and build --tests warning-free; all 40 workspace test suites pass (0 failures); cargo fmt --all --check clean. Pre-existing (verified at clean HEAD by stashing this change): workspace clippy -D warnings fails on 70 indexing_slicing hits in jpxl-core/src/color.rs from f3be8b8 -- outside this brief, reported in the work note."
+    state verified
+    result pass
+    method command
+    observed_at git:8357f0408d03cbcd0826762447a962fff84f1903
+    command "cargo build --workspace; cargo build --workspace --tests; cargo test --workspace; cargo fmt --all --check"
+    artifact ".agent/scratch/phase31/gates.log"
+    summary """
+        Workspace build and build --tests warning-free; all 40 workspace test suites pass (0 failures); cargo fmt --all --check clean. Pre-existing (verified at clean HEAD by stashing this change): workspace clippy -D warnings fails on 70 indexing_slicing hits in jpxl-core/src/color.rs from f3be8b8 -- outside this brief, reported in the work note.
+        """
+}
+
+record jpegxl-rs.evidence.phase31-identity-2026-08-16/1 : evidence {
+    title "All 8 canonical/masking-AQ streams byte-identical to the pre-change binary (quality-mid sha256 d4b03810... unchanged); every candidate output decodes cleanly (0 failures)."
+    state verified
+    result pass
+    method command
+    observed_at git:8357f0408d03cbcd0826762447a962fff84f1903
+    command "baseline-jpxl vs candidate-jpxl: 8 streams (fast/balanced/quality x mid/large + balanced masking-AQ mid/large), sha256 compare; decode each candidate"
+    artifact ".agent/scratch/phase31/identity.log"
+    summary """
+        All 8 canonical/masking-AQ streams byte-identical to the pre-change binary (quality-mid sha256 d4b03810... unchanged); every candidate output decodes cleanly (0 failures).
+        """
+}
+
+record jpegxl-rs.evidence.phase31-profile-2026-08-16/1 : evidence {
+    title "Pre-change Quality-mid DWARF profile: choose_lane4 12.7% self, quantize-loop family 34.8% of samples. Post-change same scenario: family 27.2% (choose_lane4 self 10.5%), ~22% relative family reduction. Pinned wall-clock screen mixed/noisy on 2 of 6 cases (same host-contamination signature as Phase 30); profile delta carries the cost claim."
+    state verified
+    result pass
+    method observation
+    observed_at git:8357f0408d03cbcd0826762447a962fff84f1903
+    artifact ".agent/scratch/phase31/post-change-folded.txt"
+    summary """
+        Pre-change Quality-mid DWARF profile: choose_lane4 12.7% self, quantize-loop family 34.8% of samples. Post-change same scenario: family 27.2% (choose_lane4 self 10.5%), ~22% relative family reduction. Pinned wall-clock screen mixed/noisy on 2 of 6 cases (same host-contamination signature as Phase 30); profile delta carries the cost claim.
+        """
+}
+
 record jpegxl-rs.evidence.phase4-0b-density-gate-2026-08-08/1 : evidence {
     title "4.0b density + decode-validity gate: jpxl-modular beats cjxl -e1, trails cjxl -e7 by 16-42%"
     state verified

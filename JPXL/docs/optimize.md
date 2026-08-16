@@ -538,6 +538,54 @@ formal speed check for that reason rather than mis-stating a "pass". Raw
 folded profiles and the timing log are under
 `.agent/scratch/phase30-natural-order-ref/`.
 
+## Phase 31 — lane-parallel candidate scoring in `choose_lane4` (2026-08-16)
+
+A fresh DWARF-unwound profile of the same Quality-mid scenario, taken after
+Phase 30 shifted the write/entropy cost, moved the leaf cost to
+`HfQuantizer::choose_lane4` itself: 12.7% self time, plus another ~10% spread
+across the bounds-check helpers its candidate loop de-vectorized into
+(`SliceIndex::get` for `[i32]`/`[f32]`, `Option::copied`, `wrapping_abs`,
+range-iterator and comparison glue — a "quantize-loop family" at 34.8% of
+samples). The cause was structural: the SIMD `choose_lane4` built its
+reconstructions as `f32x4` but then spilled every candidate lane back to
+scalar arrays and re-selected the winner with sixteen bounds-checked `.get()`
+updates per call, so the function paid for the vector arithmetic *and* a
+scalar selection pass.
+
+The candidate loop is now lane-parallel throughout: `best_q`/`best_err`/
+`best_recon` stay in registers as `f32x4`, and the scalar update rule —
+first legal candidate with strictly smaller error, else equal error and
+strictly smaller magnitude, in `choose`'s `[0, estimate-1, estimate,
+estimate+1]` order — is expressed as comparison masks and `blend`s. The
+`|q| > MAX_QUANT` legality skip becomes `q.abs().cmp_le(splat(MAX_QUANT))`
+(the bound is exact at 2^20 in f32), and the zero-threshold lanes are forced
+to zero after the search exactly as the scalar shortcut would have returned
+early. Two smaller hoists rode along: the per-channel step/threshold row
+lookups leave the lane loop, and the remaining scalar tails iterate by
+`zip` instead of indexed `.get()`. Results stay bit-identical to four scalar
+`choose` calls by construction — the same comparisons on the same values in
+the same order, just lane-parallel.
+
+Verified: all eight canonical/masking-AQ streams byte-identical to the
+pre-change binary (Quality-mid SHA-256 `d4b03810…`, unchanged); every
+candidate output decodes; the 99-test `jpxl-encode-policy` suite and the full
+workspace suite pass; `cargo fmt --all --check` clean. A post-change profile
+of the same scenario puts the quantize-loop family at 27.2% of samples
+(choose_lane4 self 10.5%), a ~22% relative reduction of the family, and the
+pinned wall-clock screen moved in the profile-predicted direction on four of
+six cases (Quality mid −6.4% median with tight spread, Fast large −31%,
+Balanced large −2.5% total, Balanced mid flat) while Fast mid and Quality
+large were slower/noisier — the same host-contamination signature Phase 30
+hit, so the profile delta again carries the cost claim. One pre-existing
+condition surfaced by the gate run and *not* caused by this change: workspace
+`cargo clippy --all-targets -- -D warnings` fails at HEAD on 70
+`indexing_slicing` hits in `jpxl-core/src/color.rs` (introduced with the
+f3be8b8 leaf-SIMD commit; present on the clean tree, verified by stashing
+this change). `color.rs` is outside this phase's brief, so it is reported
+here rather than fixed opportunistically. Raw folded profiles and the timing
+log are under `.agent/scratch/phase31/`.
+
+
 ### Open architectural questions
 
 1. How can the finalist refresh only structurally unstable cover decisions?

@@ -599,7 +599,7 @@ impl HfQuantizer {
         targets: [f32; 4],
         cell_base: usize,
     ) -> Result<([i32; 4], [f32; 4])> {
-        use wide::{CmpLe, f32x4};
+        use wide::{CmpEq, CmpLe, CmpLt, f32x4};
 
         // Phase 7.0: the vectorised body below implements the *nearest* rule.
         // Under rate-distortion choice, fall back to four scalar `choose`
@@ -624,22 +624,23 @@ impl HfQuantizer {
 
         let mut step_arr = [0.0f32; 4];
         let mut thr_arr = [0.0f32; 4];
-        for (i, slot) in step_arr.iter_mut().enumerate() {
+        // Phase-31: hoist the per-channel row lookups out of the lane loop.
+        // All four lanes share one channel, and the chained
+        // `.get(channel).and_then(|s| s.get(cell))` per lane was a measurable
+        // share of this function's self time in the fresh Quality-mid profile.
+        // Values (and the per-lane error order) are unchanged.
+        let steps_row = self.steps.get(channel);
+        let thr_row = self.zero_threshold.get(channel);
+        for (i, (slot, thr)) in step_arr.iter_mut().zip(thr_arr.iter_mut()).enumerate() {
             let cell = cell_base + i;
-            let step = self.step_at(channel, cell);
+            let step = steps_row.and_then(|s| s.get(cell).copied()).unwrap_or(0.0);
             if !(step.is_finite() && step > 0.0) {
                 return Err(PolicyError::Unsupported {
                     what: "a degenerate HF quantization step",
                 });
             }
             *slot = step;
-            if let Some(t) = thr_arr.get_mut(i) {
-                *t = self
-                    .zero_threshold
-                    .get(channel)
-                    .and_then(|t| t.get(cell).copied())
-                    .unwrap_or(0.0);
-            }
+            *thr = thr_row.and_then(|t| t.get(cell).copied()).unwrap_or(0.0);
         }
 
         let target = f32x4::new(targets);
@@ -672,21 +673,22 @@ impl HfQuantizer {
         // cast: estimate +/- 1 is exactly representable below MAX_QUANT.
         let quotients = (target / step).to_array();
         let mut est_arr = [0.0f32; 4];
-        for i in 0..4 {
+        for ((&quotient, &zero_lane), slot) in quotients
+            .iter()
+            .zip(zero_mask_arr.iter())
+            .zip(est_arr.iter_mut())
+        {
             // A zero-threshold lane never reaches `clamp_round` in the
             // scalar path (it returns before computing `estimate` at all),
             // so an out-of-range speculative estimate there is not an error.
-            if zero_mask_arr.get(i).copied().unwrap_or(0.0) == 0.0 {
-                let quotient = quotients.get(i).copied().unwrap_or(0.0);
+            if zero_lane == 0.0 {
                 let estimate = clamp_round(quotient)?;
-                if let Some(slot) = est_arr.get_mut(i) {
-                    #[allow(
-                        clippy::cast_precision_loss,
-                        reason = "MAX_QUANT == 2^20, exact in f32"
-                    )]
-                    {
-                        *slot = estimate as f32;
-                    }
+                #[allow(
+                    clippy::cast_precision_loss,
+                    reason = "MAX_QUANT == 2^20, exact in f32"
+                )]
+                {
+                    *slot = estimate as f32;
                 }
             }
         }
@@ -704,59 +706,70 @@ impl HfQuantizer {
             small.blend(via_bias, via_numerator)
         };
 
-        let mut best_q = [0i32; 4];
-        let mut best_err = [f32::INFINITY; 4];
-        let mut best_recon = [0.0f32; 4];
+        // Phase-31: keep the candidate scoring itself in registers as f32x4
+        // lanes. The previous form de-vectorized into a scalar per-lane update
+        // with bounds-checked `.get()` access for every one of the sixteen
+        // (candidate, lane) pairs, which the fresh Quality-mid DWARF profile
+        // put at the top of the encoder's self time. The lane-parallel blend
+        // applies exactly the scalar update rule — "first legal candidate with
+        // strictly smaller error, or equal error and strictly smaller
+        // magnitude" — in the same candidate order, so results stay
+        // bit-identical to four scalar `choose` calls.
+        let mut best_q = f32x4::splat(0.0);
+        let mut best_err = f32x4::splat(f32::INFINITY);
+        let mut best_recon = f32x4::splat(0.0);
         // Same order as `choose`'s `[0, estimate-1, estimate, estimate+1]`,
-        // so the same "first legal candidate with strictly smaller error, or
-        // equal error and strictly smaller magnitude" tie rule applies.
+        // so the same tie rule applies.
         let candidate_slots: [f32x4; 4] = [
             f32x4::splat(0.0),
             estimate - f32x4::splat(1.0),
             estimate,
             estimate + f32x4::splat(1.0),
         ];
+        // MAX_QUANT == 2^20 is exact in f32, and every candidate slot is an
+        // integer of magnitude at most MAX_QUANT + 1 (clamp_round already
+        // bounds a non-zero-threshold lane's `estimate` to MAX_QUANT, and a
+        // zero-threshold lane's slots are 0/-1/0/1), so this float comparison
+        // reproduces the scalar `|qi| > MAX_QUANT` legality skip exactly.
+        #[allow(
+            clippy::cast_precision_loss,
+            reason = "MAX_QUANT == 2^20, exact in f32"
+        )]
+        let legal_bound = f32x4::splat(MAX_QUANT as f32);
         for q_vec in candidate_slots {
-            let q_arr = q_vec.to_array();
             let recon_vec = bias_adjust_vec(q_vec) * step;
-            let err_arr = (recon_vec - target).abs().to_array();
-            let recon_arr = recon_vec.to_array();
-            for i in 0..4 {
-                let q = q_arr.get(i).copied().unwrap_or(0.0);
-                #[allow(
-                    clippy::cast_possible_truncation,
-                    reason = "estimate and estimate +/- 1 are exact integer f32 values below 2^24"
-                )]
-                let qi = q as i32;
-                if qi.unsigned_abs() > MAX_QUANT.unsigned_abs() {
-                    continue;
-                }
-                let (Some(be), Some(bq), Some(br), Some(&err)) = (
-                    best_err.get_mut(i),
-                    best_q.get_mut(i),
-                    best_recon.get_mut(i),
-                    err_arr.get(i),
-                ) else {
-                    continue;
-                };
-                if err < *be || (err == *be && qi.abs() < bq.abs()) {
-                    *be = err;
-                    *bq = qi;
-                    *br = recon_arr.get(i).copied().unwrap_or(0.0);
-                }
+            let err_vec = (recon_vec - target).abs();
+            let take = err_vec.cmp_lt(best_err);
+            let tie = err_vec.cmp_eq(best_err) & q_vec.abs().cmp_lt(best_q.abs());
+            let mask = (take | tie) & q_vec.abs().cmp_le(legal_bound);
+            best_err = mask.blend(err_vec, best_err);
+            best_recon = mask.blend(recon_vec, best_recon);
+            best_q = mask.blend(q_vec, best_q);
+        }
+        // A zero-threshold lane returns 0 before the candidate search in the
+        // scalar path; force it after the fact.
+        best_q = zero_mask.blend(f32x4::splat(0.0), best_q);
+        best_recon = zero_mask.blend(f32x4::splat(0.0), best_recon);
+
+        let mut best_q_i32 = [0i32; 4];
+        let mut best_recon_f32 = [0.0f32; 4];
+        for ((&q, &r), (qs, rs)) in best_q
+            .to_array()
+            .iter()
+            .zip(best_recon.to_array().iter())
+            .zip(best_q_i32.iter_mut().zip(best_recon_f32.iter_mut()))
+        {
+            #[allow(
+                clippy::cast_possible_truncation,
+                reason = "best_q only ever holds a legal integer f32 value below 2^24"
+            )]
+            {
+                *qs = q as i32;
             }
+            *rs = r;
         }
 
-        for i in 0..4 {
-            if zero_mask_arr.get(i).copied().unwrap_or(0.0) != 0.0 {
-                if let (Some(q), Some(r)) = (best_q.get_mut(i), best_recon.get_mut(i)) {
-                    *q = 0;
-                    *r = 0.0;
-                }
-            }
-        }
-
-        Ok((best_q, best_recon))
+        Ok((best_q_i32, best_recon_f32))
     }
 
     /// [`Self::choose_lane4`] without the `simd` feature: four independent
