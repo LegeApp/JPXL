@@ -1553,6 +1553,54 @@ record jpegxl-rs.evidence.phase27-finalist-only-entropy-workspace-2026-08-16/1 :
         """
 }
 
+record jpegxl-rs.evidence.phase28-gates-2026-08-16/1 : evidence {
+    title "Phase 28 gates pass"
+    state verified
+    result pass
+    method command
+    observed_at git:41f9f3d9602d6b4d4c0fe144191cb34320c1ad44
+    command "cargo build --workspace && cargo fmt --all --check && cargo clippy -p jpxl-encode-policy --all-features -- -D warnings"
+    summary """
+        Workspace build and formatting pass; strict Clippy on the changed crate isolates to the same pre-existing jpxl-core float-precision/indexing debt as prior phases, with no diagnostic on the changed estimate_cfl code.
+        """
+}
+
+record jpegxl-rs.evidence.phase28-identity-2026-08-16/1 : evidence {
+    title "Phase 28 identity confirmed"
+    state verified
+    result pass
+    method command
+    observed_at git:41f9f3d9602d6b4d4c0fe144191cb34320c1ad44
+    command "jpxl encode --bpp 1 --lossy-preset {fast,balanced,quality}[,--aq-mode masking] <mid|large>-photo.ppm, compared byte-for-byte against the pre-change binary; jpxl decode on every candidate output"
+    summary """
+        All six canonical Fast/Balanced/Quality mid+large streams and both Balanced masking-AQ mid+large streams stayed byte-identical to the pre-Phase-28 binary (fast mid 537999B, fast large 1495016B, balanced mid 538646B, balanced large 1496087B, quality mid 539315B, quality large 1490211B, aq mid 538658B, aq large 1496304B); every candidate output decoded successfully.
+        """
+}
+
+record jpegxl-rs.evidence.phase28-safety-2026-08-16/1 : evidence {
+    title "Phase 28 workspace tests pass"
+    state verified
+    result pass
+    method command
+    observed_at git:41f9f3d9602d6b4d4c0fe144191cb34320c1ad44
+    command "cargo test --workspace"
+    summary """
+        Full workspace test suite (unit, integration, oracle, roundtrip, rate-loop, doctests) passed unchanged.
+        """
+}
+
+record jpegxl-rs.evidence.phase28-speed-2026-08-16/1 : evidence {
+    title "Phase 28 pinned timing screen"
+    state verified
+    result pass
+    method observation
+    observed_at git:41f9f3d9602d6b4d4c0fe144191cb34320c1ad44
+    command "taskset -c 0,2,4,6 <baseline|candidate>-jpxl bench vardct-rate --input <mid|large>-photo.ppm --bpp 1 --lossy-preset {balanced,quality} --iters 5 --threads 4"
+    summary """
+        Pinned five-iteration medians: Balanced mid 942.267->928.328ms (-1.5%), Balanced large 1787.939->1741.568ms (-2.6%), Quality mid 6849.583->6644.058ms (-3.0%); Quality large's median rose slightly (13592.348->13889.233ms) but its five-iteration total fell (73961.143->68760.513ms, -7.0%) and its minimum fell (13457.713->12841.807ms, -4.6%), reading as noise rather than a regression. All four pairs kept identical output_bytes and fingerprint. Raw log under .agent/scratch/phase28-cfl-lf-scratch-reuse/pinned-timing.log.
+        """
+}
+
 record jpegxl-rs.evidence.phase3-forward-cache-rev2-postcommit/1 : evidence {
     title "Phase-3 rev-2 (rate-loop cache note) re-verified against commit 8541961"
     state verified

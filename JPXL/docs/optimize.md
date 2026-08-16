@@ -413,6 +413,48 @@ Quality promotion.
 Raw diagnostics, encoded streams, decoded pixels, hashes, and metric output
 are under `.agent/scratch/phase27-finalist-only-entropy/`.
 
+## Phase 28 — reusable CfL LF-sample scratch buffers (2026-08-16)
+
+`perf`/`cargo flamegraph` are blocked in this session's sandbox
+(`perf_event_paranoid=4`, no `sudo`), so this phase used the existing
+`bench vardct-rate --diag` stage counters instead of a fresh flamegraph. That
+diagnostic shows CfL search is now the largest or second-largest single cost
+bucket post-Phase-27: about 19-20% of Balanced's wall time and, for Quality,
+the single largest bucket at roughly 37-40% of total wall — ahead of both
+cover scoring and entropy work, which prior phases already addressed.
+Structural cover/CfL reuse across anchors was already tried and rejected
+(regressed SSIMULACRA2 by up to 3.95 points; open question 1), so this phase
+does not touch the search itself, only its allocation pattern.
+
+`estimate_cfl` allocated three fresh `vec![0.0f32; n*n]` buffers
+(`y_lf`/`x_lf`/`b_lf`) per varblock — thousands of heap allocations per CfL
+search on a photo-sized image. These are now three per-LF-group scratch
+buffers, reused across every varblock in the group via `Vec::resize` the same
+way the group's `TransformScratch` was already reused. `lf_samples_of`
+unconditionally overwrites exactly the first `n * n` cells it is given, so
+this is pure construction reuse with no arithmetic change.
+
+All six canonical Fast/Balanced/Quality mid/large streams and both Balanced
+masking-AQ mid/large streams stayed byte-identical to the pre-change binary;
+every candidate output decoded. The full workspace test suite passed
+unchanged, and strict Clippy on the changed crate isolated to the same
+pre-existing `jpxl-core` debt as prior phases.
+
+The pinned five-iteration timing screen showed small, mostly positive deltas:
+Balanced mid 942.267 to 928.328 ms (1.5% faster), Balanced large 1787.939 to
+1741.568 ms (2.6% faster), Quality mid 6849.583 to 6644.058 ms (3.0% faster).
+Quality large's median rose slightly (13592.348 to 13889.233 ms) while its
+five-iteration total fell (73961.143 to 68760.513 ms, 7.0% less) and its
+minimum fell (13457.713 to 12841.807 ms, 4.6% faster), which reads as one
+noisy iteration rather than a regression — every pair kept identical output
+bytes and fingerprints. Raw logs are under
+`.agent/scratch/phase28-cfl-lf-scratch-reuse/`.
+
+This closes the easy allocation-only win in CfL search. The remaining cost is
+believed to be the search's own arithmetic (forward DCT plus regression), so
+further reduction needs the local dirty-frontier idea in open question 1, not
+more construction reuse.
+
 ### Open architectural questions
 
 1. How can the finalist refresh only structurally unstable cover decisions?

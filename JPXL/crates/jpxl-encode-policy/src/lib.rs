@@ -2868,6 +2868,15 @@ fn estimate_cfl(
             })?;
         debug_assert_eq!(workspace.hf.tiles, tiles);
         let mut llf_scratch = TransformScratch::for_transform(TransformType::Dct32x32);
+        // Phase 28: reused across every varblock in this group instead of
+        // three fresh `Vec<f32>` allocations per varblock. `lf_samples_of`
+        // always overwrites exactly the first `n * n` cells it is given, so
+        // `resize` (which only reallocates when the new length exceeds a
+        // capacity already grown to the largest varblock seen) is equivalent
+        // to the prior always-zeroed fresh vector for every read below.
+        let mut y_lf: Vec<f32> = Vec::new();
+        let mut x_lf: Vec<f32> = Vec::new();
+        let mut b_lf: Vec<f32> = Vec::new();
         let map = maps.get(index_usize).ok_or(PolicyError::Unsupported {
             what: "a missing block map for an LF group",
         })?;
@@ -2901,9 +2910,9 @@ fn estimate_cfl(
             .unwrap_or(usize::MAX);
 
             // LF: the varblock's n*n LF samples, chroma against reconstructed dY.
-            let mut y_lf = vec![0.0f32; n * n];
-            let mut x_lf = vec![0.0f32; n * n];
-            let mut b_lf = vec![0.0f32; n * n];
+            y_lf.resize(n * n, 0.0);
+            x_lf.resize(n * n, 0.0);
+            b_lf.resize(n * n, 0.0);
             lf_samples_of(cy, transform, n, side, &mut llf_scratch, &mut y_lf)?;
             lf_samples_of(cx, transform, n, side, &mut llf_scratch, &mut x_lf)?;
             lf_samples_of(cb, transform, n, side, &mut llf_scratch, &mut b_lf)?;

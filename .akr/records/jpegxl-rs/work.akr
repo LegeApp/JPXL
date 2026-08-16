@@ -1155,6 +1155,54 @@ record jpegxl-rs.work.arch-phase27-finalist-only-entropy/1 : work {
     part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
 }
 
+record jpegxl-rs.work.arch-phase28-cfl-lf-scratch-reuse/1 : work {
+    title "Phase 28: reusable CfL LF-sample scratch buffers"
+    state completed
+    scope [
+        path ".agent/scratch/**",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/docs/optimize.md"
+    ]
+    intent """
+        Replace estimate_cfl's three fresh `vec![0.0f32; n*n]` heap allocations per varblock (y_lf, x_lf, b_lf) with per-LF-group scratch buffers reused across varblocks via `Vec::resize`, the same pattern already used for the group's `llf_scratch` TransformScratch. Preserve exact arithmetic (lf_samples_of always overwrites exactly the first n*n cells it is handed) and every wire byte; this is allocation-only construction reuse in the spirit of Phases 19-24, not an algorithmic change.
+        """
+    note """
+        A fresh diagnostic pass (bench vardct-rate --diag on this session's host, since perf/flamegraph access is blocked in this sandbox: perf_event_paranoid=4, no sudo) showed CfL search is now the largest or second-largest single cost bucket post-Phase-27: ~146-302ms of Balanced's ~760-1540ms wall (19-20%), and ~1.27-2.19s per anchor of Quality's plan_ms (Quality's cfl_ms is now its single largest bucket at roughly 37-40% of total wall, ahead of cover_ms and entropy_ms). Cover/CfL structural reuse across anchors was already tried and rejected in an earlier phase (regressed SSIMULACRA2 up to 3.95 points), so this phase only removes allocation overhead within the existing per-structural-build CfL search, not the search itself. The pinned five-iteration timing showed small, mostly positive deltas (Balanced mid 942.267->928.328ms, Balanced large 1787.939->1741.568ms, Quality mid 6849.583->6644.058ms); Quality large's median rose slightly (13592.348->13889.233ms) while its five-iteration total fell (73961.143->68760.513ms) and its minimum fell (13457.713->12841.807ms), so that one cell reads as noisy rather than a regression. All four cases stayed byte- and fingerprint-identical to the pre-change binary. The remaining CfL/cover cost is now believed to be dominated by the search's own arithmetic (forward DCT + regression), not allocation, so a further reduction needs the local dirty-frontier idea in optimize.md's open question 1, not more construction reuse.
+        """
+    acceptance {
+        check gates {
+            statement """
+                Workspace build, formatting, and Clippy on the changed crate pass; strict Clippy remains isolated to pre-existing blockers.
+                """
+            method command
+            verified_by [ @jpegxl-rs.evidence.phase28-gates-2026-08-16/1 ]
+        }
+        check identity {
+            statement """
+                Canonical Fast, Balanced, Quality, and masking-AQ streams on mid and large inputs remain byte-identical to the pre-Phase-28 binary; every candidate output decodes.
+                """
+            method command
+            verified_by [ @jpegxl-rs.evidence.phase28-identity-2026-08-16/1 ]
+        }
+        check safety {
+            statement """
+                The full workspace test suite passes unchanged.
+                """
+            method command
+            verified_by [ @jpegxl-rs.evidence.phase28-safety-2026-08-16/1 ]
+        }
+        check speed {
+            statement """
+                A pinned five-iteration Balanced/Quality mid+large timing screen shows small, mostly positive deltas with identical output bytes and fingerprints in every case.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.phase28-speed-2026-08-16/1 ]
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase27-finalist-only-entropy ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+}
+
 record jpegxl-rs.work.arch-phase3-forward-cache/1 : work {
     title "Phase 3: eliminate the selected-forward clone; borrow from CandidateForwardCache"
     state superseded
