@@ -473,10 +473,10 @@ fn plan_at_with_cfl(
         }
         let mut groups = anchor.groups.clone();
         retarget_anchor_groups(&mut groups, &aq)?;
-        let maps: Vec<&[VarblockDecision]> = groups
+        let maps: Vec<PlannedVarblockRange> = groups
             .iter()
-            .map(|(_, _, _, varblocks)| &varblocks[..])
-            .collect();
+            .map(|(_, _, _, varblocks)| varblocks.range(0, varblocks.len()))
+            .collect::<Result<Vec<_>>>()?;
         let cfl = diagnostics::time_stage(diagnostics::StageTimer::Cfl, || {
             estimate_cfl(
                 &geometry,
@@ -601,10 +601,10 @@ fn plan_at_with_cfl(
                 })
             })?;
 
-        let maps: Vec<&[VarblockDecision]> = groups
+        let maps: Vec<PlannedVarblockRange> = groups
             .iter()
-            .map(|(_, _, _, varblocks)| &varblocks[..])
-            .collect();
+            .map(|(_, _, _, varblocks)| varblocks.range(0, varblocks.len()))
+            .collect::<Result<Vec<_>>>()?;
         let cfl = diagnostics::time_stage(diagnostics::StageTimer::Cfl, || {
             estimate_cfl(
                 &geometry,
@@ -623,8 +623,8 @@ fn plan_at_with_cfl(
         *slot = Some(StructuralAnchor {
             groups: groups
                 .iter()
-                .map(|(id, blocks, rect, varblocks)| (*id, *blocks, *rect, varblocks.shared()))
-                .collect(),
+                .map(|(id, blocks, rect, varblocks)| Ok((*id, *blocks, *rect, varblocks.shared()?)))
+                .collect::<Result<Vec<_>>>()?,
             cfl: Arc::clone(&cfl),
         });
     }
@@ -669,7 +669,9 @@ fn plan_at_with_cfl(
                     .map_err(|_| PolicyError::Unsupported {
                         what: "a poisoned LF-group forward bank",
                     })?;
-                let forwards = gather_forward_refs(varblocks, (rect.x0, rect.y0), &bank)?;
+                let varblock_range = varblocks.range(0, varblocks.len())?;
+                let forwards =
+                    gather_forward_refs(varblock_range.decisions, (rect.x0, rect.y0), &bank)?;
                 let workspace = quant_workspaces
                     .get(index)
                     .ok_or(PolicyError::Unsupported {
@@ -689,7 +691,7 @@ fn plan_at_with_cfl(
                         &hf_quants,
                         &cfl.correlation,
                         group_cfl,
-                        varblocks,
+                        &varblock_range,
                         &forwards,
                         *blocks,
                         workspace,
@@ -1115,16 +1117,28 @@ type PlannedGroup = (
     PlannedVarblocks,
 );
 
-/// Varblocks owned by a fresh plan, or shared immutably by an anchored probe.
+/// Varblocks owned by a fresh plan, shared immutably by an anchored probe, or
+/// shared under a compact per-probe `HfMul` overlay.
 ///
 /// Fresh construction keeps its existing `Vec` ownership. Captured anchors
 /// convert that vector to an `Arc<[VarblockDecision]>`; later probes can then
 /// clone the group map without copying the decisions. Retargeting an `HfMul`
-/// converts only the affected group back to an owned vector.
+/// (Phase 24) layers a dense `Box<[HfMul]>` over the shared decisions instead
+/// of copying the group's decisions: a probe re-pricing a different quantizer
+/// pays four bytes per varblock, and only for groups whose multipliers moved.
+///
+/// **The `Deref`/`IntoIterator` views expose the base decisions.** Geometry
+/// fields (`transform`, `origin`) are overlay-invariant, but `hf_mul` must be
+/// read through [`PlannedVarblocks::hf_mul_at`] or a
+/// [`PlannedVarblockRange`], which resolve the overlay.
 #[derive(Clone)]
 enum PlannedVarblocks {
     Owned(Vec<VarblockDecision>),
     Shared(Arc<[VarblockDecision]>),
+    Retargeted {
+        base: Arc<[VarblockDecision]>,
+        muls: Box<[HfMul]>,
+    },
 }
 
 impl PlannedVarblocks {
@@ -1132,10 +1146,18 @@ impl PlannedVarblocks {
         Self::Owned(values)
     }
 
-    fn shared(&self) -> Self {
+    fn shared(&self) -> Result<Self> {
         match self {
-            Self::Owned(values) => Self::Shared(Arc::from(values.clone().into_boxed_slice())),
-            Self::Shared(values) => Self::Shared(Arc::clone(values)),
+            Self::Owned(values) => Ok(Self::Shared(Arc::from(values.clone().into_boxed_slice()))),
+            Self::Shared(values) => Ok(Self::Shared(Arc::clone(values))),
+            // A capture freezes this probe's effective multipliers, so the
+            // overlay is applied before the decisions become the anchor's
+            // shared base.
+            Self::Retargeted { base, muls } => {
+                let mut values = base.to_vec();
+                Self::apply_overlay(&mut values, muls)?;
+                Ok(Self::Shared(values.into()))
+            }
         }
     }
 
@@ -1143,6 +1165,118 @@ impl PlannedVarblocks {
         match self {
             Self::Owned(values) => values.into_boxed_slice(),
             Self::Shared(values) => values.to_vec().into_boxed_slice(),
+            Self::Retargeted { base, muls } => {
+                let mut values = base.to_vec();
+                // The constructor pairs an overlay with a base of the same
+                // length, so this cannot fail; keeping the base values in
+                // that impossible case avoids panicking on the wire path.
+                if Self::apply_overlay(&mut values, &muls).is_err() {
+                    values.clear();
+                }
+                values.into_boxed_slice()
+            }
+        }
+    }
+
+    /// Overwrites every decision's `hf_mul` with the overlay value. The only
+    /// failure mode is an overlay whose length differs from its decisions,
+    /// which the constructors pairing them already reject.
+    fn apply_overlay(values: &mut [VarblockDecision], muls: &[HfMul]) -> Result<()> {
+        if values.len() != muls.len() {
+            return Err(PolicyError::Unsupported {
+                what: "a retarget overlay whose length differs from its group",
+            });
+        }
+        for (slot, mul) in values.iter_mut().zip(muls.iter()) {
+            slot.hf_mul = *mul;
+        }
+        Ok(())
+    }
+
+    /// Layers `targets` (this probe's desired multiplier per varblock, in
+    /// `BlockInfo` order) over the current storage, sharing the base
+    /// decisions instead of copying them.
+    fn retargeted(prior: Self, targets: Vec<HfMul>) -> Result<Self> {
+        let base = match prior {
+            Self::Owned(values) => Arc::from(values.into_boxed_slice()),
+            Self::Shared(values) => values,
+            // Retargeting twice keeps the one shared base; only the overlay
+            // is replaced.
+            Self::Retargeted { base, .. } => base,
+        };
+        if targets.len() != base.len() {
+            return Err(PolicyError::Unsupported {
+                what: "a retarget overlay whose length differs from its group",
+            });
+        }
+        Ok(Self::Retargeted {
+            base,
+            muls: targets.into_boxed_slice(),
+        })
+    }
+
+    /// The effective `HfMul` of the varblock at `index`, resolving any
+    /// retarget overlay.
+    fn hf_mul_at(&self, index: usize) -> Result<HfMul> {
+        match self {
+            Self::Retargeted { muls, .. } => {
+                muls.get(index).copied().ok_or(PolicyError::Unsupported {
+                    what: "a retarget overlay shorter than its group",
+                })
+            }
+            _ => self
+                .get(index)
+                .map(|vb| vb.hf_mul)
+                .ok_or(PolicyError::Unsupported {
+                    what: "a planned varblock index outside its group",
+                }),
+        }
+    }
+
+    /// An overlay-aware borrow of the contiguous range `start..end`, for the
+    /// chunked parallel quantizer.
+    fn range(&self, start: usize, end: usize) -> Result<PlannedVarblockRange<'_>> {
+        let decisions = self.get(start..end).ok_or(PolicyError::Unsupported {
+            what: "a planned-varblock range outside its group",
+        })?;
+        let muls = match self {
+            Self::Retargeted { muls, .. } => {
+                Some(muls.get(start..end).ok_or(PolicyError::Unsupported {
+                    what: "a retarget overlay range outside its group",
+                })?)
+            }
+            _ => None,
+        };
+        Ok(PlannedVarblockRange { decisions, muls })
+    }
+}
+
+/// A borrowed contiguous range of planned varblocks whose effective `HfMul`
+/// values resolve through a retarget overlay. The decision slice itself is
+/// the base storage; read geometry from it and multipliers through
+/// [`PlannedVarblockRange::hf_mul`].
+struct PlannedVarblockRange<'a> {
+    decisions: &'a [VarblockDecision],
+    muls: Option<&'a [HfMul]>,
+}
+
+impl PlannedVarblockRange<'_> {
+    fn len(&self) -> usize {
+        self.decisions.len()
+    }
+
+    fn hf_mul(&self, index: usize) -> Result<HfMul> {
+        match self.muls {
+            Some(muls) => muls.get(index).copied().ok_or(PolicyError::Unsupported {
+                what: "a retarget overlay index outside its range",
+            }),
+            None => self
+                .decisions
+                .get(index)
+                .map(|vb| vb.hf_mul)
+                .ok_or(PolicyError::Unsupported {
+                    what: "a planned varblock index outside its range",
+                }),
         }
     }
 }
@@ -1154,6 +1288,8 @@ impl Deref for PlannedVarblocks {
         match self {
             Self::Owned(values) => values,
             Self::Shared(values) => values,
+            // Base decisions: `hf_mul` reads must go through `hf_mul_at`.
+            Self::Retargeted { base, .. } => base,
         }
     }
 }
@@ -1204,7 +1340,12 @@ pub(crate) enum AnchorReuse<'a> {
 
 fn retarget_anchor_groups(groups: &mut [PlannedGroup], aq: &AqSetup) -> Result<()> {
     for (_, _, rect, varblocks) in groups {
-        let mut retargeted = None;
+        // Phase 24: compute the probe's desired multipliers first, then layer
+        // them as a compact overlay over the shared decisions. Only a group
+        // whose multipliers actually moved pays for the overlay; the rest
+        // keep their shared storage untouched.
+        let mut targets = Vec::with_capacity(varblocks.len());
+        let mut moved = false;
         for index in 0..varblocks.len() {
             let varblock = varblocks.get(index).ok_or(PolicyError::Unsupported {
                 what: "an anchored varblock index outside its group",
@@ -1222,16 +1363,12 @@ fn retarget_anchor_groups(groups: &mut [PlannedGroup], aq: &AqSetup) -> Result<(
                 rows,
                 cols,
             );
-            if hf_mul != varblock.hf_mul {
-                let values = retargeted.get_or_insert_with(|| varblocks.to_vec());
-                let slot = values.get_mut(index).ok_or(PolicyError::Unsupported {
-                    what: "an anchored retarget vector shorter than its group",
-                })?;
-                slot.hf_mul = hf_mul;
-            }
+            moved |= hf_mul != varblocks.hf_mul_at(index)?;
+            targets.push(hf_mul);
         }
-        if let Some(values) = retargeted {
-            *varblocks = PlannedVarblocks::owned(values);
+        if moved {
+            let prior = std::mem::replace(varblocks, PlannedVarblocks::owned(Vec::new()));
+            *varblocks = PlannedVarblocks::retargeted(prior, targets)?;
         }
     }
     Ok(())
@@ -2584,7 +2721,7 @@ fn varblock_cfl(
 /// `maps`; cover construction establishes that invariant before this call.
 fn estimate_cfl(
     geometry: &VardctGeometry,
-    maps: &[&[VarblockDecision]],
+    maps: &[PlannedVarblockRange],
     cache: &CandidateForwardCache,
     lf_quant: &LfQuantizer,
     hf_quants: &HfQuantizers,
@@ -2620,14 +2757,12 @@ fn estimate_cfl(
             .ok_or(PolicyError::Unsupported {
                 what: "an LF group outside the frame's grid",
             })?;
-        let map = maps
-            .get(index_usize)
-            .copied()
-            .ok_or(PolicyError::Unsupported {
-                what: "a missing block map for an LF group",
-            })?;
+        let map = maps.get(index_usize).ok_or(PolicyError::Unsupported {
+            what: "a missing block map for an LF group",
+        })?;
         sample_workspaces.push(std::sync::Mutex::new(Some(group_cfl_workspace(
-            tiles, map,
+            tiles,
+            map.decisions,
         )?)));
     }
     let collect_group = |index_usize: usize| {
@@ -2653,12 +2788,9 @@ fn estimate_cfl(
             })?;
         debug_assert_eq!(workspace.hf.tiles, tiles);
         let mut llf_scratch = TransformScratch::for_transform(TransformType::Dct32x32);
-        let map = maps
-            .get(index_usize)
-            .copied()
-            .ok_or(PolicyError::Unsupported {
-                what: "a missing block map for an LF group",
-            })?;
+        let map = maps.get(index_usize).ok_or(PolicyError::Unsupported {
+            what: "a missing block map for an LF group",
+        })?;
         let rect = geometry.lf_group_rect(id).ok_or(PolicyError::Unsupported {
             what: "an LF group outside the frame's grid",
         })?;
@@ -2668,20 +2800,20 @@ fn estimate_cfl(
             .map_err(|_| PolicyError::Unsupported {
                 what: "a poisoned LF-group forward bank",
             })?;
-        let group_fwd = gather_forward_refs(map, (rect.x0, rect.y0), &bank)?;
+        let group_fwd = gather_forward_refs(map.decisions, (rect.x0, rect.y0), &bank)?;
         if map.len() != group_fwd.len() {
             return Err(PolicyError::Unsupported {
                 what: "a forward cache length that does not match the block map",
             });
         }
 
-        for (vb, fwd) in map.iter().zip(group_fwd.iter()) {
+        for (vb_index, (vb, fwd)) in map.decisions.iter().zip(group_fwd.iter()).enumerate() {
             let [cx, cy, cb] = fwd.coeffs;
             let transform = vb.transform;
             let n = transform.block_dims().0;
             let side = transform.sample_cols();
             let cells = side * side;
-            let hf_quant = hf_quants.get(transform, vb.hf_mul)?;
+            let hf_quant = hf_quants.get(transform, map.hf_mul(vb_index)?)?;
             let tile = usize::try_from(
                 u64::from(vb.origin.by() / 8) * u64::from(tiles.width)
                     + u64::from(vb.origin.bx() / 8),
@@ -3188,12 +3320,11 @@ fn quantize_groups_parallel(
             groups.get(chunk.group).ok_or(PolicyError::Unsupported {
                 what: "a missing planned LF group before chunk quantization",
             })?;
-        let varblocks =
-            group_varblocks
-                .get(chunk.start..chunk.end)
-                .ok_or(PolicyError::Unsupported {
-                    what: "a sub-LF-group quantization range outside its block map",
-                })?;
+        let varblocks = group_varblocks.range(chunk.start, chunk.end).map_err(|_| {
+            PolicyError::Unsupported {
+                what: "a sub-LF-group quantization range outside its block map",
+            }
+        })?;
         let group_cfl = cfl
             .groups
             .get(chunk.group)
@@ -3206,7 +3337,7 @@ fn quantize_groups_parallel(
             .map_err(|_| PolicyError::Unsupported {
                 what: "a poisoned LF-group forward bank",
             })?;
-        let forwards = gather_forward_refs(varblocks, (rect.x0, rect.y0), &bank)?;
+        let forwards = gather_forward_refs(varblocks.decisions, (rect.x0, rect.y0), &bank)?;
         let workspace = workspaces
             .get(index)
             .ok_or(PolicyError::Unsupported {
@@ -3226,7 +3357,7 @@ fn quantize_groups_parallel(
                 hf_quants,
                 &cfl.correlation,
                 group_cfl,
-                varblocks,
+                &varblocks,
                 &forwards,
                 workspace,
             )
@@ -3329,7 +3460,7 @@ fn quantize_chunk(
     hf_quants: &HfQuantizers,
     correlation: &LfCorrelationDecision,
     cfl: &CflGrid,
-    varblocks: &[VarblockDecision],
+    varblocks: &PlannedVarblockRange,
     forwards: &[VarblockForward<'_>],
     mut workspace: QuantChunkWorkspace,
 ) -> Result<QuantizedChunk> {
@@ -3342,7 +3473,7 @@ fn quantize_chunk(
     let mut qscratch = QuantScratch::new();
     let mut cursor = 0usize;
 
-    for (vb, fwd) in varblocks.iter().zip(forwards.iter()) {
+    for (vb_index, (vb, fwd)) in varblocks.decisions.iter().zip(forwards.iter()).enumerate() {
         let transform = vb.transform;
         let side = transform.sample_cols();
         let ch_cells = side.saturating_mul(side);
@@ -3363,7 +3494,7 @@ fn quantize_chunk(
             &fwd.coeffs,
             transform,
             lf_quant,
-            hf_quants.get(transform, vb.hf_mul)?,
+            hf_quants.get(transform, varblocks.hf_mul(vb_index)?)?,
             factors,
             &mut tscratch,
             &mut qscratch,
@@ -3381,7 +3512,7 @@ fn quantize_chunk(
         cursor = end;
     }
 
-    for (vb, channel_starts) in varblocks.iter().zip(workspace.starts) {
+    for (vb, channel_starts) in varblocks.decisions.iter().zip(workspace.starts) {
         workspace
             .coefficients
             .push(VarblockCoefficients::from_arena(
@@ -3410,7 +3541,7 @@ fn quantize_group(
     hf_quants: &HfQuantizers,
     correlation: &LfCorrelationDecision,
     cfl: &CflGrid,
-    varblocks: &[VarblockDecision],
+    varblocks: &PlannedVarblockRange,
     forwards: &[VarblockForward<'_>],
     blocks: jpxl_encode::vardct::BlockGrid,
     mut workspace: QuantWorkspace,
@@ -3424,7 +3555,7 @@ fn quantize_group(
     let mut qscratch = QuantScratch::new();
     let mut cursor = 0usize;
 
-    for (vb, fwd) in varblocks.iter().zip(forwards.iter()) {
+    for (vb_index, (vb, fwd)) in varblocks.decisions.iter().zip(forwards.iter()).enumerate() {
         let transform = vb.transform;
         let side = transform.sample_cols();
         let ch_cells = side * side;
@@ -3445,7 +3576,7 @@ fn quantize_group(
             &fwd.coeffs,
             transform,
             lf_quant,
-            hf_quants.get(transform, vb.hf_mul)?,
+            hf_quants.get(transform, varblocks.hf_mul(vb_index)?)?,
             factors,
             &mut tscratch,
             &mut qscratch,
@@ -3468,7 +3599,7 @@ fn quantize_group(
         cursor = end;
     }
 
-    for (vb, channel_starts) in varblocks.iter().zip(workspace.starts) {
+    for (vb, channel_starts) in varblocks.decisions.iter().zip(workspace.starts) {
         workspace
             .coefficients
             .push(VarblockCoefficients::from_arena(

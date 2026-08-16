@@ -302,6 +302,32 @@ true immutable transform-geometry representation plus a compact per-probe
 `HfMul` overlay; selective dirty cover refresh, raw event tapes, and Anchored
 Quality remain later phases.
 
+## Phase 24 — compact per-probe `HfMul` overlay (2026-08-16)
+
+Anchored probes no longer materialize an owned `VarblockDecision` vector when
+a group's multipliers move: `PlannedVarblocks` gained a `Retargeted` form that
+layers a dense `Box<[HfMul]>` over the shared immutable decisions. Geometry
+reads keep using the base decisions; multiplier reads resolve through
+`hf_mul_at` / `PlannedVarblockRange`. Re-retargeting keeps the one shared base
+and replaces only the overlay; capturing an anchor applies the overlay before
+freezing the base; length mismatches are rejected rather than truncated. This
+commit also carries the workspace version bump to `0.3.0`.
+
+All five canonical streams (Fast/Balanced/Quality mid, Fast large, Fast
+masking-AQ mid) remain byte-identical to Phase 23, and the candidate
+Balanced/Quality/large decodes are bit-identical to the Phase 23 PPMs. The
+focused policy suite passed all 98 tests and the workspace gates match HEAD
+(fmt clean, policy clippy clean, `jpxl-core` clippy blockers pre-existing).
+
+**No timing claim.** The timed Balanced path never exercises the overlay —
+under the neutral production AQ the desired multipliers already match, so
+Phase 23's CoW path is taken — and both pinned A/B attempts on 2026-08-16 ran
+against heavy competing host load, so the recorded runs are noise. The
+definitive pinned pass (Balanced plus a masking-AQ stream, which is what
+actually exercises the overlay) is deferred to a quiet host; the work record's
+speed check stays open until then. Raw hashes, identity logs, decode checks,
+and the contaminated timing logs are in `.agent/scratch/phase24-hfmul-overlay/`.
+
 ### Open architectural questions
 
 1. How can the finalist refresh only structurally unstable cover decisions?

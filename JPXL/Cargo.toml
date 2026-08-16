@@ -12,20 +12,20 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.97"
 license = "MIT OR Apache-2.0"
 
 # In-workspace crates plus Opt-P leaf deps (feature-gated; default-on).
 [workspace.dependencies]
-jpxl-bitstream = { path = "crates/jpxl-bitstream", version = "0.1.0" }
-jpxl-core = { path = "crates/jpxl-core", version = "0.1.0" }
-jpxl-entropy = { path = "crates/jpxl-entropy", version = "0.1.0" }
-jpxl-decode = { path = "crates/jpxl-decode", version = "0.1.0" }
-jpxl-encode = { path = "crates/jpxl-encode", version = "0.1.0" }
-jpxl-encode-policy = { path = "crates/jpxl-encode-policy", version = "0.1.0" }
-jpxl-conformance = { path = "crates/jpxl-conformance", version = "0.1.0" }
+jpxl-bitstream = { path = "crates/jpxl-bitstream", version = "0.3.0" }
+jpxl-core = { path = "crates/jpxl-core", version = "0.3.0" }
+jpxl-entropy = { path = "crates/jpxl-entropy", version = "0.3.0" }
+jpxl-decode = { path = "crates/jpxl-decode", version = "0.3.0" }
+jpxl-encode = { path = "crates/jpxl-encode", version = "0.3.0" }
+jpxl-encode-policy = { path = "crates/jpxl-encode-policy", version = "0.3.0" }
+jpxl-conformance = { path = "crates/jpxl-conformance", version = "0.3.0" }
 # Coarse group/section parallelism (EncodeResources ordered_map).
 rayon = "1.10"
 # Portable SIMD for leaf kernels (DCT butterflies, Gaborish, quantize).

@@ -838,6 +838,56 @@ record jpegxl-rs.work.arch-phase23-cow-geometry/1 : work {
     part_of [ @jpegxl-rs.track.encoder-optimization ]
 }
 
+record jpegxl-rs.work.arch-phase24-hfmul-overlay/1 : work {
+    title "Phase 24: compact per-probe HfMul overlay"
+    state proposed
+    scope [ path "JPXL/crates/jpxl-encode-policy/src/lib.rs", path "JPXL/docs/optimize.md" ]
+    intent """
+        Replace Phase 23's copy-on-write HfMul retarget (which materialized an
+        owned copy of a whole group's VarblockDecision vector when any multiplier
+        moved) with a dense Box<[HfMul]> overlay layered over the shared immutable
+        decisions. Geometry reads keep using the base decisions; multiplier reads
+        resolve through hf_mul_at / PlannedVarblockRange. Groups whose multipliers
+        did not move keep their shared storage untouched, and capturing an anchor
+        applies the overlay before freezing the base. Also carries the workspace
+        version bump to 0.3.0. Preserve output bytes, decoder behavior, thread
+        determinism, and AnchorReuse semantics.
+        """
+    note """
+        Bounded slice: no change to cover selection, CfL, quantization rules,
+        entropy choices, or the wire-facing plan beyond ownership of the HfMul
+        values.
+        """
+    acceptance {
+        check gates {
+            statement """
+                Workspace build, tests, no-default-features check, formatting, and AKR validation pass; strict Clippy remains isolated to pre-existing blockers.
+                """
+            method command
+        }
+        check identity {
+            statement """
+                Canonical Fast, Balanced, Quality, and masking-AQ streams remain byte-identical to Phase 23; decoded pixels and fingerprints are unchanged.
+                """
+            method command
+        }
+        check safety {
+            statement """
+                Focused policy tests, workspace tests, and oracle-backed decoder checks pass; the overlay cannot mutate the captured base decisions and length mismatches are rejected, not truncated.
+                """
+            method command
+        }
+        check speed {
+            statement """
+                Pinned interleaved Balanced timing measures the overlay retarget path on canonical mid and large inputs with binary/input hashes and dispersion, run without competing load.
+                """
+            method observation
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase23-cow-geometry ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+}
+
 record jpegxl-rs.work.arch-phase3-forward-cache/1 : work {
     title "Phase 3: eliminate the selected-forward clone; borrow from CandidateForwardCache"
     state superseded

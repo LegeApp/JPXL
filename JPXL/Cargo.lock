@@ -154,11 +154,11 @@ checksum = "89194689a993ab15268672e99e7b0e19da2da3268ac682e8f02d29d4d1434cd7"
 
 [[package]]
 name = "jpxl-bitstream"
-version = "0.1.0"
+version = "0.3.0"
 
 [[package]]
 name = "jpxl-cli"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "jpxl-conformance",
  "jpxl-core",
@@ -169,7 +169,7 @@ dependencies = [
 
 [[package]]
 name = "jpxl-conformance"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "butteraugli",
  "jpxl-core",
@@ -178,7 +178,7 @@ dependencies = [
 
 [[package]]
 name = "jpxl-core"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "jpxl-bitstream",
  "wide",
@@ -186,7 +186,7 @@ dependencies = [
 
 [[package]]
 name = "jpxl-decode"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "jpxl-bitstream",
  "jpxl-conformance",
@@ -196,7 +196,7 @@ dependencies = [
 
 [[package]]
 name = "jpxl-encode"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "jpxl-bitstream",
  "jpxl-conformance",
@@ -209,7 +209,7 @@ dependencies = [
 
 [[package]]
 name = "jpxl-encode-policy"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "jpxl-conformance",
  "jpxl-core",
@@ -221,7 +221,7 @@ dependencies = [
 
 [[package]]
 name = "jpxl-entropy"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "jpxl-bitstream",
  "jpxl-core",

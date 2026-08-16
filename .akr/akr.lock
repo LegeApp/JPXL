@@ -2,10 +2,10 @@ akr-lock 0.1
 project jpegxl-rs
 
 build {
-    tool "akr 0.3.0"
+    tool "akr 0.3.1"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:a02db4c53f9f1d18ca00dbcab773f74f2f73f03ddc244abce39e52f69ab57088"
+    source_graph "sha256:18fc0c7ae078650b6fbdb0d1a03ba74738f82b705520c0c9cc5cdc33228f28d5"
 }
 
 source ".akr/project.akr" {
@@ -64,8 +64,8 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:761f367582dc20afef40dcd88505db9620f4dffc6a3d7643f38b7da4f8afdb8e"
-    records 112
+    hash "sha256:626ba5b7053dedaa519ecb31c141296d1e7bcc2b7a4300cfb18b39a09546e06a"
+    records 113
 }
 
 resolution @jpegxl-rs.decision.encoder-architecture-phases/1 {
@@ -1761,6 +1761,18 @@ resolution @jpegxl-rs.work.arch-phase23-cow-geometry/1 {
 }
 
 resolution @jpegxl-rs.work.arch-phase23-cow-geometry/1 {
+    slot part_of
+    to @jpegxl-rs.track.encoder-optimization/1
+    hash "sha256:49975e17bd10998d72b08fccfe98fdea9bdf68ef56e4404dd68e94e1e2d75f23"
+}
+
+resolution @jpegxl-rs.work.arch-phase24-hfmul-overlay/1 {
+    slot depends_on
+    to @jpegxl-rs.work.arch-phase23-cow-geometry/1
+    hash "sha256:6f60259cba2d391c615f18dac04e9aaeb6c1794a556bb22fbb644d39169e48c6"
+}
+
+resolution @jpegxl-rs.work.arch-phase24-hfmul-overlay/1 {
     slot part_of
     to @jpegxl-rs.track.encoder-optimization/1
     hash "sha256:49975e17bd10998d72b08fccfe98fdea9bdf68ef56e4404dd68e94e1e2d75f23"
