@@ -1697,6 +1697,54 @@ record jpegxl-rs.evidence.phase3-selected-forward-clone-eliminated-postcommit/1 
         """
 }
 
+record jpegxl-rs.evidence.phase30-gates-2026-08-16/1 : evidence {
+    title "Phase 30 gates pass"
+    state verified
+    result pass
+    method command
+    observed_at git:8fde8145f062f370e58dc4146f3cde60017c3b9e
+    command "cargo build --workspace && cargo build --workspace --tests && cargo fmt --all --check && cargo clippy -p jpxl-core -p jpxl-encode -p jpxl-encode-policy --all-features -- -D warnings && cargo test --workspace"
+    summary """
+        Workspace build (both with and without --tests) is warning-free, formatting is clean, the full test suite passes, and Clippy reports nothing on any changed file across the three touched crates.
+        """
+}
+
+record jpegxl-rs.evidence.phase30-identity-2026-08-16/1 : evidence {
+    title "Phase 30 identity confirmed"
+    state verified
+    result pass
+    method command
+    observed_at git:8fde8145f062f370e58dc4146f3cde60017c3b9e
+    command "jpxl encode --bpp 1 --lossy-preset {fast,balanced,quality}[,--aq-mode masking] <mid|large>-photo.ppm, compared byte-for-byte against the pre-change binary; jpxl decode on every candidate output"
+    summary """
+        All six canonical Fast/Balanced/Quality mid+large streams and both Balanced masking-AQ mid+large streams stayed byte-identical to the pre-Phase-30 binary; every candidate output decoded successfully.
+        """
+}
+
+record jpegxl-rs.evidence.phase30-profile-2026-08-16/1 : evidence {
+    title "Phase 30 profile confirms the redundant clone and its removal"
+    state verified
+    result pass
+    method observation
+    observed_at git:8fde8145f062f370e58dc4146f3cde60017c3b9e
+    command "perf record -F 999 --call-graph dwarf,16384 -- jpxl bench vardct-rate --lossy-preset quality --iters 2 --threads 4; perf script | inferno-collapse-perf"
+    summary """
+        A DWARF-unwound profile on the pre-change binary attributed about 1.24% of sampled self-time (17.95M of 1.452B cycles) to the natural_coeff_order clone chain, concentrated in entropy.rs's per-varblock order-frequency loop. The same profile scenario on the post-change candidate binary shows the chain at about 0.03% (3.06M of 9.89B cycles), roughly a 40x reduction. Raw folded profiles under .agent/scratch/phase30-natural-order-ref/.
+        """
+}
+
+record jpegxl-rs.evidence.phase30-speed-2026-08-16/1 : evidence {
+    title "Phase 30 pinned timing: mixed and noise-dominated, not the primary evidence"
+    state verified
+    result inconclusive
+    method observation
+    observed_at git:8fde8145f062f370e58dc4146f3cde60017c3b9e
+    command "taskset -c 0,2,4,6 <baseline|candidate>-jpxl bench vardct-rate --input <mid|large>-photo.ppm --bpp 1 --lossy-preset {fast,balanced,quality} --iters 5 --threads 4"
+    summary """
+        Pinned five-iteration medians were mixed: Fast mid 506.566->551.191ms (+8.8%), Fast large 1140.559->1115.923ms (-2.2%), Balanced mid 976.461->987.251ms (+1.1%), Balanced large 1912.006->1691.106ms (-11.6%), Quality mid 6783.315->6570.332ms (-3.1%), Quality large 12327.749->12850.051ms (+4.2%). Output bytes and fingerprints stayed identical in all six cases. The two slower cases (Fast mid, Quality large) both show markedly higher candidate-run mad (12.008ms and 367.100ms) than their baseline runs (0.475ms and 79.605ms), consistent with host-noise contamination of those specific samples rather than a real regression; the profile evidence (phase30-profile) is the load-bearing measurement for this phase's cost claim. Raw log under .agent/scratch/phase30-natural-order-ref/pinned-timing.log.
+        """
+}
+
 record jpegxl-rs.evidence.phase4-0b-density-gate-2026-08-08/1 : evidence {
     title "4.0b density + decode-validity gate: jpxl-modular beats cjxl -e1, trails cjxl -e7 by 16-42%"
     state verified

@@ -2681,13 +2681,15 @@ fn quantize_square_varblock(
     // Phase 7.1 truncation runs on Y *before* `d_y_hf` is read, so the chroma
     // CfL targets decorrelate against the Y the decoder will actually
     // reconstruct rather than against coefficients this pass then drops.
-    let order = if truncate {
-        transform.natural_coeff_order()
+    // Phase 30: a `'static` borrow of the shared per-Order-ID cache instead
+    // of a fresh clone every varblock; see `natural_coeff_order_ref`.
+    let order: &[u32] = if truncate {
+        transform.natural_coeff_order_ref()
     } else {
-        Vec::new()
+        &[]
     };
     if truncate {
-        hf_quant.truncate_trailing(1, qy, &order, n * n, ZERO_TOKEN_BITS, |cell| {
+        hf_quant.truncate_trailing(1, qy, order, n * n, ZERO_TOKEN_BITS, |cell| {
             y_coeff.get(cell).copied().unwrap_or(0.0)
         });
     }

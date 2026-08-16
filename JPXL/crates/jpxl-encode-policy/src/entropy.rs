@@ -36,7 +36,7 @@
 //! they steer merges, they are not prices, and the oracle suite verifies the
 //! streams the trained model produces.
 
-use jpxl_core::varblock::{NUM_ORDER_IDS, natural_coeff_order, order_id_dims};
+use jpxl_core::varblock::{NUM_ORDER_IDS, natural_coeff_order_ref, order_id_dims};
 use jpxl_encode::vardct::ids::{ClusterId, OrderId, PresetId};
 use jpxl_encode::vardct::plan::{
     DEFAULT_BLOCK_CTX_MAP, HfBlockContextPlan, HistogramPlan, HybridUintPlan, OrderSet,
@@ -825,7 +825,10 @@ pub(crate) fn candidate_orders(
     for (group, coefficients) in spatial.lf_groups.iter().zip(quantized.lf_groups.iter()) {
         for (vb, coeff) in group.blocks.iter().zip(coefficients.coefficients.iter()) {
             let order_id = vb.transform.order_id();
-            let Some(natural) = order_id_dims(order_id).map(|(w, h)| natural_coeff_order(w, h))
+            // Phase 30: this ran once per varblock; `natural_coeff_order_ref`
+            // borrows the shared per-Order-ID cache instead of cloning it.
+            let Some(natural) =
+                order_id_dims(order_id).and_then(|(w, h)| natural_coeff_order_ref(w, h))
             else {
                 continue;
             };
@@ -859,7 +862,9 @@ pub(crate) fn candidate_orders(
         if totals.get(order_id).copied().unwrap_or(0) < MIN_ORDER_SAMPLES {
             continue;
         }
-        let Some(natural) = order_id_dims(order_id).map(|(w, h)| natural_coeff_order(w, h)) else {
+        let Some(natural) =
+            order_id_dims(order_id).and_then(|(w, h)| natural_coeff_order_ref(w, h))
+        else {
             continue;
         };
         let skip = natural.len() / 64;

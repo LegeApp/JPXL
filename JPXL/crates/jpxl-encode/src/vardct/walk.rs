@@ -39,7 +39,7 @@
 //! Nothing in this module encodes: it produces events. Whether an event becomes
 //! a histogram bucket or an ANS symbol is the sink's business.
 
-use jpxl_core::varblock::{TransformType, natural_coeff_order, order_id_dims};
+use jpxl_core::varblock::{TransformType, natural_coeff_order_ref, order_id_dims};
 
 use crate::entropy::pack_signed;
 use crate::vardct::error::{PlanError, PlanResult};
@@ -128,11 +128,13 @@ impl OrderTables {
     pub fn from_order_set(orders: &OrderSet) -> Self {
         let mut tables = Vec::with_capacity(jpxl_core::varblock::NUM_ORDER_IDS * NUM_CHANNELS);
         for order_id in 0..jpxl_core::varblock::NUM_ORDER_IDS {
+            // Phase 30: one shared borrow instead of one throwaway clone
+            // before the per-channel clones below.
             let natural = order_id_dims(order_id)
-                .map(|(w, h)| natural_coeff_order(w, h))
+                .and_then(|(w, h)| natural_coeff_order_ref(w, h))
                 .unwrap_or_default();
             for _ in 0..NUM_CHANNELS {
-                tables.push(natural.clone());
+                tables.push(natural.to_vec());
             }
         }
         for over in orders.overrides() {
@@ -425,6 +427,7 @@ pub const fn pre_context_count(num_hf_presets: u32, nb_block_ctx: u64) -> u64 {
 mod tests {
     use super::*;
     use crate::vardct::sink::CensusSink;
+    use jpxl_core::varblock::natural_coeff_order;
 
     fn dct8x8(values: [i32; 64]) -> VarblockCoefficients {
         VarblockCoefficients::new(

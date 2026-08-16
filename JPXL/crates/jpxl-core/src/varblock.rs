@@ -426,6 +426,14 @@ impl TransformType {
     pub fn natural_coeff_order(self) -> Vec<u32> {
         natural_coeff_order(self.coeff_cols(), self.coeff_rows())
     }
+
+    /// [`Self::natural_coeff_order`] without the per-call allocation; see
+    /// [`natural_coeff_order_ref`]. Every real `TransformType` has an Order
+    /// ID row in Table I.7, so this is never `None` for `self`.
+    #[must_use]
+    pub fn natural_coeff_order_ref(self) -> &'static [u32] {
+        natural_coeff_order_ref(self.coeff_cols(), self.coeff_rows()).unwrap_or(&[])
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -638,26 +646,39 @@ pub fn order_id_dims(order_id: usize) -> Option<(usize, usize)> {
 /// the order. The first `(bwidth/8) * (bheight/8)` entries are the LLF
 /// sub-rectangle sorted by `y * bwidth/8 + x`; the rest are the HF cells sorted
 /// by the boustrophedon `(key1, key2)` of I.3.2.
+///
+/// Allocates and copies the cached table; callers that only read it (the
+/// common case — most call this once per varblock) should prefer
+/// [`natural_coeff_order_ref`], which borrows the same cache instead.
+#[must_use]
+pub fn natural_coeff_order(bwidth: usize, bheight: usize) -> Vec<u32> {
+    natural_coeff_order_ref(bwidth, bheight)
+        .map(<[u32]>::to_vec)
+        .unwrap_or_else(|| natural_coeff_order_uncached(bwidth, bheight))
+}
+
+/// [`natural_coeff_order`] without the per-call allocation: a `'static`
+/// reference into the same per-Order-ID cache. `None` only for dimensions
+/// that do not correspond to any of Table I.7's Order IDs (every real
+/// [`TransformType`] does, via [`TransformType::natural_coeff_order_ref`]).
+///
+/// Phase 30 (`JPXL/docs/optimize.md`): a profile found this table cloned on
+/// every varblock in several read-only call sites, even though it depends
+/// only on the Order ID (13 possible values) and never changes after the
+/// first call for a given shape.
 #[must_use]
 // `bwidth * bheight` is at most 65536, so both the i64 keys and the u32 output
 // are exact; the table is fixed by Table I.1 and cannot grow at runtime.
 #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
-pub fn natural_coeff_order(bwidth: usize, bheight: usize) -> Vec<u32> {
-    if let Some(order_id) = cached_order_id_dims()
+pub fn natural_coeff_order_ref(bwidth: usize, bheight: usize) -> Option<&'static [u32]> {
+    let order_id = cached_order_id_dims()
         .iter()
-        .position(|&dims| dims == Some((bwidth, bheight)))
-    {
-        return NATURAL_COEFF_ORDERS
-            .get(order_id)
-            .map(|order| {
-                order
-                    .get_or_init(|| natural_coeff_order_uncached(bwidth, bheight))
-                    .clone()
-            })
-            .unwrap_or_default();
-    }
-
-    natural_coeff_order_uncached(bwidth, bheight)
+        .position(|&dims| dims == Some((bwidth, bheight)))?;
+    NATURAL_COEFF_ORDERS.get(order_id).map(|order| {
+        order
+            .get_or_init(|| natural_coeff_order_uncached(bwidth, bheight))
+            .as_slice()
+    })
 }
 
 #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]

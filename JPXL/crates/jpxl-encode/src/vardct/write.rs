@@ -860,7 +860,7 @@ fn write_hf_coeff_orders(
     pass: &crate::vardct::plan::HfPassEntropyPlan,
     w: &mut BitWriter,
 ) -> Result<()> {
-    use jpxl_core::varblock::{NUM_ORDER_IDS, natural_coeff_order, order_id_dims};
+    use jpxl_core::varblock::{NUM_ORDER_IDS, natural_coeff_order_ref, order_id_dims};
 
     let overrides = pass.orders.overrides();
     let mut used = 0u32;
@@ -879,7 +879,7 @@ fn write_hf_coeff_orders(
             continue;
         }
         let natural = order_id_dims(order_id)
-            .map(|(bw, bh)| natural_coeff_order(bw, bh))
+            .and_then(|(bw, bh)| natural_coeff_order_ref(bw, bh))
             .unwrap_or_default();
         let size = u32::try_from(natural.len()).unwrap_or(u32::MAX);
         let skip = size / 64;

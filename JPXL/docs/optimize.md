@@ -499,6 +499,45 @@ profiling now available, the next phase should get a fresh flamegraph on
 Quality (still CfL-dominated per Phase 28) before picking the next target,
 rather than continuing to reason from the pre-Phase-28 flamegraph.
 
+## Phase 30 — zero-copy natural coefficient order (2026-08-16)
+
+A DWARF-unwound profile on Quality mid (33,580 samples) — the first in this
+pass to look at the write/entropy stage rather than color conversion or CfL —
+found `jpxl_core::varblock::natural_coeff_order` cloning its cached I.3.2
+table on every call, even though the cache is a per-Order-ID `OnceLock` that
+never changes after the first call for a given shape (13 possible Order IDs
+total) and one call site was inside a loop over every varblock in every LF
+group. The clone chain was about 1.24% of sampled self-time.
+
+`natural_coeff_order_ref` (plus `TransformType::natural_coeff_order_ref`) now
+returns a `'static` borrow into the same cache instead of an owned `Vec`.
+Every read-only call site this profile found — `entropy.rs`'s two
+order-frequency loops (one of them per-varblock), `walk.rs`'s
+`OrderTables::from_order_set`, and `write.rs`'s `write_hf_coeff_orders` —
+switched to it. The three call sites that mutate their own copy (two
+order-search table builders and the order-length validator) keep calling the
+owned `natural_coeff_order`, unchanged.
+
+All six canonical Fast/Balanced/Quality mid/large streams and both Balanced
+masking-AQ mid/large streams stayed byte-identical to the pre-change binary;
+every candidate output decoded. The full workspace test suite passed, and
+Clippy reported nothing on any changed file. A post-change profile of the
+same Quality-mid scenario shows the clone chain reduced to about 0.03% of
+sampled cycles — roughly a 40x reduction in that specific cost.
+
+The pinned wall-clock screen was mixed rather than a clean win: Fast large
+(-2.2%), Balanced large (-11.6%), and Quality mid (-3.1%) moved in the
+profile-predicted direction, but Fast mid (+8.8%) and Quality large (+4.2%)
+were slower, both with markedly higher run-to-run spread in exactly those
+two candidate runs than their baselines — read as host-noise contamination
+of specific samples rather than a real regression, since a redundant-clone
+removal has no mechanism to slow anything down and every output stayed
+byte-identical. Unlike Phases 24-29, the profile delta (not the wall-clock
+screen) is this phase's load-bearing evidence; the acceptance record omits a
+formal speed check for that reason rather than mis-stating a "pass". Raw
+folded profiles and the timing log are under
+`.agent/scratch/phase30-natural-order-ref/`.
+
 ### Open architectural questions
 
 1. How can the finalist refresh only structurally unstable cover decisions?

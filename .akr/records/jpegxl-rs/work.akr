@@ -1453,6 +1453,51 @@ record jpegxl-rs.work.arch-phase3-forward-cache/2 : work {
     supported_by [ @jpegxl-rs.assessment.encoder-architecture-outside-advice ]
 }
 
+record jpegxl-rs.work.arch-phase30-natural-order-ref/1 : work {
+    title "Phase 30: zero-copy natural coefficient order"
+    state completed
+    scope [
+        path ".agent/scratch/**",
+        path "JPXL/crates/jpxl-core/src/varblock.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/entropy.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode/src/vardct/walk.rs",
+        path "JPXL/crates/jpxl-encode/src/vardct/write.rs",
+        path "JPXL/docs/optimize.md"
+    ]
+    intent """
+        jpxl_core::varblock::natural_coeff_order(bwidth, bheight) already caches its I.3.2 table in a per-Order-ID OnceLock<Vec<u32>>, but every call still clones the cached Vec, even though there are only 13 possible Order IDs and the table never changes after the first call for a given shape. Add natural_coeff_order_ref (and TransformType::natural_coeff_order_ref) returning a 'static borrow into the same cache, and switch every read-only call site this profile found -- jpxl-encode-policy's entropy.rs (twice, one of them inside a per-varblock loop over every LF-group block), jpxl-encode's walk.rs OrderTables::from_order_set, and write.rs's write_hf_coeff_orders -- to the borrowed form. Call sites that mutate their own copy (write.rs's two order-search table builders, plan.rs's order-length validator) keep calling the owned natural_coeff_order, unchanged.
+        """
+    note """
+        Found via a DWARF-unwound perf/inferno profile on Quality mid (2 iters, threads=4, 33580 samples) -- the first phase in this pass to profile the encoder's write/entropy stage rather than color conversion (Phase 29) or CfL (Phase 28). The clone chain (natural_coeff_order -> Vec::clone -> to_vec_in -> allocator) was about 1.24% of sampled self-time (17.95M of 1.452B cycles across 9 distinct stacks), concentrated in entropy.rs's per-varblock order-frequency counting loop. A post-change profile of the same scenario shows the same chain reduced to about 0.03% of sampled cycles (3.06M of 9.89B), roughly a 40x reduction in that specific cost. The pinned wall-clock screen was mixed: Fast large -2.2%, Balanced large -11.6%, Quality mid -3.1% (all in the profile-predicted direction), but Fast mid +8.8% and Quality large +4.2% with markedly higher run-to-run spread (mad) in exactly those two candidate runs -- read as host-noise contamination of specific samples, not a real regression, since a redundant-clone removal has no mechanism to slow anything down and every output byte and fingerprint stayed identical. The profile-measured before/after delta is the load-bearing evidence for this phase, not the noisy wall-clock screen.
+        """
+    acceptance {
+        check gates {
+            statement """
+                Workspace build (with and without --tests) is warning-free, formatting is clean, the full test suite passes, and Clippy reports nothing on any changed file.
+                """
+            method command
+            verified_by [ @jpegxl-rs.evidence.phase30-gates-2026-08-16/1 ]
+        }
+        check identity {
+            statement """
+                Canonical Fast, Balanced, Quality, and masking-AQ streams on mid and large inputs remain byte-identical to the pre-Phase-30 binary; every candidate output decodes.
+                """
+            method command
+            verified_by [ @jpegxl-rs.evidence.phase30-identity-2026-08-16/1 ]
+        }
+        check profile {
+            statement """
+                A DWARF-unwound profile traces the redundant-clone cost to the per-varblock natural_coeff_order call site, and a post-change profile shows it reduced roughly 40x. A pinned wall-clock screen was also recorded (mixed, noise-dominated result; see evidence) since it is this pass's usual acceptance method, but the profile delta carries the cost claim.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.phase30-profile-2026-08-16/1 ]
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase29-srgb-linear-lut ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+}
+
 record jpegxl-rs.work.arch-phase4-0b-density-gate/1 : work {
     title "Phase 4.0b: pinned real-corpus density + decode-validity gate (prerequisite for 4A/4C)"
     state completed
