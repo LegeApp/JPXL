@@ -2002,6 +2002,45 @@ record jpegxl-rs.evidence.phase37-speed-2026-08-17/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase38-identity-2026-08-17/1 : evidence {
+    title "Phase 38 band-parallel CfL/prep is byte-identical: every canonical stream, thread count and AVX2 setting matches Phase 34-37"
+    state verified
+    result pass
+    method command
+    observed_at git:84abaad268f9844521f98327b35fce8e0da86981
+    command ".agent/scratch/phase35-lane-dct/run-identity.sh (jpxl-p38 vs baselines); JPXL_DISABLE_AVX2=1 jpxl-p38 encode ..."
+    artifact ".agent/scratch/phase35-lane-dct/out/identity.sha256"
+    summary """
+        All six canonical mid/large Fast/Balanced/Quality 1-bpp streams, both masking-AQ streams and the lossless modular stream are byte-identical to the Phase 34/35/36/37 hashes (Balanced-mid 7f70ae001ec27658..., Quality-mid d4b03810dc0bcb73..., Balanced-large 8bb1b1fb2df6b45d..., Quality-large c3321262010e37f6...); Balanced-mid identical at one and four threads (band-parallel collection and prep therefore reduce in the same order as the serial paths); JPXL_DISABLE_AVX2 reproduces Balanced-mid; old and new decoders agree pixel for pixel; djxl 0.13.0 and jxl-oxide 0.12.6 accept the mid/large Balanced candidates.
+        """
+}
+
+record jpegxl-rs.evidence.phase38-safety-2026-08-17/1 : evidence {
+    title "Phase 38 gates: fmt, strict Clippy, 57 workspace suites in fast-debug and in release, oracle 12/12, rate_loop 13/13, roundtrip 12/12, no-default-feature and AVX2-disabled policy suites pass"
+    state verified
+    result pass
+    method command
+    observed_at git:84abaad268f9844521f98327b35fce8e0da86981
+    command "cd JPXL && cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace --profile fast-debug && cargo build --workspace --release && cargo test --workspace --release && cargo test -p jpxl-encode-policy --release --test vardct_oracle --test rate_loop --test vardct_roundtrip && cargo test -p jpxl-encode-policy --no-default-features --profile fast-debug && JPXL_DISABLE_AVX2=1 cargo test -p jpxl-encode-policy --lib --profile fast-debug"
+    artifact ".agent/scratch/phase35-lane-dct/gates-p38.log"
+    summary """
+        All gates green on the final tree, run in both the new fast-debug profile (debug assertions on; the debug_assert raster-order guards in pass_group_walk and estimate_cfl exercised by every plan-carrying test) and in release. Log: .agent/scratch/phase35-lane-dct/gates-p38.log.
+        """
+}
+
+record jpegxl-rs.evidence.phase38-speed-2026-08-17/1 : evidence {
+    title "Mid --diag cfl_ms 103 -> 37 and wall 472 -> 405 ms on a quiet host; interleaved pinned medians in one shared-host window: mid 568/574/559 -> 428/425/423 ms (-25%), large 1127/1070/1140 -> 911/954/877 ms (-18%), bytes unchanged"
+    state verified
+    result pass
+    method observation
+    observed_at git:84abaad268f9844521f98327b35fce8e0da86981
+    command "taskset -c 0,2,4,6 ./jpxl-p38 bench vardct-rate --input mid-photo.ppm --bpp 1 --lossy-preset balanced --iters 3 --threads 4 --diag; interleaved pinned p37 vs p38 five-iteration medians on mid and large"
+    artifact ".agent/scratch/phase35-lane-dct/pinned-timing-p38.log"
+    summary """
+        Quiet-host --diag on the 2400x1800 Balanced 1-bpp encode: rate_plan_fast cfl_ms 103.0 -> 71.6 (tile refinement on the executor) -> 37.5 (band-parallel collection); wall median 471.9 -> 456.0 -> 443.5 -> 404.9 ms after band-parallel source prep on the shared pool. Later interleaved pinned rounds (host load 3-6, so absolute values are inflated but pairs are comparable): mid 568.3/574.4/558.5 (p37) vs 427.7/424.6/422.7 ms (p38); large 1126.9/1070.2/1140.3 vs 911.5/954.1/876.8 ms. Output bytes and fingerprints unchanged in every run. The reverted ANS reciprocal experiment: encode_symbols+slot 7.0% before, encode_symbols 7.0% after; perf annotate put ~60% of that function on the slots[start+offset] load.
+        """
+}
+
 record jpegxl-rs.evidence.phase4-0b-density-gate-2026-08-08/1 : evidence {
     title "4.0b density + decode-validity gate: jpxl-modular beats cjxl -e1, trails cjxl -e7 by 16-42%"
     state verified

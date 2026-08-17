@@ -1789,7 +1789,7 @@ record jpegxl-rs.work.arch-phase37-avx2-exact-cbrt-xyb/1 : work {
 
 record jpegxl-rs.work.arch-phase38-band-parallel-cfl-prep/1 : work {
     title "Phase 38: band-parallel CfL collection/refinement and source prep, narrowed pass-group walks, fast-debug profile"
-    state proposed
+    state completed
     scope [
         path ".agent/scratch/**",
         path "AGENTS.md",
@@ -1812,18 +1812,21 @@ record jpegxl-rs.work.arch-phase38-band-parallel-cfl-prep/1 : work {
                 Canonical Fast/Balanced/Quality/masking-AQ/lossless streams on mid and large inputs, one- vs four-thread outputs, and JPXL_DISABLE_AVX2 outputs are byte-identical to the Phase 37 binary.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase38-identity-2026-08-17/1 ]
         }
         check safety {
             statement """
                 fmt, strict Clippy, the 57 workspace suites in both fast-debug and release, oracle/roundtrip/determinism, no-default-feature and AVX2-disabled suites pass; djxl and jxl-oxide accept the candidates.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase38-safety-2026-08-17/1 ]
         }
         check speed {
             statement """
                 cfl_ms drops materially on the mid --diag clock and pinned four-core Balanced medians improve on mid and large in the same host window.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.phase38-speed-2026-08-17/1 ]
         }
     }
     depends_on [ @jpegxl-rs.work.arch-phase37-avx2-exact-cbrt-xyb/1 ]
