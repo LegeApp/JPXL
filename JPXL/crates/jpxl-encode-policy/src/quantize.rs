@@ -606,6 +606,33 @@ impl HfQuantizer {
         targets: [f32; 4],
         cell_base: usize,
     ) -> Result<([i32; 4], [f32; 4])> {
+        self.choose_cells4(
+            channel,
+            targets,
+            [cell_base, cell_base + 1, cell_base + 2, cell_base + 3],
+        )
+    }
+
+    /// [`Self::choose`] over four explicit cells, returning each winner and
+    /// reconstruction. Unlike [`Self::choose_lane4`], the cells need not be
+    /// contiguous; their order is preserved exactly.
+    ///
+    /// Phase 34 uses this for CfL walks whose selected varblocks skip LLF
+    /// cells or fold larger-transform frequencies onto an 8x8 grid. The
+    /// arithmetic and tie rules are identical to four scalar calls. The
+    /// explicit indices affect only which precomputed step/threshold/weight
+    /// entries are loaded.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::choose`], evaluated in `cells` order.
+    #[cfg(feature = "simd")]
+    pub(crate) fn choose_cells4(
+        &self,
+        channel: usize,
+        targets: [f32; 4],
+        cells: [usize; 4],
+    ) -> Result<([i32; 4], [f32; 4])> {
         use wide::{CmpEq, CmpLe, CmpLt, f32x4};
 
         // Phase 7.0: the vectorised body below implements the *nearest* rule.
@@ -614,11 +641,10 @@ impl HfQuantizer {
         // stay bit-identical by construction rather than by a second
         // hand-vectorised implementation of the RD comparison that would have
         // to be kept in sync.
-        if self.rd_weight(channel, cell_base).is_some() {
+        if self.rd_choose {
             let mut q = [0i32; 4];
             let mut recon = [0.0f32; 4];
-            for i in 0..4 {
-                let cell = cell_base + i;
+            for (i, &cell) in cells.iter().enumerate() {
                 let target = targets.get(i).copied().unwrap_or(0.0);
                 let qi = self.choose(target, channel, cell)?;
                 if let (Some(qs), Some(rs)) = (q.get_mut(i), recon.get_mut(i)) {
@@ -638,8 +664,11 @@ impl HfQuantizer {
         // Values (and the per-lane error order) are unchanged.
         let steps_row = self.steps.get(channel);
         let thr_row = self.zero_threshold.get(channel);
-        for (i, (slot, thr)) in step_arr.iter_mut().zip(thr_arr.iter_mut()).enumerate() {
-            let cell = cell_base + i;
+        for ((&cell, slot), thr) in cells
+            .iter()
+            .zip(step_arr.iter_mut())
+            .zip(thr_arr.iter_mut())
+        {
             let step = steps_row.and_then(|s| s.get(cell).copied()).unwrap_or(0.0);
             if !(step.is_finite() && step > 0.0) {
                 return Err(PolicyError::Unsupported {
@@ -788,10 +817,24 @@ impl HfQuantizer {
         targets: [f32; 4],
         cell_base: usize,
     ) -> Result<([i32; 4], [f32; 4])> {
+        self.choose_cells4(
+            channel,
+            targets,
+            [cell_base, cell_base + 1, cell_base + 2, cell_base + 3],
+        )
+    }
+
+    /// Scalar fallback for [`Self::choose_cells4`].
+    #[cfg(not(feature = "simd"))]
+    pub(crate) fn choose_cells4(
+        &self,
+        channel: usize,
+        targets: [f32; 4],
+        cells: [usize; 4],
+    ) -> Result<([i32; 4], [f32; 4])> {
         let mut q = [0i32; 4];
         let mut recon = [0.0f32; 4];
-        for i in 0..4 {
-            let cell = cell_base + i;
+        for (i, &cell) in cells.iter().enumerate() {
             let target = targets.get(i).copied().unwrap_or(0.0);
             let qi = self.choose(target, channel, cell)?;
             if let (Some(qs), Some(rs)) = (q.get_mut(i), recon.get_mut(i)) {
@@ -1426,6 +1469,56 @@ mod tests {
                             ),
                         }
                     }
+                }
+            }
+        }
+    }
+
+    /// Phase 34: the indexed form used by CfL must preserve the same scalar
+    /// results even when the four cells are non-contiguous or arrive in a
+    /// different order.
+    #[cfg(feature = "simd")]
+    #[test]
+    fn choose_cells4_is_bit_identical_for_arbitrary_cell_indices() {
+        let quantizers = [
+            HfQuantizer::new(TransformType::Dct8x8, 4096, 1, 2, 2).expect("defaults"),
+            HfQuantizer::new(TransformType::Dct16x16, 4096, 4, 1, 3).expect("dct16"),
+            HfQuantizer::new(TransformType::Dct32x32, 8192, 1, 2, 2).expect("dct32"),
+        ];
+        for q in &quantizers {
+            let len = q.steps[0].len();
+            let cells = [
+                1usize.min(len.saturating_sub(1)),
+                (len / 3).min(len.saturating_sub(1)),
+                (len / 2 + 1).min(len.saturating_sub(1)),
+                len.saturating_sub(1),
+            ];
+            for channel in 0..NUM_CHANNELS {
+                let targets = core::array::from_fn(|i| {
+                    let cell = cells.get(i).copied().unwrap_or(0);
+                    let step = q.step(channel, cell);
+                    let sign = if i.is_multiple_of(2) { 1.0 } else { -1.0 };
+                    sign * step * (i as f32 + 0.5)
+                });
+                let scalar: [Result<(i32, f32)>; 4] = core::array::from_fn(|i| {
+                    let cell = cells.get(i).copied().unwrap_or(0);
+                    q.choose(targets.get(i).copied().unwrap_or(0.0), channel, cell)
+                        .map(|quantized| (quantized, q.reconstruct(quantized, channel, cell)))
+                });
+                let indexed = q.choose_cells4(channel, targets, cells);
+                match indexed {
+                    Ok((quantized, recons)) => {
+                        for i in 0..4 {
+                            let (expected_q, expected_recon) =
+                                scalar.get(i).expect("lane").as_ref().expect("scalar");
+                            assert_eq!(quantized.get(i), Some(expected_q));
+                            assert_eq!(recons.get(i), Some(expected_recon));
+                        }
+                    }
+                    Err(_) => assert!(
+                        scalar.iter().any(Result::is_err),
+                        "indexed batch failed while every scalar lane succeeded"
+                    ),
                 }
             }
         }

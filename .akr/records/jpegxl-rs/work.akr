@@ -1618,6 +1618,41 @@ record jpegxl-rs.work.arch-phase33-dirty-frontier-prototype/1 : work {
     part_of [ @jpegxl-rs.track.encoder-optimization ]
 }
 
+record jpegxl-rs.work.arch-phase34-indexed-lane4-cfl/1 : work {
+    title "Phase 34: indexed lane-4 quantization for CfL scalar hot paths"
+    state proposed
+    scope [
+        path ".agent/scratch/**",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/quantize.rs"
+    ]
+    intent """
+        Eliminate the fresh profile's remaining scalar HfQuantizer::choose hotspot without changing codec decisions: generalize the existing bit-identical lane-4 nearest quantizer from contiguous cells to four explicit cell indices, keep choose_lane4 as the contiguous wrapper, and use the indexed batch in CfL Y reconstruction and HF factor residual pricing. Preserve scalar-order cutoff/error semantics by checking accumulated costs lane by lane and replaying a batch scalar if the speculative SIMD batch reports an error. Default and no-SIMD paths must remain bit-identical; promotion requires canonical stream identity, deterministic thread-count identity, external decoder acceptance, a reduced scalar-choose profile share, and non-regressing wall time.
+        """
+    acceptance {
+        check identity {
+            statement """
+                Canonical fixed/target-rate streams and one-thread/four-thread outputs are byte-identical to the Phase 33 baseline; indexed lane results equal scalar choose/reconstruct over boundary and arbitrary-cell cases.
+                """
+            method command
+        }
+        check safety {
+            statement """
+                Default and no-default-feature builds/tests, strict Clippy, full workspace tests, and external decoder checks pass.
+                """
+            method command
+        }
+        check speed {
+            statement """
+                A fresh perf profile shows the scalar HfQuantizer::choose share reduced materially from the Phase 33 5.55% baseline and canonical mid/large wall time does not regress materially.
+                """
+            method observation
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase33-dirty-frontier-prototype/1 ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+}
+
 record jpegxl-rs.work.arch-phase4-0b-density-gate/1 : work {
     title "Phase 4.0b: pinned real-corpus density + decode-validity gate (prerequisite for 4A/4C)"
     state completed

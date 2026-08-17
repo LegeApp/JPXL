@@ -2969,12 +2969,66 @@ fn estimate_cfl(
             // entries beyond 8x8.
             let fold = side / 8;
             diagnostics::with_choose_stage(diagnostics::ChooseStage::CflY, || {
+                let mut batch_cells = [0usize; 4];
+                let mut batch_cell8 = [0usize; 4];
+                let mut batch_targets = [0.0f32; 4];
+                let mut batch_len = 0usize;
                 for cell in 0..cells {
                     if is_llf_cell(cell, side, n) {
                         continue;
                     }
                     let cell8 = (cell / side / fold.max(1)) * 8 + (cell % side / fold.max(1));
                     let y = cy.get(cell).copied().unwrap_or(0.0);
+                    if let (Some(slot), Some(folded), Some(target)) = (
+                        batch_cells.get_mut(batch_len),
+                        batch_cell8.get_mut(batch_len),
+                        batch_targets.get_mut(batch_len),
+                    ) {
+                        *slot = cell;
+                        *folded = cell8;
+                        *target = y;
+                    }
+                    batch_len += 1;
+                    if batch_len == 4 {
+                        let recons = match hf_quant.choose_cells4(1, batch_targets, batch_cells) {
+                            Ok((_, recons)) => recons,
+                            Err(_) => {
+                                // A speculative four-cell batch can observe an
+                                // error in a later lane before the scalar walk
+                                // would reach it. Replay in scalar order so the
+                                // public error and any earlier work match the
+                                // pre-batch path exactly.
+                                let mut recons = [0.0f32; 4];
+                                for i in 0..4 {
+                                    let cell = batch_cells.get(i).copied().unwrap_or(0);
+                                    let target = batch_targets.get(i).copied().unwrap_or(0.0);
+                                    let q_y = hf_quant.choose(target, 1, cell)?;
+                                    if let Some(recon) = recons.get_mut(i) {
+                                        *recon = hf_quant.reconstruct(q_y, 1, cell);
+                                    }
+                                }
+                                recons
+                            }
+                        };
+                        for i in 0..4 {
+                            let cell = batch_cells.get(i).copied().unwrap_or(0);
+                            let cell8 = batch_cell8.get(i).copied().unwrap_or(0);
+                            let y = batch_targets.get(i).copied().unwrap_or(0.0);
+                            let d_y = recons.get(i).copied().unwrap_or(0.0);
+                            if let Some(t) = workspace.hf.x.get_mut(tile) {
+                                t.push(cx.get(cell).copied().unwrap_or(0.0), y, d_y, cell8);
+                            }
+                            if let Some(t) = workspace.hf.b.get_mut(tile) {
+                                t.push(cb.get(cell).copied().unwrap_or(0.0), y, d_y, cell8);
+                            }
+                        }
+                        batch_len = 0;
+                    }
+                }
+                for i in 0..batch_len {
+                    let cell = batch_cells.get(i).copied().unwrap_or(0);
+                    let cell8 = batch_cell8.get(i).copied().unwrap_or(0);
+                    let y = batch_targets.get(i).copied().unwrap_or(0.0);
                     let q_y = hf_quant.choose(y, 1, cell)?;
                     let d_y = hf_quant.reconstruct(q_y, 1, cell);
                     if let Some(t) = workspace.hf.x.get_mut(tile) {
@@ -3193,19 +3247,55 @@ fn hf_residual_cost_bounded(
 ) -> Result<Option<u64>> {
     let k = cfl_multiplier(base, factor, DEFAULT_COLOUR_FACTOR);
     let mut bits = 0u64;
-    for sample in &samples.samples {
+    let mut chunks = samples.samples.chunks_exact(4);
+    for chunk in &mut chunks {
+        let mut targets = [0.0f32; 4];
+        let mut cells = [0usize; 4];
+        for (i, sample) in chunk.iter().enumerate() {
+            if let (Some(target), Some(cell)) = (targets.get_mut(i), cells.get_mut(i)) {
+                *target = sample.source - k * sample.reconstructed_y;
+                *cell = sample.cell;
+            }
+        }
+        let quantized = match quantizer.choose_cells4(channel, targets, cells) {
+            Ok((quantized, _)) => quantized,
+            Err(_) => {
+                // Replay the batch in scalar order. Besides reproducing the
+                // first concrete error, this preserves the old cutoff rule:
+                // an earlier lane may prove the challenger loses before a
+                // later invalid target would have been visited.
+                for i in 0..4 {
+                    let q = quantizer.choose(
+                        targets.get(i).copied().unwrap_or(0.0),
+                        channel,
+                        cells.get(i).copied().unwrap_or(0),
+                    )?;
+                    bits = bits.saturating_add(residual_bits(q));
+                    if cutoff.is_some_and(|cut| bits > cut) {
+                        return Ok(None);
+                    }
+                }
+                continue;
+            }
+        };
+        for q in quantized {
+            bits = bits.saturating_add(residual_bits(q));
+            // Strict > so equal residual+signalling costs still finish for
+            // magnitude tie-breaks toward neutral/smaller factor.
+            if cutoff.is_some_and(|cut| bits > cut) {
+                return Ok(None);
+            }
+        }
+    }
+    for sample in chunks.remainder() {
         let q = quantizer.choose(
             sample.source - k * sample.reconstructed_y,
             channel,
             sample.cell,
         )?;
         bits = bits.saturating_add(residual_bits(q));
-        if let Some(cut) = cutoff {
-            // Strict > so equal residual+signalling costs still finish for
-            // magnitude tie-breaks toward neutral/smaller factor.
-            if bits > cut {
-                return Ok(None);
-            }
+        if cutoff.is_some_and(|cut| bits > cut) {
+            return Ok(None);
         }
     }
     Ok(Some(bits))
