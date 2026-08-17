@@ -2092,6 +2092,45 @@ record jpegxl-rs.evidence.phase4-0b-density-gate-2026-08-08/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase40-identity-2026-08-17/1 : evidence {
+    title "Phase 40 is byte-identical: canonical mid/large Fast/Balanced/Quality/AQ/lossless streams, 1 vs 4 threads and AVX2 on/off match the Phase 34-39 hashes"
+    state verified
+    result pass
+    method command
+    observed_at git:3168100d768bf0070c38c69419f019d15adfd7cc
+    command ".agent/scratch/phase35-lane-dct/run-identity.sh (jpxl-p40); JPXL_DISABLE_AVX2=1 jpxl-p40 encode ..."
+    artifact ".agent/scratch/phase35-lane-dct/out/identity.sha256"
+    summary """
+        Balanced-mid 7f70ae001ec27658..., Quality-mid d4b03810dc0bcb73..., Balanced-large 8bb1b1fb2df6b45d..., Quality-large c3321262010e37f6... unchanged; no singleton hashes in the identity table; JPXL_DISABLE_AVX2 reproduces Balanced-mid; the per-row cutoff therefore changed no cover decision on either canonical photo at any preset.
+        """
+}
+
+record jpegxl-rs.evidence.phase40-safety-2026-08-17/1 : evidence {
+    title "Phase 40 gates: fmt, strict Clippy, workspace suites in fast-debug and release, oracle 12/12, rate_loop 13/13, roundtrip 12/12, no-default-feature and AVX2-disabled policy suites pass"
+    state verified
+    result pass
+    method command
+    observed_at git:3168100d768bf0070c38c69419f019d15adfd7cc
+    command "cd JPXL && cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace --profile fast-debug && cargo test --workspace --release && cargo test -p jpxl-encode-policy --release --test vardct_oracle --test rate_loop --test vardct_roundtrip && cargo test -p jpxl-encode-policy --no-default-features --profile fast-debug && JPXL_DISABLE_AVX2=1 cargo test -p jpxl-encode-policy --lib --profile fast-debug"
+    artifact ".agent/scratch/phase35-lane-dct/gates-p40.log"
+    summary """
+        All gates green on the final tree; log under .agent/scratch/phase35-lane-dct/gates-p40.log.
+        """
+}
+
+record jpegxl-rs.evidence.phase40-speed-2026-08-17/1 : evidence {
+    title "Instructions per two-iteration mid Balanced bench 39.08/39.10 G (Phase 39) -> 37.61/37.59 G (Phase 40), -3.8%; the two cover-scoring closures (4.9% + 3.7% of instructions) became one score_channel_lanes symbol at 6.2%; wall time not asserted (host load 9-12 from concurrent jobs)"
+    state verified
+    result pass
+    method observation
+    observed_at git:3168100d768bf0070c38c69419f019d15adfd7cc
+    command "perf stat -e cpu_core/instructions/,cpu_core/cycles/ -- taskset -c 0,2,4,6 ./jpxl-{p39,p40} bench vardct-rate --input mid-photo.ppm --bpp 1 --lossy-preset balanced --iters 2 --threads 4 (two rounds each); perf record -e cpu_core/instructions/ profile"
+    artifact ".agent/scratch/phase35-lane-dct/p40-mid-insn.perf.data"
+    summary """
+        Load-independent instruction counts carry the cost claim because the shared host was busy: 39,071,562,964 / 39,099,472,985 instructions before vs 37,612,999,220 / 37,589,314,227 after (cycles 12.08/12.14 G vs 12.17/11.92 G, noisy). Instruction profile after: choose_run_avx2 12.0%, score_channel_lanes 6.2%, write_pass_group 6.1%, build_entropy_tables closure 5.8%, quantize closure 4.5% (down from 10.7% after Phase 39). Wall-time confirmation to be taken when the host is quiet.
+        """
+}
+
 record jpegxl-rs.evidence.phase4a-weighted-predictor-wired-2026-08-08/1 : evidence {
     title "Phase 4A: Weighted predictor wired into encoder search, decode-validated (jpxl-decode + djxl), multi-section confirmed"
     state verified

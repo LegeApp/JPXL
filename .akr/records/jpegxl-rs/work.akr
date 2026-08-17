@@ -1950,7 +1950,7 @@ record jpegxl-rs.work.arch-phase4-modular-scoped/1 : work {
 
 record jpegxl-rs.work.arch-phase40-cover-scoring-pass/1 : work {
     title "Phase 40: cheapen the single cover-scoring pass (row targets, direct luma reconstruction sink, per-row cutoff)"
-    state proposed
+    state completed
     scope [
         path ".agent/scratch/**",
         path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
@@ -1968,18 +1968,21 @@ record jpegxl-rs.work.arch-phase40-cover-scoring-pass/1 : work {
                 Canonical streams across presets, sizes, thread counts and AVX2 on/off are byte-identical to Phase 39.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase40-identity-2026-08-17/1 ]
         }
         check safety {
             statement """
                 fmt, strict Clippy, workspace suites in fast-debug and release, oracle/roundtrip/determinism, no-default-feature and AVX2-disabled suites pass.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase40-safety-2026-08-17/1 ]
         }
         check speed {
             statement """
                 perf stat instruction count for the mid Balanced bench drops materially, and the scoring symbols' instruction share drops.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.phase40-speed-2026-08-17/1 ]
         }
     }
     depends_on [ @jpegxl-rs.work.arch-phase39-lane-recon/1 ]
