@@ -78,6 +78,73 @@ const BASE_CORRELATION_B: f32 = 1.0;
 /// silent clamp there would show up as a saturated block nobody can explain.
 const MAX_QUANT: i32 = 1 << 20;
 
+/// Widest vector [`HfQuantizer::choose_run`] pads a short final chunk to.
+#[cfg(feature = "simd")]
+const MAX_RUN_LANES: usize = 8;
+
+/// Per-channel constants of the vector nearest-rule kernel, splatted once per
+/// run (see [`HfQuantizer::choose_run`]).
+#[cfg(feature = "simd")]
+struct LaneConstants<V> {
+    bias: V,
+    numerator: V,
+    one: V,
+    zero: V,
+    inf: V,
+    all_set: V,
+    legal_bound: V,
+    half_magnitude: V,
+    sign_bit: V,
+}
+
+/// The run kernel compiled for AVX2, selected at run time by
+/// [`HfQuantizer::choose_run`] through [`jpxl_core::cpu::has_avx2`].
+///
+/// Same generic kernel over [`jpxl_core::simd::avx2::F32x8`] — same
+/// operations, same order — so bit-identical to the `wide` and scalar paths;
+/// only the register width differs. The lane type's contract lives with the
+/// type in `jpxl-core`; this module only adds the target-feature entry point.
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+mod avx2 {
+    use super::HfQuantizer;
+    use crate::error::Result;
+
+    /// [`HfQuantizer::choose_run`]'s kernel over AVX2 lanes.
+    ///
+    /// Safe to call only when the host supports AVX2 (see
+    /// [`jpxl_core::cpu::has_avx2`]); that is the whole contract, and it is
+    /// why a call site must be `unsafe`.
+    #[target_feature(enable = "avx2")]
+    pub(super) fn choose_run_avx2(
+        quantizer: &HfQuantizer,
+        channel: usize,
+        first_cell: usize,
+        targets: &[f32],
+        q_out: &mut [i32],
+        recon_out: Option<&mut [f32]>,
+    ) -> Result<()> {
+        quantizer.choose_run_lanes::<jpxl_core::simd::avx2::F32x8>(
+            channel, first_cell, targets, q_out, recon_out,
+        )
+    }
+
+    /// [`HfQuantizer::choose_cells`]'s kernel over AVX2 lanes; same contract
+    /// as [`choose_run_avx2`].
+    #[target_feature(enable = "avx2")]
+    pub(super) fn choose_cells_avx2(
+        quantizer: &HfQuantizer,
+        channel: usize,
+        targets: &[f32],
+        cells: &[usize],
+        q_out: &mut [i32],
+        recon_out: Option<&mut [f32]>,
+    ) -> Result<()> {
+        quantizer.choose_cells_lanes::<jpxl_core::simd::avx2::F32x8>(
+            channel, targets, cells, q_out, recon_out,
+        )
+    }
+}
+
 /// I.5.2's LF quantizer: linear, and exactly invertible.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LfQuantizer {
@@ -516,8 +583,9 @@ impl HfQuantizer {
 
     /// Phase-2: quantize a contiguous coefficient lane (one channel of one
     /// varblock) into `out`, skipping LLF cells when `skip_llf` is set.
-    /// Phase 8.5 batches each row's HF span through [`Self::choose_lane4`]
-    /// with scalar tails, so batches never cross the top-left LLF boundary.
+    /// Each row's HF span goes through [`Self::choose_run`] (Phase 36; before
+    /// that, [`Self::choose_lane4`] batches with scalar tails), so batches
+    /// never cross the top-left LLF boundary.
     ///
     /// Same integer rules as [`Self::choose`], applied cell-by-cell.
     ///
@@ -550,28 +618,16 @@ impl HfQuantizer {
             if let Some(llf) = out.get_mut(row_start..first_hf) {
                 llf.fill(0);
             }
-
-            let mut cell = first_hf;
-            while cell.saturating_add(4) <= row_end {
-                let targets = [
-                    coeffs.get(cell).copied().unwrap_or(0.0),
-                    coeffs.get(cell + 1).copied().unwrap_or(0.0),
-                    coeffs.get(cell + 2).copied().unwrap_or(0.0),
-                    coeffs.get(cell + 3).copied().unwrap_or(0.0),
-                ];
-                let (quantized, _) = self.choose_lane4(channel, targets, cell)?;
-                if let Some(slots) = out.get_mut(cell..cell + 4) {
-                    slots.copy_from_slice(&quantized);
-                }
-                cell += 4;
-            }
-            while cell < row_end {
-                let q = self.choose(coeffs.get(cell).copied().unwrap_or(0.0), channel, cell)?;
-                if let Some(slot) = out.get_mut(cell) {
-                    *slot = q;
-                }
-                cell += 1;
-            }
+            // Phase 36: the whole HF span of the row goes through the run
+            // kernel (vector chunks plus a padded final chunk), which is
+            // cell-for-cell identical to the scalar `choose` loop it replaces.
+            let (Some(targets), Some(slots)) = (
+                coeffs.get(first_hf..row_end),
+                out.get_mut(first_hf..row_end),
+            ) else {
+                continue;
+            };
+            self.choose_run(channel, first_hf, targets, slots, None)?;
         }
         Ok(())
     }
@@ -600,6 +656,11 @@ impl HfQuantizer {
     ///
     /// As [`Self::choose`], evaluated per lane.
     #[cfg(feature = "simd")]
+    #[allow(
+        dead_code,
+        reason = "Phase 36 moved production callers to `choose_run`; kept as the \
+                  four-cell contiguous reference the lane tests compare against"
+    )]
     pub(crate) fn choose_lane4(
         &self,
         channel: usize,
@@ -808,9 +869,413 @@ impl HfQuantizer {
         Ok((best_q_i32, best_recon_f32))
     }
 
+    /// [`Self::choose`] plus [`Self::reconstruct`] for a contiguous run of
+    /// HF cells `first_cell..first_cell + targets.len()` of one channel, in
+    /// cell order, writing each winner to `q_out` and (when given) each
+    /// reconstruction to `recon_out`.
+    ///
+    /// Phase 36: this is the row-oriented replacement for the per-batch
+    /// [`Self::choose_lane4`] loop. One call sets up the channel's rows,
+    /// bias and bounds once, then quantizes the run in vector-width chunks
+    /// (eight cells on an AVX2 host, four/eight `wide` lanes otherwise) with a
+    /// zero-padded final chunk instead of a scalar tail. Every lane performs
+    /// the scalar rule's operations in the scalar order, so each cell's
+    /// `(q, recon)` is bit-identical to a `choose`/`reconstruct` pair; the
+    /// property tests below pin that against the scalar functions for every
+    /// lane width available on the host.
+    ///
+    /// Semantics on failure are also the scalar loop's: if any cell of the
+    /// run would make [`Self::choose`] fail, the run is replayed cell by cell
+    /// through `choose` itself, so the returned error is exactly the first
+    /// scalar error and no vector-only diagnosis leaks out. Callers that
+    /// interleave a per-cell early exit with quantization (cover scoring's
+    /// cutoff) therefore treat `Err` as "fall back to the scalar loop", which
+    /// reproduces the exact exit/error order.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::choose`], for the first failing cell in run order.
+    pub(crate) fn choose_run(
+        &self,
+        channel: usize,
+        first_cell: usize,
+        targets: &[f32],
+        q_out: &mut [i32],
+        recon_out: Option<&mut [f32]>,
+    ) -> Result<()> {
+        #[cfg(feature = "simd")]
+        {
+            if !self.rd_choose {
+                #[cfg(target_arch = "x86_64")]
+                if jpxl_core::cpu::has_avx2() {
+                    // SAFETY: `choose_run_avx2` only requires that the host
+                    // support AVX2, which `has_avx2` has just confirmed; its
+                    // body is this type's safe generic kernel compiled for
+                    // AVX2.
+                    #[allow(unsafe_code)]
+                    return unsafe {
+                        avx2::choose_run_avx2(self, channel, first_cell, targets, q_out, recon_out)
+                    };
+                }
+                return self.choose_run_lanes::<wide::f32x8>(
+                    channel, first_cell, targets, q_out, recon_out,
+                );
+            }
+        }
+        self.choose_run_scalar(channel, first_cell, targets, q_out, recon_out)
+    }
+
+    /// The scalar reference for [`Self::choose_run`]: `choose` and
+    /// `reconstruct` per cell, in order. Also the replay path the vector
+    /// kernel uses to reproduce the exact scalar error.
+    fn choose_run_scalar(
+        &self,
+        channel: usize,
+        first_cell: usize,
+        targets: &[f32],
+        q_out: &mut [i32],
+        mut recon_out: Option<&mut [f32]>,
+    ) -> Result<()> {
+        for (i, &target) in targets.iter().enumerate() {
+            let cell = first_cell + i;
+            let q = self.choose(target, channel, cell)?;
+            if let Some(slot) = q_out.get_mut(i) {
+                *slot = q;
+            }
+            if let Some(slot) = recon_out.as_deref_mut().and_then(|r| r.get_mut(i)) {
+                *slot = self.reconstruct(q, channel, cell);
+            }
+        }
+        Ok(())
+    }
+
+    /// [`Self::choose`] plus [`Self::reconstruct`] over explicit cells
+    /// (`cells[i]` for `targets[i]`), the indexed sibling of
+    /// [`Self::choose_run`] for walks whose cells are not contiguous (the HF
+    /// CfL factor pricing folds larger transforms onto an 8x8 grid). Same
+    /// results, same failure semantics: on any failing cell the list is
+    /// replayed cell by cell through `choose`, so the error is the first
+    /// scalar one.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::choose`], for the first failing cell in list order.
+    pub(crate) fn choose_cells(
+        &self,
+        channel: usize,
+        targets: &[f32],
+        cells: &[usize],
+        q_out: &mut [i32],
+        recon_out: Option<&mut [f32]>,
+    ) -> Result<()> {
+        #[cfg(feature = "simd")]
+        {
+            if !self.rd_choose {
+                #[cfg(target_arch = "x86_64")]
+                if jpxl_core::cpu::has_avx2() {
+                    // SAFETY: `choose_cells_avx2` only requires that the host
+                    // support AVX2, which `has_avx2` has just confirmed; its
+                    // body is this type's safe generic kernel compiled for
+                    // AVX2.
+                    #[allow(unsafe_code)]
+                    return unsafe {
+                        avx2::choose_cells_avx2(self, channel, targets, cells, q_out, recon_out)
+                    };
+                }
+                return self
+                    .choose_cells_lanes::<wide::f32x8>(channel, targets, cells, q_out, recon_out);
+            }
+        }
+        self.choose_cells_scalar(channel, targets, cells, q_out, recon_out)
+    }
+
+    /// The scalar reference for [`Self::choose_cells`].
+    fn choose_cells_scalar(
+        &self,
+        channel: usize,
+        targets: &[f32],
+        cells: &[usize],
+        q_out: &mut [i32],
+        mut recon_out: Option<&mut [f32]>,
+    ) -> Result<()> {
+        for (i, (&target, &cell)) in targets.iter().zip(cells.iter()).enumerate() {
+            let q = self.choose(target, channel, cell)?;
+            if let Some(slot) = q_out.get_mut(i) {
+                *slot = q;
+            }
+            if let Some(slot) = recon_out.as_deref_mut().and_then(|r| r.get_mut(i)) {
+                *slot = self.reconstruct(q, channel, cell);
+            }
+        }
+        Ok(())
+    }
+
+    /// The per-channel constants the vector kernel hoists out of its chunk
+    /// loop. Built once per [`Self::choose_run`] / [`Self::choose_cells`].
+    #[cfg(feature = "simd")]
+    #[inline(always)]
+    fn lane_constants<V: jpxl_core::simd::F32Vec>(&self, channel: usize) -> LaneConstants<V> {
+        LaneConstants {
+            bias: V::splat(self.quant_bias.get(channel).copied().unwrap_or(1.0)),
+            numerator: V::splat(self.quant_bias_numerator),
+            one: V::splat(1.0),
+            zero: V::splat(0.0),
+            inf: V::splat(f32::INFINITY),
+            all_set: V::splat(f32::from_bits(u32::MAX)),
+            // MAX_QUANT == 2^20 is exact in f32; see `choose_cells4`.
+            #[allow(
+                clippy::cast_precision_loss,
+                reason = "MAX_QUANT == 2^20, exact in f32"
+            )]
+            legal_bound: V::splat(MAX_QUANT as f32),
+            half_magnitude: V::splat(0.5),
+            sign_bit: V::splat(-0.0),
+        }
+    }
+
+    /// One vector chunk of the nearest rule: `(q, recon)` per lane for the
+    /// given targets, steps and zero thresholds, or `None` when any lane
+    /// would make the scalar [`Self::choose`] fail (a degenerate step, a
+    /// non-finite quotient, or an estimate beyond `MAX_QUANT` on a lane the
+    /// zero shortcut did not settle). Callers then replay the scalar path.
+    ///
+    /// Mirrors [`Self::choose_cells4`]'s per-lane logic exactly: the
+    /// zero-threshold shortcut, `clamp_round`'s ties-away rounding through
+    /// truncation, the `[0, estimate-1, estimate, estimate+1]` candidate order
+    /// with the "strictly smaller error, else equal error and strictly smaller
+    /// magnitude" update rule, and the `|q| <= MAX_QUANT` legality skip.
+    #[cfg(feature = "simd")]
+    #[inline(always)]
+    fn choose_chunk_lanes<V: jpxl_core::simd::F32Vec>(
+        k: &LaneConstants<V>,
+        target: V,
+        step: V,
+        thr: V,
+    ) -> Option<(V, V)> {
+        // A degenerate step is a scalar error at that cell.
+        let step_ok = step.cmp_gt(k.zero).and(step.abs().cmp_lt(k.inf));
+        if !step_ok.all() {
+            return None;
+        }
+        let zero_lane = target.abs().cmp_le(thr);
+        if zero_lane.all() {
+            return Some((k.zero, k.zero));
+        }
+        let quotient = target / step;
+        let half = k.half_magnitude.or(quotient.and(k.sign_bit));
+        let estimate = (quotient + half).trunc();
+        // `clamp_round` errors on a non-finite quotient or an estimate beyond
+        // MAX_QUANT -- only for lanes the zero shortcut did not already settle.
+        let not_finite = quotient.abs().cmp_lt(k.inf).andnot(k.all_set);
+        let too_big = estimate.abs().cmp_gt(k.legal_bound);
+        if zero_lane.andnot(not_finite.or(too_big)).any() {
+            return None;
+        }
+
+        let mut best_q = k.zero;
+        let mut best_err = k.inf;
+        let mut best_recon = k.zero;
+        let candidates = [k.zero, estimate - k.one, estimate, estimate + k.one];
+        for q_vec in candidates {
+            let small = q_vec.abs().cmp_le(k.one);
+            let via_bias = q_vec * k.bias;
+            let via_numerator = q_vec - k.numerator / q_vec;
+            let recon_vec = small.blend(via_bias, via_numerator) * step;
+            let err_vec = (recon_vec - target).abs();
+            let take_it = err_vec.cmp_lt(best_err);
+            let tie = err_vec
+                .cmp_eq(best_err)
+                .and(q_vec.abs().cmp_lt(best_q.abs()));
+            let mask = take_it.or(tie).and(q_vec.abs().cmp_le(k.legal_bound));
+            best_err = mask.blend(err_vec, best_err);
+            best_recon = mask.blend(recon_vec, best_recon);
+            best_q = mask.blend(q_vec, best_q);
+        }
+        Some((
+            zero_lane.blend(k.zero, best_q),
+            zero_lane.blend(k.zero, best_recon),
+        ))
+    }
+
+    /// Writes one chunk's results: the whole vector when the chunk is full,
+    /// or the first `take` lanes of a padded final chunk.
+    #[cfg(feature = "simd")]
+    #[inline(always)]
+    #[allow(
+        clippy::indexing_slicing,
+        reason = "callers pass `i + take <= len` for both outputs; see choose_run_lanes"
+    )]
+    fn store_chunk_lanes<V: jpxl_core::simd::F32Vec>(
+        best_q: V,
+        best_recon: V,
+        i: usize,
+        take: usize,
+        q_out: &mut [i32],
+        recon_out: Option<&mut [f32]>,
+    ) {
+        if take == V::LANES {
+            best_q.store_trunc_i32(&mut q_out[i..]);
+            if let Some(recon) = recon_out {
+                best_recon.store(&mut recon[i..]);
+            }
+        } else {
+            let mut q_chunk = [0i32; MAX_RUN_LANES];
+            best_q.store_trunc_i32(&mut q_chunk);
+            q_out[i..i + take].copy_from_slice(&q_chunk[..take]);
+            if let Some(recon) = recon_out {
+                let mut recon_chunk = [0.0f32; MAX_RUN_LANES];
+                best_recon.store(&mut recon_chunk);
+                recon[i..i + take].copy_from_slice(&recon_chunk[..take]);
+            }
+        }
+    }
+
+    /// The vector kernel behind [`Self::choose_run`], generic over the lane
+    /// type. Only the nearest rule is vectorised (`rd_choose` takes the
+    /// scalar path before reaching here). A short final chunk is padded with
+    /// cells that trivially take the zero shortcut (target 0, step 1,
+    /// threshold 1) and whose results are dropped.
+    #[cfg(feature = "simd")]
+    #[inline(always)]
+    #[allow(
+        clippy::indexing_slicing,
+        reason = "every index below is inside `first_cell..first_cell + n`, which the \
+                  range check at the top proves lies within both rows and `q_out`; \
+                  bounds checks here would only be noise"
+    )]
+    fn choose_run_lanes<V: jpxl_core::simd::F32Vec>(
+        &self,
+        channel: usize,
+        first_cell: usize,
+        targets: &[f32],
+        q_out: &mut [i32],
+        mut recon_out: Option<&mut [f32]>,
+    ) -> Result<()> {
+        debug_assert!(
+            V::LANES <= MAX_RUN_LANES,
+            "run kernel pads to at most 8 lanes"
+        );
+        let n = targets.len();
+        let (Some(steps_row), Some(thr_row)) =
+            (self.steps.get(channel), self.zero_threshold.get(channel))
+        else {
+            return self.choose_run_scalar(channel, first_cell, targets, q_out, recon_out);
+        };
+        if first_cell.saturating_add(n) > steps_row.len().min(thr_row.len())
+            || q_out.len() < n
+            || recon_out.as_deref().is_some_and(|r| r.len() < n)
+        {
+            // Out-of-range cells are a scalar error (`step_at` reads 0 there);
+            // let the scalar path report it exactly.
+            return self.choose_run_scalar(channel, first_cell, targets, q_out, recon_out);
+        }
+        let k = self.lane_constants::<V>(channel);
+        let mut pad_targets = [0.0f32; MAX_RUN_LANES];
+        let mut pad_steps = [1.0f32; MAX_RUN_LANES];
+        let mut pad_thr = [1.0f32; MAX_RUN_LANES];
+
+        let mut i = 0usize;
+        while i < n {
+            let cell = first_cell + i;
+            let take = V::LANES.min(n - i);
+            let (target, step, thr) = if take == V::LANES {
+                (
+                    V::load(&targets[i..]),
+                    V::load(&steps_row[cell..]),
+                    V::load(&thr_row[cell..]),
+                )
+            } else {
+                pad_targets[..take].copy_from_slice(&targets[i..i + take]);
+                pad_steps[..take].copy_from_slice(&steps_row[cell..cell + take]);
+                pad_thr[..take].copy_from_slice(&thr_row[cell..cell + take]);
+                pad_targets[take..].fill(0.0);
+                pad_steps[take..].fill(1.0);
+                pad_thr[take..].fill(1.0);
+                (
+                    V::load(&pad_targets),
+                    V::load(&pad_steps),
+                    V::load(&pad_thr),
+                )
+            };
+            let Some((best_q, best_recon)) = Self::choose_chunk_lanes(&k, target, step, thr) else {
+                return self.choose_run_scalar(channel, first_cell, targets, q_out, recon_out);
+            };
+            Self::store_chunk_lanes(best_q, best_recon, i, take, q_out, recon_out.as_deref_mut());
+            i += take;
+        }
+        Ok(())
+    }
+
+    /// The vector kernel behind [`Self::choose_cells`]: as
+    /// [`Self::choose_run_lanes`], with the steps and thresholds gathered per
+    /// explicit cell index.
+    #[cfg(feature = "simd")]
+    #[inline(always)]
+    #[allow(
+        clippy::indexing_slicing,
+        reason = "every index below is inside `..n`, and `n` is bounded by every slice's \
+                  length at the top; bounds checks here would only be noise"
+    )]
+    fn choose_cells_lanes<V: jpxl_core::simd::F32Vec>(
+        &self,
+        channel: usize,
+        targets: &[f32],
+        cells: &[usize],
+        q_out: &mut [i32],
+        mut recon_out: Option<&mut [f32]>,
+    ) -> Result<()> {
+        debug_assert!(
+            V::LANES <= MAX_RUN_LANES,
+            "run kernel pads to at most 8 lanes"
+        );
+        let n = targets.len().min(cells.len());
+        let (Some(steps_row), Some(thr_row)) =
+            (self.steps.get(channel), self.zero_threshold.get(channel))
+        else {
+            return self.choose_cells_scalar(channel, targets, cells, q_out, recon_out);
+        };
+        let in_range = steps_row.len().min(thr_row.len());
+        if q_out.len() < n
+            || recon_out.as_deref().is_some_and(|r| r.len() < n)
+            || cells[..n].iter().any(|&c| c >= in_range)
+        {
+            return self.choose_cells_scalar(channel, targets, cells, q_out, recon_out);
+        }
+        let k = self.lane_constants::<V>(channel);
+        let mut g_targets = [0.0f32; MAX_RUN_LANES];
+        let mut g_steps = [1.0f32; MAX_RUN_LANES];
+        let mut g_thr = [1.0f32; MAX_RUN_LANES];
+
+        let mut i = 0usize;
+        while i < n {
+            let take = V::LANES.min(n - i);
+            for lane in 0..take {
+                let cell = cells[i + lane];
+                g_targets[lane] = targets[i + lane];
+                g_steps[lane] = steps_row[cell];
+                g_thr[lane] = thr_row[cell];
+            }
+            g_targets[take..].fill(0.0);
+            g_steps[take..].fill(1.0);
+            g_thr[take..].fill(1.0);
+            let (target, step, thr) = (V::load(&g_targets), V::load(&g_steps), V::load(&g_thr));
+            let Some((best_q, best_recon)) = Self::choose_chunk_lanes(&k, target, step, thr) else {
+                return self.choose_cells_scalar(channel, targets, cells, q_out, recon_out);
+            };
+            Self::store_chunk_lanes(best_q, best_recon, i, take, q_out, recon_out.as_deref_mut());
+            i += take;
+        }
+        Ok(())
+    }
+
     /// [`Self::choose_lane4`] without the `simd` feature: four independent
     /// scalar [`Self::choose`] calls. Callers do not need to feature-gate.
     #[cfg(not(feature = "simd"))]
+    #[allow(
+        dead_code,
+        reason = "Phase 36 moved production callers to `choose_run`; kept as the \
+                  four-cell contiguous reference the lane tests compare against"
+    )]
     pub(crate) fn choose_lane4(
         &self,
         channel: usize,
@@ -1467,6 +1932,216 @@ mod tests {
                                 "channel {channel} cell_base {cell_base} targets {targets:?}: \
                                  scalar all-ok={scalar_ok} lane={lane_result:?}"
                             ),
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Phase 36: the run kernel (and the indexed `choose_cells` sibling)
+    /// equals `choose`/`reconstruct` cell by cell for every lane width the host offers (`wide` f32x4/f32x8, AVX2 when
+    /// detected, and the scalar reference), over runs of every length from 1
+    /// to 33 at varied offsets, including runs that hit the zero shortcut in
+    /// every lane, ties, the MAX_QUANT edge and out-of-range targets (which
+    /// must fail on the same cell with the scalar loop's verdict).
+    #[cfg(feature = "simd")]
+    #[test]
+    #[allow(
+        clippy::indexing_slicing,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_precision_loss,
+        reason = "test fixture: sizes its own buffers and derives small indices from them"
+    )]
+    fn choose_run_is_bit_identical_to_scalar_for_every_lane_width() {
+        use jpxl_core::simd::F32Vec;
+
+        struct Lcg(u32);
+        impl Lcg {
+            fn next(&mut self) -> f32 {
+                self.0 = self.0.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                #[allow(clippy::cast_precision_loss)]
+                let r = (self.0 >> 8) as f32 / 16_777_216.0;
+                r
+            }
+        }
+
+        fn run_and_compare<V: F32Vec>(
+            q: &HfQuantizer,
+            channel: usize,
+            first_cell: usize,
+            targets: &[f32],
+            label: &str,
+        ) {
+            let n = targets.len();
+            let scalar: Vec<Result<(i32, f32)>> = targets
+                .iter()
+                .enumerate()
+                .map(|(i, &t)| {
+                    let cell = first_cell + i;
+                    q.choose(t, channel, cell)
+                        .map(|qi| (qi, q.reconstruct(qi, channel, cell)))
+                })
+                .collect();
+            let first_err = scalar.iter().position(Result::is_err);
+            let mut got_q = vec![i32::MIN; n];
+            let mut got_r = vec![f32::NAN; n];
+            let got =
+                q.choose_run_lanes::<V>(channel, first_cell, targets, &mut got_q, Some(&mut got_r));
+            match (first_err, got) {
+                (None, Ok(())) => {
+                    for (i, r) in scalar.iter().enumerate() {
+                        let (sq, sr) = r.as_ref().copied().expect("checked ok");
+                        assert_eq!(
+                            sq,
+                            got_q[i],
+                            "{label}: channel {channel} cell {} target {}: q",
+                            first_cell + i,
+                            targets[i]
+                        );
+                        assert_eq!(
+                            sr.to_bits(),
+                            got_r[i].to_bits(),
+                            "{label}: channel {channel} cell {} target {}: recon {sr} vs {}",
+                            first_cell + i,
+                            targets[i],
+                            got_r[i]
+                        );
+                    }
+                }
+                (Some(k), Err(e)) => {
+                    let want = scalar[k].as_ref().err().map(ToString::to_string);
+                    assert_eq!(
+                        want.as_deref(),
+                        Some(e.to_string().as_str()),
+                        "{label}: channel {channel} first_cell {first_cell}: error identity"
+                    );
+                }
+                (first_err, got) => panic!(
+                    "{label}: channel {channel} first_cell {first_cell} n {n}: scalar first \
+                     error {first_err:?} vs run {got:?}"
+                ),
+            }
+        }
+
+        let quantizers = [
+            HfQuantizer::new(TransformType::Dct8x8, 4096, 1, 2, 2).expect("defaults"),
+            HfQuantizer::new(TransformType::Dct8x8, 4096, 4, 2, 2).expect("hf_mul 4"),
+            HfQuantizer::new(TransformType::Dct16x16, 4096, 1, 1, 3).expect("dct16 asymmetric"),
+            HfQuantizer::new(TransformType::Dct32x32, 8192, 1, 2, 2).expect("dct32"),
+            HfQuantizer::new(TransformType::Dct8x8, u32::from(u16::MAX), 1, 2, 2)
+                .expect("very fine global_scale"),
+        ];
+        let mut rng = Lcg(0x5eed_1234);
+        for q in &quantizers {
+            let cells = q.steps[0].len();
+            for channel in 0..NUM_CHANNELS {
+                for n in 1..=33usize {
+                    for round in 0..6 {
+                        let first_cell = (rng.next() * (cells - n.min(cells)) as f32) as usize;
+                        let n = n.min(cells - first_cell);
+                        let mut targets = vec![0.0f32; n];
+                        for (i, t) in targets.iter_mut().enumerate() {
+                            let cell = first_cell + i;
+                            let step = q.step(channel, cell).max(f32::MIN_POSITIVE);
+                            let thr = q.zero_threshold[channel][cell];
+                            let r = rng.next();
+                            *t = match round {
+                                0 => 0.0,
+                                1 => (r - 0.5) * 2.0 * thr,
+                                2 => (r - 0.5) * 8.0 * step,
+                                3 => {
+                                    step * (2.0 * (r * 8.0).round() + 1.0)
+                                        * 0.5
+                                        * (if i % 2 == 0 { 1.0 } else { -1.0 })
+                                }
+                                4 => (r - 0.5) * 300.0 * step,
+                                _ => {
+                                    if i == n / 2 && r > 0.5 {
+                                        step * 2_000_000.0
+                                    } else if i == n / 3 && r < 0.2 {
+                                        f32::NAN
+                                    } else {
+                                        step * (r * 1_048_600.0)
+                                    }
+                                }
+                            };
+                        }
+                        run_and_compare::<f32>(q, channel, first_cell, &targets, "f32");
+                        run_and_compare::<wide::f32x4>(q, channel, first_cell, &targets, "f32x4");
+                        run_and_compare::<wide::f32x8>(q, channel, first_cell, &targets, "f32x8");
+                        #[cfg(target_arch = "x86_64")]
+                        if jpxl_core::cpu::has_avx2() {
+                            #[target_feature(enable = "avx2")]
+                            fn avx2_case(
+                                q: &HfQuantizer,
+                                channel: usize,
+                                first_cell: usize,
+                                targets: &[f32],
+                            ) {
+                                run_and_compare::<jpxl_core::simd::avx2::F32x8>(
+                                    q, channel, first_cell, targets, "avx2",
+                                );
+                            }
+                            // SAFETY: AVX2 support was checked just above.
+                            #[allow(unsafe_code)]
+                            unsafe {
+                                avx2_case(q, channel, first_cell, &targets);
+                            }
+                        }
+                        // The dispatching entry point agrees too.
+                        let mut got_q = vec![0i32; n];
+                        let mut ref_q = vec![0i32; n];
+                        let a = q.choose_run(channel, first_cell, &targets, &mut got_q, None);
+                        let b =
+                            q.choose_run_scalar(channel, first_cell, &targets, &mut ref_q, None);
+                        assert_eq!(a.is_ok(), b.is_ok());
+                        if a.is_ok() {
+                            assert_eq!(got_q, ref_q);
+                        }
+                        // The indexed kernel over a scrambled cell list (every
+                        // cell of the run, visited in a shuffled order, plus a
+                        // repeat) agrees with the scalar indexed loop.
+                        let mut cells: Vec<usize> = (first_cell..first_cell + n).collect();
+                        for i in (1..cells.len()).rev() {
+                            let j = (rng.next() * (i + 1) as f32) as usize;
+                            cells.swap(i, j.min(i));
+                        }
+                        let mut cells_targets: Vec<f32> =
+                            cells.iter().map(|&c| targets[c - first_cell]).collect();
+                        if n > 2 {
+                            cells.push(cells[0]);
+                            cells_targets.push(cells_targets[1]);
+                        }
+                        let m = cells.len();
+                        let mut got_q = vec![0i32; m];
+                        let mut got_r = vec![0.0f32; m];
+                        let mut ref_q = vec![0i32; m];
+                        let mut ref_r = vec![0.0f32; m];
+                        let a = q.choose_cells(
+                            channel,
+                            &cells_targets,
+                            &cells,
+                            &mut got_q,
+                            Some(&mut got_r),
+                        );
+                        let b = q.choose_cells_scalar(
+                            channel,
+                            &cells_targets,
+                            &cells,
+                            &mut ref_q,
+                            Some(&mut ref_r),
+                        );
+                        match (a, b) {
+                            (Ok(()), Ok(())) => {
+                                assert_eq!(got_q, ref_q, "choose_cells q, channel {channel}");
+                                for (g, r) in got_r.iter().zip(ref_r.iter()) {
+                                    assert_eq!(g.to_bits(), r.to_bits(), "choose_cells recon");
+                                }
+                            }
+                            (Err(e), Err(f)) => assert_eq!(e.to_string(), f.to_string()),
+                            (a, b) => panic!("choose_cells verdicts differ: {a:?} vs {b:?}"),
                         }
                     }
                 }

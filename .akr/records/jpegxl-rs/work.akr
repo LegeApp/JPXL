@@ -1699,6 +1699,49 @@ record jpegxl-rs.work.arch-phase35-lane-batched-dct/1 : work {
     part_of [ @jpegxl-rs.track.encoder-optimization ]
 }
 
+record jpegxl-rs.work.arch-phase36-runtime-avx2-row-quantizer/1 : work {
+    title "Phase 36: runtime AVX2 dispatch and the row-oriented lane quantizer"
+    state proposed
+    scope [
+        path ".agent/scratch/**",
+        path "JPXL/crates/jpxl-core/src/cpu.rs",
+        path "JPXL/crates/jpxl-core/src/dct.rs",
+        path "JPXL/crates/jpxl-core/src/lib.rs",
+        path "JPXL/crates/jpxl-core/src/simd.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/quantize.rs",
+        path "JPXL/docs/optimize.md"
+    ]
+    intent """
+        The user asked for AVX2 to be the default whenever the host supports it. The workspace compiles for baseline x86-64, so wide's f32x8 is two SSE registers, and LLVM does not re-widen it inside a #[target_feature(enable = "avx2")] function (verified in the disassembly: the wrapper had 2,418 xmm and zero ymm arithmetic instructions). Add jpxl_core::cpu::has_avx2 (cached std::arch detection, JPXL_DISABLE_AVX2 opt-out for A/B) and jpxl_core::simd::F32Vec, one lane trait with a scalar f32 implementation, wide f32x4/f32x8 implementations, and a __m256-backed simd::avx2::F32x8 whose contract is documented at the type and is the only unsafe in the tree; kernels are written once against the trait and instantiated a second time inside a target-feature entry point that callers reach only after has_avx2. Apply it to the Phase 35 DCT column pass and, more importantly, to the HF quantizer: replace the per-four-cell choose_lane4 calls in quantize_lane, cover scoring (score_channel_lanes) and the CfL luma walk with a row-oriented choose_run that hoists per-channel setup once and quantizes eight cells per AVX2 chunk with a padded final chunk instead of scalar tails, and give the CfL factor pricing an indexed choose_cells sibling. Every lane performs the scalar rule's IEEE operations in the scalar order (no FMA), a chunk that would fail replays the scalar loop so errors and cutoff order are exact, and both cover scoring and factor pricing fall back to their scalar per-cell loops when a run reports failure. Promotion requires canonical stream identity across presets, thread counts, the AVX2-on/off paths and the no-SIMD build; the full gate suite; and a reduced quantizer/DCT profile share with non-regressing pinned wall time.
+        """
+    note """
+        Opened 2026-08-17 immediately after Phase 35 at the user's request (AVX2 default when available). Timing on this host is contaminated by concurrent builds (load average up to 90); the identity and profile-share evidence carry the correctness and cost claims, and pinned wall time is reported with its noise.
+        """
+    acceptance {
+        check identity {
+            statement """
+                Canonical Fast/Balanced/Quality/masking-AQ/lossless streams on mid and large inputs, one- vs four-thread outputs, JPXL_DISABLE_AVX2 vs AVX2 outputs, and the no-SIMD build are all byte-identical to the Phase 35 binary; the F32Vec implementations, the run/indexed quantizer kernels and the lane DCT are pinned bit-identical to their scalar references by unit tests at every lane width available on the host.
+                """
+            method command
+        }
+        check safety {
+            statement """
+                Workspace fmt, build, strict Clippy and the full test suite pass with default features and with SIMD disabled; unsafe is confined to jpxl_core::simd::avx2 (type-level contract) plus the target-feature call sites; oracle, roundtrip and determinism suites pass; the candidates decode through djxl and jxl-oxide.
+                """
+            method command
+        }
+        check speed {
+            statement """
+                The AVX2 entry points demonstrably emit 256-bit arithmetic, a fresh profile shows the choose/quantizer and DCT families reduced from the Phase 35 shares, and pinned four-core Balanced medians do not regress (reported with host-noise caveat).
+                """
+            method observation
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase35-lane-batched-dct/1 ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+}
+
 record jpegxl-rs.work.arch-phase4-0b-density-gate/1 : work {
     title "Phase 4.0b: pinned real-corpus density + decode-validity gate (prerequisite for 4A/4C)"
     state completed

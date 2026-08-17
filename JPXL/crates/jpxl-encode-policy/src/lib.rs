@@ -2927,7 +2927,6 @@ fn estimate_cfl(
             let transform = vb.transform;
             let n = transform.block_dims().0;
             let side = transform.sample_cols();
-            let cells = side * side;
             let hf_quant = hf_quants.get(transform, map.hf_mul(vb_index)?)?;
             let tile = usize::try_from(
                 u64::from(vb.origin.by() / 8) * u64::from(tiles.width)
@@ -2969,73 +2968,51 @@ fn estimate_cfl(
             // entries beyond 8x8.
             let fold = side / 8;
             diagnostics::with_choose_stage(diagnostics::ChooseStage::CflY, || {
-                let mut batch_cells = [0usize; 4];
-                let mut batch_cell8 = [0usize; 4];
-                let mut batch_targets = [0.0f32; 4];
-                let mut batch_len = 0usize;
-                for cell in 0..cells {
-                    if is_llf_cell(cell, side, n) {
+                // Phase 36: the non-LLF cells of each row are one contiguous
+                // run, so quantize the row through the run kernel (cell-for-
+                // cell identical to `choose`/`reconstruct`) and then push the
+                // samples in the same raster order as before. A row the kernel
+                // cannot quantize is replayed in scalar order, so the public
+                // error and any earlier work match the pre-batch path exactly.
+                let mut q_row = [0i32; MAX_SCORE_ROW];
+                let mut recon_row = [0.0f32; MAX_SCORE_ROW];
+                let mut push_row = |first_cell: usize, recons: &[f32]| {
+                    for (i, &d_y) in recons.iter().enumerate() {
+                        let cell = first_cell + i;
+                        let cell8 = (cell / side / fold.max(1)) * 8 + (cell % side / fold.max(1));
+                        let y = cy.get(cell).copied().unwrap_or(0.0);
+                        if let Some(t) = workspace.hf.x.get_mut(tile) {
+                            t.push(cx.get(cell).copied().unwrap_or(0.0), y, d_y, cell8);
+                        }
+                        if let Some(t) = workspace.hf.b.get_mut(tile) {
+                            t.push(cb.get(cell).copied().unwrap_or(0.0), y, d_y, cell8);
+                        }
+                    }
+                };
+                for row in 0..side {
+                    let first_col = if row < n { n } else { 0 };
+                    let first_cell = row * side + first_col;
+                    let run_len = side - first_col;
+                    let Some(targets) = cy.get(first_cell..first_cell + run_len) else {
+                        continue;
+                    };
+                    let batched = match (q_row.get_mut(..run_len), recon_row.get_mut(..run_len)) {
+                        (Some(qs), Some(recons)) => hf_quant
+                            .choose_run(1, first_cell, targets, qs, Some(recons))
+                            .is_ok(),
+                        _ => false,
+                    };
+                    if batched {
+                        if let Some(recons) = recon_row.get(..run_len) {
+                            push_row(first_cell, recons);
+                        }
                         continue;
                     }
-                    let cell8 = (cell / side / fold.max(1)) * 8 + (cell % side / fold.max(1));
-                    let y = cy.get(cell).copied().unwrap_or(0.0);
-                    if let (Some(slot), Some(folded), Some(target)) = (
-                        batch_cells.get_mut(batch_len),
-                        batch_cell8.get_mut(batch_len),
-                        batch_targets.get_mut(batch_len),
-                    ) {
-                        *slot = cell;
-                        *folded = cell8;
-                        *target = y;
-                    }
-                    batch_len += 1;
-                    if batch_len == 4 {
-                        let recons = match hf_quant.choose_cells4(1, batch_targets, batch_cells) {
-                            Ok((_, recons)) => recons,
-                            Err(_) => {
-                                // A speculative four-cell batch can observe an
-                                // error in a later lane before the scalar walk
-                                // would reach it. Replay in scalar order so the
-                                // public error and any earlier work match the
-                                // pre-batch path exactly.
-                                let mut recons = [0.0f32; 4];
-                                for i in 0..4 {
-                                    let cell = batch_cells.get(i).copied().unwrap_or(0);
-                                    let target = batch_targets.get(i).copied().unwrap_or(0.0);
-                                    let q_y = hf_quant.choose(target, 1, cell)?;
-                                    if let Some(recon) = recons.get_mut(i) {
-                                        *recon = hf_quant.reconstruct(q_y, 1, cell);
-                                    }
-                                }
-                                recons
-                            }
-                        };
-                        for i in 0..4 {
-                            let cell = batch_cells.get(i).copied().unwrap_or(0);
-                            let cell8 = batch_cell8.get(i).copied().unwrap_or(0);
-                            let y = batch_targets.get(i).copied().unwrap_or(0.0);
-                            let d_y = recons.get(i).copied().unwrap_or(0.0);
-                            if let Some(t) = workspace.hf.x.get_mut(tile) {
-                                t.push(cx.get(cell).copied().unwrap_or(0.0), y, d_y, cell8);
-                            }
-                            if let Some(t) = workspace.hf.b.get_mut(tile) {
-                                t.push(cb.get(cell).copied().unwrap_or(0.0), y, d_y, cell8);
-                            }
-                        }
-                        batch_len = 0;
-                    }
-                }
-                for i in 0..batch_len {
-                    let cell = batch_cells.get(i).copied().unwrap_or(0);
-                    let cell8 = batch_cell8.get(i).copied().unwrap_or(0);
-                    let y = batch_targets.get(i).copied().unwrap_or(0.0);
-                    let q_y = hf_quant.choose(y, 1, cell)?;
-                    let d_y = hf_quant.reconstruct(q_y, 1, cell);
-                    if let Some(t) = workspace.hf.x.get_mut(tile) {
-                        t.push(cx.get(cell).copied().unwrap_or(0.0), y, d_y, cell8);
-                    }
-                    if let Some(t) = workspace.hf.b.get_mut(tile) {
-                        t.push(cb.get(cell).copied().unwrap_or(0.0), y, d_y, cell8);
+                    for (i, &y) in targets.iter().enumerate() {
+                        let cell = first_cell + i;
+                        let q_y = hf_quant.choose(y, 1, cell)?;
+                        let d_y = hf_quant.reconstruct(q_y, 1, cell);
+                        push_row(cell, core::slice::from_ref(&d_y));
                     }
                 }
                 Ok::<(), PolicyError>(())
@@ -3247,55 +3224,49 @@ fn hf_residual_cost_bounded(
 ) -> Result<Option<u64>> {
     let k = cfl_multiplier(base, factor, DEFAULT_COLOUR_FACTOR);
     let mut bits = 0u64;
-    let mut chunks = samples.samples.chunks_exact(4);
-    for chunk in &mut chunks {
-        let mut targets = [0.0f32; 4];
-        let mut cells = [0usize; 4];
-        for (i, sample) in chunk.iter().enumerate() {
-            if let (Some(target), Some(cell)) = (targets.get_mut(i), cells.get_mut(i)) {
-                *target = sample.source - k * sample.reconstructed_y;
-                *cell = sample.cell;
-            }
-        }
-        let quantized = match quantizer.choose_cells4(channel, targets, cells) {
-            Ok((quantized, _)) => quantized,
-            Err(_) => {
-                // Replay the batch in scalar order. Besides reproducing the
-                // first concrete error, this preserves the old cutoff rule:
-                // an earlier lane may prove the challenger loses before a
-                // later invalid target would have been visited.
-                for i in 0..4 {
-                    let q = quantizer.choose(
-                        targets.get(i).copied().unwrap_or(0.0),
-                        channel,
-                        cells.get(i).copied().unwrap_or(0),
-                    )?;
-                    bits = bits.saturating_add(residual_bits(q));
-                    if cutoff.is_some_and(|cut| bits > cut) {
-                        return Ok(None);
-                    }
-                }
-                continue;
-            }
+    // Phase 36: price the residuals in blocks of up to `CFL_PRICE_CHUNK`
+    // samples through the indexed lane kernel, then walk the block's results
+    // in sample order with the same per-sample cutoff rule as before. A block
+    // the kernel cannot quantize is replayed in scalar order, which besides
+    // reproducing the first concrete error preserves the old cutoff rule: an
+    // earlier sample may prove the challenger loses before a later invalid
+    // target would have been visited.
+    let mut targets = [0.0f32; CFL_PRICE_CHUNK];
+    let mut cells = [0usize; CFL_PRICE_CHUNK];
+    let mut quantized = [0i32; CFL_PRICE_CHUNK];
+    for block in samples.samples.chunks(CFL_PRICE_CHUNK) {
+        let len = block.len();
+        let (Some(targets), Some(cells), Some(quantized)) = (
+            targets.get_mut(..len),
+            cells.get_mut(..len),
+            quantized.get_mut(..len),
+        ) else {
+            unreachable!("chunks() never yields more than CFL_PRICE_CHUNK samples");
         };
-        for q in quantized {
-            bits = bits.saturating_add(residual_bits(q));
-            // Strict > so equal residual+signalling costs still finish for
-            // magnitude tie-breaks toward neutral/smaller factor.
-            if cutoff.is_some_and(|cut| bits > cut) {
-                return Ok(None);
-            }
+        for ((sample, target), cell) in block.iter().zip(targets.iter_mut()).zip(cells.iter_mut()) {
+            *target = sample.source - k * sample.reconstructed_y;
+            *cell = sample.cell;
         }
-    }
-    for sample in chunks.remainder() {
-        let q = quantizer.choose(
-            sample.source - k * sample.reconstructed_y,
-            channel,
-            sample.cell,
-        )?;
-        bits = bits.saturating_add(residual_bits(q));
-        if cutoff.is_some_and(|cut| bits > cut) {
-            return Ok(None);
+        if quantizer
+            .choose_cells(channel, targets, cells, quantized, None)
+            .is_ok()
+        {
+            for &q in quantized.iter() {
+                bits = bits.saturating_add(residual_bits(q));
+                // Strict > so equal residual+signalling costs still finish for
+                // magnitude tie-breaks toward neutral/smaller factor.
+                if cutoff.is_some_and(|cut| bits > cut) {
+                    return Ok(None);
+                }
+            }
+        } else {
+            for (&target, &cell) in targets.iter().zip(cells.iter()) {
+                let q = quantizer.choose(target, channel, cell)?;
+                bits = bits.saturating_add(residual_bits(q));
+                if cutoff.is_some_and(|cut| bits > cut) {
+                    return Ok(None);
+                }
+            }
         }
     }
     Ok(Some(bits))
@@ -3930,6 +3901,16 @@ fn mul_signal_bits(hf_mul: HfMul, baseline: HfMul) -> f64 {
 ///
 /// As [`HfQuantizer::choose`].
 #[allow(clippy::too_many_arguments)]
+/// Samples priced per [`HfQuantizer::choose_cells`] call in
+/// [`hf_residual_cost_bounded`]: large enough to amortise the kernel's setup,
+/// small enough that a speculative block replayed in scalar order stays cheap.
+const CFL_PRICE_CHUNK: usize = 64;
+
+/// Longest row [`score_channel_lanes`] scores through one
+/// [`HfQuantizer::choose_run`] call; longer rows (never produced by the cover
+/// candidates, whose largest side is 32) use the scalar loop.
+const MAX_SCORE_ROW: usize = 64;
+
 /// The Phase 6.3 frequency weight for one cell, or exactly `1.0` when the
 /// table is empty (the flat production objective).
 #[inline]
@@ -3958,35 +3939,53 @@ fn score_channel_lanes(
     // bit-identical to the pre-Phase-6 scorer.
     freq: &[f32],
 ) -> Result<bool> {
+    // Phase 36: one run-kernel call per row (vector chunks plus a padded
+    // final chunk), then the same per-cell accumulate-and-check walk as
+    // before, in the same raster order. `choose_run` is cell-for-cell
+    // identical to `choose`/`reconstruct`; when it reports that some cell of
+    // the row would fail, the row falls through to the scalar loop below,
+    // which reproduces the exact cutoff-before-error order.
+    let mut targets_buf = [0.0f32; MAX_SCORE_ROW];
+    let mut q_buf = [0i32; MAX_SCORE_ROW];
+    let mut recon_buf = [0.0f32; MAX_SCORE_ROW];
     for row in 0..side {
         let col_start = if row < n { n } else { 0 };
         let row_base = row * side;
         let mut col = col_start;
-        while col + 4 <= side {
-            let cell_base = row_base + col;
-            let targets = [
-                target_at(cell_base),
-                target_at(cell_base + 1),
-                target_at(cell_base + 2),
-                target_at(cell_base + 3),
-            ];
-            let (qs, recons) = hf_quant.choose_lane4(channel, targets, cell_base)?;
-            for i in 0..4 {
-                let cell = cell_base + i;
-                let q = qs.get(i).copied().unwrap_or(0);
-                let recon = recons.get(i).copied().unwrap_or(0.0);
-                let target = targets.get(i).copied().unwrap_or(0.0);
-                *bits = bits.saturating_add(residual_bits(q));
-                *weighted_sse += lambda
-                    * to_sample_domain
-                    * cell_weight(freq, cell)
-                    * f64::from(recon - target).powi(2);
-                on_recon(cell, recon);
-                if check(*bits, *weighted_sse) {
-                    return Ok(true);
-                }
+        let run_len = side - col_start;
+        if run_len <= MAX_SCORE_ROW {
+            let first_cell = row_base + col_start;
+            let (Some(targets), Some(qs), Some(recons)) = (
+                targets_buf.get_mut(..run_len),
+                q_buf.get_mut(..run_len),
+                recon_buf.get_mut(..run_len),
+            ) else {
+                unreachable!("run_len <= MAX_SCORE_ROW was checked");
+            };
+            for (i, t) in targets.iter_mut().enumerate() {
+                *t = target_at(first_cell + i);
             }
-            col += 4;
+            if hf_quant
+                .choose_run(channel, first_cell, targets, qs, Some(recons))
+                .is_ok()
+            {
+                for i in 0..run_len {
+                    let cell = first_cell + i;
+                    let q = qs.get(i).copied().unwrap_or(0);
+                    let recon = recons.get(i).copied().unwrap_or(0.0);
+                    let target = targets.get(i).copied().unwrap_or(0.0);
+                    *bits = bits.saturating_add(residual_bits(q));
+                    *weighted_sse += lambda
+                        * to_sample_domain
+                        * cell_weight(freq, cell)
+                        * f64::from(recon - target).powi(2);
+                    on_recon(cell, recon);
+                    if check(*bits, *weighted_sse) {
+                        return Ok(true);
+                    }
+                }
+                col = side;
+            }
         }
         while col < side {
             let cell = row_base + col;

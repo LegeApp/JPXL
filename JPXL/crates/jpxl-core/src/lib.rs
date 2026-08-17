@@ -23,6 +23,7 @@
 //!   analysis transforms an encoder needs, and `lf_from_llf`.
 
 pub mod color;
+pub mod cpu;
 pub mod dct;
 pub mod dequant;
 pub mod error;
@@ -30,6 +31,7 @@ pub mod forward;
 pub mod geometry;
 pub mod limits;
 pub mod modular_weighted;
+pub mod simd;
 pub mod varblock;
 
 pub use error::{JpxlError, Result};

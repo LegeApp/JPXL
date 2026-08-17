@@ -214,9 +214,10 @@ const DCT4_16: [[f32; 16]; 16] = [
 // Lanes: one implementation of every kernel, for one value or several columns
 // ---------------------------------------------------------------------------
 //
-// Each 1-D kernel below is written once, generically over a `Lane`: either a
-// single `f32`, or (with the `simd` feature) a `wide` vector holding one value
-// from each of several adjacent columns. The kernel body performs exactly the
+// Each 1-D kernel below is written once, generically over a `Lane` (the
+// crate's `simd::F32Vec`): either a single `f32`, or (with the `simd`
+// feature) a `wide` or AVX2 vector holding one value from each of several
+// adjacent columns. The kernel body performs exactly the
 // same sequence of IEEE-754 additions, subtractions and multiplications on
 // every lane that it performs on a scalar — no fused multiply-add, no
 // reassociation — so a vector lane and the scalar path produce bit-identical
@@ -225,83 +226,9 @@ const DCT4_16: [[f32; 16]; 16] = [
 // `tests::lanes_match_scalar` pins it.
 
 /// One value, or one value per column: the element type the kernels run on.
-trait Lane:
-    Copy + core::ops::Add<Output = Self> + core::ops::Sub<Output = Self> + core::ops::Mul<Output = Self>
-{
-    /// Columns transformed at once by a pass over this lane type.
-    const LANES: usize;
-    /// Every lane set to `value`.
-    fn splat(value: f32) -> Self;
-    /// Loads `Self::LANES` values from the front of `src` (which must be at
-    /// least that long).
-    fn load(src: &[f32]) -> Self;
-    /// Stores `Self::LANES` values to the front of `dst` (which must be at
-    /// least that long).
-    fn store(self, dst: &mut [f32]);
-}
-
-impl Lane for f32 {
-    const LANES: usize = 1;
-
-    #[inline(always)]
-    fn splat(value: f32) -> Self {
-        value
-    }
-
-    #[inline(always)]
-    fn load(src: &[f32]) -> Self {
-        src[0]
-    }
-
-    #[inline(always)]
-    fn store(self, dst: &mut [f32]) {
-        dst[0] = self;
-    }
-}
-
-#[cfg(feature = "simd")]
-impl Lane for wide::f32x4 {
-    const LANES: usize = 4;
-
-    #[inline(always)]
-    fn splat(value: f32) -> Self {
-        Self::splat(value)
-    }
-
-    #[inline(always)]
-    fn load(src: &[f32]) -> Self {
-        let mut a = [0.0f32; 4];
-        a.copy_from_slice(&src[..4]);
-        Self::from(a)
-    }
-
-    #[inline(always)]
-    fn store(self, dst: &mut [f32]) {
-        dst[..4].copy_from_slice(&self.to_array());
-    }
-}
-
-#[cfg(feature = "simd")]
-impl Lane for wide::f32x8 {
-    const LANES: usize = 8;
-
-    #[inline(always)]
-    fn splat(value: f32) -> Self {
-        Self::splat(value)
-    }
-
-    #[inline(always)]
-    fn load(src: &[f32]) -> Self {
-        let mut a = [0.0f32; 8];
-        a.copy_from_slice(&src[..8]);
-        Self::from(a)
-    }
-
-    #[inline(always)]
-    fn store(self, dst: &mut [f32]) {
-        dst[..8].copy_from_slice(&self.to_array());
-    }
-}
+/// This is [`crate::simd::F32Vec`]; the kernels use only its `splat`, `load`,
+/// `store` and arithmetic, and inherit its bit-identity contract.
+use crate::simd::F32Vec as Lane;
 
 /// Orthonormal 2-point DCT-IV, in place. A single Givens rotation.
 #[inline(always)]
@@ -874,6 +801,7 @@ pub fn transpose_into(src: &[f32], dst: &mut [f32], rows: usize, cols: usize) {
 /// exactly the operations the scalar kernels perform, in the same order, so
 /// the result is bit-identical whichever lane width is chosen.
 #[allow(clippy::cast_precision_loss)]
+#[inline(always)]
 fn column_pass_lanes<L: Lane>(m: &mut [f32], rows: usize, cols: usize, forward: bool) {
     let factor = if forward {
         1.0 / (rows as f32).sqrt()
@@ -933,6 +861,17 @@ fn column_pass(m: &mut [f32], rows: usize, cols: usize, forward: bool) {
     #[cfg(feature = "simd")]
     {
         if cols.is_multiple_of(8) {
+            #[cfg(target_arch = "x86_64")]
+            if crate::cpu::has_avx2() {
+                // SAFETY: `column_pass_f32x8_avx2` only requires that the host
+                // support AVX2, which `has_avx2` has just confirmed; its body
+                // is the same safe generic column pass compiled for AVX2.
+                #[allow(unsafe_code)]
+                unsafe {
+                    avx2::column_pass_f32x8(m, rows, cols, forward);
+                }
+                return;
+            }
             column_pass_lanes::<wide::f32x8>(m, rows, cols, forward);
             return;
         }
@@ -942,6 +881,28 @@ fn column_pass(m: &mut [f32], rows: usize, cols: usize, forward: bool) {
         }
     }
     column_pass_lanes::<f32>(m, rows, cols, forward);
+}
+
+/// The 8-lane column pass on 256-bit AVX2 registers, selected at run time by
+/// [`column_pass`] through [`crate::cpu::has_avx2`].
+///
+/// It runs the *same* generic kernels over [`crate::simd::avx2::F32x8`] — the
+/// same IEEE-754 operations on the same values in the same order — so it is
+/// bit-identical to every other lane width; only the register width differs
+/// (`tests::lane_widths_are_bit_identical_to_scalar` pins this on AVX2
+/// hosts). The lane type's contract lives with the type; this module only
+/// adds the target-feature entry point.
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+mod avx2 {
+    /// [`super::column_pass_lanes`] over AVX2 lanes, compiled with AVX2.
+    ///
+    /// Safe to call only when the host supports AVX2 (see
+    /// [`crate::cpu::has_avx2`]); that is the whole contract, and it is why a
+    /// call site must be `unsafe`.
+    #[target_feature(enable = "avx2")]
+    pub(super) fn column_pass_f32x8(m: &mut [f32], rows: usize, cols: usize, forward: bool) {
+        super::column_pass_lanes::<crate::simd::avx2::F32x8>(m, rows, cols, forward);
+    }
 }
 
 /// Column-first reference for tests of the lane-batched pipeline: every column
@@ -1914,9 +1875,19 @@ mod tests {
                         column_pass(&mut dispatched, rows, cols, forward);
                         let mut variants = vec![("f32x4", four), ("dispatched", dispatched)];
                         if cols.is_multiple_of(8) {
-                            let mut eight = base;
+                            let mut eight = base.clone();
                             column_pass_lanes::<wide::f32x8>(&mut eight, rows, cols, forward);
                             variants.push(("f32x8", eight));
+                            #[cfg(target_arch = "x86_64")]
+                            if crate::cpu::has_avx2() {
+                                let mut wide256 = base;
+                                // SAFETY: AVX2 support was just confirmed.
+                                #[allow(unsafe_code)]
+                                unsafe {
+                                    avx2::column_pass_f32x8(&mut wide256, rows, cols, forward);
+                                }
+                                variants.push(("avx2", wide256));
+                            }
                         }
                         for (name, values) in &variants {
                             for (i, (s, v)) in scalar.iter().zip(values.iter()).enumerate() {

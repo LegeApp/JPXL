@@ -638,6 +638,62 @@ lane throughput without changing any result (rustc never contracts
 but it is a build-configuration decision for the plan, not a code change for
 this phase.
 
+## Phase 36 — runtime AVX2 dispatch and the row-oriented lane quantizer (2026-08-17)
+
+Requested outcome: AVX2 is the default whenever the host supports it, without
+giving up a portable baseline binary. The workspace compiles for baseline
+x86-64, so `wide::f32x8` is two SSE registers, and simply wrapping the Phase 35
+column pass in a `#[target_feature(enable = "avx2")]` function did *not* widen
+it (disassembly of that wrapper: 2,418 `xmm` and zero `ymm` arithmetic
+instructions). Real 256-bit lanes need a `__m256`-backed lane type.
+
+`jpxl_core::cpu::has_avx2` caches one `std::arch` detection (with a
+`JPXL_DISABLE_AVX2` opt-out for A/B and for exercising the fallback on an AVX2
+host). `jpxl_core::simd::F32Vec` is one lane trait — splat/load/store,
+arithmetic, abs, truncation, ordered comparisons as all-bits masks, bit ops,
+blend, all/any — with a scalar `f32` implementation, `wide` `f32x4`/`f32x8`
+implementations, and `simd::avx2::F32x8` on `core::arch` intrinsics. Every
+implementation performs the same IEEE-754 operation per lane, so a kernel
+written once against the trait is bit-identical whichever lane type it is
+instantiated with; `simd::tests` pins that against the scalar implementation
+for every op. `avx2::F32x8` is the only `unsafe` in the tree: its contract is
+documented at the type (every method executes AVX instructions; the type is
+only reached inside a target-feature entry point behind `has_avx2`), and each
+entry-point call site carries the same one-line contract.
+
+Kernels: the Phase 35 DCT column pass gains an AVX2 entry point (now 1,269
+`ymm` float ops, zero `xmm`, zero FMA). The bigger change is the HF quantizer.
+`HfQuantizer::choose_run` quantizes a contiguous run of one channel's cells
+(`q` and optional reconstruction), hoisting the per-channel rows, bias and
+bounds once and processing eight cells per AVX2 chunk with a zero-padded final
+chunk (target 0 / step 1 / threshold 1 pad lanes take the zero shortcut and are
+dropped) instead of the old four-cell batches plus scalar tails; the indexed
+sibling `choose_cells` gathers steps/thresholds per explicit cell. Each chunk
+mirrors `choose_cells4`'s per-lane rule exactly — zero-threshold shortcut,
+`clamp_round`'s ties-away rounding through truncation with the sign bit carried
+by a copysign, the `[0, e-1, e, e+1]` candidate order and tie rule, the
+`|q| <= MAX_QUANT` legality skip — and a chunk with any failing lane replays the
+scalar loop, so the returned error is the first scalar one. `quantize_lane`,
+cover scoring (`score_channel_lanes`), the CfL luma walk (per row) and the CfL
+factor pricing (`hf_residual_cost_bounded`, 64-sample blocks) all use it; the
+two cutoff-interleaved callers fall back to their scalar per-cell loops when a
+run reports failure, which reproduces the exact cutoff-before-error order.
+
+Verified: all eight canonical/masking-AQ streams and the lossless stream are
+byte-identical to the Phase 35 binary; one- vs four-thread, `JPXL_DISABLE_AVX2`
+vs AVX2, and the no-SIMD build reproduce the same hashes; new property tests
+pin `choose_run`/`choose_cells` against `choose`/`reconstruct` (q, recon bits,
+and error identity) at every lane width for runs of length 1–33 at random
+offsets and scrambled index lists. Fresh mid-Balanced P-core profile: the
+choose family fell from 17.6% (`choose_cells4`) + 3.8% (`quantize_lane`) to
+6.8% (`choose_run_avx2`) + 4.3% (`choose_cells_avx2`) + 0.8%; the DCT family
+is about 8%. Pinned wall time is reported in the AKR evidence with its noise
+caveat: this host ran concurrent builds (load average up to 90) during the
+phase.
+
+Next leaf: `cbrtf` (compiler_builtins' portable implementation, 4.3%) in the
+XYB conversion is now the largest scalar leaf.
+
 
 ### Open architectural questions
 
