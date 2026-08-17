@@ -17,7 +17,12 @@ rayon = { workspace = true, optional = true }
 wide = { workspace = true, optional = true }
 
 [features]
-default = ["parallel", "simd", "phase4b-sampled-gather"]
+default = ["parallel", "simd", "phase4b-sampled-gather", "hf-token-tape"]
+# Phase 41: record each pass group's HF token stream once (tokenized under
+# its cluster's configuration) and replay it for emission, so a written plan
+# walks its coefficients once instead of twice (census, then emission). Off,
+# the two-walk path is compiled as the byte-identical oracle.
+hf-token-tape = []
 # Coarse section parallelism via rayon (falls back to std::thread::scope).
 parallel = ["dep:rayon"]
 # Leaf SIMD: Gaborish interior + core DCT when jpxl-core/simd is on.

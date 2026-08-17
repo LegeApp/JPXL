@@ -242,10 +242,31 @@ impl AnsPayload {
 /// [`EntropyError::Encode`](crate::EntropyError::Encode) if a symbol names a
 /// cluster with no table, or a token with no probability mass in it.
 pub fn encode_symbols(tables: &[AnsEncodeTable], symbols: &[AnsSymbol]) -> Result<AnsPayload> {
-    let mut renormalizations = vec![None; symbols.len()];
+    encode_symbols_with(tables, symbols.len(), |index| {
+        symbols.get(index).copied().unwrap_or(AnsSymbol {
+            cluster: usize::MAX,
+            token: u32::MAX,
+        })
+    })
+}
+
+/// [`encode_symbols`] over `count` symbols produced by `symbol_at(index)`,
+/// so a caller holding its symbols in another layout (a token tape) need not
+/// materialise a `Vec<AnsSymbol>` first. Same backward pass, same words.
+///
+/// # Errors
+///
+/// As [`encode_symbols`].
+pub fn encode_symbols_with(
+    tables: &[AnsEncodeTable],
+    count: usize,
+    symbol_at: impl Fn(usize) -> AnsSymbol,
+) -> Result<AnsPayload> {
+    let mut renormalizations = vec![None; count];
     let mut state = u64::from(FINAL_ANS_STATE);
 
-    for (index, symbol) in symbols.iter().enumerate().rev() {
+    for index in (0..count).rev() {
+        let symbol = &symbol_at(index);
         let table = tables.get(symbol.cluster).ok_or_else(|| {
             encode_error!("C.2.1: cluster {} has no distribution", symbol.cluster)
         })?;

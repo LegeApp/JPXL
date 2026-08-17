@@ -1155,7 +1155,7 @@ fn print_writer_phase(
     println!(
         "{label}=internal_counts={} outer_counts={} other_counts={} stores={} \
          section_traversals={} lf_sections={} pass_group_sections={} pool_builds={} \
-         count_ms={:.1} store_ms={:.1} pool_build_ms={:.1}",
+         count_ms={:.1} store_ms={:.1} pool_build_ms={:.1} tape_symbols={}",
         phase.internal_count_emissions,
         phase.outer_count_emissions,
         phase.other_count_emissions,
@@ -1167,6 +1167,7 @@ fn print_writer_phase(
         ns_ms(phase.count_emission_ns),
         ns_ms(phase.stored_emission_ns),
         ns_ms(phase.executor_pool_build_ns),
+        phase.tape_symbols,
     );
 }
 

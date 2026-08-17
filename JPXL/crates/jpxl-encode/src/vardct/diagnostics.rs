@@ -41,6 +41,9 @@ pub struct WriterPhaseDiagnostics {
     pub count_emission_ns: u64,
     pub stored_emission_ns: u64,
     pub executor_pool_build_ns: u64,
+    /// Phase 41: HF tokens recorded on pass-group tapes (0 when the
+    /// `hf-token-tape` feature is off).
+    pub tape_symbols: u64,
 }
 
 impl WriterPhaseDiagnostics {
@@ -81,7 +84,7 @@ std::thread_local! {
             section_body_traversals: 0, lf_section_encodes: 0,
             pass_group_section_encodes: 0, executor_pool_builds: 0,
             count_emission_ns: 0, stored_emission_ns: 0,
-            executor_pool_build_ns: 0,
+            executor_pool_build_ns: 0, tape_symbols: 0,
         },
         full: WriterPhaseDiagnostics {
             internal_count_emissions: 0, outer_count_emissions: 0,
@@ -89,7 +92,7 @@ std::thread_local! {
             section_body_traversals: 0, lf_section_encodes: 0,
             pass_group_section_encodes: 0, executor_pool_builds: 0,
             count_emission_ns: 0, stored_emission_ns: 0,
-            executor_pool_build_ns: 0,
+            executor_pool_build_ns: 0, tape_symbols: 0,
         },
         other: WriterPhaseDiagnostics {
             internal_count_emissions: 0, outer_count_emissions: 0,
@@ -97,7 +100,7 @@ std::thread_local! {
             section_body_traversals: 0, lf_section_encodes: 0,
             pass_group_section_encodes: 0, executor_pool_builds: 0,
             count_emission_ns: 0, stored_emission_ns: 0,
-            executor_pool_build_ns: 0,
+            executor_pool_build_ns: 0, tape_symbols: 0,
         },
     }) };
 }
@@ -201,6 +204,16 @@ pub(crate) fn time_stored_emission<R>(f: impl FnOnce() -> R) -> R {
         diagnostics.stored_emission_ns = diagnostics.stored_emission_ns.saturating_add(elapsed);
     });
     result
+}
+
+/// Phase 41: records the number of HF tokens a frame's pass-group tapes hold.
+#[cfg_attr(not(feature = "hf-token-tape"), allow(dead_code))]
+pub(crate) fn note_tape_symbols(symbols: usize) {
+    update(|diagnostics| {
+        diagnostics.tape_symbols = diagnostics
+            .tape_symbols
+            .saturating_add(u64::try_from(symbols).unwrap_or(u64::MAX));
+    });
 }
 
 pub(crate) fn note_sections(total: usize, lf: usize, pass_groups: usize) {

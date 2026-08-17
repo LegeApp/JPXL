@@ -836,6 +836,41 @@ mid Balanced bench (−3.8%); the two `block_cost_bounded` scoring closures
 All canonical streams identical. `HfQuantizers::get` was left alone: with AQ off
 its linear scan is over three entries.
 
+## Phase 41 — the HF token tape: one walk per written plan (2026-08-17)
+
+Each written plan (two anchor Counts and the finalist Store) walked its
+coefficients twice: `build_entropy_tables` drove `walk_pass_group` into a raw
+`TokenCensus` (two dense `vec![RawHistogram; 7425]` per worker, ~4 MB), built
+the tables, and `write_pass_group` walked again into `SymbolEncoder` (re-
+tokenizing every value, then collecting a `Vec<AnsSymbol>` for the backward
+pass). `jpxl_entropy::encode::tape` now provides `TokenTapeRecorder` and
+`TokenTape`: the writer's one walk per pass group tokenizes each event under
+its cluster's configuration as it arrives, counts the token per cluster (the
+same per-cluster token counts `EntropyTables::build` derives from a census —
+`EntropyTables::build_from_token_counts` is that second half, split out), and
+appends `(cluster u8, token u16, extra_bits u8, extra u32)` to a per-group tape.
+After the tables are built the group's section replays the tape:
+`encode_symbols_with` reads the tape's columns directly (no `Vec<AnsSymbol>`),
+then the seed, renormalisation words and extra bits are written exactly as
+`SymbolEncoder::write_stream` writes them. Behind the `hf-token-tape` feature
+(default on); off, the two-walk path compiles as the oracle.
+
+Bit-identity by construction (same triples in the same order, same integer
+counts), pinned by `stream::tests::token_tape_matches_symbol_encoder` (tables
+and bytes equal for clustered ANS and prefix plans across merged sections) and
+by every canonical stream hash. Diagnostics: `tape_symbols` in the writer
+phase lines — the mid photo records ~1.5 M tokens per plan (~12 MB of tape
+resident per in-flight plan; ~35 MB on the 12 MP photo). Instruction count per
+two-iteration mid Balanced bench: 37.66 G → 34.57 G (−8.2%; −11.5% since
+Phase 39). Wall time on this shared host was too noisy to assert (load 7–12);
+the writer's `count_ms`/`store_ms` moved down in most pairs and will be
+re-measured on a quiet host. Walks per encode: 7 → 4 (policy census, and one
+per written plan).
+
+Not done: the policy-side training census (`CensusSink`, 7425 raw histograms)
+still exists once per encode; sharing the finalist's tape with it is only
+valid when the finalist plan shape equals the trained one and is deferred.
+
 
 ### Open architectural questions
 

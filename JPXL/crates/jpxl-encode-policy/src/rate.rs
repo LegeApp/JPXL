@@ -428,6 +428,7 @@ fn add_writer_phase(
     total.count_emission_ns = total
         .count_emission_ns
         .saturating_add(extra.count_emission_ns);
+    total.tape_symbols = total.tape_symbols.saturating_add(extra.tape_symbols);
     total.stored_emission_ns = total
         .stored_emission_ns
         .saturating_add(extra.stored_emission_ns);

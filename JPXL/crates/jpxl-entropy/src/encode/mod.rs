@@ -69,8 +69,9 @@ pub mod hybrid;
 pub mod lz77;
 pub mod prefix;
 pub mod stream;
+pub mod tape;
 
-pub use ans::{AnsEncodeTable, AnsPayload, AnsSymbol, encode_symbols};
+pub use ans::{AnsEncodeTable, AnsPayload, AnsSymbol, encode_symbols, encode_symbols_with};
 pub use cluster::{ContextMap, ContextMapForm, move_to_front};
 pub use histogram::Histogram;
 pub use hybrid::TokenSplit;
@@ -79,3 +80,4 @@ pub use prefix::{PrefixEncoder, canonical_codes, huffman_lengths};
 pub use stream::{
     CodingMode, EncoderPlan, EntropyTables, RawHistogram, SymbolEncoder, TokenCensus,
 };
+pub use tape::{TokenTape, TokenTapeRecorder, merge_token_counts};

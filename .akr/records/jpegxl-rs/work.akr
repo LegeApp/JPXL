@@ -1989,6 +1989,52 @@ record jpegxl-rs.work.arch-phase40-cover-scoring-pass/1 : work {
     part_of [ @jpegxl-rs.track.encoder-optimization ]
 }
 
+record jpegxl-rs.work.arch-phase41-hf-token-tape/1 : work {
+    title "Phase 41: HF token tape -- one coefficient walk per written plan"
+    state proposed
+    scope [
+        path ".agent/scratch/**",
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/rate.rs",
+        path "JPXL/crates/jpxl-encode/Cargo.toml",
+        path "JPXL/crates/jpxl-encode/src/vardct/diagnostics.rs",
+        path "JPXL/crates/jpxl-encode/src/vardct/write.rs",
+        path "JPXL/crates/jpxl-entropy/src/encode/ans.rs",
+        path "JPXL/crates/jpxl-entropy/src/encode/mod.rs",
+        path "JPXL/crates/jpxl-entropy/src/encode/stream.rs",
+        path "JPXL/crates/jpxl-entropy/src/encode/tape.rs",
+        path "JPXL/docs/optimize.md"
+    ]
+    intent """
+        The writer walked each written plan's coefficients twice (build_entropy_tables into a dense TokenCensus, then write_pass_group into SymbolEncoder with per-symbol re-tokenization and a Vec<AnsSymbol> copy), 7 walks per encode. Add jpxl_entropy::encode::tape (TokenTapeRecorder / TokenTape): one walk per pass group tokenizes each event under its cluster's configuration, counts tokens per cluster (EntropyTables::build_from_token_counts is the split-out second half of build), and records a compact SoA tape that emission replays through encode_symbols_with and the same bit-writing sequence as SymbolEncoder::write_stream. Feature hf-token-tape (default on; off = two-walk oracle). Add the tape_symbols writer diagnostic. Byte-identical by construction and pinned by a unit test comparing tables and bytes with the replay encoder for clustered ANS and prefix plans.
+        """
+    note """
+        Opened 2026-08-17 per the approved plan. Shared-host load prevented a clean wall measurement; instruction counts carry the cost claim, wall to be re-measured quiet.
+        """
+    acceptance {
+        check identity {
+            statement """
+                Canonical streams across presets, sizes, thread counts and AVX2 on/off are byte-identical to Phase 40; the tape unit test proves tables and bytes equal the replay encoder's; djxl and jxl-oxide accept the candidates.
+                """
+            method command
+        }
+        check safety {
+            statement """
+                fmt, strict Clippy (both feature configurations of jpxl-encode), workspace suites in fast-debug and release, oracle/roundtrip/determinism, no-default-feature and AVX2-disabled suites pass.
+                """
+            method command
+        }
+        check speed {
+            statement """
+                Instruction count per mid Balanced bench drops materially; walks per encode drop from 7 to 4; tape memory measured via the tape_symbols diagnostic.
+                """
+            method observation
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase40-cover-scoring-pass/1 ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+}
+
 record jpegxl-rs.work.arch-phase4a-weighted-predictor-scoped/1 : work {
     title "Phase 4A: wire Predictor::Weighted into the encoder despite its stateful, order-dependent scoring cost"
     state completed

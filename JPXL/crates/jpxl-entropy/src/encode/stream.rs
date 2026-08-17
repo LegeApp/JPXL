@@ -427,7 +427,7 @@ impl EncoderPlan {
 
 /// The per-cluster codes of a stream, on the write side.
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum ClusterCodes {
+pub(crate) enum ClusterCodes {
     Prefix(Vec<PrefixEncoder>),
     Ans {
         histograms: Vec<Histogram>,
@@ -485,6 +485,19 @@ impl EntropyTables {
         // cluster, under that cluster's configuration. Direct tokens (LZ77
         // length triggers) are added without re-tokenization.
         let mut counts: Vec<Vec<u64>> = vec![Vec::new(); num_clusters];
+        Self::tokenize_census(plan, census, num_dist, &mut counts)?;
+        Self::build_from_token_counts(plan, counts)
+    }
+
+    /// The census-to-token-count step of [`Self::build`], separated so a
+    /// caller that already holds per-cluster token counts (a token tape
+    /// recorder) can skip it.
+    fn tokenize_census(
+        plan: &EncoderPlan,
+        census: &TokenCensus,
+        num_dist: usize,
+        counts: &mut [Vec<u64>],
+    ) -> Result<()> {
         for ctx in 0..num_dist {
             let cluster = plan.context_map.cluster_of(ctx)?;
             let config = plan
@@ -522,7 +535,32 @@ impl EntropyTables {
                 *entry = entry.saturating_add(count);
             }
         }
+        Ok(())
+    }
 
+    /// Builds the tables from per-cluster token counts (`counts[cluster][token]`),
+    /// the representation [`Self::build`] derives from a census before this
+    /// same step. A [`super::tape::TokenTapeRecorder`] produces these counts
+    /// directly. The plan's configurations must already have been validated
+    /// (the recorder does; [`Self::build`] does).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::build`].
+    pub fn build_from_token_counts(plan: &EncoderPlan, counts: Vec<Vec<u64>>) -> Result<Self> {
+        let num_clusters = plan.context_map.num_clusters();
+        if counts.len() != num_clusters {
+            return Err(encode_error!(
+                "C.2.1: {} token-count sets for {num_clusters} clusters",
+                counts.len()
+            ));
+        }
+        if plan.configs.len() != num_clusters {
+            return Err(encode_error!(
+                "C.2.1: {} configurations for {num_clusters} clusters",
+                plan.configs.len()
+            ));
+        }
         let codes = match plan.mode {
             CodingMode::Prefix => {
                 let mut codes = Vec::with_capacity(num_clusters);
@@ -602,6 +640,12 @@ impl EntropyTables {
             codes,
             lz77: plan.lz77,
         })
+    }
+
+    /// The per-cluster codes (crate-private: the token tape replays through
+    /// them).
+    pub(crate) const fn codes(&self) -> &ClusterCodes {
+        &self.codes
     }
 
     /// The context map these tables were built for.
@@ -1010,6 +1054,95 @@ mod tests {
         }
         decoder.finish().expect("terminal state");
         assert_eq!(r.total_bits_read(), bits, "no bits left unread");
+    }
+
+    /// The token tape (Phase 41) yields the same tables and the same bytes as
+    /// the census-then-replay path for the same values: several clusters with
+    /// different configurations, values across the small/tail histogram
+    /// boundary, both backends, and streams split across "sections" whose
+    /// counts merge in any order.
+    #[test]
+    fn token_tape_matches_symbol_encoder() {
+        use super::super::tape::{TokenTapeRecorder, merge_token_counts};
+        for mode in [CodingMode::Ans, CodingMode::Prefix] {
+            let num_contexts = 9;
+            let clusters: Vec<u8> = vec![0, 1, 2, 0, 1, 2, 0, 3, 3];
+            let context_map = ContextMap::new(clusters).expect("map");
+            let configs = vec![
+                HybridUintConfig::new(4, 2, 1).expect("legal"),
+                HybridUintConfig::new(1, 0, 0).expect("legal"),
+                HybridUintConfig::new(6, 2, 2).expect("legal"),
+                HybridUintConfig::new(3, 1, 0).expect("legal"),
+            ];
+            let plan = EncoderPlan::clustered(context_map, mode, configs).expect("plan");
+            let mut state = 0x1234_5678u32;
+            let mut sections: Vec<Vec<(usize, u32)>> = Vec::new();
+            for section in 0..3 {
+                let mut values = Vec::new();
+                for i in 0..400u32 {
+                    state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                    let ctx = ((state >> 8) % 9) as usize;
+                    let magnitude = match (state >> 12) % 8 {
+                        0 => 0,
+                        1..=4 => (state >> 20) % 16,
+                        5 | 6 => (state >> 20) % 300,
+                        _ => (state >> 20) % 100_000,
+                    };
+                    values.push((ctx, magnitude + section * (i % 2)));
+                }
+                sections.push(values);
+            }
+
+            // Reference: census over everything, tables, replay per section.
+            let mut census = TokenCensus::new(num_contexts).expect("census");
+            for values in &sections {
+                for &(ctx, value) in values {
+                    census.record(ctx, value).expect("records");
+                }
+            }
+            let reference_tables = EntropyTables::build(&plan, &census).expect("tables");
+
+            // Tape: two "workers" record disjoint sections; counts merge.
+            let mut recorder_a = TokenTapeRecorder::new(&plan).expect("recorder");
+            let mut recorder_b = TokenTapeRecorder::new(&plan).expect("recorder");
+            let mut tapes = Vec::new();
+            for (index, values) in sections.iter().enumerate() {
+                let recorder = if index < 2 {
+                    &mut recorder_a
+                } else {
+                    &mut recorder_b
+                };
+                for &(ctx, value) in values {
+                    recorder.record(ctx, value).expect("records");
+                }
+                tapes.push(recorder.take_tape());
+            }
+            let mut counts = recorder_b.into_counts();
+            merge_token_counts(&mut counts, recorder_a.into_counts()).expect("merge");
+            let tape_tables =
+                EntropyTables::build_from_token_counts(&plan, counts).expect("tables");
+            assert_eq!(tape_tables, reference_tables, "{mode:?}: tables");
+
+            for (values, tape) in sections.iter().zip(tapes.iter()) {
+                let mut reference = BitWriter::new();
+                let mut encoder = SymbolEncoder::new(&reference_tables);
+                for &(ctx, value) in values {
+                    encoder.push_uint(ctx, value).expect("records");
+                }
+                encoder.write_stream(&mut reference).expect("stream");
+
+                let mut replay = BitWriter::new();
+                tape.write_stream(&tape_tables, &mut replay)
+                    .expect("stream");
+                assert_eq!(
+                    replay.bit_len(),
+                    reference.bit_len(),
+                    "{mode:?}: bit length"
+                );
+                assert_eq!(replay.as_bytes(), reference.as_bytes(), "{mode:?}: bytes");
+                assert_eq!(tape.len(), values.len());
+            }
+        }
     }
 
     #[test]

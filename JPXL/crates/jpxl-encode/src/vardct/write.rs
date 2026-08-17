@@ -46,6 +46,8 @@ use jpxl_entropy::HybridUintConfig;
 use jpxl_entropy::encode::{
     CodingMode, ContextMap, ContextMapForm, EncoderPlan, EntropyTables, SymbolEncoder, TokenCensus,
 };
+#[cfg(feature = "hf-token-tape")]
+use jpxl_entropy::encode::{TokenTape, TokenTapeRecorder, merge_token_counts};
 
 use crate::entropy::pack_signed;
 use crate::error::{EncodeError, Result};
@@ -459,7 +461,8 @@ fn write_frame_body(
             .ok_or_else(|| EncodeError::unsupported("a frame with no pass", "F.6"))?
             .orders,
     );
-    let tables = build_entropy_tables(plan, geometry, &orders, executor)?;
+    let prepared = prepare_pass_groups(plan, geometry, &orders, executor)?;
+    let tables = &prepared.tables;
 
     let mut store = match mode {
         EmitMode::Store => SectionStore::new(),
@@ -475,8 +478,8 @@ fn write_frame_body(
         };
         write_lf_global(plan, &mut body)?;
         write_lf_group(plan, geometry, LfGroupId::new(0), &mut body)?;
-        write_hf_global(plan, geometry, &tables, &mut body)?;
-        write_pass_group(plan, geometry, &orders, &tables, 0, &mut body)?;
+        write_hf_global(plan, geometry, tables, &mut body)?;
+        prepared.write_pass_group(plan, geometry, &orders, 0, &mut body)?;
         body.zero_pad_to_byte();
         if mode == EmitMode::Store {
             store.push(body.into_bytes());
@@ -505,13 +508,13 @@ fn write_frame_body(
     store_push(
         &mut store,
         mode,
-        section_result(mode, |w| write_hf_global(plan, geometry, &tables, w))?,
+        section_result(mode, |w| write_hf_global(plan, geometry, tables, w))?,
     );
 
     let pg_parts = crate::resources::ordered_map_with(n_pg, executor, |group| {
         let group = u64::try_from(group).unwrap_or(u64::MAX);
         section_result(mode, |w| {
-            write_pass_group(plan, geometry, &orders, &tables, group, w)
+            prepared.write_pass_group(plan, geometry, &orders, group, w)
         })
     })?;
     for part in pg_parts {
@@ -966,6 +969,7 @@ fn write_hf_coeff_orders(
 // G.4 — PassGroup
 // ---------------------------------------------------------------------------
 
+#[cfg(not(feature = "hf-token-tape"))]
 fn write_pass_group(
     plan: &EmissionPlan,
     geometry: &VardctGeometry,
@@ -1015,11 +1019,13 @@ fn group_hfp(plan: &EmissionPlan, group: u64) -> Result<u32> {
 /// [`HfEventSink`] is infallible by design — a census cannot fail — so the
 /// first entropy error is parked here and raised by the caller. Dropping it
 /// silently would produce a short stream that no decoder could explain.
+#[cfg(not(feature = "hf-token-tape"))]
 struct SymbolSinkAdapter<'a> {
     encoder: SymbolEncoder<'a>,
     error: Option<jpxl_entropy::EntropyError>,
 }
 
+#[cfg(not(feature = "hf-token-tape"))]
 impl SymbolSinkAdapter<'_> {
     fn push(&mut self, context: PreContextId, value: u32) {
         if self.error.is_some() {
@@ -1032,6 +1038,7 @@ impl SymbolSinkAdapter<'_> {
     }
 }
 
+#[cfg(not(feature = "hf-token-tape"))]
 impl HfEventSink for SymbolSinkAdapter<'_> {
     fn nonzeros(&mut self, context: PreContextId, value: u32) {
         self.push(context, value);
@@ -1264,11 +1271,13 @@ pub fn census_frame_with_executor(
 }
 
 /// A [`TokenCensus`] behind the [`HfEventSink`] interface.
+#[cfg(not(feature = "hf-token-tape"))]
 struct TokenCensusSink {
     census: TokenCensus,
     error: Option<jpxl_entropy::EntropyError>,
 }
 
+#[cfg(not(feature = "hf-token-tape"))]
 impl TokenCensusSink {
     fn record(&mut self, context: PreContextId, value: u32) {
         if self.error.is_some() {
@@ -1281,6 +1290,7 @@ impl TokenCensusSink {
     }
 }
 
+#[cfg(not(feature = "hf-token-tape"))]
 impl HfEventSink for TokenCensusSink {
     fn nonzeros(&mut self, context: PreContextId, value: u32) {
         self.record(context, value);
@@ -1291,19 +1301,212 @@ impl HfEventSink for TokenCensusSink {
     }
 }
 
+/// The frame's entropy tables plus, with the `hf-token-tape` feature, every
+/// pass group's recorded token tape (Phase 41).
+///
+/// Without the feature the tables come from a census walk and each pass group
+/// is walked again at emission (the two-walk oracle path); with it, one walk
+/// per group records a [`TokenTape`] whose per-cluster token counts build the
+/// same tables, and emission replays the tape. Both paths produce identical
+/// bytes (`jpxl_entropy::encode::stream::tests::token_tape_matches_symbol_encoder`
+/// pins the mechanism; the canonical stream hashes pin the whole writer).
+struct PreparedPassGroups {
+    tables: EntropyTables,
+    #[cfg(feature = "hf-token-tape")]
+    tapes: Vec<TokenTape>,
+}
+
+impl PreparedPassGroups {
+    /// Writes one pass group's section body (G.4).
+    fn write_pass_group(
+        &self,
+        plan: &EmissionPlan,
+        geometry: &VardctGeometry,
+        orders: &OrderTables,
+        group: u64,
+        w: &mut BitWriter,
+    ) -> Result<()> {
+        #[cfg(feature = "hf-token-tape")]
+        {
+            let _ = (geometry, orders);
+            let tape = usize::try_from(group)
+                .ok()
+                .and_then(|index| self.tapes.get(index))
+                .ok_or_else(|| {
+                    EncodeError::unsupported("a pass group without a recorded token tape", "G.4")
+                })?;
+            write_pass_group_from_tape(plan, tape, &self.tables, group, w)
+        }
+        #[cfg(not(feature = "hf-token-tape"))]
+        {
+            write_pass_group(plan, geometry, orders, &self.tables, group, w)
+        }
+    }
+}
+
+/// Builds the entropy tables (and, with `hf-token-tape`, the token tapes) for
+/// every pass group.
+fn prepare_pass_groups(
+    plan: &EmissionPlan,
+    geometry: &VardctGeometry,
+    orders: &OrderTables,
+    executor: &crate::EncodeExecutor,
+) -> Result<PreparedPassGroups> {
+    #[cfg(feature = "hf-token-tape")]
+    {
+        record_pass_group_tapes(plan, geometry, orders, executor)
+    }
+    #[cfg(not(feature = "hf-token-tape"))]
+    {
+        Ok(PreparedPassGroups {
+            tables: build_entropy_tables(plan, geometry, orders, executor)?,
+        })
+    }
+}
+
+/// The plan's clustering and hybrid-uint choices as an [`EncoderPlan`].
+fn encoder_plan_for(plan: &EmissionPlan) -> Result<EncoderPlan> {
+    let pass = plan
+        .entropy
+        .passes
+        .first()
+        .ok_or_else(|| EncodeError::unsupported("a frame with no pass", "F.6"))?;
+    let clusters: Vec<u8> = pass
+        .distributions
+        .context_map
+        .iter()
+        .map(|c| ClusterId::get(*c))
+        .collect();
+    let context_map = ContextMap::new(clusters)?;
+    let configs: Vec<HybridUintConfig> = pass
+        .distributions
+        .hybrid_uint
+        .iter()
+        .map(|c| {
+            HybridUintConfig::new(
+                u32::from(c.split_exponent),
+                u32::from(c.msb_in_token),
+                u32::from(c.lsb_in_token),
+            )
+        })
+        .collect::<core::result::Result<_, _>>()?;
+    Ok(EncoderPlan::clustered(
+        context_map,
+        CodingMode::Ans,
+        configs,
+    )?)
+}
+
+/// One walk per pass group into a token tape (Phase 41): the walk's events
+/// are tokenized under their cluster's configuration as they arrive, counted
+/// per cluster for the tables, and kept for emission. Workers record disjoint
+/// contiguous group ranges; their counts are merged in worker order (integer
+/// sums, so any order gives the same tables) and their tapes concatenated in
+/// group order.
+#[cfg(feature = "hf-token-tape")]
+fn record_pass_group_tapes(
+    plan: &EmissionPlan,
+    geometry: &VardctGeometry,
+    orders: &OrderTables,
+    executor: &crate::EncodeExecutor,
+) -> Result<PreparedPassGroups> {
+    let encoder_plan = encoder_plan_for(plan)?;
+    let n_groups = usize::try_from(geometry.num_groups()).unwrap_or(0);
+    let workers = executor.resources().workers_for(n_groups).max(1);
+    let chunk = n_groups.div_ceil(workers);
+    let parts = executor.map_ordered(workers, |worker| {
+        let mut sink = TapeSink {
+            recorder: TokenTapeRecorder::new(&encoder_plan)?,
+            error: None,
+        };
+        let start = worker.saturating_mul(chunk).min(n_groups);
+        let end = start.saturating_add(chunk).min(n_groups);
+        let mut tapes = Vec::with_capacity(end - start);
+        for index in start..end {
+            let group = u64::try_from(index).unwrap_or(u64::MAX);
+            let (walk, varblocks) = pass_group_walk(plan, geometry, orders, group)?;
+            walk_pass_group(&walk, &varblocks, &mut sink).map_err(EncodeError::Plan)?;
+            if let Some(error) = sink.error {
+                return Err(EncodeError::from(error));
+            }
+            tapes.push(sink.recorder.take_tape());
+        }
+        Ok::<_, EncodeError>((sink.recorder.into_counts(), tapes))
+    })?;
+    let mut counts: Vec<Vec<u64>> = vec![Vec::new(); encoder_plan.context_map.num_clusters()];
+    let mut tapes = Vec::with_capacity(n_groups);
+    for (part_counts, part_tapes) in parts {
+        merge_token_counts(&mut counts, part_counts)?;
+        tapes.extend(part_tapes);
+    }
+    if tapes.len() != n_groups {
+        return Err(EncodeError::unsupported(
+            "a token tape count that does not match the pass-group count",
+            "G.4",
+        ));
+    }
+    diagnostics::note_tape_symbols(tapes.iter().map(TokenTape::len).sum());
+    let tables = EntropyTables::build_from_token_counts(&encoder_plan, counts)?;
+    Ok(PreparedPassGroups { tables, tapes })
+}
+
+/// A [`TokenTapeRecorder`] behind the [`HfEventSink`] interface.
+#[cfg(feature = "hf-token-tape")]
+struct TapeSink<'a> {
+    recorder: TokenTapeRecorder<'a>,
+    error: Option<jpxl_entropy::EntropyError>,
+}
+
+#[cfg(feature = "hf-token-tape")]
+impl TapeSink<'_> {
+    fn record(&mut self, context: PreContextId, value: u32) {
+        if self.error.is_some() {
+            return;
+        }
+        let ctx = usize::try_from(context.get()).unwrap_or(usize::MAX);
+        if let Err(e) = self.recorder.record(ctx, value) {
+            self.error = Some(e);
+        }
+    }
+}
+
+#[cfg(feature = "hf-token-tape")]
+impl HfEventSink for TapeSink<'_> {
+    fn nonzeros(&mut self, context: PreContextId, value: u32) {
+        self.record(context, value);
+    }
+
+    fn coefficient(&mut self, context: PreContextId, value: u32) {
+        self.record(context, value);
+    }
+}
+
+/// G.4 from a recorded tape: the `hfp` bits, the replayed token stream, and
+/// the (empty) modular group data.
+#[cfg(feature = "hf-token-tape")]
+fn write_pass_group_from_tape(
+    plan: &EmissionPlan,
+    tape: &TokenTape,
+    tables: &EntropyTables,
+    group: u64,
+    w: &mut BitWriter,
+) -> Result<()> {
+    let bits = ceil_log2(u64::from(plan.entropy.num_hf_presets.max(1)));
+    let hfp = group_hfp(plan, group)?;
+    w.write_bits(bits, hfp)?;
+    tape.write_stream(tables, w)?;
+    write_modular_stream(w, &[])?;
+    Ok(())
+}
+
 /// Applies the plan's clustering and hybrid-uint choices to the frame's census.
+#[cfg(not(feature = "hf-token-tape"))]
 fn build_entropy_tables(
     plan: &EmissionPlan,
     geometry: &VardctGeometry,
     orders: &OrderTables,
     executor: &crate::EncodeExecutor,
 ) -> Result<EntropyTables> {
-    let pass = plan
-        .entropy
-        .passes
-        .first()
-        .ok_or_else(|| EncodeError::unsupported("a frame with no pass", "F.6"))?;
-
     let contexts = usize::try_from(plan_pre_contexts(plan)).unwrap_or(0);
     let n_groups = usize::try_from(geometry.num_groups()).unwrap_or(0);
     let workers = executor.resources().workers_for(n_groups).max(1);
@@ -1329,27 +1532,7 @@ fn build_entropy_tables(
     for part in parts {
         counts.merge_from(part)?;
     }
-
-    let clusters: Vec<u8> = pass
-        .distributions
-        .context_map
-        .iter()
-        .map(|c| ClusterId::get(*c))
-        .collect();
-    let context_map = ContextMap::new(clusters)?;
-    let configs: Vec<HybridUintConfig> = pass
-        .distributions
-        .hybrid_uint
-        .iter()
-        .map(|c| {
-            HybridUintConfig::new(
-                u32::from(c.split_exponent),
-                u32::from(c.msb_in_token),
-                u32::from(c.lsb_in_token),
-            )
-        })
-        .collect::<core::result::Result<_, _>>()?;
-    let encoder_plan = EncoderPlan::clustered(context_map, CodingMode::Ans, configs)?;
+    let encoder_plan = encoder_plan_for(plan)?;
     Ok(EntropyTables::build(&encoder_plan, &counts)?)
 }
 
