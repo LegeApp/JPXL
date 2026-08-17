@@ -5,7 +5,7 @@ build {
     tool "akr 0.3.1"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:c374c232cc30a9a84b6c4171b380aae3369aa9449a2d2910c2d51b021e4c10af"
+    source_graph "sha256:a5eb897ef3bb9ee233e7e648eed2c6964f06f941d2533daaa46323c9d11bd487"
 }
 
 source ".akr/project.akr" {
@@ -29,8 +29,8 @@ source ".akr/records/jpegxl-rs/decisions.akr" {
 }
 
 source ".akr/records/jpegxl-rs/evidence.akr" {
-    hash "sha256:3bb67cd964d061f3afb307f3dff61a4f12ca29521f46508da0e1c48bfbe13caa"
-    records 344
+    hash "sha256:8b8b9fc81215ada7b3baf0111aee0f3c7a514cc63c8b523a461424c2ec4f5819"
+    records 348
 }
 
 source ".akr/records/jpegxl-rs/milestones.akr" {
@@ -64,7 +64,7 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:4d16aa3f2946bbf01f303af620ff33cd999c4d51d8d65f46ad39f2780b392af4"
+    hash "sha256:533a5b258393c56aba5c34266ab2fa925eda79633a8ac86f9c373a77788201d2"
     records 135
 }
 
@@ -5178,6 +5178,26 @@ seal @jpegxl-rs.evidence.phase9-quant-scheduling-speed-2026-08-15/1 {
     hash "sha256:7465cb9ef80bfd2c124fb45819dcba65dfb302af9ec7d96994a27ed40c0c6c7c"
 }
 
+seal @jpegxl-rs.evidence.q0-harness-and-sections-2026-08-17/1 {
+    state verified
+    hash "sha256:0cde321254331eedb39ffff40ca5819fd48a36c41e8d42f737df0c7b361454d0"
+}
+
+seal @jpegxl-rs.evidence.q0b-identity-safety-2026-08-17/1 {
+    state verified
+    hash "sha256:e9b80f408b68b284b07e4130a454b808521d0923be744aaea7304ef5df9eb551"
+}
+
+seal @jpegxl-rs.evidence.q0b-quality-2026-08-17/1 {
+    state verified
+    hash "sha256:052982ecacc48d379539016f1d8af162c7428afdfc67d22be7c6af238c410f65"
+}
+
+seal @jpegxl-rs.evidence.q0b-speed-2026-08-17/1 {
+    state verified
+    hash "sha256:7cff0bfb7c3d26e59b6d97330d64936ba9569ae78a06926721f59245aae8577b"
+}
+
 seal @jpegxl-rs.evidence.retire-handoff-durable-facts-2026-08-11/1 {
     state verified
     hash "sha256:d5bdf84076bed194a4be6e7e9ea15569dbed84339827e224b936cd8feeb95a65"
@@ -6496,6 +6516,16 @@ seal @jpegxl-rs.work.opt-v2-rate-work-sharing/1 {
 seal @jpegxl-rs.work.opt-v2-rate-work-sharing/2 {
     state completed
     hash "sha256:93522c79a39a3f4c6d63f5859638303fd543d1dc0511601607377870e2c75224"
+}
+
+seal @jpegxl-rs.work.quality-q0-harness-attribution/1 {
+    state completed
+    hash "sha256:94e02e61904b4c4e3de59308d8555ad011b505477149f3119052a0195517df99"
+}
+
+seal @jpegxl-rs.work.quality-q0b-lf-group-entropy/1 {
+    state completed
+    hash "sha256:332a4ad00530d0ee850cf3a97e61108f859334cfdbd60e552aba5e0b28ef9055"
 }
 
 seal @jpegxl-rs.work.retire-handoff-ledger/1 {

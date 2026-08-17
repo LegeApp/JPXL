@@ -4139,6 +4139,56 @@ record jpegxl-rs.evidence.phase9-quant-scheduling-speed-2026-08-15/1 : evidence 
         """
 }
 
+record jpegxl-rs.evidence.q0-harness-and-sections-2026-08-17/1 : evidence {
+    title "CLI research controls --dead-zone-scale (byte-identical at 1.0 on mid/large x fast/balanced/quality), --tolerance and --sections landed; the standing harness (ladder.sh, scenes.sh, cjxl-match.sh, summarise.py under .agent/scratch/quality-track) ran end to end; --sections attributed 38.1% (mid) / 37.9% (large) of a 1 bpp Balanced stream to the LF-group sections and a temporary trace measured the HF-metadata stream at 44.8 KB of flat-code tokens against 6.4 KB order-0 entropy, which opened Phase Q0b."
+    state verified
+    result pass
+    method command
+    observed_at git:ddfd5b01e7e05536b9d2caf182777129af5a8bd5
+    command "cd .agent/scratch/quality-track && ./ladder.sh BASE CAND TAG && ./scenes.sh BASE CAND TAG && ./cjxl-match.sh out/ladder-TAG.tsv TAG && python3 summarise.py out/ladder-TAG.tsv out/cjxl-TAG.tsv out/scenes-TAG.tsv; jpxl encode --sections --bpp 1 --lossy-preset balanced mid-photo.ppm out.jxl"
+    artifact ".agent/scratch/quality-track/attribution.md"
+    summary """
+        CLI research controls --dead-zone-scale (byte-identical at 1.0 on mid/large x fast/balanced/quality), --tolerance and --sections landed; the standing harness (ladder.sh, scenes.sh, cjxl-match.sh, summarise.py under .agent/scratch/quality-track) ran end to end; --sections attributed 38.1% (mid) / 37.9% (large) of a 1 bpp Balanced stream to the LF-group sections and a temporary trace measured the HF-metadata stream at 44.8 KB of flat-code tokens against 6.4 KB order-0 entropy, which opened Phase Q0b.
+        """
+}
+
+record jpegxl-rs.evidence.q0b-identity-safety-2026-08-17/1 : evidence {
+    title "Gates green in both profiles, no-default-features and AVX2-disabled suites, strict Clippy and fmt; new tests/control_image_roundtrip.rs decodes every control-image shape (LF triple with and without previous-channel properties, HF metadata set, zero-size channel, wide residuals) sample-exactly through jpxl-decode; codestreams identical across 1 and 4 threads and with AVX2 disabled (mid 476b068fba443d4f, large 963e08c7ce6b8ac6); the lossless Modular path is byte-identical to Phase 42; the loop's price equals its emission for a fixed plan; djxl and jxl-oxide 0.12.6 accept every stream of the ladder and the seven scenes (after switching the previous-channel properties off, see the jxl-oxide observation)."
+    state verified
+    result pass
+    method command
+    observed_at git:ddfd5b01e7e05536b9d2caf182777129af5a8bd5
+    command "cargo test --workspace --profile fast-debug; cargo test --workspace --release; cargo test -p jpxl-encode -p jpxl-encode-policy --no-default-features; JPXL_DISABLE_AVX2=1 cargo test -p jpxl-encode-policy; cargo clippy --workspace --all-targets -- -D warnings; cargo fmt --check; jpxl encode --threads 1|4 and JPXL_DISABLE_AVX2=1 on mid/large Balanced 1 bpp (cmp); jpxl encode mid-photo.ppm (lossless, cmp vs Phase 42)"
+    summary """
+        Gates green in both profiles, no-default-features and AVX2-disabled suites, strict Clippy and fmt; new tests/control_image_roundtrip.rs decodes every control-image shape (LF triple with and without previous-channel properties, HF metadata set, zero-size channel, wide residuals) sample-exactly through jpxl-decode; codestreams identical across 1 and 4 threads and with AVX2 disabled (mid 476b068fba443d4f, large 963e08c7ce6b8ac6); the lossless Modular path is byte-identical to Phase 42; the loop's price equals its emission for a fixed plan; djxl and jxl-oxide 0.12.6 accept every stream of the ladder and the seven scenes (after switching the previous-channel properties off, see the jxl-oxide observation).
+        """
+}
+
+record jpegxl-rs.evidence.q0b-quality-2026-08-17/1 : evidence {
+    title "At fixed decisions the mid photo shrinks 738,930 -> 669,109 B (-9.4%; per-channel histograms alone 678,115). Ladder (3 photos x 0.5/1/2 bpp x 3 presets, equal target bytes): SSIMULACRA2 mean +7.11, worst -0.03, Butteraugli mean -19.2%, worst +0.19%; seven scenes at 1 bpp: SSIMULACRA2 mean +6.69, worst +2.80, Butteraugli mean -12.9%, worst -2.6%; BD-rate -18% to -23% per image/preset; PASS against the contract's bounds. cjxl -e7 at matched bytes: jpxl leads SSIMULACRA2 in all nine cells (mid 1 bpp 76.7 vs 75.7, large 86.1 vs 84.9, mid2 86.1 vs 85.4); cjxl leads Butteraugli in seven of nine (mid 1 bpp 2.76 vs 2.21, large 1.71 vs 1.42)."
+    state verified
+    result pass
+    method command
+    observed_at git:ddfd5b01e7e05536b9d2caf182777129af5a8bd5
+    command "cd .agent/scratch/quality-track && ./ladder.sh ../phase35-lane-dct/jpxl-p42d ../phase35-lane-dct/jpxl-q0b q0b2 && ./scenes.sh ... q0b2 && ./cjxl-match.sh out/ladder-q0b.tsv q0b && python3 summarise.py out/ladder-q0b2.tsv out/cjxl-q0b.tsv out/scenes-q0b2.tsv"
+    artifact ".agent/scratch/quality-track/out/summary-q0b2.md"
+    summary """
+        At fixed decisions the mid photo shrinks 738,930 -> 669,109 B (-9.4%; per-channel histograms alone 678,115). Ladder (3 photos x 0.5/1/2 bpp x 3 presets, equal target bytes): SSIMULACRA2 mean +7.11, worst -0.03, Butteraugli mean -19.2%, worst +0.19%; seven scenes at 1 bpp: SSIMULACRA2 mean +6.69, worst +2.80, Butteraugli mean -12.9%, worst -2.6%; BD-rate -18% to -23% per image/preset; PASS against the contract's bounds. cjxl -e7 at matched bytes: jpxl leads SSIMULACRA2 in all nine cells (mid 1 bpp 76.7 vs 75.7, large 86.1 vs 84.9, mid2 86.1 vs 85.4); cjxl leads Butteraugli in seven of nine (mid 1 bpp 2.76 vs 2.21, large 1.71 vs 1.42).
+        """
+}
+
+record jpegxl-rs.evidence.q0b-speed-2026-08-17/1 : evidence {
+    title "Quiet-host pinned Balanced 1 bpp medians: mid 277-284 ms (Phase 42) -> 287-297 ms (+3.5% to +5%), large 620 ms -> 657-660 ms (+6%); instructions +8.8% on both (mid 43.0 G -> 46.8 G, large 108.7 G -> 118.3 G per 4 encodes; the writer is about 0.7 G of the mid delta, the finer HF the loop now buys the rest). Inside the +15% cumulative budget; about 9 points of it are now spent."
+    state verified
+    result pass
+    method command
+    observed_at git:ddfd5b01e7e05536b9d2caf182777129af5a8bd5
+    command "taskset -c 0,2,4,6 jpxl-{p42d,q0b} bench vardct-rate --input {mid,large}-photo.ppm --bpp 1 --lossy-preset balanced --iters 5|3 --threads 4 (three interleaved rounds, load ~1.5); perf stat -e cpu_core/instructions/ on the same benches"
+    summary """
+        Quiet-host pinned Balanced 1 bpp medians: mid 277-284 ms (Phase 42) -> 287-297 ms (+3.5% to +5%), large 620 ms -> 657-660 ms (+6%); instructions +8.8% on both (mid 43.0 G -> 46.8 G, large 108.7 G -> 118.3 G per 4 encodes; the writer is about 0.7 G of the mid delta, the finer HF the loop now buys the rest). Inside the +15% cumulative budget; about 9 points of it are now spent.
+        """
+}
+
 record jpegxl-rs.evidence.retire-handoff-durable-facts-2026-08-11/1 : evidence {
     title "HANDOFF permanent facts are represented in AKR"
     state verified

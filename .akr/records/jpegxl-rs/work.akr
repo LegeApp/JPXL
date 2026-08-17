@@ -6134,7 +6134,7 @@ record jpegxl-rs.work.optional-semantic-guidance-consumer/1 : work {
 
 record jpegxl-rs.work.quality-q0-harness-attribution/1 : work {
     title "Phase Q0: quality/density harness, section-byte attribution and the promotion bounds for the quality track"
-    state proposed
+    state completed
     scope [
         path ".agent/scratch/quality-track/**",
         path "JPXL/crates/jpxl-cli/src/main.rs",
@@ -6144,18 +6144,19 @@ record jpegxl-rs.work.quality-q0-harness-attribution/1 : work {
         path "JPXL/docs/optimize.md"
     ]
     intent """
-        Speed is done (Phases 30-42: Balanced 15-25% faster than cjxl -e7 at SSIMULACRA2 parity, ~13% larger files). Open the quality/density track: (1) CLI research controls --dead-zone-scale (EncodeRequest.dead_zone_scale, default 1.0 = exact nearest rule, byte-identical), --tolerance, and --sections (per-SectionKind byte breakdown from CodestreamSizing); (2) a standing harness under .agent/scratch/quality-track/ (ladder.sh: mid/large photo x 0.5/1/2 bpp x Fast/Balanced/Quality, djxl + jxl-oxide decodes, jpxl compare; cjxl-match.sh: cjxl -e7 -d bisected to matched bytes; summarise.py: deltas, BD-SSIM2/BD-rate, speed sidecar, determinism, verdict); (3) attribution of the density gap by section bytes and ablations. First finding: --sections shows LF-group sections at ~38% of a 1 bpp VarDCT stream (mid 205 of 539 KB, large 567 of 1496 KB) because write_modular_stream codes every control image with a one-leaf tree and one flat prefix code sized by the largest residual; a temporary trace measured the metadata stream (CfL, BlockInfo, Sharpness) at 44.8 KB of tokens against a 6.4 KB order-0 entropy and the LF planes at ~150 KB against ~114 KB order-0 in the larger mid LF group. That lossless recoding is Phase Q0b (jpegxl-rs.work.quality-q0b-lf-group-entropy) and is funded before Q1.
+        Speed is done (Phases 30-42: Balanced 15-25% faster than cjxl -e7 at SSIMULACRA2 parity, ~13% larger files). Open the quality/density track: (1) CLI research controls --dead-zone-scale (EncodeRequest.dead_zone_scale, default 1.0 = exact nearest rule, byte-identical), --tolerance, and --sections (per-SectionKind byte breakdown from CodestreamSizing); (2) a standing harness under .agent/scratch/quality-track/ (ladder.sh: mid/large/mid2 photo x 0.5/1/2 bpp x Fast/Balanced/Quality, djxl + jxl-oxide decodes, jpxl compare; scenes.sh: seven scenes at 1 bpp; cjxl-match.sh: cjxl -e7 -d bisected to matched bytes; summarise.py: deltas, BD-SSIM2/BD-rate, verdict); (3) attribution of the density gap by section bytes. First and decisive finding: --sections shows LF-group sections at ~38% of a 1 bpp VarDCT stream (mid 205 of 539 KB, large 567 of 1496 KB) because write_modular_stream coded every control image with a one-leaf tree and one flat prefix code; a temporary trace measured the metadata stream at 44.8 KB of tokens against 6.4 KB order-0 entropy and the LF planes at ~150 KB against ~114 KB. That lossless recoding is Phase Q0b (jpegxl-rs.work.quality-q0b-lf-group-entropy), funded before Q1; the remaining ablations (dead zone, quant_lf, QM scales, EPF, tolerance) move into Q1/Q2 as their own harness sweeps. Attribution written to .agent/scratch/quality-track/attribution.md; promotion bounds written into jpegxl-rs.decision.optimization-determinism-contract.
         """
     note """
-        Opened 2026-08-17 from the approved quality plan (Q0-Q4). Speed budget for the whole track: Balanced pinned wall <= +15% cumulative vs jpxl-p42d. Promotion bounds to be written into optimization-determinism-contract: SSIMULACRA2 mean delta >= 0 and worst >= -0.5 over corpus x rates; Butteraugli mean <= +2%, worst <= +5%; bytes at matched SSIMULACRA2 not up; 1-vs-4-thread hash equality; djxl and jxl-oxide accept every stream.
+        Opened and closed 2026-08-17 from the approved quality plan (Q0-Q4). Speed budget for the whole track: Balanced pinned wall <= +15% cumulative vs jpxl-p42d; Q0b spent about 9 points of it (instructions) / 4-6 points (quiet-host wall).
         """
     depends_on [ @jpegxl-rs.work.arch-phase42-writer-parallelism/1 ]
     part_of [ @jpegxl-rs.track.encoder-optimization ]
+    verified_by [ @jpegxl-rs.evidence.q0-harness-and-sections-2026-08-17/1 ]
 }
 
 record jpegxl-rs.work.quality-q0b-lf-group-entropy/1 : work {
     title "Phase Q0b: entropy-code the LF-group control images (LF planes, CfL, BlockInfo, Sharpness) with per-channel ANS histograms and a bounded MA-tree context model"
-    state proposed
+    state completed
     scope [
         path ".agent/scratch/quality-track/**",
         path "JPXL/crates/jpxl-encode/src/modular/mod.rs",
@@ -6172,6 +6173,11 @@ record jpegxl-rs.work.quality-q0b-lf-group-entropy/1 : work {
         """
     depends_on [ @jpegxl-rs.work.quality-q0-harness-attribution/1 ]
     part_of [ @jpegxl-rs.track.encoder-optimization ]
+    verified_by [
+        @jpegxl-rs.evidence.q0b-identity-safety-2026-08-17/1,
+        @jpegxl-rs.evidence.q0b-quality-2026-08-17/1,
+        @jpegxl-rs.evidence.q0b-speed-2026-08-17/1
+    ]
 }
 
 record jpegxl-rs.work.retire-handoff-ledger/1 : work {
