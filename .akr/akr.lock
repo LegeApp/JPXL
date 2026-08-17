@@ -5,7 +5,7 @@ build {
     tool "akr 0.3.1"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:cba1a612d49c4c5f695a4c9b7b237d86c37a2116fba20a200decfd0e32fd7d85"
+    source_graph "sha256:9da529e3220d334548ec8bda7c20fd51b601ef84b6f6b34b76221e8b41f1edb7"
 }
 
 source ".akr/project.akr" {
@@ -29,8 +29,8 @@ source ".akr/records/jpegxl-rs/decisions.akr" {
 }
 
 source ".akr/records/jpegxl-rs/evidence.akr" {
-    hash "sha256:8b8b9fc81215ada7b3baf0111aee0f3c7a514cc63c8b523a461424c2ec4f5819"
-    records 348
+    hash "sha256:167049297f144ec5fbaa0eddd86131a46dd3b38b501fbbdaea97cd004a607584"
+    records 350
 }
 
 source ".akr/records/jpegxl-rs/milestones.akr" {
@@ -64,7 +64,7 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:c269208c1ba866012cb22cd05fd60204f78d5585069129bef10dfc3a99d0f793"
+    hash "sha256:20e2c025ccf25d801685999a34c6f2c8d7368d69227fda84c27df2d47b5a8e3f"
     records 136
 }
 
@@ -5204,6 +5204,16 @@ seal @jpegxl-rs.evidence.q0b-speed-2026-08-17/1 {
     hash "sha256:7cff0bfb7c3d26e59b6d97330d64936ba9569ae78a06926721f59245aae8577b"
 }
 
+seal @jpegxl-rs.evidence.q1-quant-lf-4-promotion-2026-08-17/1 {
+    state verified
+    hash "sha256:8934a882fa464e301a52f1e0458d2a9427a365a44977a64783874bdaac80422e"
+}
+
+seal @jpegxl-rs.evidence.q1-sweeps-2026-08-17/1 {
+    state verified
+    hash "sha256:4344da696772192d641b1669dc8d2b8338cae6207933dd627e931097324531f5"
+}
+
 seal @jpegxl-rs.evidence.retire-handoff-durable-facts-2026-08-11/1 {
     state verified
     hash "sha256:d5bdf84076bed194a4be6e7e9ea15569dbed84339827e224b936cd8feeb95a65"
@@ -6532,6 +6542,11 @@ seal @jpegxl-rs.work.quality-q0-harness-attribution/1 {
 seal @jpegxl-rs.work.quality-q0b-lf-group-entropy/1 {
     state completed
     hash "sha256:332a4ad00530d0ee850cf3a97e61108f859334cfdbd60e552aba5e0b28ef9055"
+}
+
+seal @jpegxl-rs.work.quality-q1-quantizer/1 {
+    state completed
+    hash "sha256:f71cec19b86548985eafd3d720d4628ee13e3a26a75cbba298e698154eb21c92"
 }
 
 seal @jpegxl-rs.work.retire-handoff-ledger/1 {
