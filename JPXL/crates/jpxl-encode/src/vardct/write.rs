@@ -1088,9 +1088,29 @@ fn pass_group_walk<'a>(
     let blocks_w = rect.width.div_ceil(8);
     let blocks_h = rect.height.div_ceil(8);
 
+    // The LF group's varblocks are in raster order of their origins (the
+    // cover invariant `validate` enforces, "greedy raster origin"), so the
+    // group's varblocks all lie in the contiguous run of rows
+    // `origin_by..origin_by + blocks_h`: start at the first block of that row
+    // band and stop at its end instead of scanning the whole LF group for
+    // every one of its pass groups.
+    debug_assert!(
+        spatial
+            .blocks
+            .iter()
+            .zip(spatial.blocks.iter().skip(1))
+            .all(|(a, b)| (a.origin.by(), a.origin.bx()) <= (b.origin.by(), b.origin.bx())),
+        "LF group varblocks must be in raster order"
+    );
+    let first = spatial
+        .blocks
+        .partition_point(|block| block.origin.by() < origin_by);
     let mut varblocks = Vec::new();
-    for (i, block) in spatial.blocks.iter().enumerate() {
+    for (i, block) in spatial.blocks.iter().enumerate().skip(first) {
         let (bx, by) = (block.origin.bx(), block.origin.by());
+        if by >= origin_by + blocks_h {
+            break;
+        }
         if bx < origin_bx || by < origin_by {
             continue;
         }

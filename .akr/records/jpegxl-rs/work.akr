@@ -1787,6 +1787,49 @@ record jpegxl-rs.work.arch-phase37-avx2-exact-cbrt-xyb/1 : work {
     part_of [ @jpegxl-rs.track.encoder-optimization ]
 }
 
+record jpegxl-rs.work.arch-phase38-band-parallel-cfl-prep/1 : work {
+    title "Phase 38: band-parallel CfL collection/refinement and source prep, narrowed pass-group walks, fast-debug profile"
+    state proposed
+    scope [
+        path ".agent/scratch/**",
+        path "AGENTS.md",
+        path "JPXL/Cargo.toml",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/rate.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/source.rs",
+        path "JPXL/crates/jpxl-encode/src/vardct/write.rs",
+        path "JPXL/docs/optimize.md"
+    ]
+    intent """
+        The --diag phase clock after Phase 37 showed cfl_ms=103 of a 470 ms mid encode while CfL's CPU share was ~12%: HF factor refinement ran on the calling thread and sample collection parallelised only over LF groups (two on a 2400x1800 frame), and PreparedFrame::from_srgb8 ran serially before the executor existed. Split CfL collection into 64-pixel tile-row bands (varblocks are <=32 px, 8-aligned and raster ordered, so bands are independent and concatenate to the original order), run HF factor refinement over the executor per tile in order, build the worker pool once in encode_srgb8_to_target and use it for band-parallel from_srgb8_with, start pass_group_walk at the group's first tile row via partition_point instead of scanning the whole LF group per pass group, copy interior squares row-wise in gather_square, and add the fast-debug Cargo profile for the edit/test loop. All Contract A: byte-identical output required across presets, thread counts and AVX2 on/off. An ANS reciprocal/branchless rewrite was tried, measured no gain (the serial state chain is bound by the slot-table load) and reverted.
+        """
+    note """
+        Opened 2026-08-17. Timing evidence records the shared-host caveat; identity and --diag phase clocks carry the claims.
+        """
+    acceptance {
+        check identity {
+            statement """
+                Canonical Fast/Balanced/Quality/masking-AQ/lossless streams on mid and large inputs, one- vs four-thread outputs, and JPXL_DISABLE_AVX2 outputs are byte-identical to the Phase 37 binary.
+                """
+            method command
+        }
+        check safety {
+            statement """
+                fmt, strict Clippy, the 57 workspace suites in both fast-debug and release, oracle/roundtrip/determinism, no-default-feature and AVX2-disabled suites pass; djxl and jxl-oxide accept the candidates.
+                """
+            method command
+        }
+        check speed {
+            statement """
+                cfl_ms drops materially on the mid --diag clock and pinned four-core Balanced medians improve on mid and large in the same host window.
+                """
+            method observation
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase37-avx2-exact-cbrt-xyb/1 ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+}
+
 record jpegxl-rs.work.arch-phase4-0b-density-gate/1 : work {
     title "Phase 4.0b: pinned real-corpus density + decode-validity gate (prerequisite for 4A/4C)"
     state completed

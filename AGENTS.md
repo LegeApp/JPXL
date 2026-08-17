@@ -130,6 +130,16 @@ cargo fmt     --all --check
 All four must pass before any handoff. Toolchain is pinned (1.97.1, edition
 2024); do not bump it as a side effect of another change.
 
+For the edit/build/test loop use the `fast-debug` profile
+(`cargo test --workspace --profile fast-debug`): optimised like `release` but
+without LTO, with 16 codegen units and incremental compilation, and with
+debug assertions and overflow checks kept on, so the full workspace suite runs
+in well under a minute while the codec's `debug_assert!` shape guards still
+fire. `release` (thin LTO, one codegen unit) remains the profile for
+benchmarks, perf profiles, promoted timings and shipped binaries. Keep target
+directories on disk (`target/`, or under `.agent/scratch/` for one-off
+builds), never on tmpfs.
+
 Oracle and corpus setup (both need network, both are one-time):
 
 ```

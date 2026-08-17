@@ -1090,16 +1090,36 @@ pub fn search_frame(
     request: &EncodeRequest,
     target: RateTarget,
 ) -> Result<RateOutcome> {
+    let executor = diagnostics::with_search_phase(diagnostics::SearchDiagnosticPhase::Fast, || {
+        request.resources.executor()
+    });
+    search_frame_with_executor(frame, atlas, request, target, &executor)
+}
+
+/// [`search_frame`] on a caller-provided executor, so the worker pool built
+/// for the search can also serve the source preparation before it (Phase 38)
+/// and is built exactly once per encode.
+///
+/// # Errors
+///
+/// As [`search_frame`].
+pub fn search_frame_with_executor(
+    frame: &crate::PreparedFrame,
+    atlas: &crate::AnalysisAtlas,
+    request: &EncodeRequest,
+    target: RateTarget,
+    executor: &jpxl_encode::EncodeExecutor,
+) -> Result<RateOutcome> {
     #[cfg(feature = "anchor-sketch")]
     {
         if request.rate_preset == RateSearchPreset::Quality {
-            return search_frame_exhaustive(frame, atlas, request, target);
+            return search_frame_exhaustive(frame, atlas, request, target, executor);
         }
         let mut attempted = RateProbeStats::default();
-        match search_frame_two_anchor(frame, atlas, request, target, &mut attempted)? {
+        match search_frame_two_anchor(frame, atlas, request, target, &mut attempted, executor)? {
             Some(outcome) => Ok(outcome),
             None => {
-                let mut outcome = search_frame_exhaustive(frame, atlas, request, target)?;
+                let mut outcome = search_frame_exhaustive(frame, atlas, request, target, executor)?;
                 let attempted_first_finalist = attempted.anchor_first_finalist_bytes;
                 let attempted_correction = attempted.anchor_correction_bytes;
                 outcome.stats.add_attempted_work(attempted);
@@ -1121,7 +1141,7 @@ pub fn search_frame(
                 what: "an anchored rate preset without the anchor-sketch crate feature",
             });
         }
-        search_frame_exhaustive(frame, atlas, request, target)
+        search_frame_exhaustive(frame, atlas, request, target, executor)
     }
 }
 
@@ -1245,6 +1265,7 @@ fn search_frame_two_anchor(
     request: &EncodeRequest,
     target: RateTarget,
     attempted: &mut RateProbeStats,
+    executor: &jpxl_encode::EncodeExecutor,
 ) -> Result<Option<RateOutcome>> {
     diagnostics::reset_search_diag();
     let target_bytes = target.bytes_for(frame.width(), frame.height());
@@ -1259,15 +1280,12 @@ fn search_frame_two_anchor(
     } else {
         frame
     };
-    let executor = diagnostics::with_search_phase(diagnostics::SearchDiagnosticPhase::Fast, || {
-        request.resources.executor()
-    });
     let mut prepared = PreparedSearch {
         frame,
         transform_frame,
         atlas,
         request,
-        executor: &executor,
+        executor,
         fwd_cache: CandidateForwardCache::new(),
         quant_workspace: crate::QuantizationWorkspace::new(),
         stats,
@@ -1529,6 +1547,7 @@ fn search_frame_exhaustive(
     atlas: &crate::AnalysisAtlas,
     request: &EncodeRequest,
     target: RateTarget,
+    executor: &jpxl_encode::EncodeExecutor,
 ) -> Result<RateOutcome> {
     diagnostics::reset_search_diag();
     let target_bytes = target.bytes_for(frame.width(), frame.height());
@@ -1544,15 +1563,12 @@ fn search_frame_exhaustive(
     } else {
         frame
     };
-    let executor = diagnostics::with_search_phase(diagnostics::SearchDiagnosticPhase::Fast, || {
-        request.resources.executor()
-    });
     let mut prepared = PreparedSearch {
         frame,
         transform_frame,
         atlas,
         request,
-        executor: &executor,
+        executor,
         fwd_cache: CandidateForwardCache::new(),
         quant_workspace: crate::QuantizationWorkspace::new(),
         stats,

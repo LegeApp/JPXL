@@ -65,3 +65,19 @@ cast_possible_truncation = "warn"
 debug = true
 lto = "thin"
 codegen-units = 1
+
+# Optimised like `release` but built for iteration speed: no LTO, sixteen
+# codegen units, incremental, and with debug assertions and overflow checks
+# kept ON so the `debug_assert!` shape guards in the codec still fire under
+# test. Use it for the edit/build/test loop (`cargo test --profile fast-debug`,
+# `cargo build --profile fast-debug`); use `release` for benchmarks, perf
+# profiles, promoted timings and shipped binaries. Output lands in
+# `target/fast-debug/`.
+[profile.fast-debug]
+inherits = "release"
+lto = false
+codegen-units = 16
+incremental = true
+debug = "line-tables-only"
+debug-assertions = true
+overflow-checks = true

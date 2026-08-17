@@ -17,6 +17,12 @@ use jpxl_core::color::linear_srgb_to_xyb_planes;
 
 use crate::error::{PolicyError, Result};
 
+/// One row band of a source image handed to a worker exactly once: the
+/// interleaved sRGB bytes and the three disjoint plane slices they convert
+/// into (see [`PreparedFrame::from_srgb8_with`]).
+type SourceBand<'a> =
+    std::sync::Mutex<Option<(&'a [u8], &'a mut [f32], &'a mut [f32], &'a mut [f32])>>;
+
 /// How a plane store holds its samples.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlaneStoreKind {
@@ -192,6 +198,27 @@ impl PreparedFrame {
     /// [`PolicyError::SampleCountMismatch`] if `rgb` is not
     /// `width * height * 3` long.
     pub fn from_srgb8(width: u32, height: u32, rgb: &[u8]) -> Result<Self> {
+        Self::from_srgb8_with(width, height, rgb, None)
+    }
+
+    /// [`Self::from_srgb8`], spreading the conversion over `executor`'s
+    /// workers when one is given (Phase 38).
+    ///
+    /// The image is cut into bands of whole rows; each band deinterleaves,
+    /// linearises and converts its own pixels into disjoint slices of the
+    /// three planes, and the grayscale flag is the conjunction of the bands'
+    /// flags. Every operation is per pixel, so the planes are bit-identical
+    /// to the serial conversion whatever the band size or worker count.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::from_srgb8`].
+    pub fn from_srgb8_with(
+        width: u32,
+        height: u32,
+        rgb: &[u8],
+        executor: Option<&jpxl_encode::EncodeExecutor>,
+    ) -> Result<Self> {
         if width == 0 || height == 0 {
             return Err(PolicyError::Unsupported {
                 what: "a zero frame dimension",
@@ -213,20 +240,97 @@ impl PreparedFrame {
         // function evaluated on the same exact float for each byte.
         let lut: [f32; 256] =
             core::array::from_fn(|byte| jpxl_core::color::srgb_to_linear(byte as f32 / 255.0));
-        let mut r = Vec::with_capacity(pixels);
-        let mut g = Vec::with_capacity(pixels);
-        let mut b = Vec::with_capacity(pixels);
-        for i in 0..pixels {
-            let code = |c: usize| {
-                lut.get(usize::from(rgb.get(i * 3 + c).copied().unwrap_or(0)))
-                    .copied()
-                    .unwrap_or(0.0)
-            };
-            r.push(code(0));
-            g.push(code(1));
-            b.push(code(2));
+
+        // One band's work: deinterleave through the LUT, note whether every
+        // pixel is grey, then convert the band's rows to XYB in place.
+        let convert_band = |src: &[u8], r: &mut [f32], g: &mut [f32], b: &mut [f32]| -> bool {
+            let mut grayscale = true;
+            for (((px, rs), gs), bs) in src
+                .chunks_exact(3)
+                .zip(r.iter_mut())
+                .zip(g.iter_mut())
+                .zip(b.iter_mut())
+            {
+                let (cr, cg, cb) = (
+                    px.first().copied().unwrap_or(0),
+                    px.get(1).copied().unwrap_or(0),
+                    px.get(2).copied().unwrap_or(0),
+                );
+                grayscale &= cr == cg && cg == cb;
+                *rs = lut.get(usize::from(cr)).copied().unwrap_or(0.0);
+                *gs = lut.get(usize::from(cg)).copied().unwrap_or(0.0);
+                *bs = lut.get(usize::from(cb)).copied().unwrap_or(0.0);
+            }
+            linear_srgb_to_xyb_planes(r, g, b);
+            grayscale
+        };
+
+        let mut r = vec![0.0f32; pixels];
+        let mut g = vec![0.0f32; pixels];
+        let mut b = vec![0.0f32; pixels];
+        let grayscale = match executor {
+            Some(executor) if pixels > 0 => {
+                // Whole-row bands of about 64 rows: enough items to fill the
+                // workers on a small frame, large enough to amortise dispatch.
+                let row = usize::try_from(width).unwrap_or(usize::MAX);
+                let band_len = row.saturating_mul(64).max(1);
+                let bands: Vec<SourceBand<'_>> = rgb
+                    .chunks(band_len * 3)
+                    .zip(r.chunks_mut(band_len))
+                    .zip(g.chunks_mut(band_len))
+                    .zip(b.chunks_mut(band_len))
+                    .map(|(((src, rs), gs), bs)| std::sync::Mutex::new(Some((src, rs, gs, bs))))
+                    .collect();
+                let flags = executor.map_ordered(bands.len(), |index| {
+                    let (src, rs, gs, bs) = bands
+                        .get(index)
+                        .ok_or(PolicyError::Unsupported {
+                            what: "a source band index outside the frame",
+                        })?
+                        .lock()
+                        .map_err(|_| PolicyError::Unsupported {
+                            what: "a poisoned source band",
+                        })?
+                        .take()
+                        .ok_or(PolicyError::Unsupported {
+                            what: "a source band converted twice",
+                        })?;
+                    Ok::<bool, PolicyError>(convert_band(src, rs, gs, bs))
+                })?;
+                flags.iter().all(|&flag| flag)
+            }
+            _ => convert_band(rgb, &mut r, &mut g, &mut b),
+        };
+        Self::from_xyb_planes(width, height, r, g, b, grayscale)
+    }
+
+    /// Wraps freshly converted XYB planes with a source-domain grayscale flag.
+    fn from_xyb_planes(
+        width: u32,
+        height: u32,
+        x: Vec<f32>,
+        y: Vec<f32>,
+        b: Vec<f32>,
+        grayscale: bool,
+    ) -> Result<Self> {
+        let expected = u64::from(width) * u64::from(height);
+        for plane in [&x, &y, &b] {
+            let found = plane.len() as u64;
+            if found != expected {
+                return Err(PolicyError::SampleCountMismatch { expected, found });
+            }
         }
-        Self::from_linear_srgb(width, height, r, g, b)
+        Ok(Self {
+            width,
+            height,
+            xyb: XybPlanes {
+                x: PlaneStore::resident(x),
+                y: PlaneStore::resident(y),
+                b: PlaneStore::resident(b),
+            },
+            intensity_target: jpxl_core::color::NOMINAL_INTENSITY_TARGET,
+            grayscale,
+        })
     }
 
     /// Frame width in samples.

@@ -724,6 +724,56 @@ no-SIMD suites byte-identical / passing as before; workspace gates green.
 Profile: color conversion 6.0% -> 2.2%. Pinned medians p36 -> p37: mid
 544/532/551 -> 535/518/527 ms, large 1169/1148/1218 -> 1040/1085/1077 ms.
 
+## Phase 38 — filling the workers: band-parallel CfL and source prep, narrowed walks (2026-08-17)
+
+With the leaf kernels lane-batched, the `--diag` phase clock on the mid photo
+showed where wall time hid: `cfl_ms=103` of a 470 ms encode, although CfL's
+CPU share was ~12%. Two serial stretches: the per-tile HF factor refinement
+ran on the calling thread, and sample collection was parallel only over LF
+groups — of which a 2400×1800 frame has two, so two of four workers idled.
+The same shape sat in front of the search: `PreparedFrame::from_srgb8` (LUT
+linearisation + XYB) ran serially before any executor existed.
+
+Changes, all Contract A (output-preserving by construction):
+
+- CfL sample collection is split into 64-pixel bands (one tile row of one LF
+  group each; a varblock is ≤ 32 px and 8-aligned, so it never crosses a tile
+  boundary, and raster-ordered varblocks make band concatenation reproduce the
+  original order). LF samples are appended band by band in that order, so the
+  frame-wide regression replays the exact same scalar additions; HF tile
+  vectors are concatenated into the group's tile raster.
+- HF factor refinement runs over the executor per tile (X tiles then B tiles),
+  reduced in tile order.
+- `encode_srgb8_to_target` builds the worker pool once and passes it through
+  `search_frame_with_executor`; `PreparedFrame::from_srgb8_with` converts
+  ~64-row bands into disjoint plane slices on that pool (per-pixel arithmetic,
+  so bit-identical to the serial path; grayscale is the conjunction of band
+  flags).
+- `pass_group_walk` no longer scans the whole LF group's varblock list per
+  pass group: it starts at the group's first tile-row via `partition_point`
+  and stops after its last (validated raster order; asserted in debug).
+- `gather_square` copies interior squares row-wise from the resident plane
+  instead of clamping every sample.
+- Not kept: an ANS encoder rewrite with per-symbol reciprocals and a
+  branchless renormalisation. `perf annotate` showed 60% of
+  `encode_symbols`' time on the `slots[start + offset]` load — the serial
+  state chain is bound by that dependent lookup, not by the division — and
+  the rewrite measured no gain, so it was reverted rather than kept as
+  complexity.
+
+Also in this phase: the `fast-debug` Cargo profile (release optimisation, no
+LTO, 16 codegen units, incremental, debug assertions on) for the edit/test
+loop — the full workspace suite runs in ~30 s — with `release` reserved for
+benchmarks, profiles and shipped binaries (AGENTS.md §5).
+
+Verified: canonical streams, thread counts, AVX2 on/off, no-SIMD suites and
+external decoders as before; workspace gates green in both `fast-debug` and
+`release`. Mid `--diag`: `cfl_ms` 103 → 37, wall 472 → 405 ms (quiet host);
+interleaved pinned medians in a shared-host window: mid 568/574/559 → 428/425/423
+ms (−25%), large 1127/1070/1140 → 911/954/877 ms (−18%). Remaining wall
+budget on mid (~405 ms): cover 123, writer counts+store ~97, plan-full 37,
+CfL 37, quantize 36, entropy training 31.
+
 
 ### Open architectural questions
 

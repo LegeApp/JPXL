@@ -1542,14 +1542,19 @@ struct GroupCflSamples {
     hf: HfCflSamples,
 }
 
-fn group_cfl_workspace(
+/// The sample workspace for one *band* of an LF group: the varblocks
+/// (`decisions`) whose origins lie in tile row `tile_row` of a grid
+/// `tiles.width` tiles wide. HF sample vectors cover that row's tiles only,
+/// indexed by tile column.
+fn band_cfl_workspace(
     tiles: jpxl_encode::vardct::BlockGrid,
-    map: &[VarblockDecision],
+    tile_row: u32,
+    decisions: &[VarblockDecision],
 ) -> Result<GroupCflSamples> {
-    let tile_count = usize::try_from(tiles.area()).unwrap_or(0);
+    let tile_count = usize::try_from(tiles.width).unwrap_or(0);
     let mut hf_capacities = vec![0usize; tile_count];
     let mut lf_capacity = 0usize;
-    for vb in map {
+    for vb in decisions {
         let n = vb.transform.block_dims().0;
         let cells = vb
             .transform
@@ -1566,10 +1571,12 @@ fn group_cfl_workspace(
             .ok_or(PolicyError::Unsupported {
                 what: "a CfL workspace LF capacity overflow",
             })?;
-        let tile = usize::try_from(
-            u64::from(vb.origin.by() / 8) * u64::from(tiles.width) + u64::from(vb.origin.bx() / 8),
-        )
-        .unwrap_or(usize::MAX);
+        if vb.origin.by() / 8 != tile_row {
+            return Err(PolicyError::Unsupported {
+                what: "a varblock outside its CfL band",
+            });
+        }
+        let tile = usize::try_from(vb.origin.bx() / 8).unwrap_or(usize::MAX);
         let capacity = hf_capacities
             .get_mut(tile)
             .ok_or(PolicyError::Unsupported {
@@ -1599,6 +1606,21 @@ fn group_cfl_workspace(
                 .collect(),
         },
     })
+}
+
+/// One unit of CfL sample collection: the varblocks of LF group `group`
+/// whose origins fall in tile row `tile_row` (a 64-pixel band). Bands are
+/// independent -- a varblock is at most 32 pixels on a side and 8-aligned, so
+/// it never crosses a 64-pixel tile boundary -- and, because an LF group's
+/// varblocks are in raster order, concatenating a group's bands in row order
+/// reproduces the group's original varblock order exactly.
+#[derive(Debug, Clone, Copy)]
+struct CflBand {
+    group: usize,
+    tile_row: u32,
+    /// The band's varblocks as a range into the group's decision list.
+    first: usize,
+    end: usize,
 }
 
 /// Milestone 6's square transform vocabulary: DCT8x8, DCT16x16, DCT32x32.
@@ -2493,6 +2515,29 @@ fn gather_square(
         1 => &frame.xyb().y,
         _ => &frame.xyb().b,
     };
+    // Interior square (the overwhelmingly common case): straight row copies
+    // from the resident plane. Same values as the clamped per-sample path.
+    if x0.saturating_add(side) <= w && y0.saturating_add(side) <= h {
+        let (side_u, w_u) = (side as usize, w as usize);
+        let samples = plane.samples();
+        let mut ok = true;
+        for dy in 0..side_u {
+            let row_start = (y0 as usize + dy) * w_u + x0 as usize;
+            match (
+                samples.get(row_start..row_start + side_u),
+                out.get_mut(dy * side_u..(dy + 1) * side_u),
+            ) {
+                (Some(src), Some(dst)) => dst.copy_from_slice(src),
+                _ => {
+                    ok = false;
+                    break;
+                }
+            }
+        }
+        if ok {
+            return;
+        }
+    }
     for dy in 0..side {
         for dx in 0..side {
             let x = (x0 + dx).min(w.saturating_sub(1));
@@ -2847,31 +2892,67 @@ fn estimate_cfl(
             groups,
         });
     }
-    // Each LF group collects independently. Results are returned in raster
-    // order, then the frame-wide LF regression replays every sample in that
-    // same order so worker scheduling cannot perturb floating-point sums.
+    // Phase 38: collection is split into 64-pixel bands (one tile row of one
+    // LF group each) so a frame with only one or two LF groups still fills
+    // every worker. Results are returned in (group, band) raster order, then
+    // the frame-wide LF regression replays every sample in that same order so
+    // worker scheduling cannot perturb floating-point sums.
     let n_groups = usize::try_from(geometry.num_lf_groups()).unwrap_or(0);
+    let mut bands: Vec<CflBand> = Vec::new();
     // Allocate the large sample vectors on the request thread. Workers fill
     // them without growing, avoiding one allocator arena retaining a frame's
     // CfL samples after another thread drops the completed plan.
-    let mut sample_workspaces = Vec::with_capacity(n_groups);
-    for index_usize in 0..n_groups {
-        let index = u64::try_from(index_usize).unwrap_or(u64::MAX);
+    let mut sample_workspaces = Vec::new();
+    for group in 0..n_groups {
+        let index = u64::try_from(group).unwrap_or(u64::MAX);
         let id = LfGroupId::new(u32::try_from(index).unwrap_or(u32::MAX));
         let tiles = geometry
             .lf_group_cfl_tiles(id)
             .ok_or(PolicyError::Unsupported {
                 what: "an LF group outside the frame's grid",
             })?;
-        let map = maps.get(index_usize).ok_or(PolicyError::Unsupported {
+        let map = maps.get(group).ok_or(PolicyError::Unsupported {
             what: "a missing block map for an LF group",
         })?;
-        sample_workspaces.push(std::sync::Mutex::new(Some(group_cfl_workspace(
-            tiles,
-            map.decisions,
-        )?)));
+        debug_assert!(
+            map.decisions
+                .iter()
+                .zip(map.decisions.iter().skip(1))
+                .all(|(a, b)| (a.origin.by(), a.origin.bx()) <= (b.origin.by(), b.origin.bx())),
+            "LF group varblocks must be in raster order"
+        );
+        for tile_row in 0..tiles.height {
+            let first = map
+                .decisions
+                .partition_point(|vb| vb.origin.by() / 8 < tile_row);
+            let end = map
+                .decisions
+                .partition_point(|vb| vb.origin.by() / 8 <= tile_row);
+            let decisions = map
+                .decisions
+                .get(first..end)
+                .ok_or(PolicyError::Unsupported {
+                    what: "a CfL band range outside its block map",
+                })?;
+            sample_workspaces.push(std::sync::Mutex::new(Some(band_cfl_workspace(
+                tiles, tile_row, decisions,
+            )?)));
+            bands.push(CflBand {
+                group,
+                tile_row,
+                first,
+                end,
+            });
+        }
     }
-    let collect_group = |index_usize: usize| {
+    let collect_band = |band_index: usize| {
+        let band = bands
+            .get(band_index)
+            .copied()
+            .ok_or(PolicyError::Unsupported {
+                what: "a CfL band index outside the frame",
+            })?;
+        let index_usize = band.group;
         let index = u64::try_from(index_usize).unwrap_or(u64::MAX);
         let id = LfGroupId::new(u32::try_from(index).unwrap_or(u32::MAX));
         let tiles = geometry
@@ -2880,7 +2961,7 @@ fn estimate_cfl(
                 what: "an LF group outside the frame's grid",
             })?;
         let mut workspace = sample_workspaces
-            .get(index_usize)
+            .get(band_index)
             .ok_or(PolicyError::Unsupported {
                 what: "a missing CfL sample workspace",
             })?
@@ -2915,24 +2996,33 @@ fn estimate_cfl(
             .map_err(|_| PolicyError::Unsupported {
                 what: "a poisoned LF-group forward bank",
             })?;
-        let group_fwd = gather_forward_refs(map.decisions, (rect.x0, rect.y0), &bank)?;
-        if map.len() != group_fwd.len() {
+        let decisions =
+            map.decisions
+                .get(band.first..band.end)
+                .ok_or(PolicyError::Unsupported {
+                    what: "a CfL band range outside its block map",
+                })?;
+        let group_fwd = gather_forward_refs(decisions, (rect.x0, rect.y0), &bank)?;
+        if decisions.len() != group_fwd.len() {
             return Err(PolicyError::Unsupported {
                 what: "a forward cache length that does not match the block map",
             });
         }
 
-        for (vb_index, (vb, fwd)) in map.decisions.iter().zip(group_fwd.iter()).enumerate() {
+        for (offset, (vb, fwd)) in decisions.iter().zip(group_fwd.iter()).enumerate() {
+            let vb_index = band.first + offset;
             let [cx, cy, cb] = fwd.coeffs;
             let transform = vb.transform;
             let n = transform.block_dims().0;
             let side = transform.sample_cols();
             let hf_quant = hf_quants.get(transform, map.hf_mul(vb_index)?)?;
-            let tile = usize::try_from(
-                u64::from(vb.origin.by() / 8) * u64::from(tiles.width)
-                    + u64::from(vb.origin.bx() / 8),
-            )
-            .unwrap_or(usize::MAX);
+            if vb.origin.by() / 8 != band.tile_row {
+                return Err(PolicyError::Unsupported {
+                    what: "a varblock outside its CfL band",
+                });
+            }
+            // Tile column within the band; the band owns exactly one tile row.
+            let tile = usize::try_from(vb.origin.bx() / 8).unwrap_or(usize::MAX);
 
             // LF: the varblock's n*n LF samples, chroma against reconstructed dY.
             y_lf.resize(n * n, 0.0);
@@ -3020,21 +3110,45 @@ fn estimate_cfl(
         }
         Ok::<_, PolicyError>(workspace)
     };
-    let group_samples = if let Some(executor) = executor {
-        executor.map_ordered(n_groups, collect_group)?
+    let band_samples = if let Some(executor) = executor {
+        executor.map_ordered(bands.len(), collect_band)?
     } else {
-        (0..n_groups)
-            .map(collect_group)
+        (0..bands.len())
+            .map(collect_band)
             .collect::<Result<Vec<_>>>()?
     };
 
+    // Reassemble per LF group, bands in tile-row order: the LF streams are
+    // appended in the original varblock order, and the bands' tile rows are
+    // concatenated into the group's tile raster (row * width + column).
     let mut lf_x = CflSamples::default();
     let mut lf_b = CflSamples::default();
-    let mut hf_groups = Vec::with_capacity(group_samples.len());
-    for group in group_samples {
-        lf_x.append_ordered(group.lf_x, group.lf_regression_x);
-        lf_b.append_ordered(group.lf_b, group.lf_regression_b);
-        hf_groups.push(group.hf);
+    let mut hf_groups: Vec<HfCflSamples> = Vec::with_capacity(n_groups);
+    for (band, samples) in bands.iter().zip(band_samples) {
+        lf_x.append_ordered(samples.lf_x, samples.lf_regression_x);
+        lf_b.append_ordered(samples.lf_b, samples.lf_regression_b);
+        if band.tile_row == 0 {
+            hf_groups.push(HfCflSamples {
+                tiles: samples.hf.tiles,
+                x: Vec::with_capacity(usize::try_from(samples.hf.tiles.area()).unwrap_or(0)),
+                b: Vec::with_capacity(usize::try_from(samples.hf.tiles.area()).unwrap_or(0)),
+            });
+        }
+        if hf_groups.len() != band.group + 1 {
+            return Err(PolicyError::Unsupported {
+                what: "a CfL band out of group order",
+            });
+        }
+        let group = hf_groups.last_mut().ok_or(PolicyError::Unsupported {
+            what: "a CfL band before its group's first row",
+        })?;
+        if group.tiles != samples.hf.tiles {
+            return Err(PolicyError::Unsupported {
+                what: "a CfL band whose tile grid disagrees with its group",
+            });
+        }
+        group.x.extend(samples.hf.x);
+        group.b.extend(samples.hf.b);
     }
 
     let (x_factor, b_factor) = refine_lf_factors(&lf_x, &lf_b, lf_quant)?;
@@ -3052,27 +3166,31 @@ fn estimate_cfl(
         b_factor_lf,
     };
 
+    // Phase 38: the per-tile HF factor refinement is independent per tile, so
+    // it runs across the executor's workers (X tiles then B tiles of each LF
+    // group, results reduced in tile order -- Contract A) instead of on the
+    // calling thread alone. Each tile's arithmetic is unchanged.
+    let baseline = hf_quants.baseline(TransformType::Dct8x8)?;
     let mut groups = Vec::with_capacity(hf_groups.len());
     for group in hf_groups {
-        let mut x = Vec::with_capacity(group.x.len());
-        let mut b = Vec::with_capacity(group.b.len());
-        for tile in &group.x {
-            x.push(CflFactor::new(refine_hf_factor(
-                tile,
-                0.0,
-                0,
-                hf_quants.baseline(TransformType::Dct8x8)?,
-            )?));
-        }
-        for tile in &group.b {
-            b.push(CflFactor::new(refine_hf_factor(
-                tile,
-                1.0,
-                2,
-                hf_quants.baseline(TransformType::Dct8x8)?,
-            )?));
-        }
-        groups.push(CflGrid::new(group.tiles, x, b)?);
+        let n_x = group.x.len();
+        let refine = |index: usize| -> Result<CflFactor> {
+            if let Some(tile) = group.x.get(index) {
+                return Ok(CflFactor::new(refine_hf_factor(tile, 0.0, 0, baseline)?));
+            }
+            let tile = group.b.get(index - n_x).ok_or(PolicyError::Unsupported {
+                what: "a CfL tile index outside its group",
+            })?;
+            Ok(CflFactor::new(refine_hf_factor(tile, 1.0, 2, baseline)?))
+        };
+        let total = n_x + group.b.len();
+        let mut factors = if let Some(executor) = executor {
+            executor.map_ordered(total, refine)?
+        } else {
+            (0..total).map(refine).collect::<Result<Vec<_>>>()?
+        };
+        let b = factors.split_off(n_x);
+        groups.push(CflGrid::new(group.tiles, factors, b)?);
     }
     Ok(CflEstimate {
         correlation,
@@ -4743,9 +4861,12 @@ pub fn encode_srgb8_to_target(
     request: &EncodeRequest,
     target: RateTarget,
 ) -> Result<RateOutcome> {
-    let frame = PreparedFrame::from_srgb8(width, height, rgb)?;
+    // Phase 38: one worker pool for the whole encode; the source conversion
+    // uses it too instead of running on the calling thread alone.
+    let executor = request.resources.executor();
+    let frame = PreparedFrame::from_srgb8_with(width, height, rgb, Some(&executor))?;
     let atlas = AnalysisAtlas::analyze(&frame);
-    rate::search_frame(&frame, &atlas, request, target)
+    rate::search_frame_with_executor(&frame, &atlas, request, target, &executor)
 }
 
 #[cfg(test)]
