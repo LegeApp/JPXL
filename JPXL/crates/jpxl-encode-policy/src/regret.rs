@@ -577,7 +577,441 @@ pub(crate) fn measure_prune_safety(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{AnalysisAtlas, EncodeRequest, QuantizerChoice};
+    use crate::rate::RatePhase;
+    use crate::request::{RateSearchPreset, RateTarget};
+    use crate::{AnalysisAtlas, EncodeRequest, QuantizerChoice, Rung};
+    use std::collections::BTreeMap;
+
+    /// A merge-capable quadtree node, identified in frame-global atom
+    /// coordinates. The key is quantizer-independent, so exact evidence from
+    /// multiple rungs can be joined without relying on traversal order.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+    struct CoverNodeKey {
+        bx: u32,
+        by: u32,
+        size: u32,
+    }
+
+    /// Exact split/merge evidence for one node at one quantizer rung.
+    #[derive(Debug, Clone, Copy)]
+    struct ExactNodeEvidence {
+        split_cost: f64,
+        merge_cost: f64,
+        decision: CoverDecision,
+    }
+
+    impl ExactNodeEvidence {
+        /// Absolute runner-up margin normalised by the cheaper alternative, so
+        /// one guard is meaningful across images, transform sizes, and rungs.
+        fn relative_margin(self) -> f64 {
+            let scale = self.split_cost.min(self.merge_cost).abs().max(1.0);
+            (self.merge_cost - self.split_cost).abs() / scale
+        }
+    }
+
+    /// The real two-anchor controller's first anchor, second anchor, and
+    /// predicted finalist. Phase 32 measures fresh exact cover evidence at all
+    /// three even though the current production finalist reuses an anchor:
+    /// the point of the screen is to learn whether selective refresh could
+    /// safely replace that global reuse.
+    #[derive(Debug, Clone, Copy)]
+    struct RungTriple {
+        anchor0: Rung,
+        anchor1: Rung,
+        finalist: Rung,
+        source: &'static str,
+    }
+
+    /// One margin guard's aggregate. "Stable" means both anchors chose the
+    /// same winner and each had at least `guard` relative exact margin.
+    /// A stable node whose fresh finalist winner differs is false-stable.
+    #[derive(Debug, Clone, Copy, Default)]
+    struct DirtyFrontierSummary {
+        nodes: u64,
+        anchor_agreements: u64,
+        anchor0_finalist_agreements: u64,
+        anchor1_finalist_agreements: u64,
+        all_three_agreements: u64,
+        provisionally_stable: u64,
+        false_stable: u64,
+    }
+
+    impl DirtyFrontierSummary {
+        fn fraction(numerator: u64, denominator: u64) -> f64 {
+            if denominator == 0 {
+                return 0.0;
+            }
+            #[allow(
+                clippy::cast_precision_loss,
+                reason = "cover-node counts stay far inside f64's exact-integer range"
+            )]
+            let fraction = numerator as f64 / denominator as f64;
+            fraction
+        }
+
+        fn anchor_stability_rate(self) -> f64 {
+            Self::fraction(self.anchor_agreements, self.nodes)
+        }
+
+        fn anchor0_finalist_rate(self) -> f64 {
+            Self::fraction(self.anchor0_finalist_agreements, self.nodes)
+        }
+
+        fn anchor1_finalist_rate(self) -> f64 {
+            Self::fraction(self.anchor1_finalist_agreements, self.nodes)
+        }
+
+        fn all_three_rate(self) -> f64 {
+            Self::fraction(self.all_three_agreements, self.nodes)
+        }
+
+        fn dirty_fraction(self) -> f64 {
+            Self::fraction(
+                self.nodes.saturating_sub(self.provisionally_stable),
+                self.nodes,
+            )
+        }
+
+        fn false_stable_rate(self) -> f64 {
+            Self::fraction(self.false_stable, self.provisionally_stable)
+        }
+    }
+
+    /// Extends [`measure_region`]'s independent exact walk with addressable
+    /// per-node evidence. Only legal merge candidates are recorded: partial
+    /// edge nodes that can only split are not decisions a dirty frontier can
+    /// freeze or refresh.
+    #[allow(clippy::too_many_arguments)]
+    fn measure_exact_nodes_region(
+        frame: &PreparedFrame,
+        hf_quants: &HfQuantizers,
+        grid: jpxl_encode::vardct::BlockGrid,
+        bx: u32,
+        by: u32,
+        size: u32,
+        aq: &AqSetup,
+        x0: u32,
+        y0: u32,
+        cache: &mut CandidateGroupBank,
+        scratch: &mut ForwardScratch,
+        d_y_hf: &mut [f32],
+        nodes: &mut BTreeMap<CoverNodeKey, ExactNodeEvidence>,
+    ) -> Result<f64> {
+        if bx >= grid.width || by >= grid.height {
+            return Ok(0.0);
+        }
+        if size == 1 {
+            let hf_mul = aq.mul_for_footprint(x0 / 8 + bx, y0 / 8 + by, 1, 1);
+            return Ok(block_cost(
+                frame,
+                hf_quants,
+                TransformType::Dct8x8,
+                hf_mul,
+                x0 + bx * 8,
+                y0 + by * 8,
+                cache,
+                scratch,
+                d_y_hf,
+            )? + PER_VARBLOCK_BITS
+                + mul_signal_bits(hf_mul, aq.baseline));
+        }
+
+        let half = size / 2;
+        let mut split_cost = 0.0f64;
+        for (qx, qy) in [
+            (bx, by),
+            (bx + half, by),
+            (bx, by + half),
+            (bx + half, by + half),
+        ] {
+            split_cost += measure_exact_nodes_region(
+                frame, hf_quants, grid, qx, qy, half, aq, x0, y0, cache, scratch, d_y_hf, nodes,
+            )?;
+        }
+
+        let fits = bx + size <= grid.width && by + size <= grid.height;
+        let Some(transform) = square_transform(size).filter(|_| fits) else {
+            return Ok(split_cost);
+        };
+        let hf_mul = aq.mul_for_footprint(x0 / 8 + bx, y0 / 8 + by, size, size);
+        let fixed =
+            PER_VARBLOCK_BITS + NON_DCT8X8_SIGNAL_BITS + mul_signal_bits(hf_mul, aq.baseline);
+        let merge_cost = block_cost(
+            frame,
+            hf_quants,
+            transform,
+            hf_mul,
+            x0 + bx * 8,
+            y0 + by * 8,
+            cache,
+            scratch,
+            d_y_hf,
+        )? + fixed;
+        let decision = if merge_cost < split_cost {
+            CoverDecision::Merge
+        } else {
+            CoverDecision::Split
+        };
+        let key = CoverNodeKey {
+            bx: x0 / 8 + bx,
+            by: y0 / 8 + by,
+            size,
+        };
+        let old = nodes.insert(
+            key,
+            ExactNodeEvidence {
+                split_cost,
+                merge_cost,
+                decision,
+            },
+        );
+        assert!(
+            old.is_none(),
+            "frame-global node key must be unique: {key:?}"
+        );
+        Ok(match decision {
+            CoverDecision::Merge => merge_cost,
+            CoverDecision::Split => split_cost,
+        })
+    }
+
+    /// Measures all legal cover decisions at `quantizer`, sharing the
+    /// quantizer-independent forward cache with the other Phase-32 rungs.
+    fn measure_exact_nodes_at(
+        frame: &PreparedFrame,
+        atlas: &AnalysisAtlas,
+        request: &EncodeRequest,
+        quantizer: QuantizerChoice,
+        cache: &mut CandidateForwardCache,
+    ) -> BTreeMap<CoverNodeKey, ExactNodeEvidence> {
+        let aq = AqSetup::build(atlas, request, quantizer);
+        let hf_quants =
+            HfQuantizers::new(aq.global_scale.get(), aq.baseline, &aq.muls()).expect("quantizers");
+        let decision = jpxl_encode::vardct::FrameDecision {
+            width: frame.width(),
+            height: frame.height(),
+            group_size_shift: crate::VARDCT_GROUP_SIZE_SHIFT,
+            num_passes: 1,
+        };
+        let geometry = decision.geometry().expect("geometry");
+        cache.prepare(&geometry).expect("cache geometry");
+        let mut scratch = ForwardScratch::new();
+        let mut nodes = BTreeMap::new();
+        for index in 0..geometry.num_lf_groups() {
+            let id = crate::LfGroupId::new(u32::try_from(index).unwrap_or(u32::MAX));
+            let blocks = geometry.lf_group_blocks(id).expect("blocks");
+            let rect = geometry.lf_group_rect(id).expect("rect");
+            let mut bank = cache
+                .group(usize::try_from(index).unwrap_or(usize::MAX))
+                .expect("group bank")
+                .write()
+                .expect("group bank lock");
+            let mut d_y_hf = vec![0.0f32; 32 * 32];
+            let mut sby = 0u32;
+            while sby < blocks.height {
+                let mut sbx = 0u32;
+                while sbx < blocks.width {
+                    measure_exact_nodes_region(
+                        frame,
+                        &hf_quants,
+                        blocks,
+                        sbx,
+                        sby,
+                        4,
+                        &aq,
+                        rect.x0,
+                        rect.y0,
+                        &mut bank,
+                        &mut scratch,
+                        &mut d_y_hf,
+                        &mut nodes,
+                    )
+                    .expect("measures exact nodes");
+                    sbx += 4;
+                }
+                sby += 4;
+            }
+        }
+        nodes
+    }
+
+    /// Obtains the real bounded controller's two anchors and finalist. The
+    /// screen retries representative targets because some inputs legitimately
+    /// fall back to exhaustive Quality at a particular rate; reporting an
+    /// exhaustive bracket as though it were the bounded geometry would answer
+    /// a different question.
+    fn controller_rung_triple(
+        frame: &PreparedFrame,
+        atlas: &AnalysisAtlas,
+        request: &EncodeRequest,
+        target: RateTarget,
+    ) -> Option<RungTriple> {
+        let outcome = crate::rate::search_frame(frame, atlas, request, target).ok()?;
+        if outcome.stats.anchor_fallbacks != 0 {
+            return None;
+        }
+        let mut anchors: Vec<Rung> = Vec::new();
+        for step in &outcome.trace {
+            if step.phase == RatePhase::Bracket && !anchors.contains(&step.quantizer.rung) {
+                anchors.push(step.quantizer.rung);
+                if anchors.len() == 2 {
+                    break;
+                }
+            }
+        }
+        let finalist = outcome
+            .trace
+            .iter()
+            .find(|step| step.phase == RatePhase::Final)
+            .map(|step| step.quantizer.rung)?;
+        let (&anchor0, &anchor1) = (anchors.first()?, anchors.get(1)?);
+        (anchor0 != anchor1).then_some(RungTriple {
+            anchor0,
+            anchor1,
+            finalist,
+            source: "bounded-two-anchor",
+        })
+    }
+
+    fn summarize_dirty_frontier(
+        anchor0: &BTreeMap<CoverNodeKey, ExactNodeEvidence>,
+        anchor1: &BTreeMap<CoverNodeKey, ExactNodeEvidence>,
+        finalist: &BTreeMap<CoverNodeKey, ExactNodeEvidence>,
+        guard: f64,
+    ) -> DirtyFrontierSummary {
+        assert_eq!(
+            anchor0.len(),
+            anchor1.len(),
+            "node geometry changed between anchors"
+        );
+        assert_eq!(
+            anchor0.len(),
+            finalist.len(),
+            "node geometry changed at the finalist"
+        );
+        let mut summary = DirtyFrontierSummary::default();
+        for (key, &a0) in anchor0 {
+            let a1 = *anchor1
+                .get(key)
+                .unwrap_or_else(|| panic!("anchor1 missing node {key:?}"));
+            let f = *finalist
+                .get(key)
+                .unwrap_or_else(|| panic!("finalist missing node {key:?}"));
+            summary.nodes = summary.nodes.saturating_add(1);
+            let anchors_agree = a0.decision == a1.decision;
+            let a0_final_agree = a0.decision == f.decision;
+            let a1_final_agree = a1.decision == f.decision;
+            summary.anchor_agreements = summary
+                .anchor_agreements
+                .saturating_add(u64::from(anchors_agree));
+            summary.anchor0_finalist_agreements = summary
+                .anchor0_finalist_agreements
+                .saturating_add(u64::from(a0_final_agree));
+            summary.anchor1_finalist_agreements = summary
+                .anchor1_finalist_agreements
+                .saturating_add(u64::from(a1_final_agree));
+            summary.all_three_agreements = summary
+                .all_three_agreements
+                .saturating_add(u64::from(anchors_agree && a0_final_agree));
+
+            let stable = anchors_agree
+                && a0.relative_margin().is_finite()
+                && a1.relative_margin().is_finite()
+                && a0.relative_margin() >= guard
+                && a1.relative_margin() >= guard;
+            summary.provisionally_stable = summary
+                .provisionally_stable
+                .saturating_add(u64::from(stable));
+            summary.false_stable = summary
+                .false_stable
+                .saturating_add(u64::from(stable && !a0_final_agree));
+        }
+        summary
+    }
+
+    fn screen_dirty_frontier(
+        name: &str,
+        frame: &PreparedFrame,
+        target: RateTarget,
+    ) -> DirtyFrontierSummary {
+        let atlas = AnalysisAtlas::analyze(frame);
+        let mut request = EncodeRequest::for_target(target);
+        request.rate_preset = RateSearchPreset::Balanced;
+        let candidates = match target {
+            RateTarget::BitsPerPixel(primary) => [primary, 0.5, 1.0, 2.0, 4.0],
+            RateTarget::Bytes(_) => [0.5, 1.0, 2.0, 4.0, 8.0],
+        };
+        let (triple, measured_target) = candidates
+            .into_iter()
+            .find_map(|bpp| {
+                let target = RateTarget::BitsPerPixel(bpp);
+                request.target = Some(target);
+                controller_rung_triple(frame, &atlas, &request, target).map(|triple| (triple, bpp))
+            })
+            .expect("Phase-32 input must exercise a bounded two-anchor target");
+
+        // The existing ExactPolicy tests prove this independent walk against
+        // the production planner. Phase 32 reuses that established exact walk
+        // at three rungs and joins the evidence by frame-global node key.
+        let mut cache = CandidateForwardCache::new();
+        let anchor0 = measure_exact_nodes_at(
+            frame,
+            &atlas,
+            &request,
+            QuantizerChoice::at(triple.anchor0, request.quant_lf).expect("anchor0 quantizer"),
+            &mut cache,
+        );
+        let anchor1 = measure_exact_nodes_at(
+            frame,
+            &atlas,
+            &request,
+            QuantizerChoice::at(triple.anchor1, request.quant_lf).expect("anchor1 quantizer"),
+            &mut cache,
+        );
+        let finalist = measure_exact_nodes_at(
+            frame,
+            &atlas,
+            &request,
+            QuantizerChoice::at(triple.finalist, request.quant_lf).expect("finalist quantizer"),
+            &mut cache,
+        );
+
+        // A guard sweep is measurement, not a hidden promotion threshold. It
+        // exposes the trade between work left dirty and false-stable nodes;
+        // the later production phase can choose a guard only after corpus
+        // evidence, not from this one fixture.
+        const GUARDS: [f64; 6] = [0.0, 0.0001, 0.001, 0.005, 0.01, 0.05];
+        let baseline = summarize_dirty_frontier(&anchor0, &anchor1, &finalist, GUARDS[0]);
+        eprintln!(
+            "PHASE32 case={name} size={}x{} bpp={measured_target:.3} source={} anchor0={} \
+             anchor1={} finalist={} nodes={} \
+             anchor_stability={:.6} anchor0_finalist={:.6} anchor1_finalist={:.6} \
+             all_three={:.6}",
+            frame.width(),
+            frame.height(),
+            triple.source,
+            triple.anchor0.get(),
+            triple.anchor1.get(),
+            triple.finalist.get(),
+            baseline.nodes,
+            baseline.anchor_stability_rate(),
+            baseline.anchor0_finalist_rate(),
+            baseline.anchor1_finalist_rate(),
+            baseline.all_three_rate(),
+        );
+        for guard in GUARDS {
+            let summary = summarize_dirty_frontier(&anchor0, &anchor1, &finalist, guard);
+            eprintln!(
+                "PHASE32_GUARD case={name} guard={guard:.4} stable={} false_stable={} \
+                 false_stable_rate={:.6} dirty_fraction={:.6}",
+                summary.provisionally_stable,
+                summary.false_stable,
+                summary.false_stable_rate(),
+                summary.dirty_fraction(),
+            );
+        }
+        baseline
+    }
 
     fn ramp_frame(width: u32, height: u32) -> PreparedFrame {
         let n = usize::try_from(width).unwrap_or(0) * usize::try_from(height).unwrap_or(0);
@@ -611,6 +1045,40 @@ mod tests {
         }
         PreparedFrame::from_linear_srgb(width, height, x_plane, y_plane, b_plane)
             .expect("legal frame")
+    }
+
+    /// Deterministic photo-like RGB input for the Phase-32 controller screen:
+    /// broad colour gradients, a low-frequency checker, and bounded sensor-
+    /// like texture. Unlike `ramp_frame` it enters through the real sRGB8
+    /// conversion boundary.
+    fn phase32_synthetic_frame(width: u32, height: u32) -> PreparedFrame {
+        let capacity = usize::try_from(u64::from(width) * u64::from(height) * 3).unwrap_or(0);
+        let mut rgb = Vec::with_capacity(capacity);
+        for y in 0..height {
+            for x in 0..width {
+                let gx = x.saturating_mul(180) / width.max(1);
+                let gy = y.saturating_mul(120) / height.max(1);
+                let checker = if (x / 32 + y / 32).is_multiple_of(2) {
+                    14
+                } else {
+                    0
+                };
+                let hash = x
+                    .wrapping_mul(0x9E37)
+                    .wrapping_add(y.wrapping_mul(0x79B9))
+                    .wrapping_mul(0x85EB_CA6B);
+                let noise = (hash >> 28) & 0x0F;
+                let r = (24 + gx + gy / 4 + checker + noise).min(255);
+                let g = (18 + gx * 3 / 4 + gy / 2 + noise / 2).min(255);
+                let b = (12 + gx / 3 + gy + checker / 2 + noise).min(255);
+                rgb.extend_from_slice(&[
+                    u8::try_from(r).unwrap_or(255),
+                    u8::try_from(g).unwrap_or(255),
+                    u8::try_from(b).unwrap_or(255),
+                ]);
+            }
+        }
+        PreparedFrame::from_srgb8(width, height, &rgb).expect("legal synthetic frame")
     }
 
     /// Runs `measure_region` over every LF group of `frame` with `surrogate`,
@@ -700,6 +1168,62 @@ mod tests {
         assert_eq!(summary.mean_regret, 0.0);
         assert_eq!(summary.max_regret, 0.0);
         assert_eq!(summary.p99_regret, 0.0);
+    }
+
+    /// Phase 32's synthetic measurement row. This is deliberately ignored:
+    /// it runs real target-rate searches plus three fresh exact cover walks
+    /// and prints the measurements that decide whether a production dirty
+    /// frontier is worth building. Ordinary unit tests instead exercise the
+    /// arithmetic and ExactPolicy invariants without paying that corpus cost.
+    #[test]
+    #[ignore = "Phase 32 measurement harness; run explicitly with --ignored --nocapture"]
+    fn phase32_dirty_frontier_synthetic_screen() {
+        let frame = phase32_synthetic_frame(1024, 768);
+        let summary = screen_dirty_frontier(
+            "synthetic-photo-like-1024x768",
+            &frame,
+            RateTarget::BitsPerPixel(1.0),
+        );
+        assert!(
+            summary.nodes > 0,
+            "the screen must observe real cover nodes"
+        );
+    }
+
+    /// Phase 32's canonical-photo measurement rows. Paths are a
+    /// semicolon-separated list in `JPXL_PHASE32_PPM`; keeping corpus data
+    /// outside the source tree preserves fixture provenance and avoids
+    /// committing large copyrighted photographs. Missing input is a skipped
+    /// measurement, not a unit-test failure.
+    #[test]
+    #[ignore = "Phase 32 measurement harness; set JPXL_PHASE32_PPM"]
+    fn phase32_dirty_frontier_photo_screen() {
+        let Ok(paths) = std::env::var("JPXL_PHASE32_PPM") else {
+            eprintln!("PHASE32 skipped: set JPXL_PHASE32_PPM to semicolon-separated P6 paths");
+            return;
+        };
+        let mut measured = 0u64;
+        for path in paths.split(';').filter(|path| !path.is_empty()) {
+            let bytes = std::fs::read(path).expect("read Phase-32 PPM");
+            let image =
+                jpxl_conformance::metrics::Image::from_ppm(&bytes).expect("parse Phase-32 PPM");
+            assert_eq!(image.channels, 3, "Phase-32 inputs must be RGB P6");
+            assert_eq!(image.max_value, 255, "Phase-32 inputs must be 8-bit");
+            let rgb: Vec<u8> = image
+                .samples
+                .iter()
+                .map(|&sample| u8::try_from(sample).expect("8-bit sample"))
+                .collect();
+            let frame =
+                PreparedFrame::from_srgb8(image.w, image.h, &rgb).expect("prepare Phase-32 frame");
+            let summary = screen_dirty_frontier(path, &frame, RateTarget::BitsPerPixel(1.0));
+            assert!(
+                summary.nodes > 0,
+                "photo input {path} must observe real cover nodes"
+            );
+            measured = measured.saturating_add(1);
+        }
+        assert!(measured > 0, "JPXL_PHASE32_PPM named no inputs");
     }
 
     /// Runs `measure_prune_safety` over every LF group of `frame`, returning
