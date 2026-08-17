@@ -1658,7 +1658,7 @@ record jpegxl-rs.work.arch-phase34-indexed-lane4-cfl/1 : work {
 
 record jpegxl-rs.work.arch-phase35-lane-batched-dct/1 : work {
     title "Phase 35: lane-batched separable DCT kernels and cached ScaleF"
-    state proposed
+    state completed
     scope [
         path ".agent/scratch/**",
         path "JPXL/crates/jpxl-core/src/dct.rs",
@@ -1678,18 +1678,21 @@ record jpegxl-rs.work.arch-phase35-lane-batched-dct/1 : work {
                 Canonical Fast, Balanced, and Quality streams on mid and large inputs, plus one-thread/four-thread Balanced outputs, are byte-identical to the Phase 34 head binary; the lane-batched kernels equal the scalar kernels bit-for-bit under property tests over every supported shape.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase35-identity-2026-08-17/1 ]
         }
         check safety {
             statement """
                 Workspace fmt, build, strict Clippy, and the full test suite pass with default features and with jpxl-core simd disabled; decoder conformance/oracle suites pass; the canonical candidate decodes through vendored djxl and jxl-oxide.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase35-safety-2026-08-17/1 ]
         }
         check speed {
             statement """
                 A fresh perf profile shows the DCT-family self-time share reduced materially from the ~19% baseline, and pinned four-core Balanced 1-bpp mid/large medians do not regress.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.phase35-speed-2026-08-17/1 ]
         }
     }
     depends_on [ @jpegxl-rs.work.arch-phase34-indexed-lane4-cfl/1 ]
