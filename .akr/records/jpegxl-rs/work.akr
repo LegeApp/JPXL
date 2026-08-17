@@ -2038,6 +2038,44 @@ record jpegxl-rs.work.arch-phase41-hf-token-tape/1 : work {
     part_of [ @jpegxl-rs.track.encoder-optimization ]
 }
 
+record jpegxl-rs.work.arch-phase41b-tape-fast-path/1 : work {
+    title "Phase 41b: token-tape recorder fast path and zero-width write skip; fixed-bracket anchor experiment deferred by measurement"
+    state proposed
+    scope [
+        path ".agent/scratch/**",
+        path "JPXL/crates/jpxl-entropy/src/encode/tape.rs",
+        path "JPXL/docs/optimize.md"
+    ]
+    intent """
+        Follow-through on Phase 41: TokenTapeRecorder flattens cluster_of per context and takes the below-split token inline (what tokenize returns there), and TokenTape::write_stream skips zero-width extra-bit writes on both backends; byte-identical by construction. Also records the measurement that defers the plan's Phase 42 (gated Contract-B fixed-bracket anchors): the second anchor's plan is ~18 ms of ~400 ms on mid and its Count is unaffected by batching, so the ceiling is ~12 ms (~3%) against a quality screen and correction risk; not attempted.
+        """
+    note """
+        Opened 2026-08-17. The Phase 42 deferral is a measurement-first decision per docs/optimize.md's required workflow; the user may override.
+        """
+    acceptance {
+        check identity {
+            statement """
+                Canonical streams across presets, sizes, thread counts and AVX2 on/off are byte-identical to Phase 41; djxl and jxl-oxide accept the candidates.
+                """
+            method command
+        }
+        check safety {
+            statement """
+                fmt, strict Clippy, workspace suites in fast-debug and release, tape-off jpxl-encode suites, oracle/roundtrip/determinism, no-default-feature and AVX2-disabled suites pass.
+                """
+            method command
+        }
+        check speed {
+            statement """
+                Instruction count per mid Balanced bench drops further and pinned wall does not regress; the Phase 42 ceiling is quantified from the phase clock.
+                """
+            method observation
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase41-hf-token-tape/1 ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+}
+
 record jpegxl-rs.work.arch-phase4a-weighted-predictor-scoped/1 : work {
     title "Phase 4A: wire Predictor::Weighted into the encoder despite its stateful, order-dependent scoring cost"
     state completed

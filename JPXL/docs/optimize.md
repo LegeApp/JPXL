@@ -871,6 +871,32 @@ Not done: the policy-side training census (`CensusSink`, 7425 raw histograms)
 still exists once per encode; sharing the finalist's tape with it is only
 valid when the finalist plan shape equals the trained one and is deferred.
 
+## Phase 41b — tape recorder fast path; Phase 42 (fixed-bracket anchors) deferred by measurement (2026-08-17)
+
+Follow-through on the tape: `TokenTapeRecorder` now flattens `cluster_of` per
+context and pairs each cluster's configuration with its `split` so the common
+"value below the split is its own token" case is taken inline (what
+`tokenize` returns there), and both `TokenTape::write_stream` backends skip
+the zero-width extra-bit write. Instructions per two-iteration mid Balanced
+bench 34.5 G → 33.3 G → 32.8 G (−5% on top of Phase 41; −16% since Phase 39).
+Pinned wall in a moderately loaded window (load 2.5–6): mid 421/412/424 →
+398/409/409 ms, large 869/961 → 840/899 ms; writer `store_ms` 35–38 → 28–30
+ms on mid, `count_ms` 73–81 → 56–83 ms.
+
+The plan's Phase 42 (a gated Contract-B experiment: choose both anchor rungs
+before pricing so the two anchors quantize from one traversal) was checked
+against the phase clock before building anything, per this document's own
+workflow rule ("add the counter before changing the mechanism"). The second
+anchor's whole plan is ~18 ms of the ~400 ms mid encode (`rate_plan_full`
+plan_ms 37 for the second anchor plus the finalist, ~17 ms of it quantize),
+and its Count is unaffected by batching. Even a perfect two-rung traversal at
+1.3× the cost of one saves ≈ 12 ms (≈ 3%), while a bracket chosen without the
+first anchor's exact size is a less informed predictor than today's
+`second_anchor_rung` (which uses that size) and so risks extra corrections at
+≥ 60 ms each and a changed finalist — a quality-screen phase for a ≤ 3%
+ceiling with negative-expectation tails. It is deferred, not attempted; the
+numbers are recorded here and in AKR so it is not re-derived.
+
 
 ### Open architectural questions
 

@@ -90,6 +90,25 @@ impl TokenTape {
         Ok(())
     }
 
+    /// [`Self::push`] with the cluster already narrowed.
+    #[inline]
+    fn push_cluster_u8(&mut self, cluster: u8, split: TokenSplit) -> Result<()> {
+        let token = u16::try_from(split.token).map_err(|_| {
+            encode_error!("C.2.1: token {} does not fit the token tape", split.token)
+        })?;
+        let extra_bits = u8::try_from(split.extra_bits).map_err(|_| {
+            encode_error!(
+                "C.3.3: {} extra bits do not fit the token tape",
+                split.extra_bits
+            )
+        })?;
+        self.cluster.push(cluster);
+        self.token.push(token);
+        self.extra_bits.push(extra_bits);
+        self.extra.push(split.extra);
+        Ok(())
+    }
+
     /// Emits the recorded stream under `tables`, exactly as
     /// [`super::stream::SymbolEncoder::write_stream`] would emit the same
     /// tokens: prefix codes symbol by symbol, or one ANS backward pass whose
@@ -113,7 +132,9 @@ impl TokenTape {
                         encode_error!("C.2.1: cluster {cluster} has no prefix code")
                     })?;
                     code.write_symbol(w, u32::from(token))?;
-                    w.write_bits(u32::from(extra_bits), extra)?;
+                    if extra_bits != 0 {
+                        w.write_bits(u32::from(extra_bits), extra)?;
+                    }
                 }
                 Ok(())
             }
@@ -136,7 +157,11 @@ impl TokenTape {
                     if let Some(word) = payload.renormalization(index) {
                         w.write_bits(16, u32::from(word))?;
                     }
-                    w.write_bits(u32::from(extra_bits), extra)?;
+                    // `write_bits(0, 0)` is a no-op; most tokens carry no extra
+                    // bits, so skip the call rather than pay for it.
+                    if extra_bits != 0 {
+                        w.write_bits(u32::from(extra_bits), extra)?;
+                    }
                 }
                 Ok(())
             }
@@ -159,8 +184,13 @@ impl TokenTape {
 /// hybrid-uint token of the value cluster, and the tape stores only those.
 #[derive(Debug, Clone)]
 pub struct TokenTapeRecorder<'a> {
-    plan: &'a EncoderPlan,
-    configs: Vec<HybridUintConfig>,
+    /// Kept for the lifetime tie: the recorder's counts describe this plan.
+    _plan: core::marker::PhantomData<&'a EncoderPlan>,
+    /// `cluster_of[ctx]`, flattened once so the hot path is one lookup.
+    cluster_of: Vec<u8>,
+    /// Per cluster: its configuration and the `split` below which a value is
+    /// its own token with no extra bits (the common case, taken inline).
+    configs: Vec<(HybridUintConfig, u32)>,
     counts: Vec<Vec<u64>>,
     tape: TokenTape,
 }
@@ -189,9 +219,22 @@ impl<'a> TokenTapeRecorder<'a> {
         for config in &plan.configs {
             config.validate()?;
         }
+        let num_dist = plan.context_map.num_dist();
+        let mut cluster_of = Vec::with_capacity(num_dist);
+        for ctx in 0..num_dist {
+            let cluster = plan.context_map.cluster_of(ctx)?;
+            cluster_of.push(u8::try_from(cluster).map_err(|_| {
+                encode_error!("C.2.2: cluster {cluster} does not fit the token tape")
+            })?);
+        }
         Ok(Self {
-            plan,
-            configs: plan.configs.clone(),
+            _plan: core::marker::PhantomData,
+            cluster_of,
+            configs: plan
+                .configs
+                .iter()
+                .map(|config| (*config, config.split()))
+                .collect(),
             counts: vec![Vec::new(); num_clusters],
             tape: TokenTape::new(),
         })
@@ -203,16 +246,32 @@ impl<'a> TokenTapeRecorder<'a> {
     ///
     /// [`EntropyError::Encode`](crate::EntropyError::Encode) if `ctx` is
     /// outside the context map or the value cannot be tokenized.
+    #[inline]
     pub fn record(&mut self, ctx: usize, value: u32) -> Result<()> {
-        let cluster = self.plan.context_map.cluster_of(ctx)?;
-        let config = self
+        let cluster = self
+            .cluster_of
+            .get(ctx)
+            .copied()
+            .ok_or_else(|| encode_error!("C.2.2: context {ctx} is outside this stream"))?;
+        let (config, split_at) = self
             .configs
-            .get(cluster)
+            .get(usize::from(cluster))
             .ok_or_else(|| encode_error!("C.2.1: cluster {cluster} has no configuration"))?;
-        let split = config.tokenize(value)?;
+        // Below the split a value is its own token with no extra bits (C.3.3);
+        // that is what `tokenize` returns there, taken inline because it is
+        // the overwhelming case.
+        let split = if value < *split_at {
+            TokenSplit {
+                token: value,
+                extra_bits: 0,
+                extra: 0,
+            }
+        } else {
+            config.tokenize(value)?
+        };
         let slot = self
             .counts
-            .get_mut(cluster)
+            .get_mut(usize::from(cluster))
             .ok_or_else(|| encode_error!("C.2.1: cluster {cluster} is out of range"))?;
         let token = split.token as usize;
         if slot.len() <= token {
@@ -221,7 +280,7 @@ impl<'a> TokenTapeRecorder<'a> {
         if let Some(entry) = slot.get_mut(token) {
             *entry = entry.saturating_add(1);
         }
-        self.tape.push(cluster, split)
+        self.tape.push_cluster_u8(cluster, split)
     }
 
     /// Hands out the tape recorded since the last call and starts a new one.
