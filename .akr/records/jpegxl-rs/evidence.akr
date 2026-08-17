@@ -2131,6 +2131,45 @@ record jpegxl-rs.evidence.phase40-speed-2026-08-17/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase41-identity-2026-08-17/1 : evidence {
+    title "Phase 41 tape path is byte-identical: unit test equates tables and bytes with the replay encoder for clustered ANS and prefix plans; every canonical stream, thread count and AVX2 setting matches Phase 34-40; djxl 0.13.0 and jxl-oxide 0.12.6 accept the candidates"
+    state verified
+    result pass
+    method command
+    observed_at git:406168f12180a6de767ba3a01c567bfc5dfb1ffa
+    command "cargo test -p jpxl-entropy token_tape_matches_symbol_encoder; .agent/scratch/phase35-lane-dct/run-identity.sh (jpxl-p41); JPXL_DISABLE_AVX2=1 jpxl-p41 encode ...; djxl / jxl-oxide decode of the candidates"
+    artifact ".agent/scratch/phase35-lane-dct/out/identity.sha256"
+    summary """
+        token_tape_matches_symbol_encoder: four clusters with distinct hybrid-uint configurations, 1,200 values across the small/tail histogram boundary in three sections recorded by two recorders whose counts merge, tables PartialEq-equal and section bytes/bit lengths equal for both backends. Canonical hashes unchanged (Balanced-mid 7f70ae001ec27658..., Quality-mid d4b03810dc0bcb73..., Balanced-large 8bb1b1fb2df6b45d..., Quality-large c3321262010e37f6...); no singleton hashes; JPXL_DISABLE_AVX2 reproduces Balanced-mid; mid/large Balanced and mid Quality candidates decode through djxl and jxl-oxide.
+        """
+}
+
+record jpegxl-rs.evidence.phase41-safety-2026-08-17/1 : evidence {
+    title "Phase 41 gates: fmt, strict Clippy with the tape on and off, workspace suites in fast-debug and release, jpxl-encode suites with hf-token-tape off, oracle 12/12, rate_loop 13/13, roundtrip 12/12, no-default-feature and AVX2-disabled suites pass"
+    state verified
+    result pass
+    method command
+    observed_at git:406168f12180a6de767ba3a01c567bfc5dfb1ffa
+    command "cd JPXL && cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace --profile fast-debug && cargo test --workspace --release && cargo test -p jpxl-encode-policy --release --test vardct_oracle --test rate_loop --test vardct_roundtrip && cargo test -p jpxl-encode --no-default-features --features parallel,simd,phase4b-sampled-gather --profile fast-debug && cargo clippy -p jpxl-encode --no-default-features --features parallel,simd,phase4b-sampled-gather --all-targets -- -D warnings && cargo test -p jpxl-encode-policy --no-default-features --profile fast-debug && JPXL_DISABLE_AVX2=1 cargo test -p jpxl-encode-policy --lib --profile fast-debug"
+    artifact ".agent/scratch/phase35-lane-dct/gates-p41.log"
+    summary """
+        All gates green on the final tree in both jpxl-encode feature configurations; log under .agent/scratch/phase35-lane-dct/gates-p41.log. No new unsafe, no new dependencies.
+        """
+}
+
+record jpegxl-rs.evidence.phase41-speed-2026-08-17/1 : evidence {
+    title "Instructions per two-iteration mid Balanced bench 37.66/37.66 G (Phase 40) -> 34.57/34.57 G (Phase 41), -8.2% (-11.5% since Phase 39); walks per written plan 2 -> 1; tape_symbols 2,978,947 across the two anchor counts and 1,197,516 for the finalist store on the mid photo (~12 MB of tape per plan); wall time not asserted under host load 7-12"
+    state verified
+    result pass
+    method observation
+    observed_at git:406168f12180a6de767ba3a01c567bfc5dfb1ffa
+    command "perf stat -e cpu_core/instructions/,cpu_core/cycles/ -- taskset -c 0,2,4,6 ./jpxl-{p40,p41} bench vardct-rate --input mid-photo.ppm --bpp 1 --lossy-preset balanced --iters 2 --threads 4 (two rounds each); jpxl bench ... --diag (tape_symbols); pinned wall rounds under host load 7-12"
+    artifact ".agent/scratch/phase35-lane-dct/pinned-timing-p41.log"
+    summary """
+        Load-independent instruction counts: 37,658,990,804 / 37,657,128,164 before vs 34,572,598,196 / 34,568,519,673 after. Diagnostics confirm the writer no longer builds a TokenCensus on the tape path and records ~1.5 M tokens per plan on the mid photo. Pinned wall rounds in a heavily loaded window (load average 7-12) moved count_ms/store_ms down in most pairs (e.g. mid 112.3/56.9 -> 99.1/39.1 ms, large 219/99 -> 186/96 ms) but with outliers in both directions; a quiet-host re-measurement is owed and noted in docs/optimize.md.
+        """
+}
+
 record jpegxl-rs.evidence.phase4a-weighted-predictor-wired-2026-08-08/1 : evidence {
     title "Phase 4A: Weighted predictor wired into encoder search, decode-validated (jpxl-decode + djxl), multi-section confirmed"
     state verified

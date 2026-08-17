@@ -1991,7 +1991,7 @@ record jpegxl-rs.work.arch-phase40-cover-scoring-pass/1 : work {
 
 record jpegxl-rs.work.arch-phase41-hf-token-tape/1 : work {
     title "Phase 41: HF token tape -- one coefficient walk per written plan"
-    state proposed
+    state completed
     scope [
         path ".agent/scratch/**",
         path "JPXL/crates/jpxl-cli/src/main.rs",
@@ -2017,18 +2017,21 @@ record jpegxl-rs.work.arch-phase41-hf-token-tape/1 : work {
                 Canonical streams across presets, sizes, thread counts and AVX2 on/off are byte-identical to Phase 40; the tape unit test proves tables and bytes equal the replay encoder's; djxl and jxl-oxide accept the candidates.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase41-identity-2026-08-17/1 ]
         }
         check safety {
             statement """
                 fmt, strict Clippy (both feature configurations of jpxl-encode), workspace suites in fast-debug and release, oracle/roundtrip/determinism, no-default-feature and AVX2-disabled suites pass.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase41-safety-2026-08-17/1 ]
         }
         check speed {
             statement """
                 Instruction count per mid Balanced bench drops materially; walks per encode drop from 7 to 4; tape memory measured via the tape_symbols diagnostic.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.phase41-speed-2026-08-17/1 ]
         }
     }
     depends_on [ @jpegxl-rs.work.arch-phase40-cover-scoring-pass/1 ]
