@@ -1183,9 +1183,9 @@ fn train_entropy_for_orders(
         census_frame(&provisional, geometry)?
     };
     let model = if fast_hybrid_uint && entropy_search.uses_fast_entropy() {
-        entropy::train_fast(&census)?
+        entropy::train_fast_with_executor(&census, executor)?
     } else {
-        entropy::train(&census)?
+        entropy::train_with_executor(&census, executor)?
     };
     // Arc-clone spatial/quantized; only entropy is rebuilt.
     Ok(validate(EmissionPlan {

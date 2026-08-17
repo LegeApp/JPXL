@@ -140,7 +140,33 @@ impl BitWriter {
             return Ok(());
         }
 
+        // Fast path (Phase 42): the buffer always holds exactly
+        // `ceil(bit_len / 8)` bytes, the last of them partial when the cursor
+        // is not byte-aligned. OR the low bits into that partial byte and push
+        // the rest whole, instead of resizing and re-indexing byte by byte.
+        // Same bytes as the general path below, which remains for any state
+        // that does not satisfy the invariant.
         let bit_offset = self.bit_len % 8;
+        let held = usize::try_from(self.bit_len.div_ceil(8)).unwrap_or(usize::MAX);
+        if self.bytes.len() == held {
+            let mut packed = u64::from(value) << bit_offset;
+            let mut bits = bit_offset + u64::from(n);
+            if bit_offset != 0
+                && let Some(last) = self.bytes.last_mut()
+            {
+                *last |= u8::try_from(packed & 0xFF).unwrap_or(0);
+                packed >>= 8;
+                bits = bits.saturating_sub(8);
+            }
+            while bits > 0 {
+                self.bytes.push(u8::try_from(packed & 0xFF).unwrap_or(0));
+                packed >>= 8;
+                bits = bits.saturating_sub(8);
+            }
+            self.bit_len += u64::from(n);
+            return Ok(());
+        }
+
         // At most 7 (offset) + 32 (payload) = 39 bits → five destination bytes.
         let bytes_needed = usize::try_from((self.bit_len + u64::from(n)).div_ceil(8))
             .map_err(|_| BitstreamError::Overflow)?;
@@ -423,6 +449,44 @@ fn low_bits(value: u64, n: u32) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The packed `write_bits` fast path equals the bit-at-a-time definition
+    /// for random widths and alignments, and the counting writer agrees on
+    /// the length.
+    #[test]
+    fn write_bits_matches_bit_by_bit_reference() {
+        let mut state = 0x9e37_79b9u32;
+        let mut next = || {
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            state
+        };
+        for _ in 0..50 {
+            let mut fast = BitWriter::new();
+            let mut reference = BitWriter::new();
+            let mut counting = BitWriter::counting();
+            for _ in 0..400 {
+                let n = next() % 33;
+                let value = if n == 32 {
+                    next()
+                } else {
+                    next() & ((1u32 << n) - 1)
+                };
+                fast.write_bits(n, value).expect("fits");
+                counting.write_bits(n, value).expect("fits");
+                for bit in 0..n {
+                    reference.write_bit((value >> bit) & 1 == 1);
+                }
+                if next() % 7 == 0 {
+                    fast.zero_pad_to_byte();
+                    reference.zero_pad_to_byte();
+                    counting.zero_pad_to_byte();
+                }
+            }
+            assert_eq!(fast.bit_len(), reference.bit_len());
+            assert_eq!(fast.bit_len(), counting.bit_len());
+            assert_eq!(fast.as_bytes(), reference.as_bytes());
+        }
+    }
     use crate::primitives::{read_u32, read_u64};
     use crate::reader::BitReader;
 

@@ -2079,6 +2079,52 @@ record jpegxl-rs.work.arch-phase41b-tape-fast-path/1 : work {
     part_of [ @jpegxl-rs.track.encoder-optimization ]
 }
 
+record jpegxl-rs.work.arch-phase42-writer-parallelism/1 : work {
+    title "Phase 42: writer section map, per-cluster table build and training on the executor, bit-writer and flat-code fast paths"
+    state proposed
+    scope [
+        path ".agent/scratch/**",
+        path "JPXL/crates/jpxl-bitstream/src/writer.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/entropy.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode/src/entropy.rs",
+        path "JPXL/crates/jpxl-encode/src/resources.rs",
+        path "JPXL/crates/jpxl-encode/src/vardct/modular_out.rs",
+        path "JPXL/crates/jpxl-encode/src/vardct/write.rs",
+        path "JPXL/crates/jpxl-entropy/src/encode/mod.rs",
+        path "JPXL/crates/jpxl-entropy/src/encode/stream.rs",
+        path "JPXL/docs/optimize.md"
+    ]
+    intent """
+        A per-thread profile showed ~1.7 of 4 cores busy on average; the 1-vs-4-thread phase clock and a temporary writer stage trace located the non-scaling parts: per written plan the two LF-group sections, the serial HfGlobal and the serial per-cluster ANS table build each ran as their own barrier, and entropy training's per-context/edge cost searches were serial. Put LF groups, HfGlobal and pass groups through one ordered map, give ordered_map_rayon per-item granularity (with_max_len(1)) so heavy items are stolen individually, run the per-cluster table build through a caller-supplied ordered runner (EntropyTables::build_from_token_counts_with) and training's step-1/step-2 cost searches through the executor, and add fast paths to BitWriter::write_bits (OR into the partial byte, push whole bytes) and FlatCode::write_token (one bit-reversed write) plus row-wise gradient residuals in write_modular_stream. All Contract A. Also records the current libjxl comparison.
+        """
+    note """
+        Opened 2026-08-17. Reuses the plan's Phase 42 number after the Contract-B experiment was deferred (Phase 41b).
+        """
+    acceptance {
+        check identity {
+            statement """
+                Canonical streams (incl. lossless), thread counts, AVX2 on/off and tape on/off are byte-identical to Phase 41b; write_bits is pinned bit-for-bit against a write_bit reference; djxl and jxl-oxide accept the candidates.
+                """
+            method command
+        }
+        check safety {
+            statement """
+                fmt, strict Clippy, workspace suites in fast-debug and release, tape-off jpxl-encode suites, oracle/roundtrip/determinism, no-default-feature and AVX2-disabled suites pass.
+                """
+            method command
+        }
+        check speed {
+            statement """
+                Writer count/store and entropy training phase clocks drop on the mid photo and pinned wall does not regress; the libjxl comparison is recorded.
+                """
+            method observation
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase41b-tape-fast-path/1 ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+}
+
 record jpegxl-rs.work.arch-phase4a-weighted-predictor-scoped/1 : work {
     title "Phase 4A: wire Predictor::Weighted into the encoder despite its stateful, order-dependent scoring cost"
     state completed

@@ -273,8 +273,16 @@ where
 
     let mut slots: Vec<Option<Result<T, E>>> = (0..n).map(|_| None).collect();
     pool.install(|| {
+        // One job per item: the items handed to these maps are coarse (a
+        // section, a group, a band, a cluster table) and often unequal -- an
+        // LF-group section is tens of pass-group sections -- so letting rayon
+        // batch a contiguous run onto one worker (its default adaptive split)
+        // can leave the heavy prefix serialised while the others idle. Item
+        // granularity lets thieves take the heavy items individually.
+        // Scheduling never touches results: every slot is written by index.
         slots
             .par_iter_mut()
+            .with_max_len(1)
             .enumerate()
             .for_each(|(i, slot)| *slot = Some(f(i)));
     });

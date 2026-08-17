@@ -78,6 +78,7 @@ pub use hybrid::TokenSplit;
 pub use lz77::{LZ_LENGTH_LOG_ALPHABET_SIZE, LengthToken, Lz77EncodeParams};
 pub use prefix::{PrefixEncoder, canonical_codes, huffman_lengths};
 pub use stream::{
-    CodingMode, EncoderPlan, EntropyTables, RawHistogram, SymbolEncoder, TokenCensus,
+    AnsClusterCode, CodingMode, EncoderPlan, EntropyTables, RawHistogram, SymbolEncoder,
+    TokenCensus,
 };
 pub use tape::{TokenTape, TokenTapeRecorder, merge_token_counts};

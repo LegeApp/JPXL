@@ -214,9 +214,13 @@ impl FlatCode {
                 value: i64::from(token),
             });
         }
-        for shift in (0..self.token_bits).rev() {
-            w.write_bits(1, (token >> shift) & 1)?;
-        }
+        // C.2.4 reads a code word most-significant bit first, while
+        // `write_bits` places bit i of its value at stream position i; the
+        // MSB-first sequence of the low `token_bits` bits is therefore the
+        // bit-reversal of the token, written in one call (Phase 42) -- the
+        // same bits as the former one-bit-at-a-time loop.
+        let reversed = token.reverse_bits() >> (32 - self.token_bits);
+        w.write_bits(self.token_bits, reversed)?;
         Ok(())
     }
 

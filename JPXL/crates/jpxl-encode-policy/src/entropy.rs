@@ -523,24 +523,58 @@ fn propose_qf_thresholds(spatial: &SpatialPlan) -> Vec<u32> {
 ///
 /// Only [`HistogramPlan::new`]'s own rejection of an empty alphabet, which a
 /// census with at least one counted event cannot produce.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn train(census: &CensusSink) -> PlanResult<TrainedModel> {
-    train_with_configs(census, CANDIDATE_CONFIGS)
+    train_with_configs(census, CANDIDATE_CONFIGS, None)
+}
+
+/// [`train`] with the per-context and initial-edge cost evaluations spread
+/// over `executor` (Phase 42). Same result: those evaluations are independent
+/// pure functions and are reduced in index order; the greedy merge that
+/// follows is unchanged.
+pub(crate) fn train_with_executor(
+    census: &CensusSink,
+    executor: Option<&jpxl_encode::EncodeExecutor>,
+) -> PlanResult<TrainedModel> {
+    train_with_configs(census, CANDIDATE_CONFIGS, executor)
 }
 
 /// Trains the deterministic cluster map with only the legacy hybrid-uint
-/// configuration. This is used by Fast probes; Full/Quality call [`train`]
-/// and retain the complete configuration search.
-pub(crate) fn train_fast(census: &CensusSink) -> PlanResult<TrainedModel> {
-    train_with_configs(census, FAST_CANDIDATE_CONFIGS)
+/// configuration, on an executor (see [`train_with_executor`]). This is used
+/// by Fast probes; Full/Quality call [`train_with_executor`] and retain the
+/// complete configuration search.
+pub(crate) fn train_fast_with_executor(
+    census: &CensusSink,
+    executor: Option<&jpxl_encode::EncodeExecutor>,
+) -> PlanResult<TrainedModel> {
+    train_with_configs(census, FAST_CANDIDATE_CONFIGS, executor)
+}
+
+/// Evaluates `f(0..n)` in index order, on the executor when one is given
+/// (Contract A: results are placed by index, so scheduling cannot reorder
+/// them).
+fn map_in_order<T: Send>(
+    executor: Option<&jpxl_encode::EncodeExecutor>,
+    n: usize,
+    f: impl Fn(usize) -> T + Sync,
+) -> Vec<T> {
+    match executor {
+        Some(executor) if executor.resources().parallel_groups() && n > 1 => executor
+            .map_ordered(n, |i| Ok::<T, core::convert::Infallible>(f(i)))
+            .unwrap_or_else(|never| match never {}),
+        _ => (0..n).map(f).collect(),
+    }
 }
 
 fn train_with_configs(
     census: &CensusSink,
     candidates: &[(u32, u32, u32)],
+    executor: Option<&jpxl_encode::EncodeExecutor>,
 ) -> PlanResult<TrainedModel> {
-    // Step 1: live pre-contexts, one cluster each.
-    let mut clusters: Vec<Cluster> = Vec::new();
-    let mut context_cluster: Vec<Option<usize>> = vec![None; census.len()];
+    // Step 1: live pre-contexts, one cluster each. The per-context
+    // configuration search is independent per context, so it runs as an
+    // ordered map (Phase 42); the cluster list is assembled in context order.
+    let mut live_values: Vec<(usize, Vec<(u32, u64)>)> = Vec::new();
     for index in 0..census.len() {
         let Some(histogram) = census.histogram(jpxl_encode::vardct::ids::PreContextId::new(
             u32::try_from(index).unwrap_or(u32::MAX),
@@ -551,7 +585,17 @@ fn train_with_configs(
         if values.is_empty() {
             continue;
         }
-        let (cost, config) = best_config_with(&values, candidates);
+        live_values.push((index, values));
+    }
+    let costs = map_in_order(executor, live_values.len(), |i| {
+        live_values
+            .get(i)
+            .map(|(_, values)| best_config_with(values, candidates))
+            .unwrap_or((f64::INFINITY, (4, 2, 0)))
+    });
+    let mut clusters: Vec<Cluster> = Vec::with_capacity(live_values.len());
+    let mut context_cluster: Vec<Option<usize>> = vec![None; census.len()];
+    for ((index, values), (cost, config)) in live_values.into_iter().zip(costs) {
         if let Some(slot) = context_cluster.get_mut(index) {
             *slot = Some(clusters.len());
         }
@@ -603,9 +647,36 @@ fn train_with_configs(
             queue.push(((saving * 256.0) as i64, a, b, ca.generation, cb.generation));
         }
     };
+    // The initial window edges are all evaluated up front, in parallel when an
+    // executor is available; the queue is a total order on its tuples, so the
+    // pop sequence does not depend on push order.
+    let mut initial_edges: Vec<(usize, usize)> = Vec::new();
     for (position, &first) in order.iter().enumerate() {
         for &other in order.iter().skip(position + 1).take(CANDIDATE_WINDOW) {
-            push_edge(&mut queue, &clusters, first, other);
+            initial_edges.push((first, other));
+        }
+    }
+    let initial_costs = map_in_order(executor, initial_edges.len(), |i| {
+        let &(a, b) = initial_edges.get(i)?;
+        let (Some(ca), Some(cb)) = (clusters.get(a), clusters.get(b)) else {
+            return None;
+        };
+        let merged = merge_values(&ca.values, &cb.values);
+        Some(best_config_with(&merged, candidates).0)
+    });
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "savings are bounded by total census bits, far inside i64 scaled by 256"
+    )]
+    for (&(a, b), merged_cost) in initial_edges.iter().zip(initial_costs) {
+        let (Some(merged_cost), Some(ca), Some(cb)) =
+            (merged_cost, clusters.get(a), clusters.get(b))
+        else {
+            continue;
+        };
+        let saving = ca.cost + cb.cost + CLUSTER_OVERHEAD_BITS - merged_cost;
+        if saving > 0.0 {
+            queue.push(((saving * 256.0) as i64, a, b, ca.generation, cb.generation));
         }
     }
 

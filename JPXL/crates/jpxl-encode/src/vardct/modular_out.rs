@@ -118,10 +118,35 @@ pub fn write_modular_stream(w: &mut BitWriter, channels: &[OutChannel<'_>]) -> R
             continue;
         }
         let mut packed = Vec::with_capacity(channel.samples.len());
-        for y in 0..channel.height {
-            for x in 0..channel.width {
-                let prediction = gradient_prediction(channel, x, y);
-                let residual = channel.at(x, y) - prediction;
+        // Row-wise (Phase 42): the same Table H.3 gradient prediction as
+        // `gradient_prediction`, reading the current and previous rows as
+        // slices instead of bounds-checking every neighbour through `at`.
+        let width = usize::try_from(channel.width).unwrap_or(usize::MAX);
+        let mut previous: Option<&[i32]> = None;
+        for row in channel.samples.chunks_exact(width.max(1)) {
+            let mut west = 0i64;
+            for (x, &sample) in row.iter().enumerate() {
+                let sample = i64::from(sample);
+                let north = previous.and_then(|p| p.get(x)).map(|&v| i64::from(v));
+                let w = if x > 0 { west } else { north.unwrap_or(0) };
+                let n = north.unwrap_or(w);
+                let nw = if x > 0 {
+                    previous
+                        .and_then(|p| p.get(x - 1))
+                        .map_or(w, |&v| i64::from(v))
+                } else {
+                    w
+                };
+                let prediction = (w + n - nw).clamp(w.min(n), w.max(n));
+                debug_assert_eq!(
+                    prediction,
+                    gradient_prediction(
+                        channel,
+                        u32::try_from(x).unwrap_or(u32::MAX),
+                        u32::try_from(packed.len() / width.max(1)).unwrap_or(u32::MAX)
+                    )
+                );
+                let residual = sample - prediction;
                 let residual =
                     i32::try_from(residual).map_err(|_| EncodeError::ValueOutOfRange {
                         what: "modular residual",
@@ -130,7 +155,9 @@ pub fn write_modular_stream(w: &mut BitWriter, channels: &[OutChannel<'_>]) -> R
                 let value = pack_signed(residual);
                 max_packed = max_packed.max(value);
                 packed.push(value);
+                west = sample;
             }
+            previous = Some(row);
         }
         residuals.push(packed);
     }
@@ -169,11 +196,16 @@ fn write_single_leaf_tree(w: &mut BitWriter) -> Result<()> {
 
 /// The Table H.3 row 5 prediction at `(x, y)`, with the H.3 edge substitutions.
 ///
+/// The residual loop in [`write_modular_stream`] evaluates the same rule
+/// row-wise; this per-cell form is its readable statement and the debug
+/// oracle the loop asserts against.
+///
 /// Deliberately a second implementation of the same rule `crate::modular`
 /// spells out for the lossless track: that one predicts inside a group
 /// rectangle of a wider plane, this one inside a standalone channel, and
 /// sharing the code would mean sharing a coordinate convention that is not the
 /// same on both sides.
+#[cfg_attr(not(any(test, debug_assertions)), allow(dead_code))]
 fn gradient_prediction(channel: &OutChannel<'_>, x: u32, y: u32) -> i64 {
     let w = if x > 0 {
         channel.at(x - 1, y)

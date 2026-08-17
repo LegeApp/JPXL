@@ -897,6 +897,65 @@ first anchor's exact size is a less informed predictor than today's
 ceiling with negative-expectation tails. It is deferred, not attempted; the
 numbers are recorded here and in AKR so it is not re-derived.
 
+## Phase 42 — filling the workers, second round: writer section map, cluster tables, training, bit writer (2026-08-17)
+
+(The plan's Phase 42, a Contract-B anchor experiment, was deferred by
+measurement — see Phase 41b; this phase reuses the number.) A per-thread
+profile showed only ~1.7 of 4 pinned cores busy on average (jpxl-balanced
+mid: 0.74 s CPU in 0.43 s wall). The 1- vs 4-thread phase clock located the
+non-scaling phases: writer count/store (1.9×), entropy training (1.4×),
+quantize (2.2×), and a temporary per-stage trace inside `write_frame_body`
+found the causes: per written plan the LF-group sections (two on a 4 MP
+frame, 8–14 ms each, on two threads), a serial `HfGlobal` (context-map form
+probing, ~4 ms) and a serial per-cluster ANS table build (~7 ms for 173
+clusters) each ran as their own barrier.
+
+Changes, all Contract A:
+
+- `write_frame_body`: LF-group sections, `HfGlobal` and every pass group go
+  through **one** ordered map (results reduced in TOC order), so the heavy LF
+  sections and the serial `HfGlobal` overlap the pass groups.
+- `ordered_map_rayon` uses `with_max_len(1)`: one job per item, so a heavy
+  prefix (the LF sections) is stolen item by item instead of staying on the
+  worker that received the contiguous range — measured on the 12 MP frame,
+  where the first combined map made `store_ms` worse before this.
+- `EntropyTables::build_from_token_counts_with`: the per-cluster ANS
+  histogram/alias-table construction runs through a caller-supplied ordered
+  runner (`jpxl-entropy` takes no threading dependency); the writer passes the
+  executor.
+- `entropy::train_with_executor` / `train_fast_with_executor`: the
+  per-context configuration search and the initial window-edge costs are
+  ordered maps; the greedy merge is unchanged, and the queue is a total order
+  on its tuples so push order cannot change the pop sequence.
+- `BitWriter::write_bits`: fast path that ORs into the partial last byte and
+  pushes whole bytes (the buffer always holds `ceil(bit_len/8)` bytes), with
+  the byte-loop kept for any state off that invariant; pinned bit-for-bit
+  against a `write_bit` reference.
+- `FlatCode::write_token`: one `write_bits` of the bit-reversed token instead
+  of `token_bits` single-bit writes; `write_modular_stream` computes the H.3
+  gradient residuals row-wise (per-cell form kept as the debug oracle).
+
+Verified byte-identical (all canonical streams incl. lossless, thread counts,
+AVX2 on/off, tape on/off) and gates green. Effect on the mid photo (pinned,
+moderately loaded host): writer `count_ms` 59–69 → 42–58, `store_ms` 27–31 →
+17–24, `entropy_ms` 30–36 → 22–25; wall −4% to −6% per step in the interleaved
+pairs (≈ 380–440 → 357–373 ms across the round). The 12 MP frame's wall was
+too noisy in this window to assert (load spikes), its `count_ms` moved 118–141
+→ 100–117.
+
+**libjxl comparison after this pass** (process-to-process, pinned four
+P-cores, cjxl v0.13.0 `-e 7` at the Phase 5G equal-SSIMULACRA2 distances
+d = 2.25 mid / 1.25 large; three interleaved reps; a shared host so treat
+absolutes as ±5%): mid 2400×1800 — jpxl Balanced 0.42–0.43 s (0.80 s CPU),
+jpxl Fast 0.31–0.33 s, cjxl 0.46–0.51 s (1.25 s CPU); large 4000×3000 — jpxl
+Balanced 0.89–1.13 s (quiet: 0.89–1.06), jpxl Fast 0.76–0.97 s, cjxl 1.24–1.66 s
+(quiet: 1.24–1.44). Quality at those settings: SSIMULACRA2 72.38 (Balanced) /
+69.46 (Fast) vs cjxl 72.20 on mid, 83.63 / 80.47 vs 83.70 on large;
+Butteraugli 3.19 / 3.70 vs 3.08 (mid), 1.99 / 2.87 vs 1.45 (large). Density:
+at that matched-SSIMULACRA2 point cjxl's files are ~13% smaller (467 KB vs
+539 KB; 1,389 KB vs 1,496 KB) — jpxl is now faster in wall and uses ~40% less
+CPU, but still trails libjxl in bytes at equal SSIMULACRA2 and on Butteraugli.
+
 
 ### Open architectural questions
 

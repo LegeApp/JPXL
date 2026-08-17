@@ -489,35 +489,34 @@ fn write_frame_body(
         return Ok(store);
     }
 
-    // Globals serial; LF groups and pass groups are independent given the plan
-    // and entropy tables — map them, reduce in TOC index order.
+    // LfGlobal is written serially; every other section -- the LF groups,
+    // HfGlobal and the pass groups -- is independent given the plan and the
+    // entropy tables, so they all go through ONE ordered map (Phase 42) and are
+    // reduced in TOC index order. Before Phase 42 the LF groups (two on a
+    // 4 MP frame, ~10 ms each) and HfGlobal (serial, ~4 ms) ran as their own
+    // barriers and left most workers idle; now they overlap with the pass
+    // groups. The bytes are identical: each section body is a pure function
+    // of the plan and tables, and the reduction order is the TOC order.
     store_push(
         &mut store,
         mode,
         section_result(mode, |w| write_lf_global(plan, w))?,
     );
 
-    let lf_parts = crate::resources::ordered_map_with(n_lf, executor, |index| {
-        let id = LfGroupId::new(u32::try_from(index).unwrap_or(u32::MAX));
-        section_result(mode, |w| write_lf_group(plan, geometry, id, w))
+    let parts = crate::resources::ordered_map_with(n_lf + 1 + n_pg, executor, |index| {
+        if index < n_lf {
+            let id = LfGroupId::new(u32::try_from(index).unwrap_or(u32::MAX));
+            section_result(mode, |w| write_lf_group(plan, geometry, id, w))
+        } else if index == n_lf {
+            section_result(mode, |w| write_hf_global(plan, geometry, tables, w))
+        } else {
+            let group = u64::try_from(index - n_lf - 1).unwrap_or(u64::MAX);
+            section_result(mode, |w| {
+                prepared.write_pass_group(plan, geometry, &orders, group, w)
+            })
+        }
     })?;
-    for part in lf_parts {
-        store_push(&mut store, mode, part);
-    }
-
-    store_push(
-        &mut store,
-        mode,
-        section_result(mode, |w| write_hf_global(plan, geometry, tables, w))?,
-    );
-
-    let pg_parts = crate::resources::ordered_map_with(n_pg, executor, |group| {
-        let group = u64::try_from(group).unwrap_or(u64::MAX);
-        section_result(mode, |w| {
-            prepared.write_pass_group(plan, geometry, &orders, group, w)
-        })
-    })?;
-    for part in pg_parts {
+    for part in parts {
         store_push(&mut store, mode, part);
     }
     Ok(store)
@@ -1446,7 +1445,11 @@ fn record_pass_group_tapes(
         ));
     }
     diagnostics::note_tape_symbols(tapes.iter().map(TokenTape::len).sum());
-    let tables = EntropyTables::build_from_token_counts(&encoder_plan, counts)?;
+    // The per-cluster alias tables (a few hundred clusters on a photograph)
+    // build on the executor; each is a pure function of its own counts.
+    let tables = EntropyTables::build_from_token_counts_with(&encoder_plan, counts, |n, build| {
+        executor.map_ordered(n, build)
+    })?;
     Ok(PreparedPassGroups { tables, tapes })
 }
 

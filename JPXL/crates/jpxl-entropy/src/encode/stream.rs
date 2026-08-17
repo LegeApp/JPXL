@@ -436,6 +436,14 @@ pub(crate) enum ClusterCodes {
     },
 }
 
+/// One cluster's ANS histogram and encode table, the unit
+/// [`EntropyTables::build_from_token_counts_with`] hands to its runner.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnsClusterCode {
+    histogram: Histogram,
+    table: AnsEncodeTable,
+}
+
 /// Everything C.2.1 signals, built and validated, ready to serialize.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EntropyTables {
@@ -548,6 +556,34 @@ impl EntropyTables {
     ///
     /// As [`Self::build`].
     pub fn build_from_token_counts(plan: &EncoderPlan, counts: Vec<Vec<u64>>) -> Result<Self> {
+        Self::build_from_token_counts_with(plan, counts, |n, build| {
+            (0..n).map(build).collect::<Result<Vec<_>>>()
+        })
+    }
+
+    /// [`Self::build_from_token_counts`] with the per-cluster ANS table
+    /// construction driven through `run`: `run(n, build)` must return
+    /// `build(0..n)` in index order and may evaluate the calls concurrently
+    /// (each builds one cluster's histogram and alias table from its own
+    /// counts, independently). This lets a caller with a worker pool spread
+    /// the one serial step of table construction without this crate taking a
+    /// threading dependency; the tables are identical whichever way `run`
+    /// schedules the calls.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::build`], plus whatever `run` returns.
+    pub fn build_from_token_counts_with<M>(
+        plan: &EncoderPlan,
+        counts: Vec<Vec<u64>>,
+        run: M,
+    ) -> Result<Self>
+    where
+        M: FnOnce(
+            usize,
+            &(dyn Fn(usize) -> Result<AnsClusterCode> + Sync),
+        ) -> Result<Vec<AnsClusterCode>>,
+    {
         let num_clusters = plan.context_map.num_clusters();
         if counts.len() != num_clusters {
             return Err(encode_error!(
@@ -618,12 +654,26 @@ impl EntropyTables {
                          {log_alphabet_size}"
                     ));
                 }
+                let build = |cluster: usize| -> Result<AnsClusterCode> {
+                    let cluster_counts = counts
+                        .get(cluster)
+                        .ok_or_else(|| encode_error!("C.2.1: cluster {cluster} is out of range"))?;
+                    let histogram = Histogram::from_counts(cluster_counts, log_alphabet_size)?;
+                    let table = AnsEncodeTable::new(&histogram.distribution()?)?;
+                    Ok(AnsClusterCode { histogram, table })
+                };
+                let codes = run(num_clusters, &build)?;
+                if codes.len() != num_clusters {
+                    return Err(encode_error!(
+                        "C.2.1: {} cluster codes built for {num_clusters} clusters",
+                        codes.len()
+                    ));
+                }
                 let mut histograms = Vec::with_capacity(num_clusters);
                 let mut tables = Vec::with_capacity(num_clusters);
-                for cluster_counts in &counts {
-                    let histogram = Histogram::from_counts(cluster_counts, log_alphabet_size)?;
-                    tables.push(AnsEncodeTable::new(&histogram.distribution()?)?);
-                    histograms.push(histogram);
+                for code in codes {
+                    histograms.push(code.histogram);
+                    tables.push(code.table);
                 }
                 ClusterCodes::Ans {
                     histograms,
