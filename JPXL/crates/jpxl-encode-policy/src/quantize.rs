@@ -566,6 +566,20 @@ impl HfQuantizer {
             .unwrap_or(0.0)
     }
 
+    /// Multiplies every cell's zero threshold by `scale` (see
+    /// [`crate::EncodeRequest::dead_zone_scale`]). The nearest rule's own
+    /// threshold is `0.5 * quant_bias * step`; a larger scale zeroes
+    /// coefficients that would otherwise round to +-1. A smaller scale only
+    /// makes the zero shortcut fire less often: the candidate search that
+    /// follows still contains zero, so the decisions stay the nearest rule's.
+    pub(crate) fn scale_zero_threshold(&mut self, scale: f32) {
+        for row in &mut self.zero_threshold {
+            for slot in row.iter_mut() {
+                *slot *= scale;
+            }
+        }
+    }
+
     /// I.5.3's full reconstruction of one coefficient, before I.6.
     #[must_use]
     pub fn reconstruct(&self, q: i32, channel: usize, cell: usize) -> f32 {

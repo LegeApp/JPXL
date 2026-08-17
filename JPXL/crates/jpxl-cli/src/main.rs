@@ -85,6 +85,15 @@ Lossy options (8-bit RGB only; either one selects the VarDCT path):
     --lambda-scale <f>            Multiplier on the cover/quantizer Lagrange
                                   weight lambda. Fixed-quantizer default 1.0;
                                   target-rate default 4.0 after Phase 7.2.
+    --dead-zone-scale <f>         Multiplier on every HF cell's zero threshold
+                                  (1.0 = the exact nearest rule; >1 widens the
+                                  dead zone); quality-track research control
+    --tolerance <f>               Undershoot the rate loop may leave, as a
+                                  fraction of the target (presets keep their
+                                  own floor: Balanced 0.02, Fast 0.03)
+    --sections                    After a lossy encode, print where the bytes
+                                  went by section kind (headers/TOC, LfGlobal,
+                                  LF groups, HfGlobal, pass groups)
     --cover-freq-weight <mode>    Cover objective's per-cell frequency weight:
                                   flat (default), csf (Mannos-Sakrison at 60
                                   ppd, rejected by Phase 6.3), or quant-donor
@@ -340,6 +349,9 @@ fn cmd_encode(args: &[String]) -> u8 {
     let mut cover_frequency_weight: Option<jpxl_encode_policy::CoverFrequencyWeight> = None;
     let mut quantizer_choice: Option<jpxl_encode_policy::QuantizerChoiceMode> = None;
     let mut lambda_scale: Option<f32> = None;
+    let mut dead_zone_scale: Option<f32> = None;
+    let mut tolerance: Option<f64> = None;
+    let mut sections = false;
     let mut positional: Vec<&String> = Vec::new();
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
@@ -509,6 +521,29 @@ fn cmd_encode(args: &[String]) -> u8 {
                 }
                 lambda_scale = Some(v);
             }
+            "--dead-zone-scale" => {
+                let Some(v) = rest.next().and_then(|v| v.parse::<f32>().ok()) else {
+                    fail("`--dead-zone-scale` needs a positive finite multiplier");
+                    return EXIT_ERROR;
+                };
+                if !(v.is_finite() && v > 0.0) {
+                    fail("`--dead-zone-scale` needs a positive finite multiplier");
+                    return EXIT_ERROR;
+                }
+                dead_zone_scale = Some(v);
+            }
+            "--tolerance" => {
+                let Some(v) = rest.next().and_then(|v| v.parse::<f64>().ok()) else {
+                    fail("`--tolerance` needs a fraction of the target in [0, 1)");
+                    return EXIT_ERROR;
+                };
+                if !(v.is_finite() && (0.0..1.0).contains(&v)) {
+                    fail("`--tolerance` needs a fraction of the target in [0, 1)");
+                    return EXIT_ERROR;
+                }
+                tolerance = Some(v);
+            }
+            "--sections" => sections = true,
             "--target-bytes" => {
                 let Some(v) = rest.next().and_then(|v| v.parse::<u64>().ok()) else {
                     fail("`--target-bytes` needs a positive byte count");
@@ -617,6 +652,8 @@ fn cmd_encode(args: &[String]) -> u8 {
                     cover_frequency_weight,
                     quantizer_choice,
                     lambda_scale,
+                    dead_zone_scale,
+                    tolerance,
                     rate_preset,
                 },
             ) {
@@ -665,6 +702,9 @@ fn cmd_encode(args: &[String]) -> u8 {
             // ladder ran out of rungs and more budget cannot help; unsaturated
             // means the search ran out of prices short of the target.
             if let Some(report) = lossy {
+                if sections {
+                    print_section_breakdown(&report.sizing);
+                }
                 let miss = report.target_bytes.saturating_sub(report.achieved);
                 let slack = report.allowed_undershoot;
                 if miss > slack {
@@ -1485,6 +1525,8 @@ fn synthetic_rgb8(width: u32, height: u32) -> Vec<u8> {
 /// from a *missed* one and to say why it was missed.
 struct LossyReport {
     codestream: Vec<u8>,
+    /// Exact per-section byte accounting of the emitted codestream.
+    sizing: jpxl_encode::vardct::CodestreamSizing,
     target_bytes: u64,
     achieved: u64,
     allowed_undershoot: u64,
@@ -1508,6 +1550,10 @@ struct LossyOverrides {
     cover_frequency_weight: Option<jpxl_encode_policy::CoverFrequencyWeight>,
     quantizer_choice: Option<jpxl_encode_policy::QuantizerChoiceMode>,
     lambda_scale: Option<f32>,
+    dead_zone_scale: Option<f32>,
+    /// Requested undershoot tolerance as a fraction of the target (the preset
+    /// still applies its own floor).
+    tolerance: Option<f64>,
     rate_preset: Option<jpxl_encode_policy::RateSearchPreset>,
 }
 
@@ -1581,6 +1627,15 @@ fn encode_lossy_to_target(
     if let Some(scale) = overrides.lambda_scale {
         request.lambda_scale = scale;
     }
+    if let Some(scale) = overrides.dead_zone_scale {
+        request.dead_zone_scale = scale;
+    }
+    if let Some(fraction) = overrides.tolerance {
+        request.tolerance = jpxl_encode_policy::RateTolerance {
+            bytes: request.tolerance.bytes,
+            fraction,
+        };
+    }
     jpxl_encode_policy::encode_srgb8_to_target(
         image.width(),
         image.height(),
@@ -1598,9 +1653,47 @@ fn encode_lossy_to_target(
         saturated: outcome.saturated,
         fast_prices: outcome.stats.fast_prices,
         full_prices: outcome.stats.full_prices,
+        sizing: outcome.sizing,
         codestream: outcome.codestream,
     })
     .map_err(|e| e.to_string())
+}
+
+/// `encode --sections`: where the bytes of a lossy codestream went, by
+/// section kind (F.3.1), so a density change can be attributed to HF
+/// coefficients, LF/DC, entropy tables or headers.
+fn print_section_breakdown(sizing: &jpxl_encode::vardct::CodestreamSizing) {
+    use jpxl_encode::vardct::SectionKind;
+    let pick = |f: &dyn Fn(SectionKind) -> bool| sizing.bytes_where(f);
+    let lf_global = pick(&|k| matches!(k, SectionKind::LfGlobal));
+    let lf_groups = pick(&|k| matches!(k, SectionKind::LfGroup(_)));
+    let hf_global = pick(&|k| matches!(k, SectionKind::HfGlobal));
+    let pass_groups = pick(&|k| matches!(k, SectionKind::PassGroup { .. }));
+    let whole = pick(&|k| matches!(k, SectionKind::Whole));
+    let headers_toc = sizing.overhead();
+    let total = sizing.total.max(1);
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "byte counts stay far inside f64's exact integer range"
+    )]
+    let pct = |b: u64| b as f64 * 100.0 / total as f64;
+    println!(
+        "  sections: total={} headers_toc={} ({:.1}%) lf_global={} ({:.1}%) lf_groups={} \
+         ({:.1}%) hf_global={} ({:.1}%) pass_groups={} ({:.1}%) whole={} sections={}",
+        sizing.total,
+        headers_toc,
+        pct(headers_toc),
+        lf_global,
+        pct(lf_global),
+        lf_groups,
+        pct(lf_groups),
+        hf_global,
+        pct(hf_global),
+        pass_groups,
+        pct(pass_groups),
+        whole,
+        sizing.sections.len(),
+    );
 }
 
 /// Parses a sample-count argument: a plain integer, or `full` for "unbounded".

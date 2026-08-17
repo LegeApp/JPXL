@@ -521,7 +521,8 @@ fn plan_at_with_cfl_workspace(
         quantizer_choice,
         request.lambda_scale,
         quantizer_transforms,
-    )?;
+    )?
+    .with_dead_zone_scale(request.dead_zone_scale);
     cache.prepare(&geometry)?;
 
     // Fast navigation is deliberately allowed a cheaper structural policy.
@@ -1987,6 +1988,19 @@ impl HfQuantizers {
     /// coefficient edge. Exactly `1.0` under the neutral production policy.
     fn size_penalty(&self, transform: TransformType) -> f64 {
         self.size_penalty.multiplier(transform.coeff_cols())
+    }
+
+    /// Widens (or narrows) every quantizer's zero threshold by `scale`
+    /// (Quality-track research control, see
+    /// [`EncodeRequest::dead_zone_scale`]). `1.0`, non-finite and non-positive
+    /// values leave the tables exactly as built.
+    fn with_dead_zone_scale(mut self, scale: f32) -> Self {
+        if scale.is_finite() && scale > 0.0 && scale != 1.0 {
+            for (_, quant) in &mut self.by_key {
+                quant.scale_zero_threshold(scale);
+            }
+        }
+        self
     }
 
     fn get(&self, transform: TransformType, mul: HfMul) -> Result<&HfQuantizer> {

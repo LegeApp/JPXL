@@ -443,6 +443,14 @@ pub struct EncodeRequest {
     /// finite and positive; non-positive values are treated as `1.0` so a
     /// malformed research flag cannot zero the objective.
     pub lambda_scale: f32,
+    /// Quality-track (Q0/Q1) research control: multiplies every HF cell's
+    /// zero threshold (the dead zone below which a coefficient quantizes to
+    /// zero; `0.5 * quant_bias * step` under the nearest rule). `1.0` is the
+    /// exact nearest rule and leaves every output byte unchanged; larger
+    /// values widen the dead zone. Applied identically in cover scoring, CfL
+    /// and the final quantization pass, so a swept value moves the whole
+    /// encoder consistently.
+    pub dead_zone_scale: f32,
     /// Coarse section-parallelism policy for emission (Opt-P).
     ///
     /// Default is [`jpxl_encode::EncodeResources::auto`]. The target-rate path
@@ -491,6 +499,7 @@ impl EncodeRequest {
             cover_frequency_weight: CoverFrequencyWeight::default(),
             quantizer_choice: QuantizerChoiceMode::default(),
             lambda_scale: 1.0,
+            dead_zone_scale: 1.0,
             resources: jpxl_encode::EncodeResources::auto(),
         }
     }

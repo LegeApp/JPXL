@@ -5,7 +5,7 @@ build {
     tool "akr 0.3.1"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:32db01464520507b0e2674db7005445b71361e844352648d32cdf08d301c70b5"
+    source_graph "sha256:32489769f1d7e6953980e816dd725cd8b1356d5c0f081ec6fa2ff379a933561a"
 }
 
 source ".akr/project.akr" {
@@ -64,8 +64,8 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:fc376d57918e7c63b0c2ec60179e825bc10c022c420b5f8c5898fbe147a77509"
-    records 133
+    hash "sha256:4d16aa3f2946bbf01f303af620ff33cd999c4d51d8d65f46ad39f2780b392af4"
+    records 135
 }
 
 resolution @jpegxl-rs.decision.encoder-architecture-phases/1 {
@@ -3474,6 +3474,18 @@ resolution @jpegxl-rs.work.opt-v2-rate-work-sharing/2 {
     slot part_of
     to @jpegxl-rs.milestone.m-opt-vardct-rate/1
     hash "sha256:f7733beff3d25a93a7ba717c5686463ca7c969d91eae48dbaacfeefae835d73d"
+}
+
+resolution @jpegxl-rs.work.quality-q0-harness-attribution/1 {
+    slot part_of
+    to @jpegxl-rs.track.encoder-optimization/1
+    hash "sha256:49975e17bd10998d72b08fccfe98fdea9bdf68ef56e4404dd68e94e1e2d75f23"
+}
+
+resolution @jpegxl-rs.work.quality-q0b-lf-group-entropy/1 {
+    slot part_of
+    to @jpegxl-rs.track.encoder-optimization/1
+    hash "sha256:49975e17bd10998d72b08fccfe98fdea9bdf68ef56e4404dd68e94e1e2d75f23"
 }
 
 seal @jpegxl-rs.assessment.encoder-architecture-outside-advice/1 {
