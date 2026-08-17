@@ -1570,6 +1570,50 @@ record jpegxl-rs.work.arch-phase32-dirty-frontier-screen/1 : work {
     part_of [ @jpegxl-rs.track.encoder-optimization ]
 }
 
+record jpegxl-rs.work.arch-phase33-dirty-frontier-prototype/1 : work {
+    title "Phase 33: feature-gated exact dirty-frontier finalist refresh"
+    state proposed
+    scope [
+        path ".agent/scratch/**",
+        path "JPXL/crates/jpxl-encode-policy/Cargo.toml",
+        path "JPXL/crates/jpxl-encode-policy/src/diagnostics.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/rate.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/regret.rs"
+    ]
+    intent """
+        Implement the conservative production experiment justified by Phase 32: behind a non-default feature, retain exact split/merge winner and relative-margin evidence from both bounded-navigation anchors, classify a node stable only when both anchors agree with at least the 5% exact guard, freshly rescore the finalist only on the top-down dirty frontier, and fall back to the existing full fresh-cover/fresh-CfL or exact anchored path whenever evidence is incomplete, geometry differs, the finalist is not bracket-compatible, or a safety invariant fails. CfL must not be frozen merely because cover is stable: this phase either refreshes CfL exactly for every final cover or keeps the existing exact CfL behavior. Default builds remain byte-identical. Promotion requires measurable cover/planning speedup, deterministic output, external decoder acceptance, and no material SSIMULACRA2 or Butteraugli regression on the canonical fixed-rate screen.
+        """
+    acceptance {
+        check default-identity {
+            statement """
+                With the feature disabled, canonical target-rate streams are byte-identical to Phase 32 and all default-build tests pass.
+                """
+            method command
+        }
+        check feature-safety {
+            statement """
+                With the feature enabled, exact fallback handles incomplete/unstable evidence; one-thread/four-thread outputs are deterministic; external decoders accept every screened stream; no production panic or malformed plan occurs.
+                """
+            method command
+        }
+        check quality {
+            statement """
+                At matched achieved rate on the canonical corpus, SSIMULACRA2 has no material regression under the active promotion rule and Butteraugli remains within the documented secondary bound.
+                """
+            method observation
+        }
+        check speed {
+            statement """
+                Perf/diagnostic measurements show a meaningful reduction in finalist cover/planning work and wall time on at least the mid and large canonical photos; otherwise the prototype stays off and is closed as an honest negative.
+                """
+            method observation
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase32-dirty-frontier-screen/1 ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+}
+
 record jpegxl-rs.work.arch-phase4-0b-density-gate/1 : work {
     title "Phase 4.0b: pinned real-corpus density + decode-validity gate (prerequisite for 4A/4C)"
     state completed
