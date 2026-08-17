@@ -1701,7 +1701,7 @@ record jpegxl-rs.work.arch-phase35-lane-batched-dct/1 : work {
 
 record jpegxl-rs.work.arch-phase36-runtime-avx2-row-quantizer/1 : work {
     title "Phase 36: runtime AVX2 dispatch and the row-oriented lane quantizer"
-    state proposed
+    state completed
     scope [
         path ".agent/scratch/**",
         path "JPXL/crates/jpxl-core/src/cpu.rs",
@@ -1724,18 +1724,21 @@ record jpegxl-rs.work.arch-phase36-runtime-avx2-row-quantizer/1 : work {
                 Canonical Fast/Balanced/Quality/masking-AQ/lossless streams on mid and large inputs, one- vs four-thread outputs, JPXL_DISABLE_AVX2 vs AVX2 outputs, and the no-SIMD build are all byte-identical to the Phase 35 binary; the F32Vec implementations, the run/indexed quantizer kernels and the lane DCT are pinned bit-identical to their scalar references by unit tests at every lane width available on the host.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase36-identity-2026-08-17/1 ]
         }
         check safety {
             statement """
                 Workspace fmt, build, strict Clippy and the full test suite pass with default features and with SIMD disabled; unsafe is confined to jpxl_core::simd::avx2 (type-level contract) plus the target-feature call sites; oracle, roundtrip and determinism suites pass; the candidates decode through djxl and jxl-oxide.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase36-safety-2026-08-17/1 ]
         }
         check speed {
             statement """
                 The AVX2 entry points demonstrably emit 256-bit arithmetic, a fresh profile shows the choose/quantizer and DCT families reduced from the Phase 35 shares, and pinned four-core Balanced medians do not regress (reported with host-noise caveat).
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.phase36-speed-2026-08-17/1 ]
         }
     }
     depends_on [ @jpegxl-rs.work.arch-phase35-lane-batched-dct/1 ]
