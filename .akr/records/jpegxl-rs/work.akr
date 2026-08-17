@@ -1747,7 +1747,7 @@ record jpegxl-rs.work.arch-phase36-runtime-avx2-row-quantizer/1 : work {
 
 record jpegxl-rs.work.arch-phase37-avx2-exact-cbrt-xyb/1 : work {
     title "Phase 37: exact AVX2 cube root and planar XYB conversion"
-    state proposed
+    state completed
     scope [
         path ".agent/scratch/**",
         path "JPXL/crates/jpxl-core/src/color.rs",
@@ -1766,18 +1766,21 @@ record jpegxl-rs.work.arch-phase37-avx2-exact-cbrt-xyb/1 : work {
                 F32x8::cbrt equals f32::cbrt bit for bit on the tested normal inputs and declines the special cases; the planar conversion equals the single-pixel function bitwise on every host path; canonical streams remain byte-identical to Phase 36 with AVX2 on and off.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase37-identity-2026-08-17/1 ]
         }
         check safety {
             statement """
                 fmt, build, strict Clippy, the 57 workspace suites, oracle/roundtrip/determinism, no-SIMD and AVX2-disabled suites pass.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase37-safety-2026-08-17/1 ]
         }
         check speed {
             statement """
                 The colour-conversion profile share drops materially and pinned Balanced medians do not regress.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.phase37-speed-2026-08-17/1 ]
         }
     }
     depends_on [ @jpegxl-rs.work.arch-phase36-runtime-avx2-row-quantizer/1 ]
