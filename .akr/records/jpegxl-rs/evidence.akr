@@ -2170,6 +2170,32 @@ record jpegxl-rs.evidence.phase41-speed-2026-08-17/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase41b-gates-identity-2026-08-17/1 : evidence {
+    title "Phase 41b gates green in both profiles and both tape configurations; every canonical stream, thread count and AVX2 setting byte-identical to Phase 34-41; djxl and jxl-oxide accept the candidates"
+    state verified
+    result pass
+    method command
+    observed_at git:e7c18f77a29d76236e83f446bbe6f81512aa03cf
+    command "cd JPXL && cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace --profile fast-debug && cargo test --workspace --release && cargo test -p jpxl-encode-policy --release --test vardct_oracle --test rate_loop --test vardct_roundtrip && cargo test -p jpxl-encode --no-default-features --features parallel,simd,phase4b-sampled-gather --profile fast-debug && cargo test -p jpxl-encode-policy --no-default-features --profile fast-debug && JPXL_DISABLE_AVX2=1 cargo test -p jpxl-encode-policy --lib --profile fast-debug; .agent/scratch/phase35-lane-dct/run-identity.sh (jpxl-p41c)"
+    artifact ".agent/scratch/phase35-lane-dct/gates-p41b.log"
+    summary """
+        Balanced-mid 7f70ae001ec27658..., Quality-mid d4b03810dc0bcb73..., Balanced-large 8bb1b1fb2df6b45d..., Quality-large c3321262010e37f6... unchanged; no singleton hashes; JPXL_DISABLE_AVX2 reproduces Balanced-mid; logs under .agent/scratch/phase35-lane-dct/gates-p41b.log.
+        """
+}
+
+record jpegxl-rs.evidence.phase41b-speed-and-phase42-ceiling-2026-08-17/1 : evidence {
+    title "Instructions per mid bench 34.50 G -> 33.27 G (recorder fast path) -> 32.77 G (zero-width write skip), -16% since Phase 39; pinned wall p39 -> p41c mid 421/412/424 -> 398/409/409 ms, large 869/961 -> 840/899 ms (load 2.5-6); Phase 42 ceiling from the phase clock: the second anchor's plan is ~18 ms of ~400 ms, so batching two anchors saves at most ~12 ms (~3%) and is deferred"
+    state verified
+    result pass
+    method observation
+    observed_at git:e7c18f77a29d76236e83f446bbe6f81512aa03cf
+    command "perf stat -e cpu_core/instructions/ -- taskset -c 0,2,4,6 ./jpxl-{p41,p41b,p41c} bench vardct-rate --input mid-photo.ppm --bpp 1 --lossy-preset balanced --iters 2 --threads 4; interleaved pinned p39 vs p41c with --diag on mid and large"
+    artifact ".agent/scratch/phase35-lane-dct/pinned-timing-p41c.log"
+    summary """
+        Writer store_ms on mid 35-38 -> 28-30 ms; count_ms 73-81 -> 56-83 ms (one pair contaminated by load). rate_plan_full for the second anchor plus finalist is plan_ms 37 (quantize 35), i.e. ~17 ms of quantization per plan; the anchor Count is unaffected by batching; a fixed bracket loses the first anchor's exact size as a predictor (second_anchor_rung uses it) and risks corrections at >= 60 ms each. Deferred rather than attempted, per docs/optimize.md's counters-before-mechanism rule; the user may override.
+        """
+}
+
 record jpegxl-rs.evidence.phase4a-weighted-predictor-wired-2026-08-08/1 : evidence {
     title "Phase 4A: Weighted predictor wired into encoder search, decode-validated (jpxl-decode + djxl), multi-section confirmed"
     state verified
