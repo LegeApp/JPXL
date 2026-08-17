@@ -341,6 +341,96 @@ pub mod avx2 {
     #[derive(Clone, Copy)]
     pub struct F32x8(__m256);
 
+    impl F32x8 {
+        /// Per-lane cube root, bit-identical to Rust's `f32::cbrt` (the
+        /// FreeBSD/musl algorithm in `compiler_builtins`: a 5-bit integer
+        /// estimate, then two Newton steps in `f64`, then one rounding to
+        /// `f32`), for lanes that are finite, normal and non-zero. Returns
+        /// `None` when any lane is zero, subnormal, infinite or NaN — the
+        /// scalar function's special cases — so the caller can fall back to
+        /// `f32::cbrt` for that chunk. `tests::avx2_cbrt_matches_std` pins
+        /// the identity.
+        #[inline(always)]
+        #[must_use]
+        pub fn cbrt(self) -> Option<Self> {
+            use core::arch::x86_64::{
+                __m128i, __m256d, __m256i, _mm256_add_epi32, _mm256_add_pd, _mm256_and_si256,
+                _mm256_castps_si256, _mm256_castps128_ps256, _mm256_castps256_ps128,
+                _mm256_castsi128_si256, _mm256_castsi256_ps, _mm256_castsi256_si128,
+                _mm256_cmpgt_epi32, _mm256_cvtepi32_pd, _mm256_cvtpd_ps, _mm256_cvtps_pd,
+                _mm256_cvttpd_epi32, _mm256_div_pd, _mm256_extractf128_ps,
+                _mm256_extracti128_si256, _mm256_floor_pd, _mm256_insertf128_ps,
+                _mm256_inserti128_si256, _mm256_movemask_epi8, _mm256_mul_pd, _mm256_or_si256,
+                _mm256_set1_epi32, _mm256_set1_pd,
+            };
+            /// `(127 - 127/3 - 0.03306235651) * 2^23`: the scalar algorithm's B1.
+            const B1: i32 = 709_958_130;
+
+            // SAFETY: module contract (AVX2 host, AVX2-enabled caller); the
+            // whole body is register arithmetic on `self`.
+            unsafe {
+                let ui: __m256i = _mm256_castps_si256(self.0);
+                let hx = _mm256_and_si256(ui, _mm256_set1_epi32(0x7fff_ffff));
+                // Normal, finite, non-zero: 0x00800000 <= hx < 0x7f800000.
+                let ge_min = _mm256_cmpgt_epi32(hx, _mm256_set1_epi32(0x007f_ffff));
+                let lt_inf = _mm256_cmpgt_epi32(_mm256_set1_epi32(0x7f80_0000), hx);
+                if _mm256_movemask_epi8(_mm256_and_si256(ge_min, lt_inf)) != -1 {
+                    return None;
+                }
+                // hx / 3 exactly: the quotient of two exact integers below 2^31
+                // is correctly rounded in f64, and its floor is the integer
+                // quotient (the true value is k, k + 1/3 or k + 2/3).
+                let three = _mm256_set1_pd(3.0);
+                let lo: __m128i = _mm256_castsi256_si128(hx);
+                let hi: __m128i = _mm256_extracti128_si256::<1>(hx);
+                let q_lo = _mm256_cvttpd_epi32(_mm256_floor_pd(_mm256_div_pd(
+                    _mm256_cvtepi32_pd(lo),
+                    three,
+                )));
+                let q_hi = _mm256_cvttpd_epi32(_mm256_floor_pd(_mm256_div_pd(
+                    _mm256_cvtepi32_pd(hi),
+                    three,
+                )));
+                let q = _mm256_inserti128_si256::<1>(_mm256_castsi128_si256(q_lo), q_hi);
+                let est_bits = _mm256_or_si256(
+                    _mm256_and_si256(ui, _mm256_set1_epi32(u32::MAX.cast_signed() ^ 0x7fff_ffff)),
+                    _mm256_add_epi32(q, _mm256_set1_epi32(B1)),
+                );
+                let est = _mm256_castsi256_ps(est_bits);
+
+                // Two Newton steps in f64, exactly the scalar operation order:
+                // r = (t*t)*t; t = (t * ((x+x)+r)) / ((x+r)+r). Written out
+                // per half rather than through a closure: a closure would not
+                // carry the caller's target feature, so the intrinsics inside
+                // it would become out-of-line calls.
+                let x_lo = _mm256_castps256_ps128(self.0);
+                let x_hi = _mm256_extractf128_ps::<1>(self.0);
+                let e_lo = _mm256_castps256_ps128(est);
+                let e_hi = _mm256_extractf128_ps::<1>(est);
+                let xd_lo: __m256d = _mm256_cvtps_pd(x_lo);
+                let xd_hi: __m256d = _mm256_cvtps_pd(x_hi);
+                let mut t_lo: __m256d = _mm256_cvtps_pd(e_lo);
+                let mut t_hi: __m256d = _mm256_cvtps_pd(e_hi);
+                for _ in 0..2 {
+                    let r_lo = _mm256_mul_pd(_mm256_mul_pd(t_lo, t_lo), t_lo);
+                    let r_hi = _mm256_mul_pd(_mm256_mul_pd(t_hi, t_hi), t_hi);
+                    let num_lo = _mm256_add_pd(_mm256_add_pd(xd_lo, xd_lo), r_lo);
+                    let num_hi = _mm256_add_pd(_mm256_add_pd(xd_hi, xd_hi), r_hi);
+                    let den_lo = _mm256_add_pd(_mm256_add_pd(xd_lo, r_lo), r_lo);
+                    let den_hi = _mm256_add_pd(_mm256_add_pd(xd_hi, r_hi), r_hi);
+                    t_lo = _mm256_div_pd(_mm256_mul_pd(t_lo, num_lo), den_lo);
+                    t_hi = _mm256_div_pd(_mm256_mul_pd(t_hi, num_hi), den_hi);
+                }
+                let out_lo = _mm256_cvtpd_ps(t_lo);
+                let out_hi = _mm256_cvtpd_ps(t_hi);
+                Some(Self(_mm256_insertf128_ps::<1>(
+                    _mm256_castps128_ps256(out_lo),
+                    out_hi,
+                )))
+            }
+        }
+    }
+
     impl core::ops::Add for F32x8 {
         type Output = Self;
         #[inline(always)]
@@ -572,6 +662,66 @@ mod tests {
     fn wide_vectors_match_scalar_bitwise() {
         assert_same::<wide::f32x4>("f32x4");
         assert_same::<wide::f32x8>("f32x8");
+    }
+
+    /// The AVX2 cube root is `f32::cbrt` bit for bit on every normal input
+    /// tried (positive and negative, across the exponent range and around
+    /// the opsin bias the XYB conversion feeds it), and declines exactly the
+    /// scalar special cases.
+    #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+    #[test]
+    fn avx2_cbrt_matches_std() {
+        if !crate::cpu::has_avx2() {
+            return;
+        }
+        #[target_feature(enable = "avx2")]
+        fn run() {
+            let mut state = 0x9e37_79b9u32;
+            let mut next = || {
+                state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                state
+            };
+            let mut inputs = Vec::new();
+            for _ in 0..20_000 {
+                // Random bit patterns restricted to finite normals.
+                let bits = next();
+                let exp = 1 + (bits >> 24) % 253;
+                let mant = next() & 0x007f_ffff;
+                let sign = bits & 0x8000_0000;
+                inputs.push(f32::from_bits(sign | (exp << 23) | mant));
+            }
+            for i in 0..4096 {
+                #[allow(clippy::cast_precision_loss)]
+                let v = i as f32 / 4096.0;
+                inputs.push(v + 0.003_793_073_4);
+                inputs.push(v * 3.0 + 0.003_793_073_4);
+            }
+            inputs.extend_from_slice(&[1.0, -1.0, 8.0, 27.0, 0.001, 1e30, -1e-30, 3.5, 100.0]);
+            for chunk in inputs.chunks_exact(8) {
+                let v = avx2::F32x8::load(chunk);
+                let got = v.cbrt().expect("normal inputs are handled");
+                let mut out = [0.0f32; 8];
+                got.store(&mut out);
+                for (x, g) in chunk.iter().zip(out.iter()) {
+                    assert_eq!(x.cbrt().to_bits(), g.to_bits(), "cbrt({x})");
+                }
+            }
+            for special in [
+                [0.0f32, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+                [1.0, -0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+                [1.0, 1.0, f32::INFINITY, 1.0, 1.0, 1.0, 1.0, 1.0],
+                [1.0, 1.0, 1.0, f32::NAN, 1.0, 1.0, 1.0, 1.0],
+                [1.0, 1.0, 1.0, 1.0, 1e-40, 1.0, 1.0, 1.0],
+                [1.0, 1.0, 1.0, 1.0, 1.0, f32::NEG_INFINITY, 1.0, 1.0],
+            ] {
+                assert!(avx2::F32x8::load(&special).cbrt().is_none(), "{special:?}");
+            }
+        }
+        // SAFETY: AVX2 support was checked just above.
+        #[allow(unsafe_code)]
+        unsafe {
+            run();
+        }
     }
 
     #[cfg(all(feature = "simd", target_arch = "x86_64"))]

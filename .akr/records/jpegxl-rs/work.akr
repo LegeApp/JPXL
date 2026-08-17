@@ -1745,6 +1745,45 @@ record jpegxl-rs.work.arch-phase36-runtime-avx2-row-quantizer/1 : work {
     part_of [ @jpegxl-rs.track.encoder-optimization ]
 }
 
+record jpegxl-rs.work.arch-phase37-avx2-exact-cbrt-xyb/1 : work {
+    title "Phase 37: exact AVX2 cube root and planar XYB conversion"
+    state proposed
+    scope [
+        path ".agent/scratch/**",
+        path "JPXL/crates/jpxl-core/src/color.rs",
+        path "JPXL/crates/jpxl-core/src/simd.rs",
+        path "JPXL/docs/optimize.md"
+    ]
+    intent """
+        After Phase 36 the largest scalar leaf in the Balanced profile was compiler_builtins' portable cbrtf (4.3%) plus the planar XYB conversion around it (1.7%). Reproduce that exact algorithm (5-bit integer estimate, two f64 Newton steps in the scalar operation order, one rounding to f32) as simd::avx2::F32x8::cbrt on 256-bit registers, declining chunks that hold the scalar special cases so the caller falls back to f32::cbrt there, and run the planar linear-sRGB-to-XYB conversion eight pixels at a time on F32x8 behind cpu::has_avx2. Bit-identity to f32::cbrt and to the single-pixel conversion is pinned by unit tests; canonical streams must stay byte-identical; the workspace gates must stay green.
+        """
+    note """
+        Records the closure trap: intrinsics inside a closure in an #[inline(always)] body do not inherit the AVX2 target feature and become out-of-line calls (measured 60% slower before the fix).
+        """
+    acceptance {
+        check identity {
+            statement """
+                F32x8::cbrt equals f32::cbrt bit for bit on the tested normal inputs and declines the special cases; the planar conversion equals the single-pixel function bitwise on every host path; canonical streams remain byte-identical to Phase 36 with AVX2 on and off.
+                """
+            method command
+        }
+        check safety {
+            statement """
+                fmt, build, strict Clippy, the 57 workspace suites, oracle/roundtrip/determinism, no-SIMD and AVX2-disabled suites pass.
+                """
+            method command
+        }
+        check speed {
+            statement """
+                The colour-conversion profile share drops materially and pinned Balanced medians do not regress.
+                """
+            method observation
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase36-runtime-avx2-row-quantizer/1 ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+}
+
 record jpegxl-rs.work.arch-phase4-0b-density-gate/1 : work {
     title "Phase 4.0b: pinned real-corpus density + decode-validity gate (prerequisite for 4A/4C)"
     state completed

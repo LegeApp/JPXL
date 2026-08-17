@@ -133,6 +133,16 @@ pub fn linear_srgb_to_xyb_planes(r: &mut [f32], g: &mut [f32], b: &mut [f32]) {
         r.len() == g.len() && g.len() == b.len(),
         "planar XYB conversion needs three equally sized planes"
     );
+    #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+    if crate::cpu::has_avx2() {
+        // SAFETY: `linear_srgb_to_xyb_planes_avx2` only requires that the
+        // host support AVX2, which `has_avx2` has just confirmed.
+        #[allow(unsafe_code)]
+        unsafe {
+            avx2::linear_srgb_to_xyb_planes_avx2(r, g, b);
+        }
+        return;
+    }
     #[cfg(feature = "simd")]
     {
         linear_srgb_to_xyb_planes_simd(r, g, b);
@@ -140,6 +150,90 @@ pub fn linear_srgb_to_xyb_planes(r: &mut [f32], g: &mut [f32], b: &mut [f32]) {
     #[cfg(not(feature = "simd"))]
     {
         for ((rp, gp), bp) in r.iter_mut().zip(g.iter_mut()).zip(b.iter_mut()) {
+            let [x, y, bb] = linear_srgb_to_xyb([*rp, *gp, *bp]);
+            *rp = x;
+            *gp = y;
+            *bp = bb;
+        }
+    }
+}
+
+/// The forward planar conversion on 256-bit AVX2 registers, eight pixels at a
+/// time, selected at run time by [`linear_srgb_to_xyb_planes`].
+///
+/// The mixing arithmetic runs on [`crate::simd::avx2::F32x8`] in exactly
+/// [`linear_srgb_to_xyb`]'s operation order, and the cube root is
+/// `F32x8::cbrt`, which is `f32::cbrt` bit for bit for normal inputs; a chunk
+/// containing a zero, subnormal, infinite or NaN cone value goes through the
+/// scalar function instead. So the whole path is bit-identical to the
+/// single-pixel one (`tests::avx2_planes_match_scalar` pins it).
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+mod avx2 {
+    use super::{OPSIN_ABSORBANCE_MATRIX, OPSIN_BIAS, OPSIN_BIAS_CBRT, linear_srgb_to_xyb};
+    use crate::simd::{F32Vec, avx2::F32x8};
+
+    /// Safe to call only when the host supports AVX2 (see
+    /// [`crate::cpu::has_avx2`]); that is the whole contract, and it is why a
+    /// call site must be `unsafe`. The three planes must have equal length
+    /// (the public entry point asserts it).
+    #[target_feature(enable = "avx2")]
+    pub(super) fn linear_srgb_to_xyb_planes_avx2(r: &mut [f32], g: &mut [f32], b: &mut [f32]) {
+        let [ml, mm, ms] = OPSIN_ABSORBANCE_MATRIX;
+        let bias = F32x8::splat(OPSIN_BIAS);
+        let bias_c = F32x8::splat(OPSIN_BIAS_CBRT);
+        let half = F32x8::splat(0.5);
+        let m = [
+            [
+                F32x8::splat(ml[0]),
+                F32x8::splat(ml[1]),
+                F32x8::splat(ml[2]),
+            ],
+            [
+                F32x8::splat(mm[0]),
+                F32x8::splat(mm[1]),
+                F32x8::splat(mm[2]),
+            ],
+            [
+                F32x8::splat(ms[0]),
+                F32x8::splat(ms[1]),
+                F32x8::splat(ms[2]),
+            ],
+        ];
+        let n = r.len().min(g.len()).min(b.len());
+        let mut i = 0usize;
+        while i + 8 <= n {
+            let (Some(rs), Some(gs), Some(bs)) = (
+                r.get_mut(i..i + 8),
+                g.get_mut(i..i + 8),
+                b.get_mut(i..i + 8),
+            ) else {
+                break;
+            };
+            let rv = F32x8::load(rs);
+            let gv = F32x8::load(gs);
+            let bv = F32x8::load(bs);
+            let mix = |row: &[F32x8; 3]| row[0] * rv + row[1] * gv + row[2] * bv + bias;
+            let lm = mix(&m[0]);
+            let mm_ = mix(&m[1]);
+            let sm = mix(&m[2]);
+            if let (Some(lc), Some(mc), Some(sc)) = (lm.cbrt(), mm_.cbrt(), sm.cbrt()) {
+                let lg = lc - bias_c;
+                let mg = mc - bias_c;
+                let sg = sc - bias_c;
+                (half * (lg - mg)).store(rs);
+                (half * (lg + mg)).store(gs);
+                sg.store(bs);
+            } else {
+                for ((rp, gp), bp) in rs.iter_mut().zip(gs.iter_mut()).zip(bs.iter_mut()) {
+                    let [x, y, bb] = linear_srgb_to_xyb([*rp, *gp, *bp]);
+                    *rp = x;
+                    *gp = y;
+                    *bp = bb;
+                }
+            }
+            i += 8;
+        }
+        for ((rp, gp), bp) in r.iter_mut().zip(g.iter_mut()).zip(b.iter_mut()).skip(i) {
             let [x, y, bb] = linear_srgb_to_xyb([*rp, *gp, *bp]);
             *rp = x;
             *gp = y;
@@ -602,6 +696,46 @@ impl OpsinInverse {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The planar conversion (whichever path the host selects: AVX2, `wide`,
+    /// or scalar) equals the single-pixel function bit for bit, including
+    /// chunks that contain the scalar special cases (a zero cone value from
+    /// a negative pixel, an infinite input) and a ragged tail.
+    #[test]
+    #[allow(
+        clippy::indexing_slicing,
+        reason = "test fixture indexes buffers it sized itself"
+    )]
+    fn planes_match_single_pixel_bitwise() {
+        let mut state = 0x0bad_f00du32;
+        let mut next = || {
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            #[allow(clippy::cast_precision_loss)]
+            let r = (state >> 8) as f32 / 16_777_216.0;
+            r
+        };
+        let n = 8 * 700 + 5;
+        let mut r: Vec<f32> = (0..n).map(|_| next() * 1.2 - 0.05).collect();
+        let mut g: Vec<f32> = (0..n).map(|_| next() * 1.2 - 0.05).collect();
+        let mut b: Vec<f32> = (0..n).map(|_| next() * 1.2 - 0.05).collect();
+        // Force scalar special cases into a few chunks.
+        r[16] = -1.0;
+        g[16] = -1.0;
+        b[16] = -1.0; // negative cone values (fine) ...
+        r[24] = -0.012_643_578;
+        g[24] = 0.0;
+        b[24] = 0.0; // ... and one that lands near zero
+        r[40] = f32::INFINITY;
+        r[48] = f32::NAN;
+        let (mut xr, mut yg, mut bb) = (r.clone(), g.clone(), b.clone());
+        linear_srgb_to_xyb_planes(&mut xr, &mut yg, &mut bb);
+        for i in 0..n {
+            let [x, y, z] = linear_srgb_to_xyb([r[i], g[i], b[i]]);
+            assert_eq!(x.to_bits(), xr[i].to_bits(), "pixel {i} X");
+            assert_eq!(y.to_bits(), yg[i].to_bits(), "pixel {i} Y");
+            assert_eq!(z.to_bits(), bb[i].to_bits(), "pixel {i} B");
+        }
+    }
 
     /// Sanity-check that the tabulated cube root of the bias is right.
     #[test]

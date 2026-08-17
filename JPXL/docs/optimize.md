@@ -694,6 +694,36 @@ phase.
 Next leaf: `cbrtf` (compiler_builtins' portable implementation, 4.3%) in the
 XYB conversion is now the largest scalar leaf.
 
+## Phase 37 — exact AVX2 cube root for the XYB conversion (2026-08-17)
+
+`f32::cbrt` resolves to `compiler_builtins`' portable FreeBSD/musl `cbrtf`
+(a 5-bit integer estimate, two Newton steps in `f64`, one rounding to `f32`)
+and was the largest scalar leaf left (4.3%, plus 1.7% in the planar
+conversion around it). `simd::avx2::F32x8::cbrt` reproduces that algorithm
+lane for lane — the integer estimate through an exact `floor(hx / 3.0)` in
+`f64`, the two Newton steps in the scalar operation order on `f64x4` halves,
+one `cvtpd2ps` — and declines any chunk holding the scalar special cases
+(zero, subnormal, infinite, NaN) so the caller can use `f32::cbrt` there;
+`simd::tests::avx2_cbrt_matches_std` pins it bit for bit on 28k inputs.
+`color::avx2::linear_srgb_to_xyb_planes_avx2` runs the mixing matrix in
+[`linear_srgb_to_xyb`]'s operation order on `F32x8` and uses that cube root,
+selected by `has_avx2`; `color::tests::planes_match_single_pixel_bitwise` pins
+the planar path (whichever the host selects) against the single-pixel
+function, special cases and ragged tail included.
+
+One trap worth recording: the first cut wrote the Newton steps in a closure
+inside the `#[inline(always)]` method. A closure does not inherit the caller's
+target feature, so every `_mm256_*_pd` inside it became an out-of-line call
+(`core::core_arch::x86::avx::_mm256_add_pd` at 9% self time) and the encode
+was 60% *slower*. Intrinsics used from AVX2 entry points must sit directly in
+the target-feature function or in `#[inline(always)]` bodies that inline into
+it — never in closures.
+
+Verified: canonical streams, thread counts, `JPXL_DISABLE_AVX2` and the
+no-SIMD suites byte-identical / passing as before; workspace gates green.
+Profile: color conversion 6.0% -> 2.2%. Pinned medians p36 -> p37: mid
+544/532/551 -> 535/518/527 ms, large 1169/1148/1218 -> 1040/1085/1077 ms.
+
 
 ### Open architectural questions
 
