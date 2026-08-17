@@ -200,6 +200,23 @@ impl TokenCensus {
         Ok(())
     }
 
+    /// Records `count` occurrences of one hybrid-uint *value* in `ctx`.
+    ///
+    /// The shape for a caller that has already counted its values densely
+    /// (Phase Q0b's control-image writer): one call per distinct value
+    /// instead of one per sample.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::record`].
+    pub fn record_many(&mut self, ctx: usize, value: u32, count: u64) -> Result<()> {
+        self.contexts
+            .get_mut(ctx)
+            .ok_or_else(|| encode_error!("C.2.1: context {ctx} is outside this census"))?
+            .add(value, count);
+        Ok(())
+    }
+
     /// Records one already-tokenized alphabet symbol in `ctx`.
     ///
     /// Used for LZ77 length-trigger tokens (`>= min_symbol`), which the decoder

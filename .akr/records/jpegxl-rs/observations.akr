@@ -551,6 +551,33 @@ record jpegxl-rs.observation.icc-stream-placement/1 : observation {
     }
 }
 
+record jpegxl-rs.observation.jxl-oxide-previous-channel-properties-2026-08-17/1 : observation {
+    title "jxl-oxide 0.12.6 misreads H.4.1 previous-channel MA-tree properties (fails ANS final-state check); djxl and jpxl-decode read them per the clause"
+    state superseded
+    scope [ path "JPXL/crates/jpxl-encode/src/vardct/modular_out.rs" ]
+    statement """
+        Streams whose LF-group control-image MA tree splits on an H.4.1 previous-channel property (Table H.4 index 16 + 4j + 2, |rC - rG| of an earlier identical-shape channel, evaluated exactly as the clause's code: j from i-1 downwards over channels of identical width/height/shifts, rW = 0 at the left edge, rN and rNW falling back to rW) are decoded sample-exactly by jpxl-decode (tests/control_image_roundtrip.rs) and by djxl (the target-rate quality screen was measured through djxl decodes), but jxl-oxide 0.12.6 rejects every such stream with 'frame error: vardct error: modular stream error: entropy decoder error: ANS stream verification failed'. Bisection over the learner's property set on the 12 MP photo at 1 bpp Balanced: every static property (4, 5, 8, 10-14) alone or together decodes in jxl-oxide; adding either previous-channel column fails. The encoder therefore keeps the implementation but ships with USE_PREVIOUS_CHANNEL_PROPERTIES = false (about 0.3% of the file on the mid photo at fixed decisions: 671,281 vs 669,109 bytes).
+        """
+    observed_at git:b89c9ed03c03d1e2b6c85f8a5c9a3d1a0d1e2f3a
+    method command
+    watches [ "JPXL/crates/jpxl-encode/src/vardct/modular_out.rs" ]
+    review_after 2026-12-01
+}
+
+record jpegxl-rs.observation.jxl-oxide-previous-channel-properties-2026-08-17/2 : observation {
+    title "jxl-oxide 0.12.6 misreads H.4.1 previous-channel MA-tree properties (fails ANS final-state check); djxl and jpxl-decode read them per the clause"
+    state verified
+    scope [ path "JPXL/crates/jpxl-encode/src/vardct/modular_out.rs" ]
+    statement """
+        Streams whose LF-group control-image MA tree splits on an H.4.1 previous-channel property (Table H.4 index 16 + 4j + 2, |rC - rG| of an earlier identical-shape channel, evaluated exactly as the clause's code: j from i-1 downwards over channels of identical width/height/shifts, rW = 0 at the left edge, rN and rNW falling back to rW) are decoded sample-exactly by jpxl-decode (tests/control_image_roundtrip.rs) and by djxl (the target-rate quality screen was measured through djxl decodes), but jxl-oxide 0.12.6 rejects every such stream with 'frame error: vardct error: modular stream error: entropy decoder error: ANS stream verification failed'. Bisection over the learner's property set on the 12 MP photo at 1 bpp Balanced: every static property (4, 5, 8, 10-14) alone or together decodes in jxl-oxide; adding either previous-channel column fails. The encoder therefore keeps the implementation but ships with USE_PREVIOUS_CHANNEL_PROPERTIES = false (about 0.3% of the file on the mid photo at fixed decisions: 671,281 vs 669,109 bytes).
+        """
+    observed_at git:b89c9ed03c03441af1d47dfed3fe1ea61a43a37e
+    method command
+    watches [ "JPXL/crates/jpxl-encode/src/vardct/modular_out.rs" ]
+    review_after 2026-12-01
+    supersedes [ @jpegxl-rs.observation.jxl-oxide-previous-channel-properties-2026-08-17/1 ]
+}
+
 record jpegxl-rs.observation.k2-upsampling-afv-transpose/1 : observation {
     title "K.2 upsampling exposes AFV dequant-weight transpose"
     state verified

@@ -1691,11 +1691,14 @@ fn search_frame_exhaustive(
     let used = u32::try_from(search.trace.len()).unwrap_or(u32::MAX);
     // The reserve is a CAP on refinement, not a floor. Keep a small exact
     // correction window when the budget permits: one finalist gate and up to
-    // three follow-up candidates.
+    // five follow-up candidates (Phase Q0b widened this from three: once the
+    // LF-group sections stopped padding every total, the Full alternatives'
+    // shrink relative to the FinalFast navigator grew on small frames and the
+    // bracket needed one more interpolation to land inside the tolerance).
     // The remaining slots navigate with FinalFast, which still runs an exact
     // writer Count but avoids every nested entropy alternative.
     let remaining = max_prices.saturating_sub(used).min(full_reserve).max(1);
-    let exact_slots = remaining.min(4);
+    let exact_slots = remaining.min(6);
     let navigation_budget = remaining.saturating_sub(exact_slots);
     let navigation = if navigation_budget > 0 {
         let mut navigation_budget_request = request.budget.rate;

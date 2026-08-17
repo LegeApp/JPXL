@@ -957,6 +957,91 @@ at that matched-SSIMULACRA2 point cjxl's files are ~13% smaller (467 KB vs
 CPU, but still trails libjxl in bytes at equal SSIMULACRA2 and on Butteraugli.
 
 
+## Phase Q0 — quality track opened: harness, `--sections`, and the first attribution (2026-08-17)
+
+Speed being where the plan wanted it, the track turned to density/quality
+under a standing speed budget (Balanced pinned wall ≤ +15% cumulative vs the
+Phase 42 binary). Q0 added the research controls `--dead-zone-scale` (a
+multiplier on every HF cell's zero threshold; 1.0 is the exact nearest rule
+and byte-identical), `--tolerance`, and `--sections` (per-`SectionKind` bytes
+from `CodestreamSizing` after a lossy encode), and a standing harness under
+`.agent/scratch/quality-track/` (`ladder.sh`: three photos × 0.5/1/2 bpp ×
+Fast/Balanced/Quality, base vs candidate, djxl + jxl-oxide decodes, `jpxl
+compare`; `scenes.sh`: the seven 1024×768 scenes at 1 bpp; `cjxl-match.sh`:
+cjxl `-e 7` bisected to matched bytes; `summarise.py`: deltas, BD-SSIM2 /
+BD-rate, verdict against the recorded bounds).
+
+The very first `--sections` run answered the attribution question before any
+ablation: on the mid photo at 1 bpp the **LF-group sections were 38% of the
+stream** (205 of 539 KB; 567 of 1,496 KB on the 12 MP frame). A temporary
+trace inside `write_modular_stream` measured the HF-metadata stream (CfL
+tiles, `BlockInfo`, `Sharpness`) at 44.8 KB of flat-code tokens against a
+6.4 KB order-0 entropy in the larger LF group — a 57,600-block `Sharpness`
+plane of constant zeros was costing 3 bits a sample — and the three LF planes
+at ~150 KB against ~114 KB order-0. Every control image went out under one
+leaf, one flat prefix code sized by the largest residual in the stream. That
+is Phase Q0b; the rest of Q0's ablation matrix (dead zone, quant_lf, QM
+scales, EPF, tolerance) is superseded as attribution by that finding and moves
+into Q1/Q2 as their own sweeps.
+
+## Phase Q0b — entropy-coded LF-group control images (2026-08-17)
+
+`vardct::modular_out::write_modular_stream` now writes a real modular coder for
+VarDCT's control images:
+
+- MA tree: a chain on property 0 (channel index) so each channel owns its
+  contexts, then a bounded greedy learner per channel over the static Table
+  H.4 neighbourhood properties (`|N|`, `|W|`, `W − property9(x−1,y)`, `W−NW`,
+  `NW−N`, `N−NE`, `N−NN`, `W−WW`; never property 15) against a fixed
+  threshold grid, priced by token entropy on a ~8k-sample row subsample,
+  depth ≤ 3, one split penalty per new context. Gradient at every leaf.
+- Entropy: one context per leaf, ANS through the token tape (`TokenCensus`
+  → searched hybrid-uint configuration → `TokenTapeRecorder` →
+  `EntropyTables::build_from_token_counts`), prefix codes tried on streams
+  under 4,096 symbols.
+- Property evaluation is this file's own, checked sample-exactly against
+  `jpxl-decode` (`tests/control_image_roundtrip.rs`: LF triple, HF metadata
+  set with a two-row `BlockInfo` and a constant `Sharpness`, a zero-size
+  channel in the middle, wide residuals). H.4.1's previous-channel properties
+  are implemented and round-trip through `jpxl-decode` and djxl, but are
+  **off in production** (`USE_PREVIOUS_CHANNEL_PROPERTIES`): jxl-oxide 0.12.6
+  reads them differently and fails its ANS final-state check on every stream
+  whose tree uses one, and they were worth ~0.3% of the file.
+- The rate loop's exact correction window grew from 4 to 6 slots: on the
+  300×260 test frame the Full alternatives now shrink the FinalFast navigator
+  price by 17–20% (the flat LF code used to pad every total), and the bracket
+  needed one more interpolation to land inside 1%. Two `rate_loop` tests were
+  restated: the trace test's "winner == best feasible Final" was only ever
+  true because navigation and exact prices coincided (it now asserts ≤), and
+  the LF/HF-ratio test's 8,000-byte target fell into the unreachable gap
+  between the finest `global_scale` rung and the first `HfMul` rung on the
+  cheaper frame (now 6,000).
+
+Same decisions, same pixels, fewer bytes; under the target-rate presets the
+loop hands the saved bytes to HF. At fixed decisions on the mid photo:
+738,930 → 669,109 B (−9.4%; per-channel histograms alone reach 678,115, the
+tree learner adds the rest). At 1 bpp the LF-group share dropped from 38% to
+23% (mid: 205 → 123 KB, HF 328 → 411 KB).
+
+Quality screen (`out/summary-q0b*.md`; base = Phase 42 binary): ladder
+SSIMULACRA2 mean +7.2 (mid 1 bpp Balanced 72.4 → 76.7, large 83.6 → 86.1;
+0.5 bpp cells +14 to +35), Butteraugli mean −19%; seven scenes mean +6.8 /
+−13.5%, worst cell +2.9 / −1.2%; BD-rate −19% to −25% per image/preset;
+djxl and jxl-oxide accept every stream. cjxl `-e 7` at matched bytes:
+jpxl now leads on SSIMULACRA2 in all nine cells (mid 1 bpp 76.7 vs 75.7;
+large 86.1 vs 84.9; mid2 86.1 vs 85.4) while cjxl keeps the lead on
+Butteraugli (mid 1 bpp 2.76 vs 2.21; large 1.71 vs 1.42; mid2 1.56 vs 1.58) —
+the red/green HF deficit Q2 targets. Cost: +9% instructions per Balanced
+encode (writer ≈ 0.7 G of the 1.4 G delta on mid, the rest is the finer HF the
+loop now buys), i.e. most of the track's speed budget is still available but
+not all of it; the learner runs once per priced/stored plan per LF group
+(three writes on Balanced) and could be hoisted into the plan later (~1%).
+
+Follow-ups this opens: `quant_lf` 8 was promoted under the flat code's
+mispriced LF residuals and must be re-screened (LF is still 23% of a 1 bpp
+stream); LZ77 for the near-constant metadata channels; a per-channel
+predictor choice for the LF planes.
+
 ### Open architectural questions
 
 1. How can the finalist refresh only structurally unstable cover decisions?

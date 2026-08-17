@@ -5,7 +5,7 @@ build {
     tool "akr 0.3.1"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:32489769f1d7e6953980e816dd725cd8b1356d5c0f081ec6fa2ff379a933561a"
+    source_graph "sha256:c374c232cc30a9a84b6c4171b380aae3369aa9449a2d2910c2d51b021e4c10af"
 }
 
 source ".akr/project.akr" {
@@ -24,7 +24,7 @@ source ".akr/records/jpegxl-rs/constraints.akr" {
 }
 
 source ".akr/records/jpegxl-rs/decisions.akr" {
-    hash "sha256:48d7bbe66977c131ad369e272a9f4df1c88871547ce4aa5ecb225ac089ee7530"
+    hash "sha256:07c176b11f7e435d9ef3117c0d196c0639ce1f8d8665048f6f951518f9c89806"
     records 14
 }
 
@@ -39,8 +39,8 @@ source ".akr/records/jpegxl-rs/milestones.akr" {
 }
 
 source ".akr/records/jpegxl-rs/observations.akr" {
-    hash "sha256:34c56af39b59717530bc7f361aeac522a8adf6d51a361ffe9be53c51aa894d57"
-    records 68
+    hash "sha256:c880072265ef226e1ed9efab161bb2c174a1c78b9391208f7cc359daaa8e1886"
+    records 70
 }
 
 source ".akr/records/jpegxl-rs/papercuts.akr" {
@@ -3425,7 +3425,7 @@ resolution @jpegxl-rs.work.opt-benches-and-counters/1 {
 resolution @jpegxl-rs.work.opt-bulk-bitwriter/1 {
     slot implements
     to @jpegxl-rs.decision.optimization-determinism-contract/1
-    hash "sha256:7bddfa846d93cac3fe2761517ba0ef8b9c4d238b05ebe1ef006f303b3d255a6b"
+    hash "sha256:890feed48001165d8c4fb3efe18669454b80fe6fffb926add1187745acd9501d"
 }
 
 resolution @jpegxl-rs.work.opt-bulk-bitwriter/1 {
@@ -5461,6 +5461,16 @@ seal @jpegxl-rs.observation.i9-dct8x4-half-placement/1 {
 seal @jpegxl-rs.observation.icc-stream-placement/1 {
     state verified
     hash "sha256:8d794dddb7366f16cdaca16e7abaf6782b6e55857878bfcfed8e668946407c3f"
+}
+
+seal @jpegxl-rs.observation.jxl-oxide-previous-channel-properties-2026-08-17/1 {
+    state superseded
+    hash "sha256:e46473e886ed3219e9d25d149e8f153ef784a3c2001d49d797188137c2bdd388"
+}
+
+seal @jpegxl-rs.observation.jxl-oxide-previous-channel-properties-2026-08-17/2 {
+    state verified
+    hash "sha256:e29fc3601553b2dda0dcf159b3b9027d34aefde8290d61e2eb7cc9fa4cc80b5c"
 }
 
 seal @jpegxl-rs.observation.k2-upsampling-afv-transpose/1 {

@@ -2204,7 +2204,7 @@ fn insert_lz77_chain(
     }
 }
 
-fn seed_empty_contexts(census: &mut TokenCensus, num_contexts: usize, force_all: bool) {
+pub(crate) fn seed_empty_contexts(census: &mut TokenCensus, num_contexts: usize, force_all: bool) {
     if force_all {
         for ctx in 0..num_contexts {
             let _ = census.record(ctx, 0);
@@ -2246,7 +2246,7 @@ fn append_bits(dst: &mut BitWriter, src: &BitWriter) {
 /// When `max_literal_token` is `Some(m)`, every hybrid-uint token of a *value*
 /// (not a direct LZ77 length token) must be `< m` so it cannot collide with
 /// length-trigger symbols.
-fn best_hybrid_config(
+pub(crate) fn best_hybrid_config(
     census: &TokenCensus,
     num_contexts: usize,
     max_literal_token: Option<u32>,

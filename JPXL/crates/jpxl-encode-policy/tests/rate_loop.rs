@@ -444,7 +444,12 @@ fn size_is_not_monotone_in_global_scale_and_this_measures_it() {
 fn the_lf_hf_ratio_is_a_distortion_knob_the_loop_holds_fixed() {
     let (width, height) = (300u32, 260u32);
     let source = test_image(width, height);
-    let target = RateTarget::Bytes(8_000);
+    // 6,000 bytes: reachable at both ratios inside the main ladder segment.
+    // Phase Q0b's entropy-coded LF groups made this frame cheap enough that
+    // the earlier 8,000-byte target fell into the gap between the finest
+    // `global_scale` rung (6,930 bytes at quant_lf 8) and the first `HfMul`
+    // rung (11,264), which no loop can land inside 1% of.
+    let target = RateTarget::Bytes(6_000);
 
     let mut lf_bytes = Vec::new();
     let mut scales = Vec::new();
@@ -457,7 +462,7 @@ fn the_lf_hf_ratio_is_a_distortion_knob_the_loop_holds_fixed() {
         let outcome =
             encode_srgb8_to_target(width, height, &source, &request, target).expect("reachable");
         assert!(
-            outcome.achieved() <= 8_000,
+            outcome.achieved() <= 6_000,
             "quant_lf {quant_lf}: {} bytes",
             outcome.achieved()
         );
@@ -619,9 +624,13 @@ fn the_trace_describes_the_search_that_actually_happened() {
     for step in &outcome.trace {
         assert_eq!(step.feasible, step.bytes <= outcome.target);
     }
-    // Fast ladder sizes are upper bounds (no entropy alternatives); only
-    // Final steps are Full-priced and comparable to the emitted stream. The
-    // winner is the best Full-priced feasible size the loop kept.
+    // Fast ladder sizes are upper bounds (no entropy alternatives), and so
+    // are the Final phase's default-model navigation prices; only the exact
+    // finalist and its corrections are Full-priced and comparable to the
+    // emitted stream. The winner therefore never exceeds the best feasible
+    // Final size, and it is one of the Final steps (asserted below). It can
+    // sit below the best feasible navigation price: Full alternatives shrink
+    // the same rung's stream, and the correction window then re-aims.
     let best = outcome
         .trace
         .iter()
@@ -629,7 +638,8 @@ fn the_trace_describes_the_search_that_actually_happened() {
         .map(|s| s.bytes)
         .max()
         .expect("something fit under Full refinement");
-    assert_eq!(outcome.achieved(), best);
+    assert!(outcome.achieved() <= best);
+    assert!(outcome.achieved() <= outcome.target);
     assert!(outcome.trace.iter().any(|s| {
         s.phase == rate::RatePhase::Final
             && s.quantizer == outcome.chosen
