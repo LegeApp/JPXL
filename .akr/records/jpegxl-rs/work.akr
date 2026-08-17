@@ -2081,7 +2081,7 @@ record jpegxl-rs.work.arch-phase41b-tape-fast-path/1 : work {
 
 record jpegxl-rs.work.arch-phase42-writer-parallelism/1 : work {
     title "Phase 42: writer section map, per-cluster table build and training on the executor, bit-writer and flat-code fast paths"
-    state proposed
+    state completed
     scope [
         path ".agent/scratch/**",
         path "JPXL/crates/jpxl-bitstream/src/writer.rs",
@@ -2107,18 +2107,21 @@ record jpegxl-rs.work.arch-phase42-writer-parallelism/1 : work {
                 Canonical streams (incl. lossless), thread counts, AVX2 on/off and tape on/off are byte-identical to Phase 41b; write_bits is pinned bit-for-bit against a write_bit reference; djxl and jxl-oxide accept the candidates.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase42-identity-safety-2026-08-17/1 ]
         }
         check safety {
             statement """
                 fmt, strict Clippy, workspace suites in fast-debug and release, tape-off jpxl-encode suites, oracle/roundtrip/determinism, no-default-feature and AVX2-disabled suites pass.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase42-identity-safety-2026-08-17/1 ]
         }
         check speed {
             statement """
                 Writer count/store and entropy training phase clocks drop on the mid photo and pinned wall does not regress; the libjxl comparison is recorded.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.phase42-speed-and-libjxl-window-2026-08-17/1 ]
         }
     }
     depends_on [ @jpegxl-rs.work.arch-phase41b-tape-fast-path/1 ]

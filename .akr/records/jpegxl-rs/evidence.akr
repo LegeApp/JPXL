@@ -2196,6 +2196,32 @@ record jpegxl-rs.evidence.phase41b-speed-and-phase42-ceiling-2026-08-17/1 : evid
         """
 }
 
+record jpegxl-rs.evidence.phase42-identity-safety-2026-08-17/1 : evidence {
+    title "Phase 42 gates green in both profiles and both tape configurations; every canonical stream (incl. lossless), thread count and AVX2 setting byte-identical to Phase 34-41b; write_bits pinned against a write_bit reference; djxl and jxl-oxide accept mid/large Balanced and the lossless candidate"
+    state verified
+    result pass
+    method command
+    observed_at git:b30bc698c2cd9dfe036b6f370e02dd22ecc88adc
+    command "cd JPXL && cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace --profile fast-debug && cargo test --workspace --release && cargo test -p jpxl-encode-policy --release --test vardct_oracle --test rate_loop --test vardct_roundtrip && cargo test -p jpxl-encode --no-default-features --features parallel,simd,phase4b-sampled-gather --profile fast-debug && cargo test -p jpxl-encode-policy --no-default-features --profile fast-debug && JPXL_DISABLE_AVX2=1 cargo test -p jpxl-encode-policy --lib --profile fast-debug; .agent/scratch/phase35-lane-dct/run-identity.sh (jpxl-p42d); djxl / jxl-oxide decodes"
+    artifact ".agent/scratch/phase35-lane-dct/gates-p42.log"
+    summary """
+        Balanced-mid 7f70ae001ec27658..., Quality-mid d4b03810dc0bcb73..., Balanced-large 8bb1b1fb2df6b45d..., lossless-mid 5c49ab9020706f0d... unchanged; no singleton hashes; JPXL_DISABLE_AVX2 reproduces Balanced-mid. New unit test writer::tests::write_bits_matches_bit_by_bit_reference (random widths/alignments, counting writer agrees). Logs under .agent/scratch/phase35-lane-dct/gates-p42.log.
+        """
+}
+
+record jpegxl-rs.evidence.phase42-speed-and-libjxl-window-2026-08-17/1 : evidence {
+    title "Mid writer count_ms 59-69 -> 42-58, store_ms 27-31 -> 17-24, entropy_ms 30-36 -> 22-25; interleaved mid wall ~380-440 -> 357-373 ms; libjxl window: jpxl Balanced 0.42-0.43 s (0.80 s CPU) / Fast 0.31-0.33 s vs cjxl -e7 0.46-0.51 s (1.25 s CPU) on 2400x1800, 0.89-1.13 / 0.76-0.97 vs 1.24-1.66 s on 4000x3000, at SSIMULACRA2 parity (72.38 vs 72.20; 83.63 vs 83.70) where cjxl's files are ~13% smaller and Butteraugli favours cjxl (3.08 vs 3.19; 1.45 vs 1.99)"
+    state verified
+    result pass
+    method observation
+    observed_at git:b30bc698c2cd9dfe036b6f370e02dd22ecc88adc
+    command "interleaved pinned jpxl bench --diag rounds (p41c/p42b/p42c/p42d); JPXL_TRACE_WRITER scratch build for the stage split; .agent/scratch/phase35-lane-dct/run-cjxl-window.sh (jpxl-p42d vs cjxl v0.13.0 -e 7 at d=2.25 mid / 1.25 large)"
+    artifact ".agent/scratch/phase35-lane-dct/cjxl-window-p42.log"
+    summary """
+        Stage trace before the change (mid, per written plan, 4 threads): prep 21-35 ms (record + ~7 ms serial table build for 173 clusters), LF-group sections 8-14 ms on two threads, HfGlobal 3.6 ms serial, pass groups 8-15 ms. Per-thread profile: ~1.7 of 4 cores busy (0.74 s CPU / 0.43 s wall). After: the combined section map with per-item stealing, executor-backed cluster tables and training moved the mid clocks as titled; the 12 MP frame's wall was too noisy to assert in this window (load spikes) though its count_ms moved 118-141 -> 100-117 ms. Two libjxl windows (one quiet, one under load) agree: jpxl Balanced ~15-25% faster than cjxl -e7 wall on both photos with ~40% less CPU, Fast ~30-40% faster; density and Butteraugli still favour libjxl at the equal-SSIMULACRA2 operating point.
+        """
+}
+
 record jpegxl-rs.evidence.phase4a-weighted-predictor-wired-2026-08-08/1 : evidence {
     title "Phase 4A: Weighted predictor wired into encoder search, decode-validated (jpxl-decode + djxl), multi-section confirmed"
     state verified
