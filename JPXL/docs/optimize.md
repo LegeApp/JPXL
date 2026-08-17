@@ -585,6 +585,59 @@ this change). `color.rs` is outside this phase's brief, so it is reported
 here rather than fixed opportunistically. Raw folded profiles and the timing
 log are under `.agent/scratch/phase31/`.
 
+## Phase 35 — lane-batched separable DCT and cached `ScaleF` (2026-08-17)
+
+Phases 32–34 are closed in AKR (dirty-frontier screen and honest-negative
+prototype; indexed lane-4 CfL quantization). A fresh P-core profile of the
+Balanced 1-bpp mid encode taken on the Phase 34 head binary attributed about
+19% of self time to the separable DCT family — `dct_2d_in_place` 4.1%,
+`dct_1d` 3.8%, `forward_dct_rc` 3.4%, `dct_iv_16` 2.5%, `dct_iv_8` 1.9%,
+`dct_ii_32` 1.7%, `lf_from_llf_into` 1.4% — plus 0.9% to `libm` `cos`
+reached through I.8's `ScaleF`, which evaluated three `f64` cosines per LLF
+cell on every call. The 1-D kernels were per-vector scalar (the `simd`
+feature only shuffled one 8-vector through `f32x4`), and both 2-D drivers
+transposed around each pass so a scalar kernel could run on contiguous rows.
+
+The kernels are now written once, generically over a `Lane` — a single
+`f32`, or with `simd` a `wide::f32x4`/`f32x8` holding one value from each of
+several adjacent columns — and every lane executes exactly the scalar
+operation sequence (no FMA, no reassociation). `DCT_2D` and `IDCT_2D` are
+driven by lane-batched *column* passes: the column pass runs straight down
+the row-major matrix, and the row pass is a column pass over one transpose,
+which also drops one transpose from the forward direction. Lengths above 32
+keep the dense-matrix scalar path through a per-column gather. `ScaleF` is
+tabled once per power-of-two LF count from the same closed form, and
+`forward_dct_rc` copies varblock rows in bulk instead of cell by cell.
+
+Verified: all eight canonical/masking-AQ streams plus the lossless modular
+stream are byte-identical to the Phase 34 head binary (Balanced-mid
+`7f70ae00…`, Quality-mid `d4b03810…`); one-thread and four-thread outputs
+are identical; a `--no-default-features` (no-SIMD) release CLI reproduces
+the same Balanced and Quality hashes; the old and new decoders agree pixel
+for pixel on every candidate stream; vendored `djxl` 0.13.0 and `jxl-oxide`
+0.12.6 accept the candidates. New unit tests pin the invariant directly: the
+lane-batched inverse equals the scalar column-first reference at tolerance
+zero for every Table I.1 shape, `f32x4`/`f32x8`/dispatched column passes are
+`to_bits`-identical to the `f32` lane pass for every butterfly length and
+both directions, and the cached `ScaleF` table is bit-identical to the closed
+form. Workspace fmt/build/strict-Clippy/tests, oracle, roundtrip,
+determinism, and no-default-feature suites all pass. Pinned four-core,
+five-iteration Balanced 1-bpp medians (two interleaved rounds each): mid
+890/910 → 727/727 ms (−19%), large 1730/1679 → 1506/1492 ms (−12%); Fast is
+flat to slightly faster (its fixed DCT8 cover does little transform work).
+The post-change profile puts the DCT family at about 7.9% (`column_pass_lanes
+<f32x8>` 4.2%, transposes in `dct_2d_in_place` 1.6%, `lf_from_llf_into`
+1.0%, `forward_dct_rc` 0.6%, `column_pass` 0.6%) with `cos` gone from the
+listing. Raw profiles, timing log, and identity hashes are under
+`.agent/scratch/phase35-lane-dct/`.
+
+Not done here: the crate is still built for baseline x86-64, so `f32x8` is
+two SSE registers; a `target-cpu`/AVX2 build decision would roughly double
+lane throughput without changing any result (rustc never contracts
+`a * b + c`, and the tree's `f32::mul_add` calls are fused on every target),
+but it is a build-configuration decision for the plan, not a code change for
+this phase.
+
 
 ### Open architectural questions
 

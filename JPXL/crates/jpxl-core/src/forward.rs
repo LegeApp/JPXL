@@ -113,6 +113,15 @@ impl<'a> Grid<'a> {
             0.0
         }
     }
+
+    /// Row `y` of the window as a contiguous slice; empty outside the window.
+    fn row(&self, y: usize) -> &[f32] {
+        if y < self.rows {
+            &self.data[y * self.stride..y * self.stride + self.cols]
+        } else {
+            &[]
+        }
+    }
 }
 
 /// The mutable twin of [`Grid`].
@@ -145,6 +154,16 @@ impl<'a> GridMut<'a> {
     fn set(&mut self, x: usize, y: usize, value: f32) {
         if x < self.cols && y < self.rows {
             self.data[y * self.stride + x] = value;
+        }
+    }
+
+    /// Row `y` of the window as a contiguous mutable slice; empty outside the
+    /// window.
+    fn row_mut(&mut self, y: usize) -> &mut [f32] {
+        if y < self.rows {
+            &mut self.data[y * self.stride..y * self.stride + self.cols]
+        } else {
+            &mut []
         }
     }
 
@@ -203,6 +222,13 @@ macro_rules! read_view {
             pub fn at(&self, x: usize, y: usize) -> f32 {
                 self.0.at(x, y)
             }
+
+            /// Row `y` as a contiguous slice of `cols()` values; empty outside
+            /// the window.
+            #[must_use]
+            pub fn row(&self, y: usize) -> &[f32] {
+                self.0.row(y)
+            }
         }
     };
 }
@@ -254,6 +280,13 @@ macro_rules! write_view {
             /// Writes column `x`, row `y`. Out-of-window writes are dropped.
             pub fn set(&mut self, x: usize, y: usize, value: f32) {
                 self.0.set(x, y, value);
+            }
+
+            /// Row `y` as a contiguous mutable slice of `cols()` values; empty
+            /// outside the window.
+            #[must_use]
+            pub fn row_mut(&mut self, y: usize) -> &mut [f32] {
+                self.0.row_mut(y)
             }
 
             /// Fills the whole window.
@@ -422,18 +455,23 @@ fn forward_dct_rc(
     cols: usize,
     scratch: &mut TransformScratch,
 ) {
+    let (cr, cc) = coeff_dims(rows, cols);
+    // `forward_varblock_into` has already matched both views to the transform's
+    // shape; re-check here so the row copies below can never be fed a short
+    // row by a future caller.
+    if samples.rows() < rows || samples.cols() != cols || coeffs.rows() < cr || coeffs.cols() != cc
+    {
+        debug_assert!(false, "forward DCT{rows}x{cols} view shape mismatch");
+        coeffs.fill(0.0);
+        return;
+    }
     let (work, tmp) = scratch.pair();
-    for y in 0..rows {
-        for x in 0..cols {
-            work[y * cols + x] = samples.at(x, y);
-        }
+    for (y, dst) in work.chunks_exact_mut(cols).take(rows).enumerate() {
+        dst.copy_from_slice(samples.row(y));
     }
     dct_2d_in_place(work, tmp, rows, cols);
-    let (cr, cc) = coeff_dims(rows, cols);
-    for y in 0..cr {
-        for x in 0..cc {
-            coeffs.set(x, y, work[y * cc + x]);
-        }
+    for (y, src) in work.chunks_exact(cc).take(cr).enumerate() {
+        coeffs.row_mut(y).copy_from_slice(src);
     }
 }
 

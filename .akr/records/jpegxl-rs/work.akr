@@ -1656,6 +1656,46 @@ record jpegxl-rs.work.arch-phase34-indexed-lane4-cfl/1 : work {
     part_of [ @jpegxl-rs.track.encoder-optimization ]
 }
 
+record jpegxl-rs.work.arch-phase35-lane-batched-dct/1 : work {
+    title "Phase 35: lane-batched separable DCT kernels and cached ScaleF"
+    state proposed
+    scope [
+        path ".agent/scratch/**",
+        path "JPXL/crates/jpxl-core/src/dct.rs",
+        path "JPXL/crates/jpxl-core/src/forward.rs",
+        path "JPXL/crates/jpxl-core/src/varblock.rs",
+        path "JPXL/docs/optimize.md"
+    ]
+    intent """
+        A fresh P-core profile of the Balanced 1-bpp mid encode after Phase 34 attributes roughly 19% of self time to the separable DCT family (dct_2d_in_place 4.1%, dct_1d 3.8%, forward_dct_rc 3.4%, dct_iv_16 2.5%, dct_iv_8 1.9%, dct_ii_32 1.7%, lf_from_llf_into 1.4%) plus 0.9% to libm cos reached through I.8 ScaleF, which recomputes three f64 cosines per LLF cell on every call. The 1-D kernels are per-vector scalar (the simd feature only shuffles one 8-vector through f32x4), and every 2-D pass transposes so scalar kernels can run on contiguous rows. Make the 1-D kernels generic over a lane type (f32, and wide f32x4/f32x8 under simd) so one implementation transforms one column per lane, drive both DCT_2D and IDCT_2D with lane-batched column passes (dropping one transpose from the forward direction), cache ScaleF for the tabled power-of-two LF counts, and copy varblock rows in bulk in forward_dct_rc. Every lane executes exactly the scalar op sequence (no FMA, no reassociation), so encoder and decoder output must remain byte-identical for the simd and no-simd builds; promotion requires canonical stream identity across presets and thread counts, decoder-side conformance and roundtrip suites unchanged, external decoder acceptance, a reduced DCT-family profile share, and non-regressing pinned wall time.
+        """
+    note """
+        Opened 2026-08-17 from a fresh perf profile (.agent/scratch/phase35-lane-dct/baseline-mid.perf.data) taken on the Phase 34 head binary.
+        """
+    acceptance {
+        check identity {
+            statement """
+                Canonical Fast, Balanced, and Quality streams on mid and large inputs, plus one-thread/four-thread Balanced outputs, are byte-identical to the Phase 34 head binary; the lane-batched kernels equal the scalar kernels bit-for-bit under property tests over every supported shape.
+                """
+            method command
+        }
+        check safety {
+            statement """
+                Workspace fmt, build, strict Clippy, and the full test suite pass with default features and with jpxl-core simd disabled; decoder conformance/oracle suites pass; the canonical candidate decodes through vendored djxl and jxl-oxide.
+                """
+            method command
+        }
+        check speed {
+            statement """
+                A fresh perf profile shows the DCT-family self-time share reduced materially from the ~19% baseline, and pinned four-core Balanced 1-bpp mid/large medians do not regress.
+                """
+            method observation
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase34-indexed-lane4-cfl/1 ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+}
+
 record jpegxl-rs.work.arch-phase4-0b-density-gate/1 : work {
     title "Phase 4.0b: pinned real-corpus density + decode-validity gate (prerequisite for 4A/4C)"
     state completed

@@ -730,8 +730,39 @@ fn natural_coeff_order_uncached(bwidth: usize, bheight: usize) -> Vec<u32> {
 /// Crate-visible so the forward direction ([`crate::forward::lf_from_llf`]) can
 /// divide by the very same factor rather than transcribing it a second time —
 /// a second copy would be free to drift away from the flip point above.
-#[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
 pub(crate) fn scale_f(c: usize, lf_count: usize) -> f32 {
+    // Table I.1's LF rectangles are at most 32 cells on a side, and I.8 asks
+    // for `ScaleF` at every cell of every varblock; three `f64` cosines per
+    // cell per call was a measurable share of encoder profiles. The tabled
+    // values are the closed form evaluated once, so a hit and a miss are the
+    // same number.
+    let slot = match lf_count {
+        1 => 0,
+        2 => 1,
+        4 => 2,
+        8 => 3,
+        16 => 4,
+        32 => 5,
+        _ => return scale_f_closed_form(c, lf_count),
+    };
+    if c >= SCALE_F_TABLE_LEN {
+        return scale_f_closed_form(c, lf_count);
+    }
+    let table = SCALE_F_TABLES[slot]
+        .get_or_init(|| core::array::from_fn(|c| scale_f_closed_form(c, lf_count)));
+    table[c]
+}
+
+/// Cells per cached [`scale_f`] table: the largest LF count Table I.1 allows.
+const SCALE_F_TABLE_LEN: usize = 32;
+
+/// [`scale_f`] for LF counts 1, 2, 4, 8, 16 and 32, in that order, filled on
+/// first use.
+static SCALE_F_TABLES: [OnceLock<[f32; SCALE_F_TABLE_LEN]>; 6] = [const { OnceLock::new() }; 6];
+
+/// I.8's `ScaleF` evaluated from its closed form; [`scale_f`] caches it.
+#[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
+fn scale_f_closed_form(c: usize, lf_count: usize) -> f32 {
     let b = if LLF_SCALEF_ARG_IS_VARBLOCK_DIMENSION {
         lf_count * 8
     } else {
@@ -1663,6 +1694,24 @@ mod tests {
             }
         }
         assert_close(scale_f(0, 32), 1.0, 0.0, "ScaleF(0, b) is 1");
+    }
+
+    /// The cached tables are the closed form itself: every tabled `(c, b)`
+    /// pair is bit-identical to a direct evaluation, so caching cannot move a
+    /// single LLF coefficient.
+    #[test]
+    fn scale_f_cache_is_bit_identical_to_the_closed_form() {
+        for &lf_count in &[1usize, 2, 4, 8, 16, 32] {
+            for c in 0..lf_count {
+                assert_eq!(
+                    scale_f(c, lf_count).to_bits(),
+                    scale_f_closed_form(c, lf_count).to_bits(),
+                    "ScaleF({c}, {lf_count}) cache/closed-form"
+                );
+            }
+        }
+        // Untabled arguments still evaluate directly.
+        assert_eq!(scale_f(0, 3).to_bits(), scale_f_closed_form(0, 3).to_bits());
     }
 
     // -- Matrix types -------------------------------------------------------

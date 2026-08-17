@@ -210,44 +210,141 @@ const DCT4_16: [[f32; 16]; 16] = [
      0.261_965_78, -0.283_976_75, 0.303_252_86, -0.319_608_48, 0.332_886_1, -0.342_957_84, 0.349_726_7, -0.353_127_5],
 ];
 
+// ---------------------------------------------------------------------------
+// Lanes: one implementation of every kernel, for one value or several columns
+// ---------------------------------------------------------------------------
+//
+// Each 1-D kernel below is written once, generically over a `Lane`: either a
+// single `f32`, or (with the `simd` feature) a `wide` vector holding one value
+// from each of several adjacent columns. The kernel body performs exactly the
+// same sequence of IEEE-754 additions, subtractions and multiplications on
+// every lane that it performs on a scalar — no fused multiply-add, no
+// reassociation — so a vector lane and the scalar path produce bit-identical
+// results. That property is what lets the encoder and decoder run the same
+// transform through either build without changing a single output byte, and
+// `tests::lanes_match_scalar` pins it.
+
+/// One value, or one value per column: the element type the kernels run on.
+trait Lane:
+    Copy + core::ops::Add<Output = Self> + core::ops::Sub<Output = Self> + core::ops::Mul<Output = Self>
+{
+    /// Columns transformed at once by a pass over this lane type.
+    const LANES: usize;
+    /// Every lane set to `value`.
+    fn splat(value: f32) -> Self;
+    /// Loads `Self::LANES` values from the front of `src` (which must be at
+    /// least that long).
+    fn load(src: &[f32]) -> Self;
+    /// Stores `Self::LANES` values to the front of `dst` (which must be at
+    /// least that long).
+    fn store(self, dst: &mut [f32]);
+}
+
+impl Lane for f32 {
+    const LANES: usize = 1;
+
+    #[inline(always)]
+    fn splat(value: f32) -> Self {
+        value
+    }
+
+    #[inline(always)]
+    fn load(src: &[f32]) -> Self {
+        src[0]
+    }
+
+    #[inline(always)]
+    fn store(self, dst: &mut [f32]) {
+        dst[0] = self;
+    }
+}
+
+#[cfg(feature = "simd")]
+impl Lane for wide::f32x4 {
+    const LANES: usize = 4;
+
+    #[inline(always)]
+    fn splat(value: f32) -> Self {
+        Self::splat(value)
+    }
+
+    #[inline(always)]
+    fn load(src: &[f32]) -> Self {
+        let mut a = [0.0f32; 4];
+        a.copy_from_slice(&src[..4]);
+        Self::from(a)
+    }
+
+    #[inline(always)]
+    fn store(self, dst: &mut [f32]) {
+        dst[..4].copy_from_slice(&self.to_array());
+    }
+}
+
+#[cfg(feature = "simd")]
+impl Lane for wide::f32x8 {
+    const LANES: usize = 8;
+
+    #[inline(always)]
+    fn splat(value: f32) -> Self {
+        Self::splat(value)
+    }
+
+    #[inline(always)]
+    fn load(src: &[f32]) -> Self {
+        let mut a = [0.0f32; 8];
+        a.copy_from_slice(&src[..8]);
+        Self::from(a)
+    }
+
+    #[inline(always)]
+    fn store(self, dst: &mut [f32]) {
+        dst[..8].copy_from_slice(&self.to_array());
+    }
+}
+
 /// Orthonormal 2-point DCT-IV, in place. A single Givens rotation.
-fn dct_iv_2(v: &mut [f32; 2]) {
+#[inline(always)]
+fn dct_iv_2<L: Lane>(v: &mut [L; 2]) {
     let (x0, x1) = (v[0], v[1]);
-    v[0] = COS_PI_8 * x0 + SIN_PI_8 * x1;
-    v[1] = SIN_PI_8 * x0 - COS_PI_8 * x1;
+    v[0] = L::splat(COS_PI_8) * x0 + L::splat(SIN_PI_8) * x1;
+    v[1] = L::splat(SIN_PI_8) * x0 - L::splat(COS_PI_8) * x1;
 }
 
 /// Orthonormal 4-point DCT-IV, in place.
-fn dct_iv_4(v: &mut [f32; 4]) {
+#[inline(always)]
+fn dct_iv_4<L: Lane>(v: &mut [L; 4]) {
     let x = *v;
     for (out, row) in v.iter_mut().zip(DCT4_4.iter()) {
-        let mut acc = 0.0;
+        let mut acc = L::splat(0.0);
         for (c, xn) in row.iter().zip(x.iter()) {
-            acc += c * xn;
+            acc = acc + L::splat(*c) * *xn;
         }
         *out = acc;
     }
 }
 
 /// Orthonormal 8-point DCT-IV, in place.
-fn dct_iv_8(v: &mut [f32; 8]) {
+#[inline(always)]
+fn dct_iv_8<L: Lane>(v: &mut [L; 8]) {
     let x = *v;
     for (out, row) in v.iter_mut().zip(DCT4_8.iter()) {
-        let mut acc = 0.0;
+        let mut acc = L::splat(0.0);
         for (c, xn) in row.iter().zip(x.iter()) {
-            acc += c * xn;
+            acc = acc + L::splat(*c) * *xn;
         }
         *out = acc;
     }
 }
 
 /// Orthonormal 16-point DCT-IV, in place.
-fn dct_iv_16(v: &mut [f32; 16]) {
+#[inline(always)]
+fn dct_iv_16<L: Lane>(v: &mut [L; 16]) {
     let x = *v;
     for (out, row) in v.iter_mut().zip(DCT4_16.iter()) {
-        let mut acc = 0.0;
+        let mut acc = L::splat(0.0);
         for (c, xn) in row.iter().zip(x.iter()) {
-            acc += c * xn;
+            acc = acc + L::splat(*c) * *xn;
         }
         *out = acc;
     }
@@ -258,28 +355,37 @@ fn dct_iv_16(v: &mut [f32; 16]) {
 // ---------------------------------------------------------------------------
 
 /// Orthonormal 2-point DCT-II (also its own DCT-III), in place.
-fn dct_ii_2(v: &mut [f32; 2]) {
+#[inline(always)]
+fn dct_ii_2<L: Lane>(v: &mut [L; 2]) {
     let (x0, x1) = (v[0], v[1]);
-    v[0] = (x0 + x1) * FRAC_1_SQRT_2;
-    v[1] = (x0 - x1) * FRAC_1_SQRT_2;
+    v[0] = (x0 + x1) * L::splat(FRAC_1_SQRT_2);
+    v[1] = (x0 - x1) * L::splat(FRAC_1_SQRT_2);
 }
 
 /// Orthonormal 4-point DCT-II, in place.
-fn dct_ii_4(v: &mut [f32; 4]) {
+#[inline(always)]
+fn dct_ii_4<L: Lane>(v: &mut [L; 4]) {
     let mut even = [v[0] + v[3], v[1] + v[2]];
     let mut odd = [v[0] - v[3], v[1] - v[2]];
     dct_ii_2(&mut even);
     dct_iv_2(&mut odd);
-    v[0] = even[0] * FRAC_1_SQRT_2;
-    v[1] = odd[0] * FRAC_1_SQRT_2;
-    v[2] = even[1] * FRAC_1_SQRT_2;
-    v[3] = odd[1] * FRAC_1_SQRT_2;
+    v[0] = even[0] * L::splat(FRAC_1_SQRT_2);
+    v[1] = odd[0] * L::splat(FRAC_1_SQRT_2);
+    v[2] = even[1] * L::splat(FRAC_1_SQRT_2);
+    v[3] = odd[1] * L::splat(FRAC_1_SQRT_2);
 }
 
 /// Orthonormal 4-point DCT-III, in place. Transpose of [`dct_ii_4`].
-fn dct_iii_4(v: &mut [f32; 4]) {
-    let mut even = [v[0] * FRAC_1_SQRT_2, v[2] * FRAC_1_SQRT_2];
-    let mut odd = [v[1] * FRAC_1_SQRT_2, v[3] * FRAC_1_SQRT_2];
+#[inline(always)]
+fn dct_iii_4<L: Lane>(v: &mut [L; 4]) {
+    let mut even = [
+        v[0] * L::splat(FRAC_1_SQRT_2),
+        v[2] * L::splat(FRAC_1_SQRT_2),
+    ];
+    let mut odd = [
+        v[1] * L::splat(FRAC_1_SQRT_2),
+        v[3] * L::splat(FRAC_1_SQRT_2),
+    ];
     dct_ii_2(&mut even);
     dct_iv_2(&mut odd);
     v[0] = even[0] + odd[0];
@@ -288,45 +394,115 @@ fn dct_iii_4(v: &mut [f32; 4]) {
     v[2] = even[1] - odd[1];
 }
 
+/// Even/odd split of a length-`2N` vector: `even[k] = v[k] + v[2N-1-k]`,
+/// `odd[k] = v[k] - v[2N-1-k]`. The first half of every DCT-II butterfly.
+#[inline(always)]
+fn split_even_odd<L: Lane, const N: usize>(v: &[L]) -> ([L; N], [L; N]) {
+    let mut even = [L::splat(0.0); N];
+    let mut odd = [L::splat(0.0); N];
+    for k in 0..N {
+        even[k] = v[k] + v[2 * N - 1 - k];
+        odd[k] = v[k] - v[2 * N - 1 - k];
+    }
+    (even, odd)
+}
+
+/// Interleaves the scaled even and odd halves back into `v`: the second half
+/// of every DCT-II butterfly.
+#[inline(always)]
+fn merge_scaled<L: Lane, const N: usize>(v: &mut [L], even: &[L; N], odd: &[L; N]) {
+    for k in 0..N {
+        v[2 * k] = even[k] * L::splat(FRAC_1_SQRT_2);
+        v[2 * k + 1] = odd[k] * L::splat(FRAC_1_SQRT_2);
+    }
+}
+
+/// De-interleaves and scales `v` into even and odd halves: the first half of
+/// every DCT-III butterfly (the transpose of [`merge_scaled`]).
+#[inline(always)]
+fn split_scaled<L: Lane, const N: usize>(v: &[L]) -> ([L; N], [L; N]) {
+    let mut even = [L::splat(0.0); N];
+    let mut odd = [L::splat(0.0); N];
+    for k in 0..N {
+        even[k] = v[2 * k] * L::splat(FRAC_1_SQRT_2);
+        odd[k] = v[2 * k + 1] * L::splat(FRAC_1_SQRT_2);
+    }
+    (even, odd)
+}
+
+/// Undoes the mirrored butterfly: `v[k] = even[k] + odd[k]`,
+/// `v[2N-1-k] = even[k] - odd[k]`. The second half of every DCT-III.
+#[inline(always)]
+fn merge_even_odd<L: Lane, const N: usize>(v: &mut [L], even: &[L; N], odd: &[L; N]) {
+    for k in 0..N {
+        v[k] = even[k] + odd[k];
+        v[2 * N - 1 - k] = even[k] - odd[k];
+    }
+}
+
+/// Orthonormal 8-point DCT-II (forward transform), in place, on lanes.
+#[inline(always)]
+fn dct_ii_8_lanes<L: Lane>(v: &mut [L; 8]) {
+    let (mut even, mut odd) = split_even_odd::<L, 4>(v);
+    dct_ii_4(&mut even);
+    dct_iv_4(&mut odd);
+    merge_scaled(v, &even, &odd);
+}
+
+/// Orthonormal 8-point DCT-III (inverse transform), in place, on lanes.
+#[inline(always)]
+fn dct_iii_8_lanes<L: Lane>(v: &mut [L; 8]) {
+    let (mut even, mut odd) = split_scaled::<L, 4>(v);
+    dct_iii_4(&mut even);
+    dct_iv_4(&mut odd);
+    merge_even_odd(v, &even, &odd);
+}
+
+/// Orthonormal 16-point DCT-II (forward transform), in place, on lanes.
+#[inline(always)]
+fn dct_ii_16_lanes<L: Lane>(v: &mut [L; 16]) {
+    let (mut even, mut odd) = split_even_odd::<L, 8>(v);
+    dct_ii_8_lanes(&mut even);
+    dct_iv_8(&mut odd);
+    merge_scaled(v, &even, &odd);
+}
+
+/// Orthonormal 16-point DCT-III (inverse transform), in place, on lanes.
+#[inline(always)]
+fn dct_iii_16_lanes<L: Lane>(v: &mut [L; 16]) {
+    let (mut even, mut odd) = split_scaled::<L, 8>(v);
+    dct_iii_8_lanes(&mut even);
+    dct_iv_8(&mut odd);
+    merge_even_odd(v, &even, &odd);
+}
+
+/// Orthonormal 32-point DCT-II (forward transform), in place, on lanes.
+///
+/// Factored even/odd split over [`dct_ii_16_lanes`] and [`dct_iv_16`].
+/// Replaces the dense matrix path for length 32 (Opt-D / flamegraph
+/// `matrix_pass` hotspot).
+#[inline(always)]
+fn dct_ii_32_lanes<L: Lane>(v: &mut [L; 32]) {
+    let (mut even, mut odd) = split_even_odd::<L, 16>(v);
+    dct_ii_16_lanes(&mut even);
+    dct_iv_16(&mut odd);
+    merge_scaled(v, &even, &odd);
+}
+
+/// Orthonormal 32-point DCT-III (inverse transform), in place, on lanes.
+#[inline(always)]
+fn dct_iii_32_lanes<L: Lane>(v: &mut [L; 32]) {
+    let (mut even, mut odd) = split_scaled::<L, 16>(v);
+    dct_iii_16_lanes(&mut even);
+    dct_iv_16(&mut odd);
+    merge_even_odd(v, &even, &odd);
+}
+
 /// Orthonormal 8-point DCT-II (forward transform), in place.
 ///
 /// Output `v[u]` is the coefficient for frequency `u`; `v[0]` is DC.
-///
-/// With the `simd` feature, the even/odd split and scale use `wide::f32x4`
-/// (Opt-P leaf kernel). Without it, pure scalar arithmetic is used.
 pub fn dct_ii_8(v: &mut [f32; 8]) {
-    #[cfg(feature = "simd")]
-    {
-        use wide::f32x4;
-        let lo = f32x4::new([v[0], v[1], v[2], v[3]]);
-        let hi = f32x4::new([v[7], v[6], v[5], v[4]]);
-        let mut even = (lo + hi).to_array();
-        let mut odd = (lo - hi).to_array();
-        dct_ii_4(&mut even);
-        dct_iv_4(&mut odd);
-        let scale = f32x4::splat(FRAC_1_SQRT_2);
-        let e = (f32x4::new(even) * scale).to_array();
-        let o = (f32x4::new(odd) * scale).to_array();
-        v[0] = e[0];
-        v[1] = o[0];
-        v[2] = e[1];
-        v[3] = o[1];
-        v[4] = e[2];
-        v[5] = o[2];
-        v[6] = e[3];
-        v[7] = o[3];
-    }
-    #[cfg(not(feature = "simd"))]
-    {
-        let mut even = [v[0] + v[7], v[1] + v[6], v[2] + v[5], v[3] + v[4]];
-        let mut odd = [v[0] - v[7], v[1] - v[6], v[2] - v[5], v[3] - v[4]];
-        dct_ii_4(&mut even);
-        dct_iv_4(&mut odd);
-        for k in 0..4 {
-            v[2 * k] = even[k] * FRAC_1_SQRT_2;
-            v[2 * k + 1] = odd[k] * FRAC_1_SQRT_2;
-        }
-    }
+    dct_ii_8_lanes(v);
 }
 
 /// Orthonormal 8-point DCT-III (inverse transform), in place.
@@ -334,266 +510,75 @@ pub fn dct_ii_8(v: &mut [f32; 8]) {
 /// Exact inverse of [`dct_ii_8`]: input `v[u]` is the coefficient for
 /// frequency `u`, output `v[n]` is sample `n`.
 pub fn dct_iii_8(v: &mut [f32; 8]) {
-    #[cfg(feature = "simd")]
-    let (mut even, mut odd) = {
-        use wide::f32x4;
-        let scale = f32x4::splat(FRAC_1_SQRT_2);
-        let e = f32x4::new([v[0], v[2], v[4], v[6]]) * scale;
-        let o = f32x4::new([v[1], v[3], v[5], v[7]]) * scale;
-        (e.to_array(), o.to_array())
-    };
-    #[cfg(not(feature = "simd"))]
-    let (mut even, mut odd) = {
-        let mut even = [0.0f32; 4];
-        let mut odd = [0.0f32; 4];
-        for k in 0..4 {
-            even[k] = v[2 * k] * FRAC_1_SQRT_2;
-            odd[k] = v[2 * k + 1] * FRAC_1_SQRT_2;
-        }
-        (even, odd)
-    };
-    dct_iii_4(&mut even);
-    dct_iv_4(&mut odd);
-    #[cfg(feature = "simd")]
-    {
-        use wide::f32x4;
-        let e = f32x4::new(even);
-        let o = f32x4::new(odd);
-        let sum = (e + o).to_array();
-        let dif = (e - o).to_array();
-        for k in 0..4 {
-            v[k] = sum[k];
-            v[7 - k] = dif[k];
-        }
-    }
-    #[cfg(not(feature = "simd"))]
-    {
-        for k in 0..4 {
-            v[k] = even[k] + odd[k];
-            v[7 - k] = even[k] - odd[k];
-        }
-    }
+    dct_iii_8_lanes(v);
 }
 
 /// Orthonormal 16-point DCT-II (forward transform), in place.
 pub fn dct_ii_16(v: &mut [f32; 16]) {
-    let mut even = [0.0f32; 8];
-    let mut odd = [0.0f32; 8];
-    #[cfg(feature = "simd")]
-    {
-        use wide::f32x4;
-        // Two f32x4 chunks cover the 8 even/odd pairs.
-        for chunk in 0..2 {
-            let base = chunk * 4;
-            let lo = f32x4::new([v[base], v[base + 1], v[base + 2], v[base + 3]]);
-            let hi = f32x4::new([v[15 - base], v[14 - base], v[13 - base], v[12 - base]]);
-            let e = (lo + hi).to_array();
-            let o = (lo - hi).to_array();
-            even[base..base + 4].copy_from_slice(&e);
-            odd[base..base + 4].copy_from_slice(&o);
-        }
-    }
-    #[cfg(not(feature = "simd"))]
-    {
-        for k in 0..8 {
-            even[k] = v[k] + v[15 - k];
-            odd[k] = v[k] - v[15 - k];
-        }
-    }
-    dct_ii_8(&mut even);
-    dct_iv_8(&mut odd);
-    #[cfg(feature = "simd")]
-    {
-        use wide::f32x4;
-        let scale = f32x4::splat(FRAC_1_SQRT_2);
-        for chunk in 0..2 {
-            let base = chunk * 4;
-            let e =
-                f32x4::new([even[base], even[base + 1], even[base + 2], even[base + 3]]) * scale;
-            let o = f32x4::new([odd[base], odd[base + 1], odd[base + 2], odd[base + 3]]) * scale;
-            let ea = e.to_array();
-            let oa = o.to_array();
-            for i in 0..4 {
-                v[2 * (base + i)] = ea[i];
-                v[2 * (base + i) + 1] = oa[i];
-            }
-        }
-    }
-    #[cfg(not(feature = "simd"))]
-    {
-        for k in 0..8 {
-            v[2 * k] = even[k] * FRAC_1_SQRT_2;
-            v[2 * k + 1] = odd[k] * FRAC_1_SQRT_2;
-        }
-    }
+    dct_ii_16_lanes(v);
 }
 
 /// Orthonormal 16-point DCT-III (inverse transform), in place.
 ///
 /// Exact inverse of [`dct_ii_16`].
 pub fn dct_iii_16(v: &mut [f32; 16]) {
-    let mut even = [0.0f32; 8];
-    let mut odd = [0.0f32; 8];
-    #[cfg(feature = "simd")]
-    {
-        use wide::f32x4;
-        let scale = f32x4::splat(FRAC_1_SQRT_2);
-        for chunk in 0..2 {
-            let base = chunk * 4;
-            let mut e = [0.0f32; 4];
-            let mut o = [0.0f32; 4];
-            for i in 0..4 {
-                e[i] = v[2 * (base + i)];
-                o[i] = v[2 * (base + i) + 1];
-            }
-            even[base..base + 4].copy_from_slice(&(f32x4::new(e) * scale).to_array());
-            odd[base..base + 4].copy_from_slice(&(f32x4::new(o) * scale).to_array());
-        }
-    }
-    #[cfg(not(feature = "simd"))]
-    {
-        for k in 0..8 {
-            even[k] = v[2 * k] * FRAC_1_SQRT_2;
-            odd[k] = v[2 * k + 1] * FRAC_1_SQRT_2;
-        }
-    }
-    dct_iii_8(&mut even);
-    dct_iv_8(&mut odd);
-    #[cfg(feature = "simd")]
-    {
-        use wide::f32x4;
-        for chunk in 0..2 {
-            let base = chunk * 4;
-            let e = f32x4::new([even[base], even[base + 1], even[base + 2], even[base + 3]]);
-            let o = f32x4::new([odd[base], odd[base + 1], odd[base + 2], odd[base + 3]]);
-            let sum = (e + o).to_array();
-            let dif = (e - o).to_array();
-            for i in 0..4 {
-                let k = base + i;
-                v[k] = sum[i];
-                v[15 - k] = dif[i];
-            }
-        }
-    }
-    #[cfg(not(feature = "simd"))]
-    {
-        for k in 0..8 {
-            v[k] = even[k] + odd[k];
-            v[15 - k] = even[k] - odd[k];
-        }
-    }
+    dct_iii_16_lanes(v);
 }
 
 /// Orthonormal 32-point DCT-II (forward transform), in place.
-///
-/// Factored even/odd split over [`dct_ii_16`] and [`dct_iv_16`]. Replaces the
-/// dense matrix path for length 32 (Opt-D / flamegraph `matrix_pass` hotspot).
-/// With `simd`, the even/odd split and scale use `wide::f32x4` (Opt-P leaf).
 pub fn dct_ii_32(v: &mut [f32; 32]) {
-    let mut even = [0.0f32; 16];
-    let mut odd = [0.0f32; 16];
-    #[cfg(feature = "simd")]
-    {
-        use wide::f32x4;
-        for chunk in 0..4 {
-            let base = chunk * 4;
-            let lo = f32x4::new([v[base], v[base + 1], v[base + 2], v[base + 3]]);
-            let hi = f32x4::new([v[31 - base], v[30 - base], v[29 - base], v[28 - base]]);
-            even[base..base + 4].copy_from_slice(&(lo + hi).to_array());
-            odd[base..base + 4].copy_from_slice(&(lo - hi).to_array());
-        }
-    }
-    #[cfg(not(feature = "simd"))]
-    {
-        for k in 0..16 {
-            even[k] = v[k] + v[31 - k];
-            odd[k] = v[k] - v[31 - k];
-        }
-    }
-    dct_ii_16(&mut even);
-    dct_iv_16(&mut odd);
-    #[cfg(feature = "simd")]
-    {
-        use wide::f32x4;
-        let scale = f32x4::splat(FRAC_1_SQRT_2);
-        for chunk in 0..4 {
-            let base = chunk * 4;
-            let e =
-                f32x4::new([even[base], even[base + 1], even[base + 2], even[base + 3]]) * scale;
-            let o = f32x4::new([odd[base], odd[base + 1], odd[base + 2], odd[base + 3]]) * scale;
-            let ea = e.to_array();
-            let oa = o.to_array();
-            for i in 0..4 {
-                v[2 * (base + i)] = ea[i];
-                v[2 * (base + i) + 1] = oa[i];
-            }
-        }
-    }
-    #[cfg(not(feature = "simd"))]
-    {
-        for k in 0..16 {
-            v[2 * k] = even[k] * FRAC_1_SQRT_2;
-            v[2 * k + 1] = odd[k] * FRAC_1_SQRT_2;
-        }
-    }
+    dct_ii_32_lanes(v);
 }
 
 /// Orthonormal 32-point DCT-III (inverse transform), in place.
 ///
 /// Exact inverse of [`dct_ii_32`].
 pub fn dct_iii_32(v: &mut [f32; 32]) {
-    let mut even = [0.0f32; 16];
-    let mut odd = [0.0f32; 16];
-    #[cfg(feature = "simd")]
-    {
-        use wide::f32x4;
-        let scale = f32x4::splat(FRAC_1_SQRT_2);
-        for chunk in 0..4 {
-            let base = chunk * 4;
-            // even[k] = v[2k]*s, odd[k] = v[2k+1]*s
-            let mut e = [0.0f32; 4];
-            let mut o = [0.0f32; 4];
-            for i in 0..4 {
-                e[i] = v[2 * (base + i)];
-                o[i] = v[2 * (base + i) + 1];
-            }
-            let ea = (f32x4::new(e) * scale).to_array();
-            let oa = (f32x4::new(o) * scale).to_array();
-            even[base..base + 4].copy_from_slice(&ea);
-            odd[base..base + 4].copy_from_slice(&oa);
-        }
+    dct_iii_32_lanes(v);
+}
+
+/// Longest 1-D length the factored butterflies cover; longer transforms use
+/// the dense matrix path in [`dct_ii_any`] / [`dct_iii_any`].
+const MAX_BUTTERFLY_LENGTH: usize = 32;
+
+/// Runs a fixed-size lane kernel over a lane slice already known to have
+/// length `N`.
+#[inline(always)]
+fn apply_fixed_lanes<L: Lane, const N: usize>(v: &mut [L], kernel: fn(&mut [L; N])) {
+    let mut buf = [L::splat(0.0); N];
+    buf.copy_from_slice(v);
+    kernel(&mut buf);
+    v.copy_from_slice(&buf);
+}
+
+/// Orthonormal DCT-II on lanes, for the butterfly lengths (1 to
+/// [`MAX_BUTTERFLY_LENGTH`]). Length 1 is the identity; anything else leaves
+/// `v` untouched (and asserts in a debug build).
+#[inline(always)]
+fn dct_ii_lanes<L: Lane>(v: &mut [L]) {
+    match v.len() {
+        0 | 1 => {}
+        2 => apply_fixed_lanes::<L, 2>(v, dct_ii_2),
+        4 => apply_fixed_lanes::<L, 4>(v, dct_ii_4),
+        8 => apply_fixed_lanes::<L, 8>(v, dct_ii_8_lanes),
+        16 => apply_fixed_lanes::<L, 16>(v, dct_ii_16_lanes),
+        32 => apply_fixed_lanes::<L, 32>(v, dct_ii_32_lanes),
+        n => debug_assert!(false, "unsupported lane DCT length {n}"),
     }
-    #[cfg(not(feature = "simd"))]
-    {
-        for k in 0..16 {
-            even[k] = v[2 * k] * FRAC_1_SQRT_2;
-            odd[k] = v[2 * k + 1] * FRAC_1_SQRT_2;
-        }
-    }
-    dct_iii_16(&mut even);
-    dct_iv_16(&mut odd);
-    #[cfg(feature = "simd")]
-    {
-        use wide::f32x4;
-        for chunk in 0..4 {
-            let base = chunk * 4;
-            let e = f32x4::new([even[base], even[base + 1], even[base + 2], even[base + 3]]);
-            let o = f32x4::new([odd[base], odd[base + 1], odd[base + 2], odd[base + 3]]);
-            let sum = (e + o).to_array();
-            let dif = (e - o).to_array();
-            for i in 0..4 {
-                let k = base + i;
-                v[k] = sum[i];
-                v[31 - k] = dif[i];
-            }
-        }
-    }
-    #[cfg(not(feature = "simd"))]
-    {
-        for k in 0..16 {
-            v[k] = even[k] + odd[k];
-            v[31 - k] = even[k] - odd[k];
-        }
+}
+
+/// Orthonormal DCT-III on lanes; exact inverse of [`dct_ii_lanes`].
+#[inline(always)]
+fn dct_iii_lanes<L: Lane>(v: &mut [L]) {
+    match v.len() {
+        0 | 1 => {}
+        // The orthonormal 2-point DCT-II is its own inverse.
+        2 => apply_fixed_lanes::<L, 2>(v, dct_ii_2),
+        4 => apply_fixed_lanes::<L, 4>(v, dct_iii_4),
+        8 => apply_fixed_lanes::<L, 8>(v, dct_iii_8_lanes),
+        16 => apply_fixed_lanes::<L, 16>(v, dct_iii_16_lanes),
+        32 => apply_fixed_lanes::<L, 32>(v, dct_iii_32_lanes),
+        n => debug_assert!(false, "unsupported lane IDCT length {n}"),
     }
 }
 
@@ -880,46 +865,90 @@ pub fn transpose_into(src: &[f32], dst: &mut [f32], rows: usize, cols: usize) {
     }
 }
 
-/// Applies the forward 1-D DCT to each contiguous row of a row-major matrix.
+/// One column pass of `DCT_2D` / `IDCT_2D`: applies the normative 1-D transform
+/// ([`dct_1d`] when `forward`, else [`idct_1d`]) to every column of a
+/// row-major `rows x cols` matrix, in place, `L::LANES` columns at a time.
 ///
-/// Transposing around a pass lets each 1-D kernel borrow its input directly
-/// instead of gathering and scattering a strided column through a temporary
-/// array.
-fn row_dct(m: &mut [f32], rows: usize, cols: usize) {
-    for row in m.chunks_exact_mut(cols).take(rows) {
-        dct_1d(row);
+/// `cols` must be a multiple of `L::LANES` and `rows` at most
+/// [`MAX_BUTTERFLY_LENGTH`]; [`column_pass`] guarantees both. Each lane sees
+/// exactly the operations the scalar kernels perform, in the same order, so
+/// the result is bit-identical whichever lane width is chosen.
+#[allow(clippy::cast_precision_loss)]
+fn column_pass_lanes<L: Lane>(m: &mut [f32], rows: usize, cols: usize, forward: bool) {
+    let factor = if forward {
+        1.0 / (rows as f32).sqrt()
+    } else {
+        (rows as f32).sqrt()
+    };
+    let scale = L::splat(factor);
+    let mut buf = [L::splat(0.0); MAX_BUTTERFLY_LENGTH];
+    let col = &mut buf[..rows];
+    for c in (0..cols).step_by(L::LANES) {
+        for (r, slot) in col.iter_mut().enumerate() {
+            *slot = L::load(&m[r * cols + c..]);
+        }
+        if forward {
+            dct_ii_lanes(col);
+        } else {
+            dct_iii_lanes(col);
+        }
+        for (r, slot) in col.iter_mut().enumerate() {
+            let scaled = *slot * scale;
+            *slot = scaled;
+            scaled.store(&mut m[r * cols + c..]);
+        }
     }
 }
 
-/// Column-first reference for tests of the contiguous forward pipeline.
+/// [`column_pass`] for the lengths the butterflies do not cover: gathers each
+/// column into a temporary and runs the scalar 1-D transform on it.
+fn column_pass_scalar(m: &mut [f32], rows: usize, cols: usize, forward: bool) {
+    let mut buf = [0.0f32; MAX_TRANSFORM_SIZE];
+    for c in 0..cols {
+        let col = &mut buf[..rows];
+        for (r, slot) in col.iter_mut().enumerate() {
+            *slot = m[r * cols + c];
+        }
+        if forward {
+            dct_1d(col);
+        } else {
+            idct_1d(col);
+        }
+        for r in 0..rows {
+            m[r * cols + c] = buf[r];
+        }
+    }
+}
+
+/// `ColumnDCT` / `ColumnIDCT` of I.7.3: the normative 1-D transform down every
+/// column of a row-major `rows x cols` matrix, in place.
+///
+/// Picks the widest lane type that divides `cols` for the butterfly lengths,
+/// and falls back to a scalar gather for the dense-matrix lengths (64 and up).
+fn column_pass(m: &mut [f32], rows: usize, cols: usize, forward: bool) {
+    if rows > MAX_BUTTERFLY_LENGTH {
+        column_pass_scalar(m, rows, cols, forward);
+        return;
+    }
+    #[cfg(feature = "simd")]
+    {
+        if cols.is_multiple_of(8) {
+            column_pass_lanes::<wide::f32x8>(m, rows, cols, forward);
+            return;
+        }
+        if cols.is_multiple_of(4) {
+            column_pass_lanes::<wide::f32x4>(m, rows, cols, forward);
+            return;
+        }
+    }
+    column_pass_lanes::<f32>(m, rows, cols, forward);
+}
+
+/// Column-first reference for tests of the lane-batched pipeline: every column
+/// gathered and transformed one at a time through the scalar [`dct_1d`].
 #[cfg(test)]
 fn column_dct(m: &mut [f32], rows: usize, cols: usize) {
-    let mut buf = [0.0f32; MAX_TRANSFORM_SIZE];
-    for c in 0..cols {
-        let col = &mut buf[..rows];
-        for (r, slot) in col.iter_mut().enumerate() {
-            *slot = m[r * cols + c];
-        }
-        dct_1d(col);
-        for r in 0..rows {
-            m[r * cols + c] = buf[r];
-        }
-    }
-}
-
-/// `ColumnIDCT` of I.7.3.
-fn column_idct(m: &mut [f32], rows: usize, cols: usize) {
-    let mut buf = [0.0f32; MAX_TRANSFORM_SIZE];
-    for c in 0..cols {
-        let col = &mut buf[..rows];
-        for (r, slot) in col.iter_mut().enumerate() {
-            *slot = m[r * cols + c];
-        }
-        idct_1d(col);
-        for r in 0..rows {
-            m[r * cols + c] = buf[r];
-        }
-    }
+    column_pass_scalar(m, rows, cols, true);
 }
 
 /// The shape of the coefficient matrix produced by `DCT_2D` on `rows x cols`
@@ -960,16 +989,18 @@ pub fn dct_2d_in_place(work: &mut [f32], scratch: &mut [f32], rows: usize, cols:
         debug_assert!(false, "bad DCT_2D shape {rows}x{cols}");
         return;
     }
-    // Keep I.7.3's column-then-row evaluation order, including its floating
-    // rounding, but transpose around each axis so the 1-D kernels operate on
-    // contiguous rows instead of gathering and scattering strided columns.
+    // I.7.3's column-then-row evaluation order, including its floating
+    // rounding: the column pass runs straight down the row-major samples, and
+    // the row pass is a column pass over the transpose.
+    column_pass(work, rows, cols, true);
     transpose_into(work, scratch, rows, cols);
-    row_dct(scratch, cols, rows);
-    transpose_into(scratch, work, cols, rows);
-    row_dct(work, rows, cols);
+    column_pass(scratch, cols, rows, true);
+    // `scratch` is now the `cols x rows` matrix of I.7.3's transposed result;
+    // the clause keeps that orientation exactly when it is landscape.
     if cols <= rows {
-        transpose_into(work, scratch, rows, cols);
         work[..n].copy_from_slice(&scratch[..n]);
+    } else {
+        transpose_into(scratch, work, cols, rows);
     }
 }
 
@@ -990,9 +1021,9 @@ pub fn idct_2d_in_place(work: &mut [f32], scratch: &mut [f32], rows: usize, cols
     } else {
         scratch[..n].copy_from_slice(&work[..n]);
     }
-    column_idct(scratch, cols, rows);
+    column_pass(scratch, cols, rows, false);
     transpose_into(scratch, work, cols, rows);
-    column_idct(work, rows, cols);
+    column_pass(work, rows, cols, false);
 }
 
 /// `DCT_2D` of 18181-1 I.7.3, into caller-provided buffers.
@@ -1825,6 +1856,80 @@ mod tests {
                 0.0,
                 &format!("{rows}x{cols} contiguous/column-first coefficients"),
             );
+        }
+    }
+
+    /// The inverse pipeline preserves I.7.3's column-first evaluation exactly
+    /// for every Table I.1 shape: `IDCT_2D` through the lane-batched column
+    /// passes equals the same passes run one scalar column at a time.
+    #[test]
+    fn i73_inverse_matches_column_first_reference() {
+        let mut rng = Lcg::new(0x1d17_c017);
+        for &(rows, cols) in &TABLE_I1_SHAPES {
+            let coeffs: Vec<f32> = (0..rows * cols).map(|_| rng.next(1.0)).collect();
+            let got = idct_2d_raw(&coeffs, rows, cols);
+
+            let n = rows * cols;
+            let mut reference = vec![0.0f32; n];
+            let mut scratch = vec![0.0f32; n];
+            if cols > rows {
+                transpose_into(&coeffs, &mut scratch, rows, cols);
+            } else {
+                scratch.copy_from_slice(&coeffs);
+            }
+            column_pass_scalar(&mut scratch, cols, rows, false);
+            transpose_into(&scratch, &mut reference, cols, rows);
+            column_pass_scalar(&mut reference, rows, cols, false);
+
+            assert_slice_close(
+                &got,
+                &reference,
+                0.0,
+                &format!("{rows}x{cols} lane/column-first samples"),
+            );
+        }
+    }
+
+    /// Every lane width runs the identical operation sequence: for each
+    /// butterfly length and both directions, a pass over `wide` lanes is
+    /// bit-for-bit (`to_bits`, so signed zeros count) equal to the scalar
+    /// pass over the same matrix. This is the invariant that lets `simd` and
+    /// non-`simd` builds emit byte-identical codestreams.
+    #[cfg(feature = "simd")]
+    #[test]
+    fn lane_widths_are_bit_identical_to_scalar() {
+        let mut rng = Lcg::new(0x5ca1_ab1e);
+        for &rows in &[1usize, 2, 4, 8, 16, 32] {
+            for &cols in &[4usize, 8, 16, 32] {
+                for forward in [true, false] {
+                    for round in 0..8 {
+                        let amplitude = if round % 2 == 0 { 1.0 } else { 4096.0 };
+                        let base: Vec<f32> =
+                            (0..rows * cols).map(|_| rng.next(amplitude)).collect();
+                        let mut scalar = base.clone();
+                        column_pass_lanes::<f32>(&mut scalar, rows, cols, forward);
+                        let mut four = base.clone();
+                        column_pass_lanes::<wide::f32x4>(&mut four, rows, cols, forward);
+                        let mut dispatched = base.clone();
+                        column_pass(&mut dispatched, rows, cols, forward);
+                        let mut variants = vec![("f32x4", four), ("dispatched", dispatched)];
+                        if cols.is_multiple_of(8) {
+                            let mut eight = base;
+                            column_pass_lanes::<wide::f32x8>(&mut eight, rows, cols, forward);
+                            variants.push(("f32x8", eight));
+                        }
+                        for (name, values) in &variants {
+                            for (i, (s, v)) in scalar.iter().zip(values.iter()).enumerate() {
+                                assert_eq!(
+                                    s.to_bits(),
+                                    v.to_bits(),
+                                    "{rows}x{cols} forward={forward} {name} cell {i}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
