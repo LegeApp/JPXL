@@ -1835,7 +1835,7 @@ record jpegxl-rs.work.arch-phase38-band-parallel-cfl-prep/1 : work {
 
 record jpegxl-rs.work.arch-phase39-lane-recon/1 : work {
     title "Phase 39: reconstruction from the lane pass and vectorisable chroma targets; ANS-reciprocal and walk micro-work recorded as honest negatives"
-    state proposed
+    state completed
     scope [
         path ".agent/scratch/**",
         path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
@@ -1854,18 +1854,21 @@ record jpegxl-rs.work.arch-phase39-lane-recon/1 : work {
                 Canonical streams across presets, sizes, thread counts and AVX2 on/off are byte-identical to Phase 38.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase39-identity-2026-08-17/1 ]
         }
         check safety {
             statement """
                 fmt, strict Clippy, the workspace suites in fast-debug and release, oracle/roundtrip/determinism, no-default-feature and AVX2-disabled suites pass.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase39-safety-2026-08-17/1 ]
         }
         check speed {
             statement """
                 Pinned Balanced mid medians do not regress (measured ~2% faster in three interleaved rounds); the two reverted experiments are documented with their measurements.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.phase39-speed-2026-08-17/1 ]
         }
     }
     depends_on [ @jpegxl-rs.work.arch-phase38-band-parallel-cfl-prep/1 ]
