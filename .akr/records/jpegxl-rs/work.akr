@@ -1539,7 +1539,7 @@ record jpegxl-rs.work.arch-phase31-lane4-vector-select/1 : work {
 
 record jpegxl-rs.work.arch-phase32-dirty-frontier-screen/1 : work {
     title "Phase 32: dirty-frontier cover stability screen (open question 1)"
-    state proposed
+    state completed
     scope [ path ".agent/scratch/**", path "JPXL/crates/jpxl-encode-policy/src/regret.rs" ]
     intent """
         Measure, before building anything, whether open question 1's dirty-frontier premise holds: extend the read-only regret harness (regret.rs) to walk the cover quadtree with exact split/merge costs at multiple quantizer rungs (anchor0, anchor1, finalist geometry), join the per-node evidence, and report winner-stability across rungs, the false-stable rate a margin guard would introduce (same winner and safe margin at both anchors, flipped at the finalist), and the dirty-node fraction those guards leave. This is a counters-first screen per optimize.md's required workflow: it changes no production path, and its numbers decide whether the local dirty-frontier refresh mechanism is worth a feature-gated phase at all.
@@ -1550,18 +1550,21 @@ record jpegxl-rs.work.arch-phase32-dirty-frontier-screen/1 : work {
                 Workspace build and strict Clippy pass on the changed crate; the harness stays read-only (no production path touched).
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase32-gates-2026-08-17/1 ]
         }
         check measurement {
             statement """
                 The screen reports stability, false-stable, and dirty-fraction numbers over synthetic and canonical-photo inputs at representative anchor/finalist rung triples, with raw logs under .agent/scratch/.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.phase32-measurement-2026-08-17/1 ]
         }
         check safety {
             statement """
                 The full workspace test suite passes; the existing ExactPolicy zero-regret/full-agreement invariants still hold.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase32-safety-2026-08-17/1 ]
         }
     }
     part_of [ @jpegxl-rs.track.encoder-optimization ]

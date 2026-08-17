@@ -242,6 +242,18 @@ record jpegxl-rs.papercut.the-installed-akr-0-3-1-rejected-four-existing/1 : pap
     created_at 2026-08-15
 }
 
+record jpegxl-rs.papercut.the-photo-measurement-used-paths-relative-to/1 : papercut {
+    title "The photo measurement used paths relative to the repository root while…"
+    state verified
+    statement """
+        The photo measurement used paths relative to the repository root while cargo ran from JPXL/, causing an immediate file-not-found retry. Use absolute corpus paths in measurement commands to avoid cwd-sensitive scratch references.
+        """
+    observed_at git:0f244c1acd48871c78c0d3166f9e5b0b9bfbe7de
+    about "Phase 32 harness invocation"
+    author "fugu-ultra"
+    created_at 2026-08-17
+}
+
 record jpegxl-rs.papercut.the-repository-root-and-the-jpxl-crate-root-use/1 : papercut {
     title "The repository root and the JPXL crate root use different relative…"
     state verified

@@ -1783,6 +1783,45 @@ record jpegxl-rs.evidence.phase31-profile-2026-08-16/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase32-gates-2026-08-17/1 : evidence {
+    title "Phase 32 changed-crate gates pass and production remains untouched"
+    state verified
+    result pass
+    method command
+    observed_at git:d54b4abf17a3be2e802d649e0cd518b0f9005dbd
+    command "cd JPXL && cargo fmt --all --check && cargo build --workspace && cargo build --workspace --tests && cargo clippy -p jpxl-encode-policy --lib --tests -- -D warnings"
+    artifact "JPXL/crates/jpxl-encode-policy/src/regret.rs"
+    summary """
+        Formatting, workspace build, workspace test-build, and strict Clippy for jpxl-encode-policy lib/tests all passed. The committed change is confined to the cfg(test) regret harness in regret.rs, so no production encode path, bytes, or quality policy changed.
+        """
+}
+
+record jpegxl-rs.evidence.phase32-measurement-2026-08-17/1 : evidence {
+    title "Phase 32 exact-margin screen supports a conservative dirty-frontier prototype"
+    state verified
+    result pass
+    method command
+    observed_at git:d54b4abf17a3be2e802d649e0cd518b0f9005dbd
+    command "cd JPXL && JPXL_PHASE32_PPM='<absolute mid-photo.ppm>;<absolute large-photo.ppm>' cargo test -p jpxl-encode-policy --lib --release phase32_dirty_frontier_photo_screen -- --ignored --nocapture; cargo test -p jpxl-encode-policy --lib --release phase32_dirty_frontier_synthetic_screen -- --ignored --nocapture"
+    artifact ".agent/scratch/phase32-dirty-frontier/photos.log"
+    summary """
+        The read-only exact cover harness joined anchor0/anchor1/finalist evidence by frame-global node across one synthetic and two canonical-photo inputs. Mid 4.3MP: 21,000 nodes, anchor stability 93.43%; at a 5% exact relative-margin guard dirty_fraction=21.1238% with 0 false-stable nodes. Large 12MP: 58,375 nodes, anchor stability 94.64%; guard 5% dirty_fraction=21.2094% with 2/45,994 false-stable nodes (0.0043%). Synthetic 1024x768 at its bounded 0.5bpp path is harder: guard 5% leaves 57.58% dirty with 0 false-stable. This supports a conservative feature-gated production experiment with exact fallback, not immediate default promotion.
+        """
+}
+
+record jpegxl-rs.evidence.phase32-safety-2026-08-17/1 : evidence {
+    title "Phase 32 full workspace and exact-regret invariants pass"
+    state verified
+    result pass
+    method command
+    observed_at git:d54b4abf17a3be2e802d649e0cd518b0f9005dbd
+    command "cd JPXL && cargo test --workspace && cargo test -p jpxl-encode-policy --lib --release regret"
+    artifact ".agent/scratch/phase32-dirty-frontier/workspace-tests.log"
+    summary """
+        The full workspace test suite passed with zero failures, including all external-oracle VarDCT tests. The focused release regret suite passed ExactPolicy zero-regret/full-agreement, production tile_region total-cost agreement, and lower-bound prune safety; the two expensive Phase-32 measurement rows remain explicitly ignored by default and passed when invoked separately.
+        """
+}
+
 record jpegxl-rs.evidence.phase4-0b-density-gate-2026-08-08/1 : evidence {
     title "4.0b density + decode-validity gate: jpxl-modular beats cjxl -e1, trails cjxl -e7 by 16-42%"
     state verified
