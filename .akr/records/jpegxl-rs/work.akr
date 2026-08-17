@@ -1948,6 +1948,44 @@ record jpegxl-rs.work.arch-phase4-modular-scoped/1 : work {
     ]
 }
 
+record jpegxl-rs.work.arch-phase40-cover-scoring-pass/1 : work {
+    title "Phase 40: cheapen the single cover-scoring pass (row targets, direct luma reconstruction sink, per-row cutoff)"
+    state proposed
+    scope [
+        path ".agent/scratch/**",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/docs/optimize.md"
+    ]
+    intent """
+        The planning review found no module needing an overhaul: cover, CfL and entropy training already run once per encode and the controller's data dependency keeps the quantize replays sequential under Contract A. The remaining planning-side lever is instruction volume in the one cover-scoring pass (cover_ms 123 of ~400 ms on mid), whose hot loop is score_channel_lanes inside block_cost_bounded. Rewrite it to take targets as LaneTargets (Y plane directly; chroma residual plane - k*d_y computed per row as a vectorisable zip), write the luma reconstruction straight into the caller's d_y_hf through the run kernel's reconstruction output, fold lambda*to_sample_domain once under the flat policy (per-cell weight exactly 1.0), and test the cutoff once per row instead of per cell -- decision-preserving because both accumulators only grow with non-negative finite terms and a pruned candidate is discarded whole; the scalar fallback keeps the per-cell order. Byte-identical output required.
+        """
+    note """
+        Opened 2026-08-17 from the plan-mode review (two independent analyses). Host carried other jobs during measurement, so the cost claim uses load-independent perf stat instruction counts.
+        """
+    acceptance {
+        check identity {
+            statement """
+                Canonical streams across presets, sizes, thread counts and AVX2 on/off are byte-identical to Phase 39.
+                """
+            method command
+        }
+        check safety {
+            statement """
+                fmt, strict Clippy, workspace suites in fast-debug and release, oracle/roundtrip/determinism, no-default-feature and AVX2-disabled suites pass.
+                """
+            method command
+        }
+        check speed {
+            statement """
+                perf stat instruction count for the mid Balanced bench drops materially, and the scoring symbols' instruction share drops.
+                """
+            method observation
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase39-lane-recon/1 ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+}
+
 record jpegxl-rs.work.arch-phase4a-weighted-predictor-scoped/1 : work {
     title "Phase 4A: wire Predictor::Weighted into the encoder despite its stateful, order-dependent scoring cost"
     state completed

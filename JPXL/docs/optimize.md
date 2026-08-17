@@ -805,6 +805,37 @@ Two experiments measured nothing and were reverted rather than kept:
 Remaining wall budget on mid at ~400 ms (quiet host): cover 123, writer
 counts + store ~97, plan-full 37, CfL 37, quantize ~34, entropy training 31.
 
+## Phase 40 — cheapening the single cover-scoring pass (2026-08-17)
+
+Planning review (two independent code-cited analyses, recorded in the plan for
+this round): no module needs an overhaul. Cover, CfL and entropy training
+already run once per encode; the three quantize replays are kept sequential by
+the controller's data dependency (second rung from the first exact size,
+finalist from both); the writer walks each written plan twice. What remained
+on the planning side was instruction volume in the one 123 ms cover-scoring
+pass, whose hot loop is `score_channel_lanes` inside `block_cost_bounded`.
+
+`score_channel_lanes` now takes its targets as a `LaneTargets` (the Y plane
+directly, or the `plane - k * d_y` chroma residual computed per row as a
+vectorisable zip), writes the luma reconstruction straight into the caller's
+`d_y_hf` through the run kernel's reconstruction output instead of a per-cell
+closure, folds `lambda * to_sample_domain` once under the flat policy (the
+per-cell weight is exactly 1.0 there, so `(lambda*tsd) * err²` is the same
+product), and tests the cutoff once per row instead of after every cell. The
+per-row cutoff is decision-preserving because both accumulators only grow (bits
+by saturating adds, `weighted_sse` by non-negative finite terms) and a pruned
+candidate is discarded whole — its partial sums and its `d_y_hf` scratch are
+never read — so anything pruned at cell k is still pruned at the end of that
+row and every survivor performs exactly the same additions in the same order.
+The scalar fallback (run kernel error) keeps the per-cell order.
+
+Measured with `perf stat` instruction counts, which are load-independent (this
+host was carrying other jobs): 39.08 G → 37.60 G instructions per two-iteration
+mid Balanced bench (−3.8%); the two `block_cost_bounded` scoring closures
+(4.9% + 3.7% of instructions) became one `score_channel_lanes` symbol at 6.2%.
+All canonical streams identical. `HfQuantizers::get` was left alone: with AQ off
+its linear scan is over three entries.
+
 
 ### Open architectural questions
 

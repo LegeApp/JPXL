@@ -4065,9 +4065,62 @@ fn cell_weight(freq: &[f32], cell: usize) -> f64 {
     freq.get(cell).map_or(1.0, |w| f64::from(*w))
 }
 
+/// Where [`score_channel_lanes`] reads one channel's targets from: the
+/// coefficient plane itself (Y), or the CfL-neutral residual
+/// `plane - k * d_y` against the luma reconstruction (X/B).
+#[derive(Clone, Copy)]
+enum LaneTargets<'a> {
+    Direct(&'a [f32]),
+    Residual {
+        plane: &'a [f32],
+        k: f32,
+        d_y: &'a [f32],
+    },
+}
+
+impl LaneTargets<'_> {
+    /// The scalar reference for one cell: what the pre-Phase-40 `target_at`
+    /// closures computed.
+    #[inline]
+    fn at(&self, cell: usize) -> f32 {
+        match *self {
+            Self::Direct(plane) => plane.get(cell).copied().unwrap_or(0.0),
+            Self::Residual { plane, k, d_y } => {
+                plane.get(cell).copied().unwrap_or(0.0) - k * d_y.get(cell).copied().unwrap_or(0.0)
+            }
+        }
+    }
+
+    /// The row `first..first + len` as a slice: borrowed straight from the
+    /// plane for `Direct`, or computed cell by cell into `buf` (the same
+    /// `plane - k * d_y` arithmetic as [`Self::at`], written as a zip so the
+    /// compiler vectorises it) for `Residual`. `None` when the row is not
+    /// fully inside every source, in which case the caller falls back to
+    /// [`Self::at`].
+    #[inline]
+    fn row<'b>(&'b self, first: usize, len: usize, buf: &'b mut [f32]) -> Option<&'b [f32]> {
+        match *self {
+            Self::Direct(plane) => plane.get(first..first + len),
+            Self::Residual { plane, k, d_y } => {
+                let (src, dy, out) = (
+                    plane.get(first..first + len)?,
+                    d_y.get(first..first + len)?,
+                    buf.get_mut(..len)?,
+                );
+                for ((slot, &c), &d) in out.iter_mut().zip(src.iter()).zip(dy.iter()) {
+                    *slot = c - k * d;
+                }
+                Some(out)
+            }
+        }
+    }
+}
+
 #[allow(
     clippy::too_many_arguments,
-    reason = "internal plumbing: a lane-scoring bundle where the two closures \\\n              and the two accumulators are consumed by exactly two callers \\\n              (block_cost_bounded and the Phase 6.3 weight tests)"
+    reason = "internal plumbing: a lane-scoring bundle where the target source, \
+              the reconstruction sink and the two accumulators are consumed by \
+              exactly two callers (block_cost_bounded and the Phase 6.3 weight tests)"
 )]
 fn score_channel_lanes(
     hf_quant: &HfQuantizer,
@@ -4076,8 +4129,8 @@ fn score_channel_lanes(
     to_sample_domain: f64,
     side: usize,
     n: usize,
-    mut target_at: impl FnMut(usize) -> f32,
-    mut on_recon: impl FnMut(usize, f32),
+    targets: LaneTargets<'_>,
+    mut recon_sink: Option<&mut [f32]>,
     bits: &mut u64,
     weighted_sse: &mut f64,
     check: &impl Fn(u64, f64) -> bool,
@@ -4087,11 +4140,24 @@ fn score_channel_lanes(
     freq: &[f32],
 ) -> Result<bool> {
     // Phase 36: one run-kernel call per row (vector chunks plus a padded
-    // final chunk), then the same per-cell accumulate-and-check walk as
-    // before, in the same raster order. `choose_run` is cell-for-cell
-    // identical to `choose`/`reconstruct`; when it reports that some cell of
-    // the row would fail, the row falls through to the scalar loop below,
-    // which reproduces the exact cutoff-before-error order.
+    // final chunk). `choose_run` is cell-for-cell identical to
+    // `choose`/`reconstruct`; when it reports that some cell of the row would
+    // fail, the row falls through to the scalar loop below, which reproduces
+    // the exact per-cell cutoff-before-error order.
+    //
+    // Phase 40: the cutoff is tested once per row rather than after every
+    // cell. Both accumulators only ever grow (`bits` by saturating adds of
+    // non-negative counts, `weighted_sse` by non-negative finite terms), and a
+    // pruned candidate is discarded whole -- its partial sums and its
+    // reconstruction scratch are never read again -- so a candidate that the
+    // per-cell test would have pruned at cell k is still pruned at the end of
+    // that row, and every survivor accumulates exactly the same additions in
+    // the same order. Cover decisions are therefore unchanged; only the
+    // per-cell branch is gone. Under the flat policy the per-cell weight is
+    // exactly 1.0, so `(lambda * to_sample_domain) * err^2` is the same
+    // product as `lambda * to_sample_domain * 1.0 * err^2`.
+    let flat = freq.is_empty();
+    let flat_weight = lambda * to_sample_domain;
     let mut targets_buf = [0.0f32; MAX_SCORE_ROW];
     let mut q_buf = [0i32; MAX_SCORE_ROW];
     let mut recon_buf = [0.0f32; MAX_SCORE_ROW];
@@ -4102,41 +4168,69 @@ fn score_channel_lanes(
         let run_len = side - col_start;
         if run_len <= MAX_SCORE_ROW {
             let first_cell = row_base + col_start;
-            let (Some(targets), Some(qs), Some(recons)) = (
-                targets_buf.get_mut(..run_len),
+            let batched = match (
+                targets.row(first_cell, run_len, &mut targets_buf),
                 q_buf.get_mut(..run_len),
-                recon_buf.get_mut(..run_len),
-            ) else {
-                unreachable!("run_len <= MAX_SCORE_ROW was checked");
-            };
-            for (i, t) in targets.iter_mut().enumerate() {
-                *t = target_at(first_cell + i);
-            }
-            if hf_quant
-                .choose_run(channel, first_cell, targets, qs, Some(recons))
-                .is_ok()
-            {
-                for i in 0..run_len {
-                    let cell = first_cell + i;
-                    let q = qs.get(i).copied().unwrap_or(0);
-                    let recon = recons.get(i).copied().unwrap_or(0.0);
-                    let target = targets.get(i).copied().unwrap_or(0.0);
-                    *bits = bits.saturating_add(residual_bits(q));
-                    *weighted_sse += lambda
-                        * to_sample_domain
-                        * cell_weight(freq, cell)
-                        * f64::from(recon - target).powi(2);
-                    on_recon(cell, recon);
-                    if check(*bits, *weighted_sse) {
-                        return Ok(true);
+            ) {
+                (Some(row_targets), Some(qs)) => {
+                    // The luma pass writes its reconstruction straight into
+                    // the caller's sink; chroma uses a row scratch.
+                    let recons: &mut [f32] = match recon_sink
+                        .as_deref_mut()
+                        .and_then(|sink| sink.get_mut(first_cell..first_cell + run_len))
+                    {
+                        Some(sink_row) => sink_row,
+                        None => match recon_buf.get_mut(..run_len) {
+                            Some(scratch) => scratch,
+                            None => unreachable!("run_len <= MAX_SCORE_ROW was checked"),
+                        },
+                    };
+                    if hf_quant
+                        .choose_run(channel, first_cell, row_targets, qs, Some(recons))
+                        .is_ok()
+                    {
+                        let mut row_bits = *bits;
+                        let mut row_sse = *weighted_sse;
+                        if flat {
+                            for ((&q, &recon), &target) in
+                                qs.iter().zip(recons.iter()).zip(row_targets.iter())
+                            {
+                                row_bits = row_bits.saturating_add(residual_bits(q));
+                                row_sse += flat_weight * f64::from(recon - target).powi(2);
+                            }
+                        } else {
+                            for (i, ((&q, &recon), &target)) in qs
+                                .iter()
+                                .zip(recons.iter())
+                                .zip(row_targets.iter())
+                                .enumerate()
+                            {
+                                row_bits = row_bits.saturating_add(residual_bits(q));
+                                row_sse += lambda
+                                    * to_sample_domain
+                                    * cell_weight(freq, first_cell + i)
+                                    * f64::from(recon - target).powi(2);
+                            }
+                        }
+                        *bits = row_bits;
+                        *weighted_sse = row_sse;
+                        if check(*bits, *weighted_sse) {
+                            return Ok(true);
+                        }
+                        true
+                    } else {
+                        false
                     }
                 }
+                _ => false,
+            };
+            if batched {
                 col = side;
             }
         }
         while col < side {
             let cell = row_base + col;
-            let target = target_at(cell);
+            let target = targets.at(cell);
             let q = hf_quant.choose(target, channel, cell)?;
             let recon = hf_quant.reconstruct(q, channel, cell);
             *bits = bits.saturating_add(residual_bits(q));
@@ -4144,7 +4238,12 @@ fn score_channel_lanes(
                 * to_sample_domain
                 * cell_weight(freq, cell)
                 * f64::from(recon - target).powi(2);
-            on_recon(cell, recon);
+            if let Some(slot) = recon_sink
+                .as_deref_mut()
+                .and_then(|sink| sink.get_mut(cell))
+            {
+                *slot = recon;
+            }
             if check(*bits, *weighted_sse) {
                 return Ok(true);
             }
@@ -4330,12 +4429,8 @@ fn block_cost_bounded(
             to_sample_domain,
             side,
             n,
-            |cell| cy.get(cell).copied().unwrap_or(0.0),
-            |cell, recon| {
-                if let Some(slot) = d_y_hf.get_mut(cell) {
-                    *slot = recon;
-                }
-            },
+            LaneTargets::Direct(cy),
+            Some(&mut *d_y_hf),
             &mut bits,
             &mut weighted_sse,
             &check,
@@ -4379,11 +4474,12 @@ fn block_cost_bounded(
                 to_sample_domain,
                 side,
                 n,
-                |cell| {
-                    plane.get(cell).copied().unwrap_or(0.0)
-                        - k * d_y_hf.get(cell).copied().unwrap_or(0.0)
+                LaneTargets::Residual {
+                    plane,
+                    k,
+                    d_y: d_y_hf,
                 },
-                |_cell, _recon| {},
+                None,
                 &mut bits,
                 &mut weighted_sse,
                 &check,
