@@ -522,7 +522,8 @@ fn plan_at_with_cfl_workspace(
         request.lambda_scale,
         quantizer_transforms,
     )?
-    .with_dead_zone_scale(request.dead_zone_scale);
+    .with_dead_zone_scale(request.dead_zone_scale)
+    .with_zero_token_bits(request.zero_token_bits);
     cache.prepare(&geometry)?;
 
     // Fast navigation is deliberately allowed a cheaper structural policy.
@@ -2003,6 +2004,19 @@ impl HfQuantizers {
         self
     }
 
+    /// Sets what the trailing-truncation pass charges per freed interior zero
+    /// token (Quality-track research control, see
+    /// [`EncodeRequest::zero_token_bits`]). Non-finite or negative values keep
+    /// the built default.
+    fn with_zero_token_bits(mut self, bits: f32) -> Self {
+        if bits.is_finite() && bits >= 0.0 {
+            for (_, quant) in &mut self.by_key {
+                quant.set_zero_token_bits(bits);
+            }
+        }
+        self
+    }
+
     fn get(&self, transform: TransformType, mul: HfMul) -> Result<&HfQuantizer> {
         self.by_key
             .iter()
@@ -2676,8 +2690,9 @@ fn set_lf(
 /// toward keeping coefficients.
 ///
 /// This is a stated estimate, not a measurement. Sweeping it is the first thing
-/// to try if the pass screens close to neutral.
-const ZERO_TOKEN_BITS: f32 = 1.0;
+/// to try if the pass screens close to neutral — the Quality track does that
+/// through [`EncodeRequest::zero_token_bits`], whose default this is.
+pub const ZERO_TOKEN_BITS: f32 = 1.0;
 
 /// Reused per-varblock temporaries for [`quantize_square_varblock`].
 struct QuantScratch {
@@ -2782,9 +2797,10 @@ fn quantize_square_varblock(
         &[]
     };
     if truncate {
-        let dropped = hf_quant.truncate_trailing(1, qy, order, n * n, ZERO_TOKEN_BITS, |cell| {
-            y_coeff.get(cell).copied().unwrap_or(0.0)
-        });
+        let dropped =
+            hf_quant.truncate_trailing(1, qy, order, n * n, hf_quant.zero_token_bits(), |cell| {
+                y_coeff.get(cell).copied().unwrap_or(0.0)
+            });
         // A truncated cell now reconstructs as `reconstruct(0)`; refresh only
         // those (a cell whose integer was already zero already holds it).
         if dropped > 0 {
@@ -2853,9 +2869,14 @@ fn quantize_square_varblock(
         }
         hf_quant.quantize_lane(channel, &qscratch.chroma_targets, out, side, n, true)?;
         if truncate {
-            hf_quant.truncate_trailing(channel, out, order, n * n, ZERO_TOKEN_BITS, |cell| {
-                qscratch.chroma_targets.get(cell).copied().unwrap_or(0.0)
-            });
+            hf_quant.truncate_trailing(
+                channel,
+                out,
+                order,
+                n * n,
+                hf_quant.zero_token_bits(),
+                |cell| qscratch.chroma_targets.get(cell).copied().unwrap_or(0.0),
+            );
         }
     }
 

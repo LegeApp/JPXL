@@ -451,6 +451,12 @@ pub struct EncodeRequest {
     /// and the final quantization pass, so a swept value moves the whole
     /// encoder consistently.
     pub dead_zone_scale: f32,
+    /// What Phase 7.1's trailing-truncation pass charges, in bits, for each
+    /// interior zero token that dropping a block's last nonzero would free
+    /// (Quality-track research control). The default is the crate's stated
+    /// estimate [`crate::ZERO_TOKEN_BITS`] (1.0) and leaves every output byte
+    /// unchanged; larger values truncate more.
+    pub zero_token_bits: f32,
     /// Coarse section-parallelism policy for emission (Opt-P).
     ///
     /// Default is [`jpxl_encode::EncodeResources::auto`]. The target-rate path
@@ -500,6 +506,7 @@ impl EncodeRequest {
             quantizer_choice: QuantizerChoiceMode::default(),
             lambda_scale: 1.0,
             dead_zone_scale: 1.0,
+            zero_token_bits: crate::ZERO_TOKEN_BITS,
             resources: jpxl_encode::EncodeResources::auto(),
         }
     }
@@ -512,13 +519,19 @@ impl EncodeRequest {
     /// rate. LF fill stays disabled because it changes that distortion knob
     /// after the primary rate ladder settles. Phase 5I then found one active
     /// EPF step with uniform Sharpness 7 improved Butteraugli in all twelve
-    /// cells as well. [`Self::defaults`] remains the stable fixed-quantizer,
-    /// restoration-off request.
+    /// cells as well. Phase Q1 (2026-08-17) re-screened `quant_lf` on the
+    /// quality harness once the LF sections were entropy-coded (Q0b) and
+    /// found 4 the optimum of {2, 3, 4, 5, 6, 8, 12, 16, 24}: SSIMULACRA2
+    /// +0.41 on the ladder and +0.67 on the seven scenes at equal bytes,
+    /// Butteraugli 3-norm -3.0% / -3.3%, with 2 already turning SSIMULACRA2
+    /// negative at 0.5 bpp. `--quant-lf 8` reaches the Phase 5G value.
+    /// [`Self::defaults`] remains the stable fixed-quantizer, restoration-off
+    /// request.
     #[must_use]
     pub fn for_target(target: RateTarget) -> Self {
         let mut request = Self::defaults();
         request.target = Some(target);
-        request.quant_lf = QuantLf::new(8).unwrap_or(QuantLf::MIN);
+        request.quant_lf = QuantLf::new(4).unwrap_or(QuantLf::MIN);
         request.budget.aq_mode = crate::field::AqMode::Off;
         request.budget.rate.lf_fill_probes = 0;
         request.restoration.epf_iters = 1;
@@ -611,7 +624,7 @@ mod tests {
         let target = RateTarget::Bytes(12_345);
         let request = EncodeRequest::for_target(target);
         assert_eq!(request.target, Some(target));
-        assert_eq!(request.quant_lf.get(), 8);
+        assert_eq!(request.quant_lf.get(), 4);
         assert_eq!(request.budget.aq_mode, crate::field::AqMode::Off);
         assert_eq!(request.budget.rate.lf_fill_probes, 0);
         assert_eq!(request.restoration.epf_iters, 1);

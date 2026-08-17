@@ -239,6 +239,9 @@ pub struct HfQuantizer {
     /// Phase 7.0's mode; off by default and off under Phase 7.1, which wants
     /// the weight but keeps the nearest per-coefficient rule.
     rd_choose: bool,
+    /// What Phase 7.1's trailing-truncation pass charges for one interior
+    /// zero token it would free (see [`crate::EncodeRequest::zero_token_bits`]).
+    zero_token_bits: f32,
 }
 
 impl HfQuantizer {
@@ -358,6 +361,7 @@ impl HfQuantizer {
             zero_threshold,
             rd: None,
             rd_choose: false,
+            zero_token_bits: 1.0,
         })
     }
 
@@ -564,6 +568,18 @@ impl HfQuantizer {
             .get(channel)
             .and_then(|s| s.get(cell).copied())
             .unwrap_or(0.0)
+    }
+
+    /// Sets the interior-zero token price for the truncation pass (see
+    /// [`crate::EncodeRequest::zero_token_bits`]).
+    pub(crate) fn set_zero_token_bits(&mut self, bits: f32) {
+        self.zero_token_bits = bits;
+    }
+
+    /// The interior-zero token price the truncation pass uses.
+    #[must_use]
+    pub(crate) fn zero_token_bits(&self) -> f32 {
+        self.zero_token_bits
     }
 
     /// Multiplies every cell's zero threshold by `scale` (see

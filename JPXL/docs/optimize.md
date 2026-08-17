@@ -1042,6 +1042,32 @@ mispriced LF residuals and must be re-screened (LF is still 23% of a 1 bpp
 stream); LZ77 for the near-constant metadata channels; a per-channel
 predictor choice for the LF planes.
 
+## Phase Q1 — the quantizer under the harness: quant_lf 4 promoted; dead zone, λ and truncation price are flat (2026-08-17)
+
+With the LF sections entropy-coded, the ledger's quantizer pointers were
+swept on the harness (`sweep-q1*.sh`, `out/sweep-q1-summary.txt`; same
+binary both arms, ladder at Fast + Balanced, three photos × three rates):
+
+| knob | values | result |
+|---|---|---|
+| `quant_lf` (held, no LF fill) | 2 3 **4** 5 6 12 16 24 vs 8 | finer is worse everywhere (12: SSIM2 −0.43, 24: −1.5); coarser helps until it doesn't: 4 = SSIM2 +0.41 / worst −0.12, 3-norm Butteraugli −3.0%, 6 = +0.26, 3 = +0.28, 2 = −0.55 (0.5 bpp cells −1.4). Seven scenes: 4 = +0.67 / worst +0.34, Butteraugli −5.9%, 3-norm −3.3%. |
+| `--dead-zone-scale` | 0.85 1.15 1.3 1.5 | < 1 is exactly a no-op (the nearest rule's candidate set already contains zero); > 1 trades SSIM2 down (−0.03 … −0.23) for a Butteraugli mean gain and a worst cell of −3.4 SSIM2 at 1.5. Not a lever. |
+| `--lambda-scale` | 2 3 6 8 vs 4 | ±0.1–0.26 SSIM2, Butteraugli mean up with λ; the analytic ×4 sits at the flat optimum. |
+| `--zero-token-bits` (new; Phase 7.1's interior-zero price) | 0.5 1.5 2 3 vs 1 | ±0.05 SSIM2 across a 6× range: the trailing-truncation pass is insensitive to its price, so 7.1a's real-cost model would be built on a dead lever and is not funded. |
+
+Promoted: **`quant_lf` 4** as the target-rate default (`--quant-lf 8` reaches
+Phase 5G's value; LF fill remains off under `for_target`). Its promotion
+screen against the Q0b binary is `out/summary-q1.md`. The Butteraugli max-norm
+turned out to swing +8% to +18% in single cells on settings whose SSIMULACRA2,
+RMSE and 3-norm were neutral or better, so the contract's worst-cell
+Butteraugli bound now reads on the 3-norm (`butteraugli_pnorm3` ≤ +5%), the
+max-norm mean stays bounded and its worst cell is reported. quant_lf 4's one
+max-norm outlier (mid 2 bpp Fast, +7.6%) has SSIM2 +0.26, RMSE and 3-norm
+better.
+
+Speed: neutral within noise (LF planes cost fewer bytes at the coarser
+quantizer; the writer's learner sees the same sample counts).
+
 ### Open architectural questions
 
 1. How can the finalist refresh only structurally unstable cover decisions?

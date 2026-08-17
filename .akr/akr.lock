@@ -5,7 +5,7 @@ build {
     tool "akr 0.3.1"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:a5eb897ef3bb9ee233e7e648eed2c6964f06f941d2533daaa46323c9d11bd487"
+    source_graph "sha256:cba1a612d49c4c5f695a4c9b7b237d86c37a2116fba20a200decfd0e32fd7d85"
 }
 
 source ".akr/project.akr" {
@@ -24,7 +24,7 @@ source ".akr/records/jpegxl-rs/constraints.akr" {
 }
 
 source ".akr/records/jpegxl-rs/decisions.akr" {
-    hash "sha256:07c176b11f7e435d9ef3117c0d196c0639ce1f8d8665048f6f951518f9c89806"
+    hash "sha256:da5eadba2a6dbf670a9e274b928c3fa7fbe689ffb9c394abb86ca1da63c7e6ff"
     records 14
 }
 
@@ -64,8 +64,8 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:533a5b258393c56aba5c34266ab2fa925eda79633a8ac86f9c373a77788201d2"
-    records 135
+    hash "sha256:c269208c1ba866012cb22cd05fd60204f78d5585069129bef10dfc3a99d0f793"
+    records 136
 }
 
 resolution @jpegxl-rs.decision.encoder-architecture-phases/1 {
@@ -3425,7 +3425,7 @@ resolution @jpegxl-rs.work.opt-benches-and-counters/1 {
 resolution @jpegxl-rs.work.opt-bulk-bitwriter/1 {
     slot implements
     to @jpegxl-rs.decision.optimization-determinism-contract/1
-    hash "sha256:890feed48001165d8c4fb3efe18669454b80fe6fffb926add1187745acd9501d"
+    hash "sha256:ecb91293a20a0833107481703a146ab966fa30a7ab93b02916a3c0e02241e42a"
 }
 
 resolution @jpegxl-rs.work.opt-bulk-bitwriter/1 {
@@ -3483,6 +3483,12 @@ resolution @jpegxl-rs.work.quality-q0-harness-attribution/1 {
 }
 
 resolution @jpegxl-rs.work.quality-q0b-lf-group-entropy/1 {
+    slot part_of
+    to @jpegxl-rs.track.encoder-optimization/1
+    hash "sha256:49975e17bd10998d72b08fccfe98fdea9bdf68ef56e4404dd68e94e1e2d75f23"
+}
+
+resolution @jpegxl-rs.work.quality-q1-quantizer/1 {
     slot part_of
     to @jpegxl-rs.track.encoder-optimization/1
     hash "sha256:49975e17bd10998d72b08fccfe98fdea9bdf68ef56e4404dd68e94e1e2d75f23"

@@ -65,7 +65,9 @@ Lossy options (8-bit RGB only; either one selects the VarDCT path):
     --aq-clamp <f>                Activity-field clamp; research control
     --aq-chroma <f>               Activity-field chroma weight; research control
     --quant-lf <n>                Hold the LF quantizer at n and disable the
-                                  secondary LF fill; research control
+                                  secondary LF fill (target-rate default 4
+                                  after Phase Q1; 8 was Phase 5G's); research
+                                  control
     --x-qm-scale <0..7>           X-channel QM exponent (default 2); research
                                   chroma-allocation control
     --b-qm-scale <0..7>           B-channel QM exponent (default 2); research
@@ -88,6 +90,9 @@ Lossy options (8-bit RGB only; either one selects the VarDCT path):
     --dead-zone-scale <f>         Multiplier on every HF cell's zero threshold
                                   (1.0 = the exact nearest rule; >1 widens the
                                   dead zone); quality-track research control
+    --zero-token-bits <f>         Bits the trailing-truncation pass charges per
+                                  interior zero token it frees (default 1.0);
+                                  quality-track research control
     --tolerance <f>               Undershoot the rate loop may leave, as a
                                   fraction of the target (presets keep their
                                   own floor: Balanced 0.02, Fast 0.03)
@@ -350,6 +355,7 @@ fn cmd_encode(args: &[String]) -> u8 {
     let mut quantizer_choice: Option<jpxl_encode_policy::QuantizerChoiceMode> = None;
     let mut lambda_scale: Option<f32> = None;
     let mut dead_zone_scale: Option<f32> = None;
+    let mut zero_token_bits: Option<f32> = None;
     let mut tolerance: Option<f64> = None;
     let mut sections = false;
     let mut positional: Vec<&String> = Vec::new();
@@ -532,6 +538,17 @@ fn cmd_encode(args: &[String]) -> u8 {
                 }
                 dead_zone_scale = Some(v);
             }
+            "--zero-token-bits" => {
+                let Some(v) = rest.next().and_then(|v| v.parse::<f32>().ok()) else {
+                    fail("`--zero-token-bits` needs a non-negative finite bit count");
+                    return EXIT_ERROR;
+                };
+                if !(v.is_finite() && v >= 0.0) {
+                    fail("`--zero-token-bits` needs a non-negative finite bit count");
+                    return EXIT_ERROR;
+                }
+                zero_token_bits = Some(v);
+            }
             "--tolerance" => {
                 let Some(v) = rest.next().and_then(|v| v.parse::<f64>().ok()) else {
                     fail("`--tolerance` needs a fraction of the target in [0, 1)");
@@ -653,6 +670,7 @@ fn cmd_encode(args: &[String]) -> u8 {
                     quantizer_choice,
                     lambda_scale,
                     dead_zone_scale,
+                    zero_token_bits,
                     tolerance,
                     rate_preset,
                 },
@@ -1551,6 +1569,7 @@ struct LossyOverrides {
     quantizer_choice: Option<jpxl_encode_policy::QuantizerChoiceMode>,
     lambda_scale: Option<f32>,
     dead_zone_scale: Option<f32>,
+    zero_token_bits: Option<f32>,
     /// Requested undershoot tolerance as a fraction of the target (the preset
     /// still applies its own floor).
     tolerance: Option<f64>,
@@ -1629,6 +1648,9 @@ fn encode_lossy_to_target(
     }
     if let Some(scale) = overrides.dead_zone_scale {
         request.dead_zone_scale = scale;
+    }
+    if let Some(bits) = overrides.zero_token_bits {
+        request.zero_token_bits = bits;
     }
     if let Some(fraction) = overrides.tolerance {
         request.tolerance = jpxl_encode_policy::RateTolerance {

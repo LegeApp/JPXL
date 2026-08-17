@@ -6180,6 +6180,28 @@ record jpegxl-rs.work.quality-q0b-lf-group-entropy/1 : work {
     ]
 }
 
+record jpegxl-rs.work.quality-q1-quantizer/1 : work {
+    title "Phase Q1: the HF quantizer under the quality harness — quant_lf re-screen, dead-zone and lambda sweeps, real-cost last-position truncation"
+    state proposed
+    scope [
+        path ".agent/scratch/quality-track/**",
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/quantize.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/rate.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/request.rs",
+        path "JPXL/docs/optimize.md"
+    ]
+    intent """
+        With the LF sections entropy-coded (Q0b) the ledger's own pointers become testable on the standing harness: (1) re-screen quant_lf 8, promoted in Phase 5G under the flat code's mispriced LF residuals (LF is still 23% of a 1 bpp stream); (2) sweep the dead-zone scale (EncodeRequest.dead_zone_scale) and lambda_scale (analytic 16/mean(step^2) x4 was never calibrated against a perceptual metric) on the ladder and the seven scenes; (3) price the trailing-position truncation in truncate_trailing at real token cost from the trained fast model instead of residual_bits/ZERO_TOKEN_BITS (7.1a's prescribed design). Each is a Contract B change if promoted: request-default flips with the old value reachable by flag, gated by the contract's quality-track bounds and the +15% cumulative speed budget (about 9 points spent by Q0b).
+        """
+    note """
+        Opened 2026-08-17 after Q0/Q0b. Sweeps use ladder.sh with EXTRA_CAND flags against the Q0b binary as base; a knob is promoted only if the ladder and scenes both pass the bounds.
+        """
+    depends_on [ @jpegxl-rs.work.quality-q0b-lf-group-entropy/1 ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+}
+
 record jpegxl-rs.work.retire-handoff-ledger/1 : work {
     title "Retire HANDOFF.md as a duplicate ledger after AKR migration"
     state completed
