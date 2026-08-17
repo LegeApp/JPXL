@@ -1833,6 +1833,45 @@ record jpegxl-rs.work.arch-phase38-band-parallel-cfl-prep/1 : work {
     part_of [ @jpegxl-rs.track.encoder-optimization ]
 }
 
+record jpegxl-rs.work.arch-phase39-lane-recon/1 : work {
+    title "Phase 39: reconstruction from the lane pass and vectorisable chroma targets; ANS-reciprocal and walk micro-work recorded as honest negatives"
+    state proposed
+    scope [
+        path ".agent/scratch/**",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/quantize.rs",
+        path "JPXL/docs/optimize.md"
+    ]
+    intent """
+        An instruction-count profile placed the quantization closure at 10.7% of executed instructions, hot on the scalar per-cell reconstruct sweep that fills d_y_hf after Y quantization and on the per-cell chroma-target loop. Return each cell's reconstruction from the run kernel via HfQuantizer::quantize_lane_with_recon (LLF cells get reconstruct(0); truncation refreshes only zeroed cells with reconstruct(0)), and write the chroma-target loop as a zip over row slices so it vectorises. Byte-identical by construction (the kernel's recon is pinned bitwise against reconstruct by the Phase 36 property test). Two experiments measured no gain and were reverted: per-symbol ANS reciprocals with a branchless renormalisation (the serial state chain waits on the slot-table load), and shift/branch-free rewrites of the pass-group walk (walk shares unchanged; the encode runs at IPC ~3.4, so walk cost is instruction volume across three walks per plan, which is the token-tape question, not per-walk micro-work).
+        """
+    note """
+        Opened 2026-08-17; small positive step plus two recorded negatives so they are not retried.
+        """
+    acceptance {
+        check identity {
+            statement """
+                Canonical streams across presets, sizes, thread counts and AVX2 on/off are byte-identical to Phase 38.
+                """
+            method command
+        }
+        check safety {
+            statement """
+                fmt, strict Clippy, the workspace suites in fast-debug and release, oracle/roundtrip/determinism, no-default-feature and AVX2-disabled suites pass.
+                """
+            method command
+        }
+        check speed {
+            statement """
+                Pinned Balanced mid medians do not regress (measured ~2% faster in three interleaved rounds); the two reverted experiments are documented with their measurements.
+                """
+            method observation
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase38-band-parallel-cfl-prep/1 ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+}
+
 record jpegxl-rs.work.arch-phase4-0b-density-gate/1 : work {
     title "Phase 4.0b: pinned real-corpus density + decode-validity gate (prerequisite for 4A/4C)"
     state completed

@@ -774,6 +774,37 @@ ms (−25%), large 1127/1070/1140 → 911/954/877 ms (−18%). Remaining wall
 budget on mid (~405 ms): cover 123, writer counts+store ~97, plan-full 37,
 CfL 37, quantize 36, entropy training 31.
 
+## Phase 39 — reconstruction from the lane pass; two honest negatives (2026-08-17)
+
+An instruction-count profile (`perf record -e instructions`) put the
+quantization closure second (10.7%) behind the run kernel itself; its hot
+lines were the scalar per-cell `reconstruct(q)` sweep that filled `d_y_hf`
+after Y quantization and the per-cell `coeff - k*d_y` chroma-target loop
+with `.get()` on every index. `HfQuantizer::quantize_lane_with_recon` now
+returns each cell's reconstruction from the run kernel (already computed
+there; LLF cells receive `reconstruct(0)`), truncation refreshes only the
+cells it zeroed with `reconstruct(0)`, and the chroma-target loop is a zip
+over row slices that the compiler vectorises (same per-cell operations and
+rounding). Interleaved pinned mid medians: 479/477/475 → 473/466/461 ms
+(≈ −2%), all streams identical.
+
+Two experiments measured nothing and were reverted rather than kept:
+
+- ANS backward pass with per-symbol reciprocals and a select instead of the
+  renormalisation branch (Phase 38 notes): `perf annotate` put ~60% of
+  `encode_symbols` on the `slots[start + offset]` load — the serial state
+  chain waits on that dependent lookup, not on the division.
+- The pass-group walk's per-coefficient divisions replaced by shifts, and its
+  non-zero count turned into a branch-free sweep with a backward scan for the
+  last non-zero: walk shares 14.3% → 13.7%, inside noise. The overall encode
+  runs at IPC ≈ 3.4, so the walks are not stall-bound either; their cost is
+  instruction volume spread over three walks per written plan (census,
+  entropy-table census, emission) — the token-tape question (open question 3)
+  is the lever, not micro-work inside one walk.
+
+Remaining wall budget on mid at ~400 ms (quiet host): cover 123, writer
+counts + store ~97, plan-full 37, CfL 37, quantize ~34, entropy training 31.
+
 
 ### Open architectural questions
 

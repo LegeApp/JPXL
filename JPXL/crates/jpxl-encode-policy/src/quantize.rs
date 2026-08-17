@@ -601,6 +601,30 @@ impl HfQuantizer {
         n_blocks: usize,
         skip_llf: bool,
     ) -> Result<()> {
+        self.quantize_lane_with_recon(channel, coeffs, out, None, side, n_blocks, skip_llf)
+    }
+
+    /// [`Self::quantize_lane`] that also writes each cell's I.5.3
+    /// reconstruction to `recon_out` (Phase 39): the run kernel produces it
+    /// alongside the integer, so a caller that needs `reconstruct(q)` for
+    /// every cell (the chroma-from-luma targets) no longer re-derives it in a
+    /// second pass. Skipped LLF cells receive `reconstruct(0)`, exactly what
+    /// the second pass computed for the zeros written there.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::choose`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn quantize_lane_with_recon(
+        &self,
+        channel: usize,
+        coeffs: &[f32],
+        out: &mut [i32],
+        mut recon_out: Option<&mut [f32]>,
+        side: usize,
+        n_blocks: usize,
+        skip_llf: bool,
+    ) -> Result<()> {
         let cells = coeffs.len().min(out.len());
         if side == 0 {
             return Err(PolicyError::Unsupported {
@@ -618,6 +642,13 @@ impl HfQuantizer {
             if let Some(llf) = out.get_mut(row_start..first_hf) {
                 llf.fill(0);
             }
+            if let Some(recon) = recon_out.as_deref_mut()
+                && let Some(llf) = recon.get_mut(row_start..first_hf)
+            {
+                for (offset, slot) in llf.iter_mut().enumerate() {
+                    *slot = self.reconstruct(0, channel, row_start + offset);
+                }
+            }
             // Phase 36: the whole HF span of the row goes through the run
             // kernel (vector chunks plus a padded final chunk), which is
             // cell-for-cell identical to the scalar `choose` loop it replaces.
@@ -627,7 +658,10 @@ impl HfQuantizer {
             ) else {
                 continue;
             };
-            self.choose_run(channel, first_hf, targets, slots, None)?;
+            let recon_row = recon_out
+                .as_deref_mut()
+                .and_then(|r| r.get_mut(first_hf..row_end));
+            self.choose_run(channel, first_hf, targets, slots, recon_row)?;
         }
         Ok(())
     }

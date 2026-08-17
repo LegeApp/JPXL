@@ -2746,7 +2746,17 @@ fn quantize_square_varblock(
         }
     }
     // Phase-2: final HF quant as contiguous lanes (Y, then chroma with CfL).
-    hf_quant.quantize_lane(1, y_coeff, qy, side, n, true)?;
+    // Phase 39: the lane pass also yields every cell's reconstruction, so
+    // `d_y_hf` is filled here rather than by a second `reconstruct` sweep.
+    hf_quant.quantize_lane_with_recon(
+        1,
+        y_coeff,
+        qy,
+        qscratch.d_y_hf.get_mut(..cells),
+        side,
+        n,
+        true,
+    )?;
     // Phase 7.1 truncation runs on Y *before* `d_y_hf` is read, so the chroma
     // CfL targets decorrelate against the Y the decoder will actually
     // reconstruct rather than against coefficients this pass then drops.
@@ -2758,21 +2768,24 @@ fn quantize_square_varblock(
         &[]
     };
     if truncate {
-        hf_quant.truncate_trailing(1, qy, order, n * n, ZERO_TOKEN_BITS, |cell| {
+        let dropped = hf_quant.truncate_trailing(1, qy, order, n * n, ZERO_TOKEN_BITS, |cell| {
             y_coeff.get(cell).copied().unwrap_or(0.0)
         });
-    }
-    // `quantize_lane` writes zero to every LLF cell, so reconstructing the
-    // whole lane both preserves those zeros and avoids a modulo/divide pair
-    // per coefficient just to rediscover the top-left LLF rectangle.
-    for (cell, (q, slot)) in qy
-        .iter()
-        .copied()
-        .zip(qscratch.d_y_hf.iter_mut())
-        .take(cells)
-        .enumerate()
-    {
-        *slot = hf_quant.reconstruct(q, 1, cell);
+        // A truncated cell now reconstructs as `reconstruct(0)`; refresh only
+        // those (a cell whose integer was already zero already holds it).
+        if dropped > 0 {
+            for (cell, (q, slot)) in qy
+                .iter()
+                .copied()
+                .zip(qscratch.d_y_hf.iter_mut())
+                .take(cells)
+                .enumerate()
+            {
+                if q == 0 && *slot != 0.0 {
+                    *slot = hf_quant.reconstruct(0, 1, cell);
+                }
+            }
+        }
     }
 
     // --- X and B: X = dX + kX*dY, B = dB + kB*dY (I.6) ---
@@ -2802,10 +2815,26 @@ fn quantize_square_varblock(
             let (llf, hf) = targets.split_at_mut(first_hf);
             llf.fill(0.0);
             let base = row.saturating_mul(side).saturating_add(first_hf);
-            for (offset, slot) in hf.iter_mut().enumerate() {
-                let cell = base.saturating_add(offset);
-                *slot = coeff.get(cell).copied().unwrap_or(0.0)
-                    - k_hf * qscratch.d_y_hf.get(cell).copied().unwrap_or(0.0);
+            // Phase 39: written as a zip over row slices so the compiler can
+            // vectorise the multiply-subtract (same per-cell arithmetic and
+            // rounding; the slices exist for every row of a full arena, and
+            // the per-cell fallback covers a short one).
+            match (
+                coeff.get(base..base + hf.len()),
+                qscratch.d_y_hf.get(base..base + hf.len()),
+            ) {
+                (Some(src), Some(d_y)) => {
+                    for ((slot, &c), &d) in hf.iter_mut().zip(src.iter()).zip(d_y.iter()) {
+                        *slot = c - k_hf * d;
+                    }
+                }
+                _ => {
+                    for (offset, slot) in hf.iter_mut().enumerate() {
+                        let cell = base.saturating_add(offset);
+                        *slot = coeff.get(cell).copied().unwrap_or(0.0)
+                            - k_hf * qscratch.d_y_hf.get(cell).copied().unwrap_or(0.0);
+                    }
+                }
             }
         }
         hf_quant.quantize_lane(channel, &qscratch.chroma_targets, out, side, n, true)?;
