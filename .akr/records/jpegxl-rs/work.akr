@@ -1620,7 +1620,7 @@ record jpegxl-rs.work.arch-phase33-dirty-frontier-prototype/1 : work {
 
 record jpegxl-rs.work.arch-phase34-indexed-lane4-cfl/1 : work {
     title "Phase 34: indexed lane-4 quantization for CfL scalar hot paths"
-    state proposed
+    state completed
     scope [
         path ".agent/scratch/**",
         path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
@@ -1635,18 +1635,21 @@ record jpegxl-rs.work.arch-phase34-indexed-lane4-cfl/1 : work {
                 Canonical fixed/target-rate streams and one-thread/four-thread outputs are byte-identical to the Phase 33 baseline; indexed lane results equal scalar choose/reconstruct over boundary and arbitrary-cell cases.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase34-identity-2026-08-17/1 ]
         }
         check safety {
             statement """
                 Default and no-default-feature builds/tests, strict Clippy, full workspace tests, and external decoder checks pass.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase34-safety-2026-08-17/1 ]
         }
         check speed {
             statement """
                 A fresh perf profile shows the scalar HfQuantizer::choose share reduced materially from the Phase 33 5.55% baseline and canonical mid/large wall time does not regress materially.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.phase34-speed-2026-08-17/1 ]
         }
     }
     depends_on [ @jpegxl-rs.work.arch-phase33-dirty-frontier-prototype/1 ]
