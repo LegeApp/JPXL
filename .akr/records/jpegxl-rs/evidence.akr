@@ -1822,6 +1822,31 @@ record jpegxl-rs.evidence.phase32-safety-2026-08-17/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase33-honest-negative-2026-08-17/1 : evidence {
+    title "The temporary non-default exact dirty-frontier prototype was implemented and removed after measurement. At 1 bpp/4 threads/3 iterations, mid median regressed 1005.884 -> 1896.760 ms (1.886x slower), SSIMULACRA2 72.3798 -> 72.1370 (-0.2428), Butteraugli 3.1908 -> 3.0962; large median 1847.673 -> 3065.982 ms (1.659x slower), SSIMULACRA2 83.6276 -> 83.6067 (-0.0209), Butteraugli 1.9912 -> 1.9552. Exact two-anchor margins require buying a second full cover pass because current Balanced reuses anchor0 structure at anchor1; mandatory fresh CfL then adds further cost. The feature fails speed and primary-quality promotion gates and was removed. Raw prototype patch SHA-256 23c35d16b5e414913efcf360346dd8bce2de4c0fee2c26fb64266275864f94b6."
+    state verified
+    result pass
+    method observation
+    observed_at git:f3ec7fa7b0cdd27cb7a9c49e5e96f0ca95ddbb88
+    artifact ".agent/scratch/phase33-dirty-frontier/SUMMARY.md"
+    summary """
+        The temporary non-default exact dirty-frontier prototype was implemented and removed after measurement. At 1 bpp/4 threads/3 iterations, mid median regressed 1005.884 -> 1896.760 ms (1.886x slower), SSIMULACRA2 72.3798 -> 72.1370 (-0.2428), Butteraugli 3.1908 -> 3.0962; large median 1847.673 -> 3065.982 ms (1.659x slower), SSIMULACRA2 83.6276 -> 83.6067 (-0.0209), Butteraugli 1.9912 -> 1.9552. Exact two-anchor margins require buying a second full cover pass because current Balanced reuses anchor0 structure at anchor1; mandatory fresh CfL then adds further cost. The feature fails speed and primary-quality promotion gates and was removed. Raw prototype patch SHA-256 23c35d16b5e414913efcf360346dd8bce2de4c0fee2c26fb64266275864f94b6.
+        """
+}
+
+record jpegxl-rs.evidence.phase33-safety-and-clean-removal-2026-08-17/1 : evidence {
+    title "The prototype compiled warning-free, passed its policy lib suite, emitted byte-identical one-thread/four-thread streams in both default and feature arms, and its screened stream decoded through vendored djxl 0.13.0 and jxl-oxide. After removing all production changes, the default workspace format, build, full tests, strict workspace Clippy, and focused release policy suite passed. The tracked tree contains no prototype code."
+    state verified
+    result pass
+    method command
+    observed_at git:f3ec7fa7b0cdd27cb7a9c49e5e96f0ca95ddbb88
+    command "temporary feature: cargo clippy -p jpxl-encode-policy --lib --tests --features dirty-frontier -- -D warnings; cargo test -p jpxl-encode-policy --lib --release --features dirty-frontier; rate-loop determinism tests; djxl and jxl-oxide decode. after removal: cargo fmt --all --check; cargo build --workspace; cargo test --workspace; cargo clippy --workspace --all-targets -- -D warnings"
+    artifact ".agent/scratch/phase33-dirty-frontier/final-gates.log"
+    summary """
+        The prototype compiled warning-free, passed its policy lib suite, emitted byte-identical one-thread/four-thread streams in both default and feature arms, and its screened stream decoded through vendored djxl 0.13.0 and jxl-oxide. After removing all production changes, the default workspace format, build, full tests, strict workspace Clippy, and focused release policy suite passed. The tracked tree contains no prototype code.
+        """
+}
+
 record jpegxl-rs.evidence.phase4-0b-density-gate-2026-08-08/1 : evidence {
     title "4.0b density + decode-validity gate: jpxl-modular beats cjxl -e1, trails cjxl -e7 by 16-42%"
     state verified

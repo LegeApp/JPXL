@@ -1572,7 +1572,7 @@ record jpegxl-rs.work.arch-phase32-dirty-frontier-screen/1 : work {
 
 record jpegxl-rs.work.arch-phase33-dirty-frontier-prototype/1 : work {
     title "Phase 33: feature-gated exact dirty-frontier finalist refresh"
-    state proposed
+    state completed
     scope [
         path ".agent/scratch/**",
         path "JPXL/crates/jpxl-encode-policy/Cargo.toml",
@@ -1590,24 +1590,28 @@ record jpegxl-rs.work.arch-phase33-dirty-frontier-prototype/1 : work {
                 With the feature disabled, canonical target-rate streams are byte-identical to Phase 32 and all default-build tests pass.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase33-safety-and-clean-removal-2026-08-17/1 ]
         }
         check feature-safety {
             statement """
                 With the feature enabled, exact fallback handles incomplete/unstable evidence; one-thread/four-thread outputs are deterministic; external decoders accept every screened stream; no production panic or malformed plan occurs.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.phase33-safety-and-clean-removal-2026-08-17/1 ]
         }
         check quality {
             statement """
                 At matched achieved rate on the canonical corpus, SSIMULACRA2 has no material regression under the active promotion rule and Butteraugli remains within the documented secondary bound.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.phase33-honest-negative-2026-08-17/1 ]
         }
         check speed {
             statement """
                 Perf/diagnostic measurements show a meaningful reduction in finalist cover/planning work and wall time on at least the mid and large canonical photos; otherwise the prototype stays off and is closed as an honest negative.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.phase33-honest-negative-2026-08-17/1 ]
         }
     }
     depends_on [ @jpegxl-rs.work.arch-phase32-dirty-frontier-screen/1 ]
