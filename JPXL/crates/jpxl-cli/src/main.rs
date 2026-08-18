@@ -60,10 +60,15 @@ Lossy options (8-bit RGB only; either one selects the VarDCT path):
                                   exhaustive), balanced (anchored fast-final),
                                   or fast (bounded two-anchor)
     --aq-mode <mode>              Per-block HF allocation: off (target-rate
-                                  default), masking, or uniform; research control
+                                  default), masking, uniform, fine-masking,
+                                  fine-uniform, or edge-refine (Phase Q3 fields
+                                  on a 1/16-octave HfMul lattice; all screened
+                                  negative); research control
     --aq-strength <f>             Activity-field strength; research control
     --aq-clamp <f>                Activity-field clamp; research control
     --aq-chroma <f>               Activity-field chroma weight; research control
+    --aq-edge-contrast <f>        edge-refine dead zone in activity octaves
+                                  (default 6); research control
     --quant-lf <n>                Hold the LF quantizer at n and disable the
                                   secondary LF fill (target-rate default 4
                                   after Phase Q1; 8 was Phase 5G's); research
@@ -75,8 +80,12 @@ Lossy options (8-bit RGB only; either one selects the VarDCT path):
                                   research chroma-allocation control
     --epf-iters <0..3>            Decoder EPF iteration count (target-rate
                                   default 1); research control
-    --epf-sharpness <mode>        EPF sharpness plane: zero (fixed default) or
-                                  uniform7 (target-rate default); research control
+    --epf-sharpness <mode>        EPF sharpness plane: zero (fixed default),
+                                  uniform7 (target-rate default), or adaptive
+                                  (Phase Q3 activity ramp); research control
+    --epf-adaptive <f,k,s>        Adaptive sharpness constants floor,knee,span
+                                  (implies --epf-sharpness adaptive); research
+                                  control
     --cover-size-penalty <mode>   Cover objective's per-transform distortion
                                   scale: neutral (default) or measured (Phase
                                   6.2's large-transform correction); research
@@ -384,15 +393,18 @@ fn cmd_encode(args: &[String]) -> u8 {
             // the explicit modes remain useful research controls.
             "--aq-mode" => {
                 let Some(value) = rest.next() else {
-                    fail("`--aq-mode` needs one of: off, masking, uniform");
+                    fail("`--aq-mode` needs one of: off, masking, uniform, fine-masking");
                     return EXIT_ERROR;
                 };
                 aq_mode = Some(match value.as_str() {
                     "off" => jpxl_encode_policy::AqMode::Off,
                     "masking" => jpxl_encode_policy::AqMode::Masking,
                     "uniform" => jpxl_encode_policy::AqMode::Uniform,
+                    "fine-masking" => jpxl_encode_policy::AqMode::FineMasking,
+                    "fine-uniform" => jpxl_encode_policy::AqMode::FineUniform,
+                    "edge-refine" => jpxl_encode_policy::AqMode::EdgeRefine,
                     _ => {
-                        fail("`--aq-mode` needs one of: off, masking, uniform");
+                        fail("`--aq-mode` needs one of: off, masking, uniform, fine-masking");
                         return EXIT_ERROR;
                     }
                 });
@@ -417,6 +429,13 @@ fn cmd_encode(args: &[String]) -> u8 {
                     return EXIT_ERROR;
                 };
                 aq_tuning.chroma_weight = v;
+            }
+            "--aq-edge-contrast" => {
+                let Some(v) = rest.next().and_then(|v| v.parse::<f32>().ok()) else {
+                    fail("`--aq-edge-contrast` needs a number (octaves of activity)");
+                    return EXIT_ERROR;
+                };
+                aq_tuning.edge_contrast = v;
             }
             "--quant-lf" => {
                 let Some(value) = rest.next().and_then(|v| v.parse::<u32>().ok()) else {
@@ -459,11 +478,36 @@ fn cmd_encode(args: &[String]) -> u8 {
                 epf_sharpness = Some(match value.as_str() {
                     "zero" => jpxl_encode_policy::EpfSharpnessMode::Zero,
                     "uniform7" => jpxl_encode_policy::EpfSharpnessMode::Uniform7,
+                    "adaptive" => jpxl_encode_policy::EpfSharpnessMode::Adaptive(
+                        jpxl_encode_policy::AdaptiveSharpness::default(),
+                    ),
                     _ => {
-                        fail("`--epf-sharpness` needs one of: zero, uniform7");
+                        fail("`--epf-sharpness` needs one of: zero, uniform7, adaptive");
                         return EXIT_ERROR;
                     }
                 });
+            }
+            "--epf-adaptive" => {
+                // Research spelling: `--epf-adaptive floor,knee,span`.
+                let Some(value) = rest.next() else {
+                    fail("`--epf-adaptive` needs `floor,knee,span`");
+                    return EXIT_ERROR;
+                };
+                let parts: Vec<&str> = value.split(',').collect();
+                let parsed = match parts.as_slice() {
+                    [f, k, s] => match (f.parse::<u8>(), k.parse::<f32>(), s.parse::<f32>()) {
+                        (Ok(floor), Ok(knee), Ok(span)) if floor <= 7 => {
+                            Some(jpxl_encode_policy::AdaptiveSharpness { floor, knee, span })
+                        }
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                let Some(model) = parsed else {
+                    fail("`--epf-adaptive` needs `floor(0..7),knee,span`");
+                    return EXIT_ERROR;
+                };
+                epf_sharpness = Some(jpxl_encode_policy::EpfSharpnessMode::Adaptive(model));
             }
             "--cover-size-penalty" => {
                 let Some(value) = rest.next() else {
@@ -473,6 +517,20 @@ fn cmd_encode(args: &[String]) -> u8 {
                 cover_size_penalty = Some(match value.as_str() {
                     "neutral" => jpxl_encode_policy::CoverSizePenalty::Neutral,
                     "measured" => jpxl_encode_policy::CoverSizePenalty::Measured,
+                    custom if custom.starts_with("custom:") => {
+                        let nums: Vec<f64> = custom["custom:".len()..]
+                            .split(',')
+                            .filter_map(|n| n.parse().ok())
+                            .collect();
+                        let [dct16, dct32] = nums.as_slice() else {
+                            fail("`--cover-size-penalty custom:<dct16>,<dct32>` needs two numbers");
+                            return EXIT_ERROR;
+                        };
+                        jpxl_encode_policy::CoverSizePenalty::Custom {
+                            dct16: *dct16,
+                            dct32: *dct32,
+                        }
+                    }
                     _ => {
                         fail("`--cover-size-penalty` needs one of: neutral, measured");
                         return EXIT_ERROR;
@@ -723,6 +781,24 @@ fn cmd_encode(args: &[String]) -> u8 {
             if let Some(report) = lossy {
                 if sections {
                     print_section_breakdown(&report.sizing);
+                }
+                // Research aid: `JPXL_RATE_TRACE=1` dumps every priced rung so a
+                // rate-search miss can be attributed to the ladder shape.
+                if let Some(path) = std::env::var_os("JPXL_COVER_DUMP") {
+                    dump_cover_map(&report.plan, &path.to_string_lossy());
+                }
+                if std::env::var_os("JPXL_RATE_TRACE").is_some() {
+                    for step in &report.trace {
+                        println!(
+                            "  trace: {:?} rung={} scale={} hf_mul={} bytes={} feasible={}",
+                            step.phase,
+                            step.quantizer.rung.get(),
+                            step.quantizer.global_scale.get(),
+                            step.quantizer.hf_mul.get(),
+                            step.bytes,
+                            step.feasible
+                        );
+                    }
                 }
                 let miss = report.target_bytes.saturating_sub(report.achieved);
                 let slack = report.allowed_undershoot;
@@ -1554,6 +1630,57 @@ struct LossyReport {
     saturated: bool,
     fast_prices: u32,
     full_prices: u32,
+    /// Every priced candidate, for the `JPXL_RATE_TRACE` research dump.
+    trace: Vec<jpxl_encode_policy::RateStep>,
+    /// The chosen plan, for the `JPXL_COVER_DUMP` research dump.
+    plan: jpxl_encode::vardct::ValidatedEmissionPlan,
+}
+
+/// Research aid: writes the chosen cover as a P5 map with one sample per 8x8
+/// block — 64 for DCT8x8, 128 for DCT16x16, 255 for DCT32x32 (other shapes
+/// 32) — so a perceptual hot spot can be matched against the transform under
+/// it.
+fn dump_cover_map(plan: &jpxl_encode::vardct::ValidatedEmissionPlan, path: &str) {
+    let Ok(geometry) = plan.geometry() else {
+        return;
+    };
+    let grid = geometry.frame_blocks();
+    let (w, h) = (grid.width as usize, grid.height as usize);
+    let mut map = vec![0u8; w * h];
+    for group in plan.plan().spatial.lf_groups.iter() {
+        let Some(rect) = geometry.lf_group_rect(group.id) else {
+            continue;
+        };
+        for vb in group.blocks.iter() {
+            let (rows, cols) = vb.transform.block_dims();
+            let value = match vb.transform.sample_cols() {
+                8 => 64u8,
+                16 => 128,
+                32 => 255,
+                _ => 32,
+            };
+            let x0 = (rect.x0 / 8 + vb.origin.bx()) as usize;
+            let y0 = (rect.y0 / 8 + vb.origin.by()) as usize;
+            for dy in 0..rows {
+                for dx in 0..cols {
+                    if let Some(slot) = map.get_mut((y0 + dy) * w + x0 + dx) {
+                        *slot = value;
+                    }
+                }
+            }
+        }
+    }
+    let mut pgm = format!(
+        "P5
+{w} {h}
+255
+"
+    )
+    .into_bytes();
+    pgm.extend_from_slice(&map);
+    if let Err(err) = std::fs::write(path, pgm) {
+        eprintln!("cover dump failed: {err}");
+    }
 }
 
 /// Research controls that override the production target-rate policy.
@@ -1678,6 +1805,8 @@ fn encode_lossy_to_target(
         fast_prices: outcome.stats.fast_prices,
         full_prices: outcome.stats.full_prices,
         sizing: outcome.sizing,
+        trace: outcome.trace,
+        plan: outcome.plan,
         codestream: outcome.codestream,
     })
     .map_err(|e| e.to_string())

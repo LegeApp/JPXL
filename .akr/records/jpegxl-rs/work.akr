@@ -6318,6 +6318,76 @@ record jpegxl-rs.work.quality-q2-chroma-hf/1 : work {
     part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
 }
 
+record jpegxl-rs.work.quality-q3-ladder-ceiling-and-allocation-screens/1 : work {
+    title "Phase Q3: rate-ladder ceiling fix; fine-lattice AQ, adaptive EPF, size-penalty and X-scale screens"
+    state completed
+    scope [
+        path ".agent/scratch/q3/**",
+        path ".agent/scratch/quality-track/**",
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/field.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/rate.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/request.rs",
+        path "JPXL/crates/jpxl-encode-policy/tests/truncation_saving.rs",
+        path "JPXL/docs/experiments/2026-08-18-q3-fine-lattice-aq-and-adaptive-epf.md",
+        path "JPXL/docs/optimize.md"
+    ]
+    intent """
+        Phase Q3 asks how far the Phase Q2 encoder is from cjxl -e 7 at matched bytes on every standing metric, localises the remaining Butteraugli deficit spatially, and screens the per-block allocation levers that could close it inside the quality track's remaining +6 points of Balanced speed budget: adaptive quantization on a sixteenth-octave HfMul lattice (eroded masking, uniform, edge-adjacent refinement), an activity-adaptive EPF sharpness plane, and re-screens of the Phase 6.2b size penalty and X quant-matrix scale 3 on the standing corpus. Promote only what passes the Contract B bounds; record honest negatives per lever. Fix any rate-control defect the standing harness exposes on the way.
+        """
+    note """
+        Opened 2026-08-18 from the completed Q2 handoff. The first standing measurement exposed a rate-control defect rather than an allocation one: above the global_scale ceiling the ladder stepped by whole HfMul multiples, so mid2 at 2 bpp emitted 698 KB for a 1,080 KB target and large at 2 bpp 2.18 MB for 3.0 MB, 'budget spent, not at the ladder's limit'. That fix (dense HfMul x global_scale segments with quant_lf coupled up to 16) is the pass's promoted change; every allocation lever screened negative and is retained as a documented research control. Measurements were taken on a clean git worktree at 13498bb plus this pass's patch because another agent was concurrently editing jpxl-encode (16-bit input work) in the main worktree.
+        """
+    acceptance {
+        check allocation-screens-recorded {
+            statement """
+                Each screened allocation lever (fine-masking, fine-uniform, edge-refine fields; adaptive EPF sharpness; size penalty measured/custom; X scale 3) has its result recorded with raw numbers, and none is promoted without passing the corpus bounds.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.quality-q3-allocation-screens-2026-08-18/1 ]
+        }
+        check determinism-decoders {
+            statement """
+                Changed target-rate outputs are byte-identical across one and four threads, and every changed stream decodes in djxl and jxl-oxide.
+                """
+            method command
+            verified_by [ @jpegxl-rs.evidence.quality-q3-determinism-decoders-2026-08-18/1 ]
+        }
+        check gates {
+            statement """
+                cargo fmt --check, clippy -D warnings, the full workspace test suite (Windows fixture links materialised, JPXL_DISABLE_AVX2=1 as in Q2), and the no-default-features check pass on a clean worktree carrying only this pass's patch.
+                """
+            method command
+            verified_by [ @jpegxl-rs.evidence.quality-q3-rust-gates-2026-08-18/1 ]
+        }
+        check ladder-ceiling-fix {
+            statement """
+                Target-rate encodes whose crossing lies above the global_scale ceiling reach their byte target within the preset tolerance instead of undershooting: mid2 2 bpp Balanced emits within 0.1% of 1,080,000 bytes and large 2 bpp within 0.1% of 3,000,000 bytes, and cells below the ceiling keep their Phase Q2 codestream hashes.
+                """
+            method command
+            command "bash .agent/scratch/quality-track/q3-arm.sh q3-final"
+            verified_by [ @jpegxl-rs.evidence.quality-q3-ladder-ceiling-fix-2026-08-18/1 ]
+        }
+        check quality-gate {
+            statement """
+                The final binary passes the standing ladder and seven-scene Contract B gate against the Phase Q2 outputs: SSIMULACRA2 mean delta non-negative with no cell below -0.5, Butteraugli max-norm mean no worse than +2%, no 3-norm cell worse than +5%, every stream accepted by djxl and jxl-oxide; the only changed cells are the ceiling-bound ones and they improve.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.quality-q3-corpus-gates-2026-08-18/1 ]
+        }
+        check speed-budget {
+            statement """
+                Alternating native Windows A/B timing on the standing mid 1 bpp Balanced cell keeps the cumulative quality-track cost within +15% of Phase 42: the Q3 binary is within noise of the frozen Phase Q1 binary.
+                """
+            method command
+            verified_by [ @jpegxl-rs.evidence.quality-q3-speed-budget-2026-08-18/1 ]
+        }
+    }
+    depends_on [ @jpegxl-rs.work.quality-q2-chroma-hf/1 ]
+    part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+}
+
 record jpegxl-rs.work.retire-handoff-ledger/1 : work {
     title "Retire HANDOFF.md as a duplicate ledger after AKR migration"
     state completed

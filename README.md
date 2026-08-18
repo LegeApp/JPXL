@@ -110,6 +110,14 @@ For the 4000×3000 anchor, rerun with `large-photo.ppm` and
 The measured parity window and the correction to the earlier mismatched
 comparison are recorded in
 [JPXL/docs/experiments/2026-08-18-speed-parity-reconciliation.md](JPXL/docs/experiments/2026-08-18-speed-parity-reconciliation.md).
+
+At matched bytes on the three standing photographs at 0.5, 1 and 2 bpp
+(`Balanced` against `cjxl -e 7`, 2026-08-18), JPXL is ahead on SSIMULACRA2 in
+all nine cells (+0.4 to +2.4), behind on PSNR in eight (by 0.04–0.53 dB), and
+behind on Butteraugli in all nine on the max-norm (0.7–44%) and seven on the
+3-norm (up to 14%). The per-cell table, its localisation, and the levers that
+did not close it are in the Phase Q3 section of
+[JPXL/docs/optimize.md](JPXL/docs/optimize.md).
 Raw artifacts stay in `.agent/scratch/` so reports remain reviewable without
 committing test images or generated streams.
 

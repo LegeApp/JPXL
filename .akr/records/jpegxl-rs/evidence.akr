@@ -4291,6 +4291,82 @@ record jpegxl-rs.evidence.quality-q2-speed-budget-2026-08-18/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.quality-q3-allocation-screens-2026-08-18/1 : evidence {
+    title "Q3 allocation-lever screens recorded, none promoted"
+    state verified
+    result pass
+    method observation
+    observed_at git:13498bb933ab27f28e2b0580d2bdea1c19b9c7e0
+    artifact "JPXL/docs/experiments/2026-08-18-q3-fine-lattice-aq-and-adaptive-epf.md"
+    summary """
+        Fine-masking/fine-uniform/edge-refine fields, adaptive EPF sharpness, size-penalty measured/custom and X scale 3 each have raw mid-photo screens; the size-penalty and X-scale corpus arms (ladder-q3p-*.tsv, scenes-q3p-*.tsv against a same-binary control) fail the Contract B bounds; nothing was promoted.
+        """
+}
+
+record jpegxl-rs.evidence.quality-q3-corpus-gates-2026-08-18/1 : evidence {
+    title "Q3 corpus gates against the Phase Q2 outputs"
+    state verified
+    result pass
+    method observation
+    observed_at git:13498bb933ab27f28e2b0580d2bdea1c19b9c7e0
+    artifact ".agent/scratch/quality-track/out/ladder-q3-final.tsv"
+    summary """
+        Photo ladder (27 cells) SSIMULACRA2 mean +0.528, worst -0.008, best +2.865; Butteraugli max-norm mean -5.94% worst +0.03%; 3-norm mean -5.87% worst +0.03%; only the ten ceiling-bound cells changed and every one improved; the 14 scene cells are byte-identical; every stream decoded in djxl and jxl-oxide (summarise.py verdict PASS; scenes-q3-final.tsv).
+        """
+}
+
+record jpegxl-rs.evidence.quality-q3-determinism-decoders-2026-08-18/1 : evidence {
+    title "Q3 changed cells are thread-deterministic and dual-decodable"
+    state verified
+    result pass
+    method command
+    observed_at git:13498bb933ab27f28e2b0580d2bdea1c19b9c7e0
+    command "for each of mid2 2 bpp, large 2 bpp, mid 2 bpp, mid2 1 bpp Balanced: jpxl encode --threads 1 vs --threads 4, sha256 compared; djxl/oxide flags in ladder-q3-final.tsv"
+    artifact ".agent/scratch/quality-track/out/ladder-q3-final.tsv"
+    summary """
+        One- and four-thread outputs are byte-identical on all four changed Balanced cells (0d710fec509074bf, cb57b2296d18cc63, 535fb4d565278095, c9bba7532fb84bb8); every ladder and scene stream decoded in djxl and jxl-oxide 0.12.6. JPXL_DISABLE_AVX2=1 still differs on Windows/MSVC as recorded by the Q2 observation.
+        """
+}
+
+record jpegxl-rs.evidence.quality-q3-ladder-ceiling-fix-2026-08-18/1 : evidence {
+    title "Q3 dense upper ladder reaches ceiling-bound targets"
+    state verified
+    result pass
+    method command
+    observed_at git:13498bb933ab27f28e2b0580d2bdea1c19b9c7e0
+    command "JPXL=.agent/scratch/q3/wt-target/release/jpxl.exe INPUT_DIR=<non-symlink copies of quality-track/inputs> bash .agent/scratch/quality-track/q3-arm.sh q3-final"
+    artifact ".agent/scratch/quality-track/out/ladder-q3-final.tsv"
+    summary """
+        mid2 2 bpp Balanced 1,079,753 B and large 2 bpp 2,998,909 B against 1,080,000 / 3,000,000 targets (previously 698,435 / 2,181,655, 'budget spent, not at the ladder's limit'); the 17 cells below the ceiling keep their Phase Q2 sha16 hashes; the rate:: unit tests (18) pin every upper rung as distinct, invertible and quant_lf-coupled.
+        """
+}
+
+record jpegxl-rs.evidence.quality-q3-rust-gates-2026-08-18/1 : evidence {
+    title "Q3 Rust workspace gates on a clean worktree carrying only this pass's patch"
+    state verified
+    result pass
+    method command
+    observed_at git:13498bb933ab27f28e2b0580d2bdea1c19b9c7e0
+    command "git worktree add --detach .agent/scratch/q3/wt HEAD; git apply .agent/scratch/q3/mine.diff; cargo fmt --all --check; cargo clippy --workspace --all-targets --profile fast-debug -- -D warnings; JPXL_JXLINFO=<oracle-bin jxlinfo.exe> test-workspace-windows.ps1 -DisableAvx2 -CargoArgs test,--workspace,--profile,fast-debug,--no-fail-fast; cargo check --workspace --no-default-features"
+    artifact ".agent/scratch/q3/wt-test2.log"
+    summary """
+        fmt clean, clippy clean, 1424 tests passed / 0 failed with fixture links materialised, AVX2 disabled and the pinned jxlinfo, no-default-features check clean; with AVX2 enabled only the two pre-existing 1-ULP jpxl-core tests differ (Q2's Windows/MSVC observation).
+        """
+}
+
+record jpegxl-rs.evidence.quality-q3-speed-budget-2026-08-18/1 : evidence {
+    title "Q3 native Windows speed budget"
+    state verified
+    result pass
+    method command
+    observed_at git:13498bb933ab27f28e2b0580d2bdea1c19b9c7e0
+    command "bash .agent/scratch/quality-track/q3-ab-bin.sh 3 mid-photo.ppm jpxl-q1-windows.exe <Q3 release jpxl.exe> (alternating, --threads 4, --bpp 1, balanced)"
+    artifact ".agent/scratch/q3/timing-mid1-balanced.txt"
+    summary """
+        Alternating 4x3 medians 428 ms (frozen Phase Q1) vs 423 ms (Q3) on the mid photo at 1 bpp Balanced; large 1 bpp 895 vs 896 ms; the cumulative quality-track cost stays at Q0b's ~+9%, below +15%. mid2 2 bpp Balanced is 5,920 vs 5,219 ms because it now reaches its target and still falls back to the exhaustive controller (recorded observation).
+        """
+}
+
 record jpegxl-rs.evidence.retire-handoff-durable-facts-2026-08-11/1 : evidence {
     title "HANDOFF permanent facts are represented in AKR"
     state verified

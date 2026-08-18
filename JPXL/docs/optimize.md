@@ -1095,6 +1095,101 @@ PowerShell harness produced the same stream hashes as the earlier Linux/WSL
 commands while avoiding WSL path-translation overhead; perceptual metric
 calculation and the two independent decodes remain the dominant runtime.
 
+## Phase Q3 — the rate-ladder ceiling, and where the Butteraugli deficit actually sits (2026-08-18)
+
+Q3 opened by asking the standing harness the pass's own question: how far is
+the Q2 encoder from `cjxl -e 7` at matched bytes on *every* metric, not just
+SSIMULACRA2? Answering it first exposed a rate-control defect. Above the
+`global_scale` ceiling the ladder stepped by whole `HfMul` multiples, and
+`HfMul` 2 at the ceiling is a full octave finer than `HfMul` 1 — a 65% byte
+jump on the smooth mid2 photo — so every 2 bpp target between the two rungs
+landed 35% under ("budget spent, not at the ladder's limit"); large at 2 bpp
+landed 27% under. The `JPXL_RATE_TRACE=1` dump added to the CLI shows it:
+
+```
+Bisect rung=73726 scale=73727 hf_mul=1  bytes=703405  feasible=true
+Bisect rung=73728 scale=73728 hf_mul=2  bytes=1163964 feasible=false   (target 1,080,000)
+```
+
+**Promoted: the dense upper ladder.** Segment `k` (2..=65) walks
+`global_scale` from `floor((k-1)*MAX/k)+1` to `MAX` with `HfMul = k`, so
+consecutive rungs differ by `k` units of effective scale and the top stays
+`65 * MAX`. `quant_lf` is coupled to the segment (`base * j`, `j <= k`, while
+that stays at or below 16) so the LF/HF balance carries through the first
+segments; the bound is the `MAX * 16` product the fixed-quantizer defaults have
+always reached, because jxl-oxide 0.12.6 narrows `LfQuant` to signed 16 bits
+and a synthetic high-contrast oracle fixture wraps at twice that. Search paths
+that recover a `quant_lf` from a `QuantizerChoice` now carry the request's base
+value (feeding the coupled wire value back coupled it twice; the Phase 7
+truncation test, which had been pinned to one rung only by the old cliff, now
+pins its quantizer explicitly).
+
+Result against the Phase Q2 outputs (27 photo cells, three presets): 17 cells
+byte-identical; the ten ceiling-bound cells all improve — mid2 2 bpp
+698 KB → 1,080 KB (+2.84 SSIMULACRA2, −31% Butteraugli), large 2 bpp
+2.18 MB → 3.00 MB (+1.6…+2.1, −18…−22%), mid 2 bpp and mid2 1 bpp within
+tolerance of target with +0.07…+0.12; ladder mean +0.528, worst −0.008,
+Butteraugli max −5.9% mean / worst +0.03%; the 14 scene cells are identical.
+One-thread and four-thread outputs are byte-identical on every changed cell;
+`djxl` and `jxl-oxide` accept all of them. Timing on the standing mid 1 bpp
+Balanced cell: 423 ms vs 428 ms for the frozen Phase Q1 binary (alternating
+4×3), so the cumulative quality-track cost stays at Q0b's ~+9%. Balanced at
+mid2 2 bpp is 5.9 s (was 5.2 s and undershooting) because the two-anchor
+controller's second anchor extrapolates with exponent 2 where the measured
+exponent is 0.95–1.8 and falls back to the exhaustive controller — recorded
+as `jpegxl-rs.observation.q3-balanced-second-anchor-overshoots-above-the-ceiling-2026-08-18`
+for the next pass.
+
+**Where JPXL stands against `cjxl -e 7` at matched bytes (Balanced, Q3 head):**
+
+| image | bpp | bytes JPXL / cjxl | PSNR JPXL / cjxl (Δ dB) | SSIMULACRA2 JPXL / cjxl (Δ) | Butteraugli max JPXL / cjxl (Δ%) | 3-norm JPXL / cjxl (Δ%) |
+|---|---:|---:|---:|---:|---:|---:|
+| mid-photo | 0.5 | 266,642 / 266,650 | 31.58 / 31.62 (-0.04) | 56.89 / 54.51 (+2.38) | 5.188 / 5.121 (+1.3%) | 1.7172 / 1.7258 (-0.5%) |
+| mid-photo | 1 | 539,694 / 539,684 | 35.38 / 35.51 (-0.13) | 77.18 / 75.68 (+1.51) | 2.783 / 2.228 (+24.9%) | 0.8716 / 0.8387 (+3.9%) |
+| mid-photo | 2 | 1,077,076 / 1,077,129 | 39.31 / 39.43 (-0.12) | 88.77 / 87.53 (+1.24) | 1.292 / 0.897 (+44.1%) | 0.4069 / 0.3562 (+14.2%) |
+| large-photo | 0.5 | 748,380 / 748,369 | 35.57 / 35.81 (-0.23) | 72.87 / 71.48 (+1.39) | 3.436 / 3.116 (+10.3%) | 1.0539 / 1.0129 (+4.0%) |
+| large-photo | 1 | 1,495,861 / 1,495,703 | 38.95 / 39.15 (-0.20) | 86.38 / 84.88 (+1.50) | 1.632 / 1.419 (+15.0%) | 0.5194 / 0.4888 (+6.3%) |
+| large-photo | 2 | 2,998,909 / 2,999,060 | 42.53 / 42.93 (-0.40) | 92.54 / 92.14 (+0.40) | 0.823 / 0.669 (+22.9%) | 0.2721 / 0.2456 (+10.8%) |
+| mid2-photo | 0.5 | 269,873 / 269,949 | 40.64 / 40.78 (-0.15) | 80.06 / 78.66 (+1.40) | 2.259 / 2.161 (+4.5%) | 0.9959 / 0.9974 (-0.2%) |
+| mid2-photo | 1 | 533,843 / 533,687 | 42.71 / 43.24 (-0.53) | 86.01 / 85.44 (+0.56) | 1.551 / 1.495 (+3.7%) | 0.7378 / 0.7027 (+5.0%) |
+| mid2-photo | 2 | 1,079,753 / 1,080,066 | 46.85 / 46.81 (+0.04) | 91.13 / 90.46 (+0.67) | 0.923 / 0.916 (+0.7%) | 0.4231 / 0.4098 (+3.2%) |
+
+SSIMULACRA2 parity is met and exceeded in 9/9 cells; PSNR trails in 8/9
+(0.04–0.53 dB), Butteraugli max-norm in 9/9 (0.7–44%), 3-norm in 7/9 (up to
+14%). "Matched libjxl across the board" is therefore **not** met: the
+remaining gap is Butteraugli (and a small PSNR gap), largest on the busy mid
+photo at 1–2 bpp, smallest on the smooth mid2 photo.
+
+**Localisation.** A per-tile Butteraugli diffmap comparison
+(`.agent/scratch/q3/bdiff`) shows the deficit is not in flat regions and not
+in the busiest texture but in low-to-mid activity blocks (JPXL/cjxl 3-norm
+ratio by variance quintile 1.00 / 1.06 / 1.05 / 1.02 / 0.96), and its worst
+cases are DCT8×8 blocks that mix a strong edge with flat content, where JPXL
+leaves ±8…14 luma error on the flat side against cjxl's ±2. A DCT8-only cover
+still shows the same hot spots (max 2.45 vs 2.78) while gaining 0.03 dB PSNR
+and losing 0.37 SSIMULACRA2 at equal bytes: the merge decisions are the one
+lever that moves PSNR and Butteraugli together.
+
+**Honest negatives** (all retained as research controls, byte-identical when
+off; full tables in
+`docs/experiments/2026-08-18-q3-fine-lattice-aq-and-adaptive-epf.md`):
+
+* Fine-lattice adaptive quantization (`--aq-mode fine-masking|fine-uniform|
+  edge-refine`, baseline `HfMul` 16, 3×3 erosion, edge dead zone): every
+  strength of every direction loses SSIMULACRA2 and Butteraugli 3-norm on the
+  mid photo at 1 bpp; the `mul` plane alone costs 1–3% of the file. This is a
+  stronger negative than Phases 4J/5A, whose lattice rounded any coarsening
+  to a full octave.
+* Activity-adaptive EPF sharpness (`--epf-sharpness adaptive`): worse
+  everywhere; uniform sharpness 7 is doing real work in busy content.
+* `--cover-size-penalty measured` (max-norm −5% on the mid cell) and
+  `--x-qm-scale 3` are neutral-to-negative on the corpus (SSIMULACRA2 −0.037 /
+  +0.021 photos, −0.134 / −0.007 scenes; 3-norm +0.4…+0.7%). Not promoted.
+
+**Next.** The cover objective's rate proxy (bit length of nonzeros, zeros
+free) is the natural target for the merge-decision lever; the two-anchor
+second-anchor exponent is the speed follow-up at high rates.
+
 ### Open architectural questions
 
 1. How can the finalist refresh only structurally unstable cover decisions?

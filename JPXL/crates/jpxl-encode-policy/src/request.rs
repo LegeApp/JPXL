@@ -244,7 +244,7 @@ pub struct SearchBudget {
 /// This is separate from [`RestorationDecision`] because the latter is the
 /// decoder-visible J.1 header decision, while choosing the sharpness samples
 /// is encoder analysis. Production stays at [`Self::Zero`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum EpfSharpnessMode {
     /// Emit the neutral all-zero sharpness plane; EPF sigma is zero.
     #[default]
@@ -253,6 +253,56 @@ pub enum EpfSharpnessMode {
     /// nonzero multiplier. Phase 5I promoted this for target-rate requests
     /// after it improved Butteraugli in all twelve corpus/rate cells.
     Uniform7,
+    /// Phase Q3: activity-adaptive sharpness. Every block starts at 7 (the
+    /// full default-LUT sigma) and ramps down toward `floor` as the block's
+    /// luma activity `log2(1 + variance_8bit)` rises from `knee` over `span`
+    /// octaves, so busy, high-contrast blocks — thin dark structures were the
+    /// Butteraugli hot spots against `cjxl` at matched bytes — are smoothed
+    /// less while flat and gently textured blocks keep the Phase 5I filter.
+    Adaptive(AdaptiveSharpness),
+}
+
+/// The three constants of [`EpfSharpnessMode::Adaptive`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AdaptiveSharpness {
+    /// The lowest sharpness a block may reach (0 = EPF identity there).
+    pub floor: u8,
+    /// Activity (`log2(1 + variance_8bit)`) at which the ramp starts.
+    pub knee: f32,
+    /// Octaves of activity over which sharpness falls from 7 to `floor`.
+    pub span: f32,
+}
+
+impl Default for AdaptiveSharpness {
+    fn default() -> Self {
+        Self {
+            floor: 0,
+            knee: 6.0,
+            span: 6.0,
+        }
+    }
+}
+
+impl AdaptiveSharpness {
+    /// The sharpness sample for one block's activity.
+    #[must_use]
+    pub fn sharpness_for(self, activity: f32) -> u8 {
+        let floor = f32::from(self.floor.min(7));
+        let span = if self.span.is_finite() && self.span > 0.0 {
+            self.span
+        } else {
+            1.0
+        };
+        let t = ((activity - self.knee) / span).clamp(0.0, 1.0);
+        let s = (7.0 - (7.0 - floor) * t).round();
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "clamped into 0..=7 before the cast"
+        )]
+        let s = s.clamp(0.0, 7.0) as u8;
+        s
+    }
 }
 
 /// Research policy for the cover objective's per-transform distortion scale.
@@ -271,12 +321,20 @@ pub enum EpfSharpnessMode {
 /// spread across sixteen independently-signed 8x8 patches is closer to noise,
 /// and noise is easier to mask. The objective therefore under-penalises large
 /// transforms, which biases the hierarchical cover toward merging.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum CoverSizePenalty {
     /// Price every transform's sample-domain error identically: the shipped
     /// objective, and byte-identical to the pre-Phase-6 encoder.
     #[default]
     Neutral,
+    /// Phase Q3 research arm: explicit multipliers for the 16 and 32 edges,
+    /// so the size axis can be swept beyond the Phase 6.2 measurement.
+    Custom {
+        /// The DCT16x16 distortion multiplier.
+        dct16: f64,
+        /// The DCT32x32 distortion multiplier.
+        dct32: f64,
+    },
     /// Scale each candidate's distortion by [`CoverSizePenalty::measured`].
     Measured,
 }
@@ -305,6 +363,11 @@ impl CoverSizePenalty {
             Self::Measured => match coeff_edge {
                 16 => 1.0881,
                 32 => 1.1331,
+                _ => 1.0,
+            },
+            Self::Custom { dct16, dct32 } => match coeff_edge {
+                16 => dct16,
+                32 => dct32,
                 _ => 1.0,
             },
         }

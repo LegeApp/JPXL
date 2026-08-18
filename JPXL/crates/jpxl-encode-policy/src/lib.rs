@@ -111,15 +111,15 @@ pub use diagnostics::{
 pub use error::{PolicyError, Result};
 pub use field::{AqMode, AqTuning};
 
-use field::{DesiredQuantField, mul_lattice};
+use field::{DesiredQuantField, mul_lattice_for};
 pub use rate::{
     LadderSearch, QuantizerChoice, RateOutcome, RatePhase, RateProbeStats, RateStep, Rung,
     search_frame,
 };
 pub use request::{
-    ChromaHfPolicy, CoverFrequencyWeight, CoverMode, CoverSizePenalty, EncodeRequest,
-    EpfSharpnessMode, QuantizerChoiceMode, RateSearchBudget, RateSearchPreset, RateTarget,
-    RateTolerance, SearchBudget,
+    AdaptiveSharpness, ChromaHfPolicy, CoverFrequencyWeight, CoverMode, CoverSizePenalty,
+    EncodeRequest, EpfSharpnessMode, QuantizerChoiceMode, RateSearchBudget, RateSearchPreset,
+    RateTarget, RateTolerance, SearchBudget,
 };
 pub use source::PreparedFrame;
 // Re-export so callers can set [`EncodeRequest::restoration`] without a
@@ -820,6 +820,19 @@ fn plan_at_with_cfl_workspace(
             EpfSharpnessMode::Uniform7 => {
                 let len = usize::try_from(blocks.area()).unwrap_or(0);
                 SharpnessGrid::new(blocks, vec![7; len])?
+            }
+            EpfSharpnessMode::Adaptive(model) => {
+                let len = usize::try_from(blocks.area()).unwrap_or(0);
+                let mut values = Vec::with_capacity(len);
+                for by in 0..blocks.height {
+                    for bx in 0..blocks.width {
+                        let activity = atlas
+                            .atom(_rect.x0 / 8 + bx, _rect.y0 / 8 + by)
+                            .map_or(0.0, |f| (1.0 + f.variance_xyb[1] * 255.0 * 255.0).log2());
+                        values.push(model.sharpness_for(activity));
+                    }
+                }
+                SharpnessGrid::new(blocks, values)?
             }
         };
         lf_groups.push(LfGroupPlan {
@@ -1698,19 +1711,26 @@ impl AqSetup {
             _ => return off,
         };
 
-        // An odd `global_scale` is snapped down to the even family (an
-        // off-by-one the rate loop prices exactly) instead of falling back to
-        // refine-only: a fallback keyed on parity would make adjacent rate
-        // rungs alternate between two differently-sized encoders and put a
+        // The legacy lattice factors by 2; the fine lattice (Phase Q3) by
+        // `FINE_BASELINE`. A `global_scale` that is not a multiple of the
+        // factor is snapped down to the nearest multiple (an off-by-a-few the
+        // rate loop prices exactly) instead of falling back to refine-only: a
+        // fallback keyed on divisibility would make adjacent rate rungs
+        // alternate between two differently-sized encoders and put a
         // systematic sawtooth in the ladder.
-        let even = quantizer.global_scale.get() & !1;
-        let doubled = (
-            even >= 2,
-            GlobalScale::new((even / 2).max(1)),
-            QuantLf::new(quantizer.quant_lf.get().saturating_mul(2)),
-            HfMul::new(quantizer.hf_mul.get().saturating_mul(2)),
+        let factor = if field.is_fine() {
+            crate::field::FINE_BASELINE
+        } else {
+            2
+        };
+        let snapped = quantizer.global_scale.get() - quantizer.global_scale.get() % factor;
+        let factored = (
+            snapped >= factor,
+            GlobalScale::new((snapped / factor).max(1)),
+            QuantLf::new(quantizer.quant_lf.get().saturating_mul(factor)),
+            HfMul::new(quantizer.hf_mul.get().saturating_mul(factor)),
         );
-        if let (true, Ok(global_scale), Ok(quant_lf), Ok(baseline)) = doubled {
+        if let (true, Ok(global_scale), Ok(quant_lf), Ok(baseline)) = factored {
             Self {
                 field: Some(field),
                 refine_only: false,
@@ -1736,10 +1756,22 @@ impl AqSetup {
 
     /// Every `HfMul` this setup can assign.
     fn muls(&self) -> Vec<HfMul> {
-        if self.field.is_some() {
-            mul_lattice(self.baseline, self.refine_only)
-        } else {
-            vec![self.baseline]
+        match &self.field {
+            Some(field) => mul_lattice_for(self.baseline, self.refine_only, field.is_fine()),
+            None => vec![self.baseline],
+        }
+    }
+
+    /// The `metadata_bits` a varblock's `HfMul` pays in the cover objective.
+    ///
+    /// The legacy lattice charges [`mul_signal_bits`]. The fine field varies
+    /// almost everywhere, so a per-varblock 8-bit charge would only bias the
+    /// cover toward merging; its `mul` row is a smooth, small-residual plane
+    /// under the LF-group entropy coder, charged at a flat estimate instead.
+    fn mul_signal_bits(&self, hf_mul: HfMul) -> f64 {
+        match &self.field {
+            Some(field) if field.is_fine() => FINE_MUL_SIGNAL_BITS,
+            _ => mul_signal_bits(hf_mul, self.baseline),
         }
     }
 }
@@ -4049,6 +4081,10 @@ fn mul_signal_bits(hf_mul: HfMul, baseline: HfMul) -> f64 {
     if hf_mul == baseline { 0.0 } else { 8.0 }
 }
 
+/// What every varblock's `mul` sample is charged under the fine field
+/// (Phase Q3): a flat estimate of a smooth plane's per-sample cost.
+const FINE_MUL_SIGNAL_BITS: f64 = 2.0;
+
 /// §4.3's objective `J = R + lambda * D + metadata_bits` for one square
 /// transform candidate, in bits: the residual bit proxy, plus each channel's
 /// squared reconstruction error at that channel's operating-point exchange
@@ -4618,7 +4654,7 @@ fn tile_region_with(
             scratch,
             d_y_hf,
         )? + PER_VARBLOCK_BITS
-            + mul_signal_bits(hf_mul, aq.baseline);
+            + aq.mul_signal_bits(hf_mul);
         return Ok((
             cost,
             vec![VarblockDecision {
@@ -4649,8 +4685,7 @@ fn tile_region_with(
     let single = match square_transform(size) {
         Some(transform) if fits => {
             let hf_mul = aq.mul_for_footprint(x0 / 8 + bx, y0 / 8 + by, size, size);
-            let fixed =
-                PER_VARBLOCK_BITS + NON_DCT8X8_SIGNAL_BITS + mul_signal_bits(hf_mul, aq.baseline);
+            let fixed = PER_VARBLOCK_BITS + NON_DCT8X8_SIGNAL_BITS + aq.mul_signal_bits(hf_mul);
             // Fixed metadata alone can already lose to the split.
             if fixed >= split_cost {
                 return Ok((split_cost, split_blocks));

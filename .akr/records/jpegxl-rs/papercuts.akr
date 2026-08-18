@@ -67,6 +67,18 @@ record jpegxl-rs.papercut.cargo-fmt-all-check-fails-on-code-committed-at/1 : pap
     created_at 2026-08-12
 }
 
+record jpegxl-rs.papercut.concurrent-agent-edits-in-the-main-worktree-2026-08-18/1 : papercut {
+    title "Two agents edited the main worktree at once during Phase Q3; the pass had to gate and commit from a filtered patch on a separate git worktree"
+    state verified
+    statement """
+        While Phase Q3 was in progress another agent session started editing 16-bit-input support (from_srgb16, ImageMetadata bit_depth) in JPXL/crates/jpxl-encode/src/vardct/{headers,plan,write}.rs, jpxl-encode-policy/src/{source,regret,lib,request}.rs and tests, in the same working tree, with CRLF line endings, including two files this pass was also editing (lib.rs, request.rs). Nothing announced the overlap; git status was clean when Q3 started. Q3 therefore ran its gates and built its measurement binary on a detached git worktree at HEAD plus a hunk-filtered patch of its own changes, and staged that patch rather than the files, leaving the other agent's uncommitted hunks untouched. One accidental `git stash`/`stash pop` (30 s) touched their tree. Whitespace-only rustfmt drift on their in-progress source.rs may have landed. AGENTS.md section 8 assumes disjoint briefs; it has no mechanism for detecting a live overlap.
+        """
+    observed_at git:13498bb933ab27f28e2b0580d2bdea1c19b9c7e0
+    about """
+        AGENTS.md section 8 multi-agent ownership; concurrent sessions on one checkout
+        """
+}
+
 record jpegxl-rs.papercut.fff-find-files-returned-transport-closed-while/1 : papercut {
     title "FFF find_files returned `Transport closed` while locating the fresh…"
     state verified

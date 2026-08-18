@@ -62,7 +62,35 @@ pub enum AqMode {
     Masking,
     /// Error equalization: busy finer, flat coarser.
     Uniform,
+    /// Phase Q3: perceptual masking on a fine lattice.
+    ///
+    /// Same activity signal as [`AqMode::Masking`], but (1) each atom's
+    /// activity is eroded to the minimum over its 3x3 neighbourhood, so an
+    /// atom bordering flat content stays finely quantized (busy neighbours do
+    /// not mask errors that bleed into the flat side of an edge), and (2) the
+    /// field is carried on a sixteenth-octave `HfMul` lattice around a
+    /// baseline of [`FINE_BASELINE`] rather than the half-octave lattice
+    /// around 2. On that lattice a coarsening of half an octave is a real
+    /// half octave, where the legacy lattice rounds it to a full one — which
+    /// is what the Phase 4J/5A "AQ is a net loss" screens actually measured.
+    FineMasking,
+    /// The sign-mirror of [`AqMode::FineMasking`] (busy finer, flat coarser)
+    /// on the same eroded activity and fine lattice; a research arm.
+    FineUniform,
+    /// Phase Q3: refine-only edge field on the fine lattice. An atom is
+    /// refined by `strength` octaves per octave of activity it has *above the
+    /// quietest atom in its 3x3 neighbourhood* (clamped), so a block that
+    /// carries a strong edge next to flat content — where the Butteraugli
+    /// hot spots against `cjxl` sit — spends more, while uniform texture and
+    /// uniform flatness stay at the baseline. No atom is coarsened; the rate
+    /// loop funds the refinement from the global scale.
+    EdgeRefine,
 }
+
+/// The `HfMul` baseline the fine lattice is factored around: `global_scale`
+/// is divided by it and `quant_lf` multiplied by it, so the wire baseline is
+/// unchanged and one `HfMul` step is a `1/16` octave near the baseline.
+pub const FINE_BASELINE: u32 = 16;
 
 /// The x265-family strength: how many octaves of adjustment one octave of
 /// activity deviation buys. `0.25` keeps the default field inside `+-1`
@@ -74,6 +102,10 @@ const AQ_STRENGTH: f32 = 0.25;
 /// the lattice `{1, 2, 3, 4, ...}` around baseline 2 cannot express more than
 /// `-1` octave finer anyway, and unbounded coarsening blurs.
 const AQ_CLAMP: f32 = 1.0;
+
+/// [`AqMode::EdgeRefine`]'s default neighbour-contrast dead zone, in octaves
+/// of activity: on the standing 4 MP photograph 8% of atoms exceed it.
+const EDGE_CONTRAST: f32 = 6.0;
 
 /// The chroma share of an atom's activity (Prangnell-style luma+chroma
 /// activity, down-weighted).
@@ -101,6 +133,10 @@ pub struct AqTuning {
     pub clamp: f32,
     /// How much an atom's chroma activity counts relative to its luma.
     pub chroma_weight: f32,
+    /// [`AqMode::EdgeRefine`] only: octaves of activity an atom must sit
+    /// above the quietest atom of its 3x3 neighbourhood before it counts as
+    /// an edge and is refined.
+    pub edge_contrast: f32,
 }
 
 impl Default for AqTuning {
@@ -109,6 +145,7 @@ impl Default for AqTuning {
             strength: AQ_STRENGTH,
             clamp: AQ_CLAMP,
             chroma_weight: CHROMA_AQ_WEIGHT,
+            edge_contrast: EDGE_CONTRAST,
         }
     }
 }
@@ -138,6 +175,11 @@ impl AqTuning {
             } else {
                 CHROMA_AQ_WEIGHT
             },
+            edge_contrast: if self.edge_contrast.is_finite() {
+                self.edge_contrast.clamp(0.0, 16.0)
+            } else {
+                EDGE_CONTRAST
+            },
         }
     }
 }
@@ -148,6 +190,31 @@ impl AqTuning {
 pub struct DesiredQuantField {
     width: u32,
     adj: Box<[f32]>,
+    /// Whether the field is carried on the fine lattice (no half-octave
+    /// snapping) or the legacy one.
+    fine: bool,
+}
+
+/// Erodes an activity grid: each atom takes the minimum over its 3x3
+/// neighbourhood (clamped at the frame edge).
+fn erode_min_3x3(activity: &[f32], width: u32, height: u32) -> Vec<f32> {
+    let w = usize::try_from(width).unwrap_or(0);
+    let h = usize::try_from(height).unwrap_or(0);
+    let mut out = Vec::with_capacity(activity.len());
+    for y in 0..h {
+        for x in 0..w {
+            let mut m = f32::INFINITY;
+            for ny in y.saturating_sub(1)..(y + 2).min(h) {
+                for nx in x.saturating_sub(1)..(x + 2).min(w) {
+                    if let Some(&v) = activity.get(ny * w + nx) {
+                        m = m.min(v);
+                    }
+                }
+            }
+            out.push(if m.is_finite() { m } else { 0.0 });
+        }
+    }
+    out
 }
 
 impl DesiredQuantField {
@@ -163,11 +230,15 @@ impl DesiredQuantField {
     #[must_use]
     pub fn from_atlas_tuned(atlas: &AnalysisAtlas, mode: AqMode, tuning: AqTuning) -> Option<Self> {
         let tuning = tuning.sanitised();
-        let sign = match mode {
+        let (sign, fine) = match mode {
             AqMode::Off => return None,
-            AqMode::Masking => 1.0f32,
-            AqMode::Uniform => -1.0f32,
+            AqMode::Masking => (1.0f32, false),
+            AqMode::Uniform => (-1.0f32, false),
+            AqMode::FineMasking => (1.0f32, true),
+            AqMode::FineUniform => (-1.0f32, true),
+            AqMode::EdgeRefine => (-1.0f32, true),
         };
+        let edge_refine = mode == AqMode::EdgeRefine;
         let grid = atlas.grid();
         let count = usize::try_from(grid.area()).unwrap_or(0);
 
@@ -181,9 +252,30 @@ impl DesiredQuantField {
                         (1.0 + (f.variance_xyb[0] + f.variance_xyb[2]) * VARIANCE_TO_8BIT).log2();
                     luma + tuning.chroma_weight * chroma
                 });
-                sum += f64::from(a);
                 activity.push(a);
             }
+        }
+        if edge_refine {
+            // Contrast against the quietest neighbour, not the frame mean.
+            let eroded = erode_min_3x3(&activity, grid.width, grid.height);
+            let adj = activity
+                .iter()
+                .zip(eroded.iter())
+                // Below the contrast dead zone an atom is not an edge at all;
+                // the lattice's own one-octave bound caps the refinement.
+                .map(|(&a, &m)| sign * tuning.strength * (a - m - tuning.edge_contrast).max(0.0))
+                .collect();
+            return Some(Self {
+                width: grid.width,
+                adj,
+                fine,
+            });
+        }
+        if fine {
+            activity = erode_min_3x3(&activity, grid.width, grid.height);
+        }
+        for &a in &activity {
+            sum += f64::from(a);
         }
         #[allow(
             clippy::cast_possible_truncation,
@@ -202,7 +294,14 @@ impl DesiredQuantField {
         Some(Self {
             width: grid.width,
             adj,
+            fine,
         })
+    }
+
+    /// Whether the field is carried on the fine lattice.
+    #[must_use]
+    pub fn is_fine(&self) -> bool {
+        self.fine
     }
 
     /// Whether every atom's snapped adjustment is zero: the field would
@@ -211,7 +310,12 @@ impl DesiredQuantField {
     /// a neutral field exactly like [`AqMode::Off`].
     #[must_use]
     pub fn is_neutral(&self) -> bool {
-        self.adj.iter().all(|a| (a * 2.0).round() == 0.0)
+        if self.fine {
+            let baseline = HfMul::new(FINE_BASELINE).unwrap_or(HfMul::MIN);
+            self.adj.iter().all(|&a| mul_of(baseline, a) == baseline)
+        } else {
+            self.adj.iter().all(|a| (a * 2.0).round() == 0.0)
+        }
     }
 
     /// The adjustment of atom `(x, y)`, zero outside the grid.
@@ -253,11 +357,18 @@ impl DesiredQuantField {
             reason = "footprints are at most 16 atoms"
         )]
         let mut adj = if count > 0 { sum / count as f32 } else { 0.0 };
-        // §7.2 wants a compact, predictable `HfMul` distribution: the field is
-        // snapped to the half-octave lattice, so a frame carries at most the
-        // five values of [`mul_lattice`] and the `mul` row's residuals stay
-        // small and repetitive.
-        adj = (adj * 2.0).round() / 2.0;
+        // §7.2 wants a compact, predictable `HfMul` distribution: the legacy
+        // field is snapped to the half-octave lattice, so a frame carries at
+        // most the five values of [`mul_lattice`] and the `mul` row's
+        // residuals stay small and repetitive. The fine lattice keeps the
+        // continuous adjustment and lets `mul_of` round it to the nearest of
+        // the [`FINE_BASELINE`]-anchored integers.
+        if self.fine {
+            // The fine lattice spans exactly one octave either way.
+            adj = adj.clamp(-1.0, 1.0);
+        } else {
+            adj = (adj * 2.0).round() / 2.0;
+        }
         if refine_only {
             adj = adj.min(0.0);
         }
@@ -287,6 +398,20 @@ fn mul_of(baseline: HfMul, adj: f32) -> HfMul {
 /// quantizer cache is prebuilt over exactly this set.
 #[must_use]
 pub fn mul_lattice(baseline: HfMul, refine_only: bool) -> Vec<HfMul> {
+    mul_lattice_for(baseline, refine_only, false)
+}
+
+/// As [`mul_lattice`], selecting the fine lattice: every integer from one
+/// octave coarser (`baseline / 2`, at least 1) to one octave finer
+/// (`2 * baseline`), or from the baseline up under `refine_only`.
+#[must_use]
+pub fn mul_lattice_for(baseline: HfMul, refine_only: bool, fine: bool) -> Vec<HfMul> {
+    if fine {
+        let base = baseline.get();
+        let lo = if refine_only { base } else { (base / 2).max(1) };
+        let hi = base.saturating_mul(2);
+        return (lo..=hi).filter_map(|m| HfMul::new(m).ok()).collect();
+    }
     let steps: &[f32] = if refine_only {
         &[-1.0, -0.5, 0.0]
     } else {
@@ -462,6 +587,7 @@ mod tests {
             strength: -5.0,
             clamp: 100.0,
             chroma_weight: f32::NAN,
+            edge_contrast: -1.0,
         }
         .sanitised();
         assert_eq!(wild.strength, 0.0, "negative strength clamps to zero");
@@ -470,5 +596,63 @@ mod tests {
             wild.chroma_weight, CHROMA_AQ_WEIGHT,
             "a NaN weight falls back to the default rather than poisoning the field"
         );
+        assert_eq!(
+            wild.edge_contrast, 0.0,
+            "a negative dead zone clamps to zero"
+        );
+    }
+
+    /// Phase Q3: the fine field keeps its continuous adjustment and lands on
+    /// the sixteenth-octave lattice; the edge field refines only atoms whose
+    /// activity clears the dead zone above their quietest neighbour.
+    #[test]
+    fn fine_fields_use_the_fine_lattice_and_edge_refine_never_coarsens() {
+        let atlas = atlas_of(128, 64, &half_flat_half_noise(128, 64));
+        let baseline = HfMul::new(FINE_BASELINE).expect("legal");
+        let fine = DesiredQuantField::from_atlas(&atlas, AqMode::FineMasking).expect("field");
+        assert!(fine.is_fine());
+        let lattice = mul_lattice_for(baseline, false, true);
+        assert_eq!(lattice.first().map(|m| m.get()), Some(FINE_BASELINE / 2));
+        assert_eq!(lattice.last().map(|m| m.get()), Some(FINE_BASELINE * 2));
+        let grid = atlas.grid();
+        for y in 0..grid.height {
+            for x in 0..grid.width {
+                let mul = fine.mul_for_footprint(x, y, 1, 1, baseline, false);
+                assert!(
+                    lattice.contains(&mul),
+                    "({x},{y}) left the lattice: {mul:?}"
+                );
+            }
+        }
+        // Flat side finer than the noisy side under masking.
+        let flat = fine.mul_for_footprint(1, 1, 1, 1, baseline, false);
+        let noisy = fine.mul_for_footprint(12, 1, 1, 1, baseline, false);
+        assert!(flat.get() > noisy.get(), "flat {flat:?} vs noisy {noisy:?}");
+
+        let edge = DesiredQuantField::from_atlas_tuned(
+            &atlas,
+            AqMode::EdgeRefine,
+            AqTuning {
+                strength: 0.2,
+                edge_contrast: 1.0,
+                ..AqTuning::default()
+            },
+        )
+        .expect("field");
+        for y in 0..grid.height {
+            for x in 0..grid.width {
+                assert!(
+                    edge.mul_for_footprint(x, y, 1, 1, baseline, false).get() >= FINE_BASELINE,
+                    "edge refine must never coarsen ({x},{y})"
+                );
+            }
+        }
+        // Deep inside the flat half nothing is an edge; the flat/noise border
+        // column is.
+        assert_eq!(
+            edge.mul_for_footprint(1, 3, 1, 1, baseline, false),
+            baseline
+        );
+        assert!(edge.mul_for_footprint(8, 3, 1, 1, baseline, false).get() > FINE_BASELINE);
     }
 }

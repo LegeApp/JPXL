@@ -34,8 +34,17 @@ impl HfEventSink for Counts {
 }
 
 fn walk_counts(rgb: &[u8], w: u32, h: u32, mode: QuantizerChoiceMode) -> (Counts, usize) {
-    let target = RateTarget::BitsPerPixel(1.0);
-    let mut request = EncodeRequest::for_target(target);
+    // The difference has to be measured at ONE quantizer: the pass changes
+    // coefficients, and a rate loop would spend the bytes it saves on a finer
+    // rung and re-partition the cover with them. Until Phase Q3 the 1 bpp
+    // target happened to pin both arms to the same rung only because the
+    // ladder cliffed at the `global_scale` ceiling; the dense upper ladder
+    // takes that accident away, so the quantizer is pinned explicitly here at
+    // the target-rate policy's own settings.
+    let mut request = EncodeRequest::for_target(RateTarget::BitsPerPixel(1.0));
+    request.target = None;
+    request.global_scale =
+        jpxl_encode::vardct::ids::GlobalScale::new(55_000).expect("inside the wire range");
     // This is a single-mechanism Phase 7 test. Keep Q2's automatic chroma-HF
     // allocation out so changing `mode` is the only policy difference.
     request.chroma_hf_policy = jpxl_encode_policy::ChromaHfPolicy::Manual;
@@ -43,12 +52,14 @@ fn walk_counts(rgb: &[u8], w: u32, h: u32, mode: QuantizerChoiceMode) -> (Counts
     // Pin unit lambda so this measures the truncation pass itself, not Phase
     // 7.2's calibrated scale (which also moves cover selection).
     request.lambda_scale = 1.0;
-    let report = jpxl_encode_policy::encode_srgb8_to_target(w, h, rgb, &request, target)
-        .expect("a targeted encode");
-    let geometry = report.plan.geometry().expect("geometry");
+    let frame = jpxl_encode_policy::PreparedFrame::from_srgb8(w, h, rgb).expect("a frame");
+    let plan = jpxl_encode_policy::plan_frame(&frame, &request).expect("a plan");
+    let bytes =
+        jpxl_encode::vardct::write_codestream_with(&plan, request.resources).expect("a codestream");
+    let geometry = plan.geometry().expect("geometry");
     let mut sink = Counts::default();
-    walk_frame(report.plan.plan(), &geometry, &mut sink).expect("walk");
-    (sink, report.codestream.len())
+    walk_frame(plan.plan(), &geometry, &mut sink).expect("walk");
+    (sink, bytes.len())
 }
 
 /// Deterministic mixed content: smooth gradients with a textured corner, so
