@@ -5,7 +5,7 @@ build {
     tool "akr 0.3.1"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:0d8aac03bd2ce386f91ead9c1d5feb94d84b5bc0fa2ca2de2ebee33b2a9ae7f8"
+    source_graph "sha256:6915fb842321167f9b373440def1a59020f49dfe5818612bc74ec30e4fdaf751"
 }
 
 source ".akr/project.akr" {
@@ -39,8 +39,8 @@ source ".akr/records/jpegxl-rs/milestones.akr" {
 }
 
 source ".akr/records/jpegxl-rs/observations.akr" {
-    hash "sha256:07530c32aff31df60228e307603aecc09986b435cb69f30b3308ffef4e66201f"
-    records 83
+    hash "sha256:d99a1434454d9d465d130a786abfb89f962f62189802e90b984bb8c63b8b3aa3"
+    records 84
 }
 
 source ".akr/records/jpegxl-rs/papercuts.akr" {
@@ -5869,8 +5869,13 @@ seal @jpegxl-rs.observation.q4-rate-proxy-audit-and-metric-divergence-2026-08-18
 }
 
 seal @jpegxl-rs.observation.q4-rate-proxy-audit-and-metric-divergence-2026-08-18/2 {
+    state superseded
+    hash "sha256:188f825226c60240747c8125206f7a962f52103e9651e7b5c56521cbc1b40c6a"
+}
+
+seal @jpegxl-rs.observation.q4-rate-proxy-audit-and-metric-divergence-2026-08-18/3 {
     state verified
-    hash "sha256:d01765a105fbf283f2128f07d933e463b05d1f0e184012ad8245e188c32736a1"
+    hash "sha256:91d2ade6f93113a714828b5556ab68acec741e17589661f91a039b21c7a99f68"
 }
 
 seal @jpegxl-rs.observation.quantizer-normalised-distortion-is-the-lever-2026-08-12/1 {

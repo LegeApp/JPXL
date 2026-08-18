@@ -2028,7 +2028,7 @@ record jpegxl-rs.observation.q4-rate-proxy-audit-and-metric-divergence-2026-08-1
 
 record jpegxl-rs.observation.q4-rate-proxy-audit-and-metric-divergence-2026-08-18/2 : observation {
     title "Q4: the writer spends 1.5-2.0x the cover proxy's residual bits with a stable DCT8 < DCT16 < DCT32 ordering; SSIMULACRA2 and Butteraugli diverge because JPXL's SSIMULACRA2-first policy accepts localised worst-case error that Butteraugli's max-norm and masking model punish"
-    state verified
+    state superseded
     scope [ path "JPXL/crates/jpxl-encode-policy/**" ]
     statement """
         Rate audit (tests/rate_proxy_audit.rs, 1 bpp Balanced): actual/proxy including fixed bits is 1.63/1.37/1.27 (mid), 1.60/1.35/1.53 (large), 1.89/1.60/1.78 (mid2) for DCT8/16/32; per token, interior zeros cost 0.40-1.11 bits (falling with transform size), nonzero coefficients 3.3-4.1 bits against bitlen+1, non_zeros symbols 1.7-3.7 bits each; a DCT8x8 varblock walks 22-33 coefficient positions per three channels, a DCT16x16 94-173, a DCT32x32 70-389. Calibrated per-size scales are consistent across the three photos in ordering (residual under-pricing 1.56/1.63/1.88 mid, 1.52/1.58/1.76 large, 1.84/1.89/2.0 mid2). Metric divergence: at matched bytes JPXL leads cjxl -e7 on SSIMULACRA2 in 9/9 cells and trails on Butteraugli max-norm in 7/9 (up to +43%), 3-norm in 7/9 (up to +14%) and PSNR in 8/9 (up to 0.54 dB). SSIMULACRA2 averages multi-scale structural similarity over the frame and forgives localised error; Butteraugli reports a max-norm (and a high-power 3-norm) of a masking-based difference map, so one visible patch next to flat content sets the score; PSNR is mean-square error. JPXL's target-rate policy was promoted SSIMULACRA2-first (quant_lf 4, quant-donor frequency weight, trailing truncation at lambda x4, uniform EPF 7, hierarchical merges), each improving average structure while trading MSE and accepting occasional localised errors at edge/flat DCT8x8 blocks (Q3 localisation), and cjxl targets Butteraugli distance directly; the two encoders sit at different points of one tradeoff surface. Q4's rate calibration is the first change since Q1 that improves SSIMULACRA2 (+0.048 photos / +0.059 scenes) and Butteraugli 3-norm (-0.15% / -0.13%) together; the per-block allocation levers of Q3 did not.
@@ -2043,6 +2043,25 @@ record jpegxl-rs.observation.q4-rate-proxy-audit-and-metric-divergence-2026-08-1
     review_after 2026-09-30
     derived_from [ @jpegxl-rs.observation.q3-butteraugli-deficit-localisation-2026-08-18/3 ]
     supersedes [ @jpegxl-rs.observation.q4-rate-proxy-audit-and-metric-divergence-2026-08-18/1 ]
+}
+
+record jpegxl-rs.observation.q4-rate-proxy-audit-and-metric-divergence-2026-08-18/3 : observation {
+    title "Q4: the writer spends 1.5-2.0x the cover proxy's residual bits with a stable DCT8 < DCT16 < DCT32 ordering; SSIMULACRA2 and Butteraugli diverge because JPXL's SSIMULACRA2-first policy accepts localised worst-case error that Butteraugli's max-norm and masking model punish"
+    state verified
+    scope [ path "JPXL/crates/jpxl-encode-policy/**" ]
+    statement """
+        Rate audit (tests/rate_proxy_audit.rs, 1 bpp Balanced): actual/proxy including fixed bits is 1.63/1.37/1.27 (mid), 1.60/1.35/1.53 (large), 1.89/1.60/1.78 (mid2) for DCT8/16/32; per token, interior zeros cost 0.40-1.11 bits (falling with transform size), nonzero coefficients 3.3-4.1 bits against bitlen+1, non_zeros symbols 1.7-3.7 bits each; a DCT8x8 varblock walks 22-33 coefficient positions per three channels, a DCT16x16 94-173, a DCT32x32 70-389. Calibrated per-size scales are consistent across the three photos in ordering (residual under-pricing 1.56/1.63/1.88 mid, 1.52/1.58/1.76 large, 1.84/1.89/2.0 mid2). Metric divergence: at matched bytes JPXL leads cjxl -e7 on SSIMULACRA2 in 9/9 cells and trails on Butteraugli max-norm in 7/9 (up to +43%), 3-norm in 7/9 (up to +14%) and PSNR in 8/9 (up to 0.54 dB). SSIMULACRA2 averages multi-scale structural similarity over the frame and forgives localised error; Butteraugli reports a max-norm (and a high-power 3-norm) of a masking-based difference map, so one visible patch next to flat content sets the score; PSNR is mean-square error. JPXL's target-rate policy was promoted SSIMULACRA2-first (quant_lf 4, quant-donor frequency weight, trailing truncation at lambda x4, uniform EPF 7, hierarchical merges), each improving average structure while trading MSE and accepting occasional localised errors at edge/flat DCT8x8 blocks (Q3 localisation), and cjxl targets Butteraugli distance directly; the two encoders sit at different points of one tradeoff surface. Q4's rate calibration is the first change since Q1 that improves SSIMULACRA2 (+0.048 photos / +0.059 scenes) and Butteraugli 3-norm (-0.15% / -0.13%) together; the per-block allocation levers of Q3 did not. Observed on the Phase Q4 commit 547da94d.
+        """
+    observed_at git:547da94dc095a9f3b2b9c609fad09ec071637fdd
+    method command
+    watches [
+        "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        "JPXL/crates/jpxl-encode-policy/src/request.rs",
+        "JPXL/crates/jpxl-encode/src/vardct/walk.rs"
+    ]
+    review_after 2026-09-30
+    derived_from [ @jpegxl-rs.observation.q3-butteraugli-deficit-localisation-2026-08-18/3 ]
+    supersedes [ @jpegxl-rs.observation.q4-rate-proxy-audit-and-metric-divergence-2026-08-18/2 ]
 }
 
 record jpegxl-rs.observation.quantizer-normalised-distortion-is-the-lever-2026-08-12/1 : observation {
