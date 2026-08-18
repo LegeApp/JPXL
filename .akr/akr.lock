@@ -5,8 +5,7 @@ build {
     tool "akr 0.3.1"
     grammar "0.1"
     vocabulary "0.2"
-    commit git:cd721fc51b3c376b52aea51af55bd6a3ae99190f
-    source_graph "sha256:df53e0dc90414842c4876358f4d819e098284f79781e0f92ed92426b19852b86"
+    source_graph "sha256:49eac7f1b14f5b307764583f662f67c74eb050308842f1219daa9697958404cc"
 }
 
 source ".akr/project.akr" {
@@ -40,8 +39,8 @@ source ".akr/records/jpegxl-rs/milestones.akr" {
 }
 
 source ".akr/records/jpegxl-rs/observations.akr" {
-    hash "sha256:a36349808e1e8c69b53e75c18f50c0a99618213486ca6d00c9b653fed6054da4"
-    records 87
+    hash "sha256:faa0c53985420d129e9b611be354b8a920f8d6d8bd607a2f77ab4d8c50d68332"
+    records 89
 }
 
 source ".akr/records/jpegxl-rs/papercuts.akr" {
@@ -5917,6 +5916,16 @@ seal @jpegxl-rs.observation.q5-exhaustive-fallback-is-a-hidden-quality-tier-2026
 seal @jpegxl-rs.observation.q5-exhaustive-fallback-is-a-hidden-quality-tier-2026-08-18/3 {
     state verified
     hash "sha256:b627557e5baa72028406519cd1d69b876770f7a9bc3268d677f4fcada03ab772"
+}
+
+seal @jpegxl-rs.observation.q6-zero-run-term-explains-dct8-residual-only-2026-08-18/1 {
+    state superseded
+    hash "sha256:72b319a4668c7a95fde594dc8814c079542f9b54bab5a45cf8a602f5185e4b15"
+}
+
+seal @jpegxl-rs.observation.q6-zero-run-term-explains-dct8-residual-only-2026-08-18/2 {
+    state verified
+    hash "sha256:b8f2dbcfa64821d55adec25c2e7bcacda934a401eefbbd7723fb364caa4f259a"
 }
 
 seal @jpegxl-rs.observation.quantizer-normalised-distortion-is-the-lever-2026-08-12/1 {

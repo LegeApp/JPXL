@@ -2118,6 +2118,41 @@ record jpegxl-rs.observation.q5-exhaustive-fallback-is-a-hidden-quality-tier-202
     ]
 }
 
+record jpegxl-rs.observation.q6-zero-run-term-explains-dct8-residual-only-2026-08-18/1 : observation {
+    title "Q6: a per-varblock interior-zero term halves the DCT8x8 rate-proxy residual's p90 but explains little for DCT16/32; deferred rather than built into the scoring kernel"
+    state superseded
+    scope [ path "JPXL/crates/jpxl-encode-policy/**" ]
+    statement """
+        tests/rate_proxy_audit.rs now fits actual ~ s*proxy + z*zeros per varblock on the chosen plan (calibrated cover, 1 bpp Balanced). mid photo: DCT8 residual p10/p50/p90 -0.12/+0.04/+0.30 -> -0.10/-0.00/+0.15 with z=1.13 bits per interior zero; DCT16 -0.74/-0.09/+0.06 -> -0.72/-0.11/+0.05 (z=0.51); DCT32 -0.95/-0.89/+0.02 -> -0.90/-0.76/+0.06 (a bimodal near-empty/dense population). mid2: DCT8 -0.11/+0.07/+0.30 -> -0.12/-0.02/+0.12 (z=0.67); DCT16 z=-0.02 (no gain); DCT32 -0.36/-0.04/+0.07 -> -0.32/-0.04/+0.03. A merge decision compares one 16x16 against four 8x8, so the term mostly sharpens the split side; the expected decision change is modest against a coding-order last-nonzero scan inside the SIMD scoring kernel and its speed cost. Not built; the per-block fixed cost keyed on emptiness is the DCT32 lever if anyone returns to this.
+        """
+    observed_at git:eede6a5b9f5c1a26fbe4e6f5f0f6b3fbb1a1a35a
+    method command
+    watches [ "JPXL/crates/jpxl-encode-policy/tests/rate_proxy_audit.rs" ]
+    review_after 2026-09-30
+    derived_from [
+        @jpegxl-rs.observation.q4-rate-proxy-audit-and-metric-divergence-2026-08-18/3
+    ]
+}
+
+record jpegxl-rs.observation.q6-zero-run-term-explains-dct8-residual-only-2026-08-18/2 : observation {
+    title "Q6: a per-varblock interior-zero term halves the DCT8x8 rate-proxy residual's p90 but explains little for DCT16/32; deferred rather than built into the scoring kernel"
+    state verified
+    scope [ path "JPXL/crates/jpxl-encode-policy/**" ]
+    statement """
+        tests/rate_proxy_audit.rs now fits actual ~ s*proxy + z*zeros per varblock on the chosen plan (calibrated cover, 1 bpp Balanced). mid photo: DCT8 residual p10/p50/p90 -0.12/+0.04/+0.30 -> -0.10/-0.00/+0.15 with z=1.13 bits per interior zero; DCT16 -0.74/-0.09/+0.06 -> -0.72/-0.11/+0.05 (z=0.51); DCT32 -0.95/-0.89/+0.02 -> -0.90/-0.76/+0.06 (a bimodal near-empty/dense population). mid2: DCT8 -0.11/+0.07/+0.30 -> -0.12/-0.02/+0.12 (z=0.67); DCT16 z=-0.02 (no gain); DCT32 -0.36/-0.04/+0.07 -> -0.32/-0.04/+0.03. A merge decision compares one 16x16 against four 8x8, so the term mostly sharpens the split side; the expected decision change is modest against a coding-order last-nonzero scan inside the SIMD scoring kernel and its speed cost. Not built; the per-block fixed cost keyed on emptiness is the DCT32 lever if anyone returns to this.
+        """
+    observed_at git:eede6a5f2ab12b4974e99fb5eba0a1494f1e4695
+    method command
+    watches [ "JPXL/crates/jpxl-encode-policy/tests/rate_proxy_audit.rs" ]
+    review_after 2026-09-30
+    derived_from [
+        @jpegxl-rs.observation.q4-rate-proxy-audit-and-metric-divergence-2026-08-18/3
+    ]
+    supersedes [
+        @jpegxl-rs.observation.q6-zero-run-term-explains-dct8-residual-only-2026-08-18/1
+    ]
+}
+
 record jpegxl-rs.observation.quantizer-normalised-distortion-is-the-lever-2026-08-12/1 : observation {
     title "The standard's own quant matrices carry a third of the frequency weighting; measuring distortion in quantizer-normalised units cuts Y mispricing 2.65x to 1.86x"
     state verified

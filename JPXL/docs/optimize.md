@@ -1383,6 +1383,19 @@ The mid2 2 bpp Balanced cell remains ~5 s because a fresh-structure price at
 next step there, if wanted, is the Q5 controller constants (0.8 s, −0.25
 SSIMULACRA2 on that cell).
 
+**The zero-run proxy, measured before building it.** The Q4 audit harness
+now also fits `actual ≈ s·proxy + z·zeros` per varblock. On the calibrated
+cover a zero-run term halves the DCT8×8 residual's p90 (mid: +0.30 → +0.15,
+mid2: +0.30 → +0.12; z ≈ 1.1 / 0.7 bits per interior zero) but explains
+almost nothing for DCT16×16 (mid2: z ≈ 0) and leaves DCT32×32's spread where
+it is (mid: p50 −0.89 — a bimodal population of near-empty and dense blocks
+that no per-coefficient term fixes; a per-block fixed cost keyed on emptiness
+would). Since a merge decision compares a 16×16 candidate with four 8×8s and
+the term mostly sharpens the 8×8 side, the expected decision change is
+modest, and it would need a coding-order last-nonzero scan inside the SIMD
+scoring kernel. Not built in this pass; the numbers stay here for whoever
+picks it up.
+
 ### Open architectural questions
 
 1. How can the finalist refresh only structurally unstable cover decisions?
