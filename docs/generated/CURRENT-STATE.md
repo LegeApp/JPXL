@@ -534,6 +534,8 @@ The public comparison previously conflated the exhaustive JPXL Quality preset at
 
 **supersedes** `@jpegxl-rs.observation.libjxl-comparison-2026-08-18/1` · **derived_from** `@jpegxl-rs.policy.jpxl-bench-entry-points/1`, `@jpegxl-rs.policy.performance-baseline-rules/1`
 
+> **Stale** — `watches "JPXL/tools/compare-libjxl.ps1"` was matched by `4f528696`, which touched `JPXL/tools/compare-libjxl.ps1`. See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#reproducible-jpxl-versus-libjxl-vardct-baseline-on-4-mp-and-12-mp-photographs).
+
 ### Head-to-head vs cjxl 0.13: jpxl is at cjxl -e1 density, 5-24x slower, and its effort ladder is inert above level 1
 
 `verified` · `@jpegxl-rs.observation.libjxl-headsup-modular-2026-08-10/1`

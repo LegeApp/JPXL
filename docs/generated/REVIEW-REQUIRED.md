@@ -7,7 +7,7 @@
 
 What should not be trusted without re-checking: records the build flagged `stale` or `at_risk`. Neither flag means a record is wrong (D-003); both mean look at it. This view is generated on every successful build, including one that exits 0 with a long queue (D-024). An empty file on an active project is more often a sign the `watches` globs are wrong than a sign the knowledge is perfect.
 
-## Stale (34)
+## Stale (35)
 
 ### The cover/CfL objective misprices Y-channel error by 2.65x across DCT8x8 frequency; the mispricing is in the ruler, not the lever
 
@@ -98,6 +98,12 @@ What should not be trusted without re-checking: records the build flagged `stale
 `verified` · `@jpegxl-rs.observation.phase5-aqoff-jxloxide-incompatibility-2026-08-11/3` · observation · **stale** · [jxl-oxide 0.12.6 narrows LfQuant at the signed-16-bit boundary](CURRENT-STATE.md#jxl-oxide-0126-narrows-lfquant-at-the-signed-16-bit-boundary)
 
 **Cause** — `watches "JPXL/crates/jpxl-encode-policy/src/rate.rs"` was matched by `3f137d37`, which touched `JPXL/crates/jpxl-encode-policy/src/rate.rs`.
+
+### Reproducible JPXL versus libjxl VarDCT baseline on 4 MP and 12 MP photographs
+
+`verified` · `@jpegxl-rs.observation.libjxl-comparison-2026-08-18/2` · observation · **stale** · [Reproducible JPXL versus libjxl VarDCT baseline on 4 MP and 12 MP photographs](CURRENT-STATE.md#reproducible-jpxl-versus-libjxl-vardct-baseline-on-4-mp-and-12-mp-photographs)
+
+**Cause** — `watches "JPXL/tools/compare-libjxl.ps1"` was matched by `4f528696`, which touched `JPXL/tools/compare-libjxl.ps1`.
 
 ### Cropped frames, orientation, kBlack channels
 
