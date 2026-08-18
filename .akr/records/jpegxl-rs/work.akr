@@ -6206,6 +6206,71 @@ record jpegxl-rs.work.quality-q1-quantizer/1 : work {
     ]
 }
 
+record jpegxl-rs.work.quality-q2-chroma-hf/1 : work {
+    title "Phase Q2: chroma-HF allocation, EPF and rate-effort sweep under the remaining quality-track speed budget"
+    state completed
+    scope [
+        path ".agent/scratch/quality-track/**",
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/request.rs",
+        path "JPXL/crates/jpxl-encode-policy/tests/truncation_saving.rs",
+        path "JPXL/docs/optimize.md"
+    ]
+    intent """
+        Phase Q2 targets the remaining high-frequency red/green perceptual deficit recorded by Phase 8.6 and the Q0b matched-byte comparison, while deliberately spending only the quality track's remaining speed budget. Re-screen the already-wired X/B quant-matrix scales, active-EPF choices, and rate undershoot tolerance on the Phase Q1 standing harness. Start with one-knob Fast/Balanced sweeps, attribute channel and rate effects, then screen only justified combinations. Promote at most one target-rate default change if it passes the SSIMULACRA2-first Contract B bounds, remains within +15% cumulative Balanced cost versus Phase 42 (about nine points already spent by Q0b), is deterministic and independently decodable, and leaves the Phase Q1 behavior reachable by explicit flags. Honest negative results are acceptable and should close the corresponding lever rather than forcing a promotion.
+        """
+    note """
+        Opened 2026-08-18 from the completed Q1 handoff and Q0's approved Q0-Q4 quality plan. Q1 closed quant_lf, dead-zone, lambda and truncation-price levers; Q2 owns the deferred QM/EPF/tolerance sweep and the red/green HF target. Scope now includes the Phase 7 truncation mechanism test because Q2's automatic chroma policy must be disabled there to preserve its single-variable invariant.
+        """
+    acceptance {
+        check chroma-attribution {
+            statement """
+                The X/B QM, EPF, and undershoot-tolerance sweeps are recorded separately enough to attribute any quality gain; a promoted setting has an explicit per-channel/per-rate rationale rather than an unexplained bundle.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.quality-q2-chroma-attribution-2026-08-18/1 ]
+        }
+        check compatibility-control {
+            statement """
+                The previous Phase Q1 policy remains reachable through explicit CLI research controls and reproduces its retained codestream fingerprints on the canonical mid and large images.
+                """
+            method command
+            verified_by [ @jpegxl-rs.evidence.quality-q2-compatibility-control-2026-08-18/1 ]
+        }
+        check determinism-decoders {
+            statement """
+                Promoted target-rate outputs are byte-identical across one and four threads and with AVX2 disabled, and representative/corpus streams are accepted by djxl and jxl-oxide.
+                """
+            method command
+            verified_by [ @jpegxl-rs.evidence.quality-q2-determinism-decoders-2026-08-18/1 ]
+        }
+        check gates {
+            statement """
+                Workspace formatting, build, tests, strict Clippy, no-default-features checks, and AKR validation pass, or any unchanged pre-existing diagnostic is explicitly retained with raw output.
+                """
+            method command
+            verified_by [ @jpegxl-rs.evidence.quality-q2-rust-gates-2026-08-18/1 ]
+        }
+        check quality-gate {
+            statement """
+                The promoted Q2 candidate passes the standing ladder and seven-scene Contract B gate against the Phase Q1 binary: SSIMULACRA2 mean delta is non-negative with no cell below -0.5, Butteraugli max-norm mean is no worse than +2%, Butteraugli pnorm3 has no cell worse than +5%, and matched-SSIMULACRA2 bytes do not increase.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.quality-q2-corpus-gates-2026-08-18/1 ]
+        }
+        check speed-budget {
+            statement """
+                Pinned four-worker Balanced timing or instruction-count evidence keeps the cumulative quality-track cost within +15% of the Phase 42 binary, with the already-spent Q0b cost included.
+                """
+            method command
+            verified_by [ @jpegxl-rs.evidence.quality-q2-speed-budget-2026-08-18/1 ]
+        }
+    }
+    depends_on [ @jpegxl-rs.work.quality-q1-quantizer/1 ]
+    part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+}
+
 record jpegxl-rs.work.retire-handoff-ledger/1 : work {
     title "Retire HANDOFF.md as a duplicate ledger after AKR migration"
     state completed

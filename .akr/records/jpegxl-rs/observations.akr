@@ -2112,3 +2112,47 @@ record jpegxl-rs.observation.vardct-flip-point-probe/1 : observation {
             """
     }
 }
+
+record jpegxl-rs.observation.windows-msvc-avx2-fallback-not-bit-identical-2026-08-18/1 : observation {
+    title "Windows MSVC AVX2 and fallback paths differ by one ULP"
+    state superseded
+    scope [
+        path "JPXL/crates/jpxl-core/src/color.rs",
+        path "JPXL/crates/jpxl-core/src/simd.rs",
+        path "JPXL/crates/jpxl-encode-policy/**"
+    ]
+    statement """
+        On Windows/MSVC, both the frozen Phase Q1 binary and the Phase Q2 binary produce different target-rate hashes with JPXL_DISABLE_AVX2=1, and the existing planes_match_single_pixel_bitwise and avx2_cbrt_matches_std tests differ by one ULP. The frozen Linux Phase Q1 binary is byte-identical with AVX2 enabled or disabled, and Q2 production output matches the screened frozen-binary B=5 output, so the Windows discrepancy predates and is independent of Q2.
+        """
+    observed_at git:e337cefd96bb5452fac01aab39535829f59f01b7
+    method command
+    watches [
+        "JPXL/crates/jpxl-core/src/color.rs",
+        "JPXL/crates/jpxl-core/src/simd.rs",
+        "JPXL/.cargo/config.toml",
+        "JPXL/rust-toolchain.toml"
+    ]
+}
+
+record jpegxl-rs.observation.windows-msvc-avx2-fallback-not-bit-identical-2026-08-18/2 : observation {
+    title "Windows MSVC AVX2 and fallback paths differ by one ULP"
+    state verified
+    scope [
+        path "JPXL/crates/jpxl-core/src/color.rs",
+        path "JPXL/crates/jpxl-core/src/simd.rs",
+        path "JPXL/crates/jpxl-encode-policy/**"
+    ]
+    statement """
+        On Windows/MSVC, both the frozen Phase Q1 binary and the Phase Q2 binary produce different target-rate hashes with JPXL_DISABLE_AVX2=1, and the existing planes_match_single_pixel_bitwise and avx2_cbrt_matches_std tests differ by one ULP. The frozen Linux Phase Q1 binary is byte-identical with AVX2 enabled or disabled, and Q2 production output matches the screened frozen-binary B=5 output, so the Windows discrepancy predates and is independent of Q2.
+        """
+    observed_at git:e337cefd96bb5452fac01aab39535829f59f01b7
+    method command
+    watches [
+        "JPXL/crates/jpxl-core/src/color.rs",
+        "JPXL/crates/jpxl-core/src/simd.rs",
+        "JPXL/rust-toolchain.toml"
+    ]
+    supersedes [
+        @jpegxl-rs.observation.windows-msvc-avx2-fallback-not-bit-identical-2026-08-18/1
+    ]
+}

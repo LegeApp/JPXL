@@ -266,6 +266,17 @@ record jpegxl-rs.papercut.the-repository-root-and-the-jpxl-crate-root-use/1 : pa
     created_at 2026-08-16
 }
 
+record jpegxl-rs.papercut.the-standing-quality-track-scripts-hard-coded/1 : papercut {
+    title "The standing quality-track scripts hard-coded the old…"
+    state verified
+    statement """
+        The standing quality-track scripts hard-coded the old /mnt/Samsung980_1TB checkout and assumed a Linux djxl plus jxl-oxide on PATH. In the current D: checkout the input links materialize as IntxLNK files under WSL and the Linux djxl misses libgif.so.7, so the Q2 run needed a repo-relative root, real copied inputs, and Windows-tool fallbacks with wslpath conversion.
+        """
+    observed_at git:e337cefd96bb5452fac01aab39535829f59f01b7
+    author "fugu"
+    created_at 2026-08-18
+}
+
 record jpegxl-rs.papercut.while-checking-an-in-progress-akr-change-akr/1 : papercut {
     title "While checking an in-progress AKR change, `akr change status` was…"
     state verified

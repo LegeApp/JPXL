@@ -1068,6 +1068,33 @@ better.
 Speed: neutral within noise (LF planes cost fewer bytes at the coarser
 quantizer; the writer's learner sees the same sample counts).
 
+## Phase Q2 — selective low-rate B-channel HF allocation (2026-08-18)
+
+The Q1 harness was extended to sweep X/B quantization-matrix scales, EPF, and
+effort boundaries. A global B scale of 5 improved the 27-cell photo ladder by
++0.605 mean SSIMULACRA2 but failed the seven-scene screen; adding EPF 2 did
+not repair it. X=3/B=3 passed scenes narrowly but exceeded the photo
+Butteraugli mean bound. Restricting B=5 to Quality improved both corpora but
+missed one 2 bpp Butteraugli 3-norm cell (+6.06% against the +5% bound).
+
+Promoted: **B scale 5 only for the Quality preset at targets no greater than
+1 bpp**. Fast, Balanced, and Quality above 1 bpp remain byte-identical to Q1;
+an explicit `--b-qm-scale` always bypasses the automatic policy. The exact
+48-cell composite screen (three photos and seven scenes, with both `djxl` and
+`jxl-oxide` decoding every changed stream) passed:
+
+| corpus | SSIMULACRA2 mean / worst | Butteraugli max mean / worst | Butteraugli 3-norm mean / worst |
+|---|---:|---:|---:|
+| photos (27 cells) | +0.149 / +0.000 | -0.22% / +4.17% | +0.33% / +2.88% |
+| scenes (21 cells) | +0.022 / -0.269 | +0.40% / +15.19% | +0.50% / +2.78% |
+
+Quality BD-rate moved -4.2%, -3.7%, and -1.3% on the three photos. Alternating
+native Windows A/B timing on the mid photo measured the candidate about 1.5%
+faster (noise-level), so Q2 adds no measurable encode cost. The Windows
+PowerShell harness produced the same stream hashes as the earlier Linux/WSL
+commands while avoiding WSL path-translation overhead; perceptual metric
+calculation and the two independent decodes remain the dominant runtime.
+
 ### Open architectural questions
 
 1. How can the finalist refresh only structurally unstable cover decisions?

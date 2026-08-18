@@ -148,6 +148,26 @@ pub enum RateSearchPreset {
     Balanced,
 }
 
+/// How target-rate requests allocate high-frequency chroma bits.
+///
+/// The fixed-quantizer request and explicit research controls use
+/// [`Self::Manual`]. Target-rate requests use [`Self::QualityLowRateB5`],
+/// which refines only the B channel for the exhaustive Quality preset at no
+/// more than one bit per pixel. Phase Q2 found that broader B=5 policies
+/// regressed the scene corpus, while this rate-and-effort guard passed both
+/// standing Contract B corpora and leaves Fast, Balanced, and higher-rate
+/// Quality output on the Phase Q1 policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ChromaHfPolicy {
+    /// Use [`EncodeRequest::x_qm_scale`] and [`EncodeRequest::b_qm_scale`]
+    /// exactly as supplied.
+    #[default]
+    Manual,
+    /// Use B-channel QM scale 5 only for Quality targets at or below 1 bpp;
+    /// otherwise use the neutral scale.
+    QualityLowRateB5,
+}
+
 impl RateSearchPreset {
     /// Effective target undershoot tolerance for this preset.
     #[must_use]
@@ -390,6 +410,9 @@ pub struct EncodeRequest {
     pub x_qm_scale: QmScale,
     /// F.2/I.5.3's B-channel quantization-matrix exponent.
     pub b_qm_scale: QmScale,
+    /// Whether the B-channel scale is explicit or selected by the promoted
+    /// target-rate chroma-HF policy.
+    pub chroma_hf_policy: ChromaHfPolicy,
     /// F.2's `group_size_shift`.
     pub group_size_shift: u32,
     /// The effort budget.
@@ -494,6 +517,7 @@ impl EncodeRequest {
             hf_mul: HfMul::new(1).unwrap_or(HfMul::MIN),
             x_qm_scale: QmScale::NEUTRAL,
             b_qm_scale: QmScale::NEUTRAL,
+            chroma_hf_policy: ChromaHfPolicy::Manual,
             group_size_shift: 1,
             budget: SearchBudget::default(),
             target: None,
@@ -542,7 +566,27 @@ impl EncodeRequest {
         // gain (24/28 and 23/28 pooled; 7/7 both on the clean 1 bpp row).
         request.quantizer_choice = QuantizerChoiceMode::TrailingTruncation;
         request.lambda_scale = 4.0;
+        request.chroma_hf_policy = ChromaHfPolicy::QualityLowRateB5;
         request
+    }
+
+    /// Resolves the B-channel QM scale for one concrete target and frame.
+    ///
+    /// Byte targets use the same `target_bytes * 8 <= pixels` boundary as the
+    /// bits-per-pixel spelling, so the policy does not depend on which public
+    /// target form the caller chose. Manual requests are returned verbatim.
+    #[must_use]
+    pub fn effective_b_qm_scale(self, width: u32, height: u32, target: RateTarget) -> QmScale {
+        if self.chroma_hf_policy == ChromaHfPolicy::Manual {
+            return self.b_qm_scale;
+        }
+        let pixels = u64::from(width) * u64::from(height);
+        let at_most_one_bpp = target.bytes_for(width, height).saturating_mul(8) <= pixels;
+        if self.rate_preset == RateSearchPreset::Quality && at_most_one_bpp {
+            QmScale::new(5).unwrap_or(QmScale::NEUTRAL)
+        } else {
+            QmScale::NEUTRAL
+        }
     }
 }
 
@@ -612,6 +656,7 @@ mod tests {
         assert_eq!(request.rate_preset, RateSearchPreset::Quality);
         assert_eq!(request.x_qm_scale, QmScale::NEUTRAL);
         assert_eq!(request.b_qm_scale, QmScale::NEUTRAL);
+        assert_eq!(request.chroma_hf_policy, ChromaHfPolicy::Manual);
         assert!(
             !request.restoration.gaborish && request.restoration.epf_iters == 0,
             "default path keeps filters off"
@@ -629,6 +674,48 @@ mod tests {
         assert_eq!(request.budget.rate.lf_fill_probes, 0);
         assert_eq!(request.restoration.epf_iters, 1);
         assert_eq!(request.epf_sharpness, EpfSharpnessMode::Uniform7);
+        assert_eq!(request.chroma_hf_policy, ChromaHfPolicy::QualityLowRateB5);
+    }
+
+    #[test]
+    fn q2_chroma_hf_policy_is_quality_only_and_stops_above_one_bpp() {
+        let target = RateTarget::BitsPerPixel(1.0);
+        let quality = EncodeRequest::for_target(target);
+        let b5 = QmScale::new(5).expect("Q2 scale is inside the wire range");
+        assert_eq!(quality.effective_b_qm_scale(64, 64, target), b5);
+        assert_eq!(
+            quality.effective_b_qm_scale(64, 64, RateTarget::Bytes(512)),
+            b5,
+            "the byte spelling of exactly one bpp uses the same policy"
+        );
+        assert_eq!(
+            quality.effective_b_qm_scale(64, 64, RateTarget::Bytes(513)),
+            QmScale::NEUTRAL,
+            "the first byte above one bpp keeps the Phase Q1 scale"
+        );
+        assert_eq!(
+            quality.effective_b_qm_scale(64, 64, RateTarget::BitsPerPixel(2.0)),
+            QmScale::NEUTRAL
+        );
+
+        for preset in [RateSearchPreset::Fast, RateSearchPreset::Balanced] {
+            let mut request = quality;
+            request.rate_preset = preset;
+            assert_eq!(
+                request.effective_b_qm_scale(64, 64, target),
+                QmScale::NEUTRAL,
+                "{preset:?} must remain on the Phase Q1 chroma policy"
+            );
+        }
+
+        let mut manual = quality;
+        manual.chroma_hf_policy = ChromaHfPolicy::Manual;
+        manual.b_qm_scale = QmScale::new(3).expect("research scale is legal");
+        assert_eq!(
+            manual.effective_b_qm_scale(64, 64, RateTarget::BitsPerPixel(2.0)),
+            manual.b_qm_scale,
+            "an explicit research scale bypasses the automatic guard"
+        );
     }
 
     #[test]

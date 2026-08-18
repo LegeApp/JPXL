@@ -117,9 +117,9 @@ pub use rate::{
     search_frame,
 };
 pub use request::{
-    CoverFrequencyWeight, CoverMode, CoverSizePenalty, EncodeRequest, EpfSharpnessMode,
-    QuantizerChoiceMode, RateSearchBudget, RateSearchPreset, RateTarget, RateTolerance,
-    SearchBudget,
+    ChromaHfPolicy, CoverFrequencyWeight, CoverMode, CoverSizePenalty, EncodeRequest,
+    EpfSharpnessMode, QuantizerChoiceMode, RateSearchBudget, RateSearchPreset, RateTarget,
+    RateTolerance, SearchBudget,
 };
 pub use source::PreparedFrame;
 // Re-export so callers can set [`EncodeRequest::restoration`] without a
@@ -5021,12 +5021,14 @@ pub fn encode_srgb8_to_target(
     request: &EncodeRequest,
     target: RateTarget,
 ) -> Result<RateOutcome> {
+    let mut resolved = *request;
+    resolved.b_qm_scale = request.effective_b_qm_scale(width, height, target);
     // Phase 38: one worker pool for the whole encode; the source conversion
     // uses it too instead of running on the calling thread alone.
-    let executor = request.resources.executor();
+    let executor = resolved.resources.executor();
     let frame = PreparedFrame::from_srgb8_with(width, height, rgb, Some(&executor))?;
     let atlas = AnalysisAtlas::analyze(&frame);
-    rate::search_frame_with_executor(&frame, &atlas, request, target, &executor)
+    rate::search_frame_with_executor(&frame, &atlas, &resolved, target, &executor)
 }
 
 #[cfg(test)]

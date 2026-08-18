@@ -4215,6 +4215,82 @@ record jpegxl-rs.evidence.q1-sweeps-2026-08-17/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.quality-q2-chroma-attribution-2026-08-18/1 : evidence {
+    title "Q2 chroma-HF attribution sweep"
+    state verified
+    result pass
+    method command
+    observed_at git:e337cefd96bb5452fac01aab39535829f59f01b7
+    command "python .agent/scratch/quality-track/summarise.py .agent/scratch/quality-track/out/ladder-q2-native-selective-b5.tsv .agent/scratch/quality-track/out/scenes-q2-native-selective-b5.tsv"
+    artifact ".agent/scratch/quality-track/out/ladder-q2-native-selective-b5.tsv"
+    summary """
+        B=5 produced the photo gain; global B=5 failed scenes, Quality-wide B=5 missed one 2 bpp pnorm3 cell, and Quality at <=1 bpp passed both corpora.
+        """
+}
+
+record jpegxl-rs.evidence.quality-q2-compatibility-control-2026-08-18/1 : evidence {
+    title "Q2 compatibility control"
+    state verified
+    result pass
+    method command
+    observed_at git:e337cefd96bb5452fac01aab39535829f59f01b7
+    command "powershell -File .agent/scratch/quality-track/ladder.ps1 -Candidate JPXL/target/release/jpxl.exe -Baseline .agent/scratch/quality-track/jpxl-q1-windows.exe -Out .agent/scratch/quality-track/out/ladder-q2-production-smoke.tsv"
+    artifact ".agent/scratch/quality-track/out/ladder-q2-production-smoke.tsv"
+    summary """
+        Fast and Balanced at every screened rate and Quality above 1 bpp retained Q1 hashes; explicit --b-qm-scale 2 restored the Q1 Quality 1 bpp hash.
+        """
+}
+
+record jpegxl-rs.evidence.quality-q2-corpus-gates-2026-08-18/1 : evidence {
+    title "Q2 corpus gates"
+    state verified
+    result pass
+    method command
+    observed_at git:e337cefd96bb5452fac01aab39535829f59f01b7
+    command "python .agent/scratch/quality-track/summarise.py .agent/scratch/quality-track/out/ladder-q2-native-selective-b5.tsv .agent/scratch/quality-track/out/scenes-q2-native-selective-b5.tsv"
+    artifact ".agent/scratch/quality-track/out/scenes-q2-native-selective-b5.tsv"
+    summary """
+        Photo ladder SSIMULACRA2 mean +0.149, worst +0.000 and pnorm3 worst +2.88%; scenes mean +0.022, worst -0.269 and pnorm3 worst +2.78%; every decode passed.
+        """
+}
+
+record jpegxl-rs.evidence.quality-q2-determinism-decoders-2026-08-18/1 : evidence {
+    title "Q2 deterministic dual-decoder verification"
+    state verified
+    result pass
+    method command
+    observed_at git:e337cefd96bb5452fac01aab39535829f59f01b7
+    command "powershell -File .agent/scratch/quality-track/verify-q2-production.ps1"
+    artifact ".agent/scratch/quality-track/verify-q2-production.ps1"
+    summary """
+        All 13 production-changed cells matched the screened candidate byte for byte and decoded with djxl and jxl-oxide; 1-thread and 4-thread output hashes were identical.
+        """
+}
+
+record jpegxl-rs.evidence.quality-q2-rust-gates-2026-08-18/1 : evidence {
+    title "Q2 Rust workspace gates"
+    state verified
+    result pass
+    method command
+    observed_at git:e337cefd96bb5452fac01aab39535829f59f01b7
+    command "powershell -File .agent/scratch/quality-track/test-workspace-windows.ps1 -DisableAvx2"
+    artifact ".agent/scratch/quality-track/test-workspace-windows.ps1"
+    summary """
+        Full native Windows cargo test --workspace passed in 275.2 s with fixture links materialized and AVX2 disabled; build, clippy -D warnings, fmt --check, no-default-features check, and the encode-policy suite also passed.
+        """
+}
+
+record jpegxl-rs.evidence.quality-q2-speed-budget-2026-08-18/1 : evidence {
+    title "Q2 native Windows speed budget"
+    state verified
+    result pass
+    method observation
+    observed_at git:e337cefd96bb5452fac01aab39535829f59f01b7
+    summary """
+        Alternating 4x3 native Windows A/B medians were 476.568 ms for frozen Q1 and 469.566 ms for Q2 (-1.47%, noise-level); cumulative Q0b+Q2 remains about +9%, below +15%.
+        """
+}
+
 record jpegxl-rs.evidence.retire-handoff-durable-facts-2026-08-11/1 : evidence {
     title "HANDOFF permanent facts are represented in AKR"
     state verified

@@ -36,6 +36,9 @@ impl HfEventSink for Counts {
 fn walk_counts(rgb: &[u8], w: u32, h: u32, mode: QuantizerChoiceMode) -> (Counts, usize) {
     let target = RateTarget::BitsPerPixel(1.0);
     let mut request = EncodeRequest::for_target(target);
+    // This is a single-mechanism Phase 7 test. Keep Q2's automatic chroma-HF
+    // allocation out so changing `mode` is the only policy difference.
+    request.chroma_hf_policy = jpxl_encode_policy::ChromaHfPolicy::Manual;
     request.quantizer_choice = mode;
     // Pin unit lambda so this measures the truncation pass itself, not Phase
     // 7.2's calibrated scale (which also moves cover selection).
