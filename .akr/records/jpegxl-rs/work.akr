@@ -6638,7 +6638,7 @@ record jpegxl-rs.work.quality-q8-chroma-allocation/1 : work {
 
 record jpegxl-rs.work.quality-q8-preserve-chroma-policy-api/1 : work {
     title "Q8 follow-up: preserve the public ChromaHfPolicy variant spelling"
-    state proposed
+    state completed
     scope [ path "JPXL/crates/jpxl-encode-policy/src/request.rs", path "JPXL/docs/optimize.md" ]
     intent """
         Repair the source-compatibility regression introduced when Phase Q8 renamed the public ChromaHfPolicy::QualityLowRateB5 enum variant. Retain the historical variant as the actual enum discriminant, expose QualityChroma as a descriptive associated-constant alias for new code and documentation, keep the graduated Q8 X/B behavior and all codestream outputs unchanged, and correct the Q8 optimization note to describe the compatibility alias accurately. Add tests pinning both spellings and exhaustive matching through the legacy variant.
@@ -6650,12 +6650,14 @@ record jpegxl-rs.work.quality-q8-preserve-chroma-policy-api/1 : work {
                 """
             method command
             command "cargo test -p jpxl-encode-policy --lib request:: --profile fast-debug"
+            verified_by [ @jpegxl-rs.evidence.quality-q8-api-compatibility-2026-08-18/1 ]
         }
         check output-identity {
             statement """
                 Representative Q8 Quality outputs retain their pre-fix hashes and Fast/Balanced remain byte-identical to the frozen Q7 baseline.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.quality-q8-api-output-identity-2026-08-18/1 ]
         }
         check workspace-gates {
             statement """
@@ -6663,6 +6665,7 @@ record jpegxl-rs.work.quality-q8-preserve-chroma-policy-api/1 : work {
                 """
             method command
             command "cargo build --workspace && cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all --check"
+            verified_by [ @jpegxl-rs.evidence.quality-q8-api-workspace-gates-2026-08-18/1 ]
         }
     }
     depends_on [ @jpegxl-rs.work.quality-q8-chroma-allocation/1 ]

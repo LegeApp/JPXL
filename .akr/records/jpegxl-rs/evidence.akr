@@ -4544,6 +4544,45 @@ record jpegxl-rs.evidence.quality-q7-workspace-gates-2026-08-18/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.quality-q8-api-compatibility-2026-08-18/1 : evidence {
+    title "Q8 legacy ChromaHfPolicy spelling remains source-compatible"
+    state verified
+    result pass
+    method command
+    observed_at git:662a96b78250d28b24d7c772ec4ddb969c2c9d51
+    command "cargo test -p jpxl-encode-policy --lib request:: --profile fast-debug"
+    artifact "JPXL/crates/jpxl-encode-policy/src/request.rs"
+    summary """
+        All 8 request-policy tests passed. ChromaHfPolicy::QualityLowRateB5 remains the actual public enum variant, equals the QualityChroma associated-constant alias, and still supports exhaustive matching over the historical variants.
+        """
+}
+
+record jpegxl-rs.evidence.quality-q8-api-output-identity-2026-08-18/1 : evidence {
+    title "Q8 compatibility fix preserves codestreams and decoder acceptance"
+    state verified
+    result pass
+    method command
+    observed_at git:662a96b78250d28b24d7c772ec4ddb969c2c9d51
+    command "release jpxl encode + SHA-256 fingerprints + djxl/jxl-oxide decode"
+    artifact ".agent/scratch/q8-api-final"
+    summary """
+        Pinned outputs are unchanged from Q8: mid Quality 1 bpp 42B1F6253D7B750D (536552 B), Quality 2 bpp C3C7CC974C869C1E (1071357 B), Fast 1 bpp 07D71108DE1FC69F, Balanced 1 bpp 22A57D34875F0737. Both Quality streams decoded with djxl and jxl-oxide and retained the Q8 perceptual metrics.
+        """
+}
+
+record jpegxl-rs.evidence.quality-q8-api-workspace-gates-2026-08-18/1 : evidence {
+    title "Q8 API follow-up workspace gates"
+    state verified
+    result pass
+    method command
+    observed_at git:662a96b78250d28b24d7c772ec4ddb969c2c9d51
+    command "cargo build --workspace; cargo clippy --workspace --all-targets -- -D warnings; cargo fmt --all --check; cargo check -p jpxl-encode-policy --no-default-features; test-workspace-windows.ps1 -DisableAvx2 -CargoArgs test --workspace --profile fast-debug"
+    artifact "JPXL"
+    summary """
+        Workspace build, strict Clippy, formatting, and no-default-features check completed; the complete workspace and oracle suite passed under the established Windows AVX2 workaround. The no-default check emitted only the known feature-disabled dead-code warnings.
+        """
+}
+
 record jpegxl-rs.evidence.quality-q8-byte-identity-2026-08-18/1 : evidence {
     title "Q8 byte-identity: Fast/Balanced unchanged, compiled==manual, thread-stable"
     state verified
