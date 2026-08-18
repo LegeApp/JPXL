@@ -1444,6 +1444,59 @@ High-rate Quality exact prices fall from 12 → 10 (mid), 15 → 14 (mid2), and
 returns pass, but it improves both the controller's truthfulness and the
 post-ceiling path's end-to-end cost without touching any public entry point.
 
+## Phase Q8 — graduating the Quality-only chroma allocation (2026-08-18)
+
+Q2 promoted a B-channel QM scale of 5 for the exhaustive Quality preset at or
+below 1 bpp, and confined it to Quality precisely because the standing scene
+screen only exercises Fast and Balanced — so a Quality-only chroma change is
+scene-neutral by construction and its one binding gate is the nine Quality
+cells of the photo ladder. That left two neutral surfaces on the table: the
+**X channel at every Quality rate**, and the **B channel above 1 bpp**, where
+the rate ladder had been undershooting the byte target (mid 2 bpp Quality
+landed 1.073 MB against a 1.080 MB budget; large 2 bpp 2.972 MB against
+3.000 MB) and simply leaving chroma bits unspent.
+
+A manual-flag sweep of the Quality tier (three photos × three rates, the auto
+policy reproduced with `--x-qm-scale`/`--b-qm-scale`) fixed the graduation:
+
+* **B = 4 above 1 bpp.** B = 5 there was the Q2 finding that overshot the
+  Butteraugli 3-norm bound (+6.06%); B = 4 keeps it inside (worst +3.12%) and
+  still spends the slack — mid 2 bpp +0.586 SSIMULACRA2, large 2 bpp +0.182,
+  mid2 2 bpp −0.026 — while the Butteraugli **max-norm improves** on all three
+  (−0.3% / −4.2% / −2.3%). B = 3 gained less and, on the large photo, actually
+  worsened the max-norm (+8.0%).
+* **X = 3 at or below 1 bpp.** Adds red–green chroma detail where the tier was
+  neutral: large 0.5/1 bpp +0.132/+0.091, the smaller photos +0.0…+0.06, one
+  −0.026 cell (mid 1 bpp), Butteraugli neutral-to-better throughout. X = 4 was
+  a touch stronger on SSIMULACRA2 but pushed a large 1 bpp max-norm cell to
+  +5.5%, so the conservative X = 3 was chosen.
+
+The policy stays Quality-only; the two neutral surfaces above 1 bpp for X and
+at every rate for the other presets are untouched. `ChromaHfPolicy::QualityLowRateB5`
+became `QualityChroma`, `effective_b_qm_scale` graduates 5 → 4 across the 1 bpp
+boundary, and a new `effective_x_qm_scale` mirrors it; both resolve to neutral
+for Fast/Balanced and take the supplied scale verbatim under `Manual`. The CLI
+now pins `Manual` when `--x-qm-scale` is set (it already did for `--b-qm-scale`),
+so an explicit research override still wins.
+
+**Standing Contract B screen, candidate vs the frozen Q7 binary.** Only the
+nine Quality photo cells change; every Fast, Balanced, and seven-scene stream
+is byte-identical (verified by hash), and the compiled policy reproduces the
+manual-flag arms bit-for-bit at one and four threads.
+
+| corpus | SSIMULACRA2 mean / worst | Butteraugli max mean / worst | 3-norm mean / worst | decoders |
+|---|---:|---:|---:|---|
+| photos (27 cells) | +0.038 / −0.026 | −0.26% / +0.92% | +0.32% / +3.12% | djxl + oxide ok |
+| scenes (14 cells) | +0.000 / +0.000 | +0.00% / +0.00% | +0.00% / +0.00% | byte-identical |
+
+Quality BD-rate moved −0.8% (mid), −0.8% (large), −0.1% (mid2). The
+headline cell is mid 2 bpp Quality: +0.59 SSIMULACRA2 at −0.3% Butteraugli
+max, using budget the ceiling used to leave unspent — the first pass since Q4
+to move SSIMULACRA2 and the Butteraugli max-norm the same direction, which is
+the axis Q3 measured JPXL trailing `cjxl -e7` on. Fast/Balanced and every
+fixed-quantizer stream are unchanged, so the cumulative quality-track speed
+budget is untouched.
+
 ### Open architectural questions
 
 1. How can the finalist refresh only structurally unstable cover decisions?

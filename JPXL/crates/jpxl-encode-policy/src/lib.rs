@@ -5086,6 +5086,7 @@ pub fn encode_srgb8_to_target(
 ) -> Result<RateOutcome> {
     let mut resolved = *request;
     resolved.b_qm_scale = request.effective_b_qm_scale(width, height, target);
+    resolved.x_qm_scale = request.effective_x_qm_scale(width, height, target);
     // Phase 38: one worker pool for the whole encode; the source conversion
     // uses it too instead of running on the calling thread alone.
     let executor = resolved.resources.executor();
@@ -5120,6 +5121,7 @@ pub fn encode_srgb16_to_target(
     let mut resolved = *request;
     resolved.bits_per_sample = bits_per_sample;
     resolved.b_qm_scale = request.effective_b_qm_scale(width, height, target);
+    resolved.x_qm_scale = request.effective_x_qm_scale(width, height, target);
     let executor = resolved.resources.executor();
     let frame =
         PreparedFrame::from_srgb16_with(width, height, rgb, bits_per_sample, Some(&executor))?;

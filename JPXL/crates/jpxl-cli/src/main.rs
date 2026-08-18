@@ -74,10 +74,13 @@ Lossy options (8-bit RGB only; either one selects the VarDCT path):
                                   after Phase Q1; 8 was Phase 5G's); research
                                   control
     --x-qm-scale <0..7>           X-channel QM exponent (default 2); research
+                                  chroma-allocation control (Quality defaults
+                                  to 3 at <=1 bpp after Phase Q8; setting it
+                                  pins the manual chroma policy)
+    --b-qm-scale <0..7>           B-channel QM exponent (Quality defaults to 5
+                                  at <=1 bpp per Phase Q2 and 4 above it per
+                                  Phase Q8; otherwise 2); research
                                   chroma-allocation control
-    --b-qm-scale <0..7>           B-channel QM exponent (Quality at <=1 bpp
-                                  defaults to 5 after Phase Q2; otherwise 2);
-                                  research chroma-allocation control
     --epf-iters <0..3>            Decoder EPF iteration count (target-rate
                                   default 1); research control
     --epf-sharpness <mode>        EPF sharpness plane: zero (fixed default),
@@ -1798,6 +1801,9 @@ fn encode_lossy_to_target(
         request.budget.rate.lf_fill_probes = 0;
     }
     if let Some(value) = overrides.x_qm_scale {
+        // An explicit chroma scale is a research override: pin Manual so the
+        // automatic Quality policy does not resolve X back to its own value.
+        request.chroma_hf_policy = jpxl_encode_policy::ChromaHfPolicy::Manual;
         request.x_qm_scale = jpxl_encode::vardct::ids::QmScale::new(value)
             .map_err(|_| format!("x_qm_scale {value} is outside the wire range"))?;
     }

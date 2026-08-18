@@ -6580,6 +6580,58 @@ record jpegxl-rs.work.quality-q7-effective-scale-controller/1 : work {
     part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
 }
 
+record jpegxl-rs.work.quality-q8-chroma-allocation/1 : work {
+    title "Phase Q8: graduate the Quality-only chroma QM allocation — B=4 above 1 bpp and X=3 at or below it"
+    state proposed
+    scope [
+        path ".agent/scratch/quality-track/**",
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/request.rs",
+        path "JPXL/docs/optimize.md"
+    ]
+    intent """
+        Extend the promoted Phase Q2 Quality-only chroma refinement to the two surfaces it left neutral, where the rate ladder was undershooting the byte target and leaving chroma bits unspent: the B channel above 1 bpp (scale 4, since Q2's B=5 there overshot the Butteraugli 3-norm bound) and the X channel at or below 1 bpp (scale 3). The policy stays confined to the exhaustive Quality preset, so Fast, Balanced, the seven-scene screen, and every fixed-quantizer stream remain byte-identical; rename ChromaHfPolicy::QualityLowRateB5 to QualityChroma, graduate effective_b_qm_scale across the 1 bpp boundary, add a mirroring effective_x_qm_scale, and make the CLI pin Manual for an explicit --x-qm-scale so a research override still wins. Promote only if the standing photo ladder and seven-scene screen pass the Contract B bounds against the frozen Phase Q7 binary with both decoders accepting every changed stream.
+        """
+    note """
+        Screened candidate passes both standing corpora against Q7: photo ladder SSIMULACRA2 mean +0.038 / worst -0.026, Butteraugli max mean -0.26% (improves) / 3-norm worst +3.12%; scenes byte-identical. Only the nine Quality photo cells change; compiled policy reproduces the manual-flag sweep bit-for-bit at one and four threads. Headline cell mid 2 bpp Quality +0.586 SSIMULACRA2 at -0.3% Butteraugli max.
+        """
+    acceptance {
+        check byte-identity {
+            statement """
+                Fast, Balanced, and every fixed-quantizer stream stay byte-identical to Phase Q7; the compiled Quality policy reproduces the equivalent manual-flag streams, and the changed Quality cells are byte-identical at one and four threads.
+                """
+            method observation
+        }
+        check corpus-gate {
+            statement """
+                The standing photo ladder and seven-scene screen pass the Contract B bounds against the frozen Phase Q7 binary, with djxl and jxl-oxide accepting every changed Quality stream.
+                """
+            method observation
+        }
+        check policy-invariants {
+            statement """
+                Policy unit tests cover the rate-graduated Quality chroma scales (B 5->4 across 1 bpp, X 3 at or below it), Quality-only confinement for both channels at every rate, and Manual bypass for both channels; all pass.
+                """
+            method command
+            command "cargo test -p jpxl-encode-policy --lib request:: --profile fast-debug"
+        }
+        check workspace-gates {
+            statement """
+                Workspace build, the full test suite, strict Clippy, and formatting pass under the pinned toolchain; the only test failures are the pre-existing host-dependent AVX2-fallback ULP checks in jpxl-core, which this change does not touch and which pass with the AVX2 fallback disabled.
+                """
+            method command
+            command "cargo build --workspace && cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all --check"
+        }
+    }
+    depends_on [ @jpegxl-rs.work.quality-q7-effective-scale-controller/1 ]
+    implements [
+        @jpegxl-rs.decision.optimization-determinism-contract/1,
+        @jpegxl-rs.decision.ssimulacra2-is-the-primary-promotion-metric/1
+    ]
+    part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+}
+
 record jpegxl-rs.work.retire-handoff-ledger/1 : work {
     title "Retire HANDOFF.md as a duplicate ledger after AKR migration"
     state completed
