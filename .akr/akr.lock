@@ -5,7 +5,7 @@ build {
     tool "akr 0.3.1"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:dfd3ba334d8a2c92f0bf94568e7461dbe53fa067bec439c54c40eaa432d6ea7b"
+    source_graph "sha256:3d4f8e30e74139754e1d89fd17c9e816bcf8f2502e513bcedbe85a38c7b22062"
 }
 
 source ".akr/project.akr" {
@@ -39,8 +39,8 @@ source ".akr/records/jpegxl-rs/milestones.akr" {
 }
 
 source ".akr/records/jpegxl-rs/observations.akr" {
-    hash "sha256:e30a0a54979cd0cbefd08a6fc5d9b8359aa52ac34c5f0f510bb0e337ae385a19"
-    records 78
+    hash "sha256:a1ab415349e7ebbcfe9f4b04957a683a2136cb8220d95f13c40237873fa07746"
+    records 81
 }
 
 source ".akr/records/jpegxl-rs/papercuts.akr" {
@@ -5804,8 +5804,13 @@ seal @jpegxl-rs.observation.preopt-flamegraphs-2026-08-06/2 {
 }
 
 seal @jpegxl-rs.observation.q3-balanced-second-anchor-overshoots-above-the-ceiling-2026-08-18/1 {
+    state superseded
+    hash "sha256:6eaad321d9c535c100729e7c979ac29e88d9923d59e8ae876cf381ce29929436"
+}
+
+seal @jpegxl-rs.observation.q3-balanced-second-anchor-overshoots-above-the-ceiling-2026-08-18/2 {
     state verified
-    hash "sha256:088645191977edc12077b2af8120c702130f691aedc7dad0862b0511f1efa145"
+    hash "sha256:7283513a9ec7a321f147f88bc2ab54fa74b6b245ff46e32498e78837b8de2f02"
 }
 
 seal @jpegxl-rs.observation.q3-butteraugli-deficit-localisation-2026-08-18/1 {
@@ -5814,13 +5819,23 @@ seal @jpegxl-rs.observation.q3-butteraugli-deficit-localisation-2026-08-18/1 {
 }
 
 seal @jpegxl-rs.observation.q3-butteraugli-deficit-localisation-2026-08-18/2 {
+    state superseded
+    hash "sha256:a5fe22a418fe490409e6ba7d5011d936c55ff3dde41d68a87997b4f7626f92cc"
+}
+
+seal @jpegxl-rs.observation.q3-butteraugli-deficit-localisation-2026-08-18/3 {
     state verified
-    hash "sha256:9235df32e5e719e755ceac1320e06c42c9d97b1f0cc8e5d36540c09f6eb1a471"
+    hash "sha256:9bff0d79e0b9a3fe7f6e46026e4410a0479a0fb0baa19e6ce495663e2817a1d2"
 }
 
 seal @jpegxl-rs.observation.q3-per-block-fields-lose-on-a-fine-lattice-2026-08-18/1 {
+    state superseded
+    hash "sha256:a87b7eb8e7335c1fb8bded0ea6013f934f6956d229432e7a311d3233ca4b5bae"
+}
+
+seal @jpegxl-rs.observation.q3-per-block-fields-lose-on-a-fine-lattice-2026-08-18/2 {
     state verified
-    hash "sha256:768958e2dc72fe1fbcdaf382bdd7aee86c6deac947e97f7ec4732b6b2515481d"
+    hash "sha256:1eae9d6b306dd88859598c4657e18ce0413d2a7b7b45e8fd1e69acc21a12321e"
 }
 
 seal @jpegxl-rs.observation.quantizer-normalised-distortion-is-the-lever-2026-08-12/1 {
