@@ -6528,6 +6528,54 @@ record jpegxl-rs.work.quality-q6-cheaper-exhaustive-search/1 : work {
     part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
 }
 
+record jpegxl-rs.work.quality-q7-effective-scale-controller/1 : work {
+    title "Phase Q7: effective-scale cold bracketing, duplicate-price suppression, bounded Quality top-off, and exact saturation reporting"
+    state proposed
+    scope [
+        path ".agent/scratch/quality-track/**",
+        path "JPXL/crates/jpxl-encode-policy/src/rate.rs",
+        path "JPXL/crates/jpxl-encode-policy/tests/rate_loop.rs",
+        path "JPXL/docs/optimize.md"
+    ]
+    intent """
+        Continue the diminishing-returns quality/speed pass in the exact target-rate controller. Make Cold bracketing geometric in the ladder's true effective scale across the dense post-ceiling HfMul segments, suppress repeated exact prices of an already-seen rung without changing trace order or the hard budget, and report saturation when the top rung was actually priced feasible even if entropy non-monotonicity leaves a closer coarser incumbent. Reinvest at most one already-budgeted exact price for post-ceiling Quality finalists on frames up to 5 MP, while larger frames retain the requested tolerance as their stop. Preserve every public entry point and the never-over, representable-rung, deterministic tie-break, non-monotone-pocket, and error-propagation contracts. Promote only if corpus quality stays within Contract B and exhaustive high-rate price counts and wall time improve.
+        """
+    note """
+        Screened candidate passes the 27-cell photo ladder and 14-cell scene gate against Phase Q6. Only two 2 bpp Quality cells change; high-rate Quality price counts fall 12->10, 15->14, and 11->7 on mid/mid2/large, with alternating medians -30.8%, -4.2%, and -28.8%.
+        """
+    acceptance {
+        check controller-invariants {
+            statement """
+                Rate-loop tests cover effective-scale stepping across the ceiling, duplicate-price suppression, floor/top and saturated edge cases, hard-budget accounting, and existing non-monotone behavior; all pass.
+                """
+            method command
+            command "cargo test -p jpxl-encode-policy --lib rate::tests --profile fast-debug"
+        }
+        check corpus-gate {
+            statement """
+                The standing photo ladder and scene screen remain within Contract B against Phase Q6, with decoder acceptance intact.
+                """
+            method observation
+        }
+        check price-reduction {
+            statement """
+                At least one standing exhaustive high-rate cell uses fewer exact prices or lower interleaved wall time without a material quality regression.
+                """
+            method observation
+        }
+        check workspace-gates {
+            statement """
+                Workspace build, tests, strict Clippy, and formatting pass under the pinned toolchain.
+                """
+            method command
+            command "cargo build --workspace && cargo test --workspace --profile fast-debug && cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all --check"
+        }
+    }
+    depends_on [ @jpegxl-rs.work.quality-q6-cheaper-exhaustive-search/1 ]
+    implements [ @jpegxl-rs.decision.optimization-determinism-contract/1 ]
+    part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+}
+
 record jpegxl-rs.work.retire-handoff-ledger/1 : work {
     title "Retire HANDOFF.md as a duplicate ledger after AKR migration"
     state completed

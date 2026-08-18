@@ -1396,6 +1396,54 @@ modest, and it would need a coding-order last-nonzero scan inside the SIMD
 scoring kernel. Not built in this pass; the numbers stay here for whoever
 picks it up.
 
+## Phase Q7 — effective-scale cold brackets, unique exact prices, and one bounded Quality top-off (2026-08-18)
+
+Q6 fixed the local bracket but left the cold path doubling the **rung index**.
+That stopped being geometric when Q3 made the post-ceiling ladder dense. From
+the common `global_scale=65536` point, raw-index doubling jumped effective
+scale `65,536 → 208,896` (3.19×), not 2×, then paid several exact bisections
+to return to the 2 bpp crossing. Q7 moves Cold through
+`rung_for_effective_scale(2·effective_scale)` (and the corresponding half
+step), with one-rung progress at representability gaps and explicit floor/top
+clamps.
+
+Two controller-quality fixes ride with it:
+
+* `Search::eval` now returns an already-priced rung from the trace. An
+  infeasible false-position probe is deliberately forbidden from tightening
+  the hard upper bracket; when the mandatory midpoint later lands on that
+  same rung, its exact result now tightens the bracket for free instead of
+  running the whole encoder twice. The trace remains actual price calls, so
+  its length is still the hard budget counter.
+* `saturated` now means the top rung was actually priced feasible. It no
+  longer depends on the selected incumbent itself being `Rung::TOP`, which
+  was wrong for a legal non-monotone pocket whose coarser stream happened to
+  sit closer to the target.
+
+The cheaper bracket initially moved two 2 bpp Quality outputs just enough for
+the strict SSIMULACRA2-mean gate to sit microscopically below zero. Rather than
+give the speed back globally, moderate frames (at most 5 MP) whose Quality
+finalist is above the ceiling may spend **one** remaining exact slot after
+first entering the requested band. It is a work cap, not a content heuristic:
+the 12 MP frame keeps the normal stop because one extra Full price costs
+seconds there. The top-off is never allowed to exceed the shared price budget,
+and an over-target attempt is discarded without opening another window.
+
+Against Q6, 25/27 photo cells and all 14 scene cells are byte-identical. The
+two changed cells are both 2 bpp Quality: mid is 6,557 bytes smaller with
+SSIMULACRA2 −0.005 and Butteraugli max −1.34%; mid2 is 84 bytes smaller with
+SSIMULACRA2 +0.0164, max +4.46%, and 3-norm −0.02%. The standing gate passes:
+SSIMULACRA2 mean **+0.00042**, worst **−0.005**; Butteraugli max mean
+**+0.12%**, 3-norm worst **+0.55%**; every stream is accepted by `djxl` and
+`jxl-oxide`.
+
+High-rate Quality exact prices fall from 12 → 10 (mid), 15 → 14 (mid2), and
+11 → 7 (large). Four-pair alternating native-Windows medians are
+3,918 → 2,713 ms (**−30.8%**), 5,161 → 4,945 ms (**−4.2%**), and
+9,298 → 6,623 ms (**−28.8%**) respectively. This is a narrow diminishing-
+returns pass, but it improves both the controller's truthfulness and the
+post-ceiling path's end-to-end cost without touching any public entry point.
+
 ### Open architectural questions
 
 1. How can the finalist refresh only structurally unstable cover decisions?

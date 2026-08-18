@@ -1,6 +1,18 @@
 akr 0.1
 project jpegxl-rs
 
+record jpegxl-rs.papercut.a-harmless-scratch-setup-command-was-rejected/1 : papercut {
+    title "A harmless scratch setup command was rejected because it combined…"
+    state verified
+    statement """
+        A harmless scratch setup command was rejected because it combined hard-link creation with Remove-Item cleanup in one PowerShell invocation. Using a fresh scratch directory avoids the policy trigger; the rejection did not affect repository state.
+        """
+    observed_at git:69bb49d8f58f941f5557c720d24789a91066bcf5
+    about "shell_command"
+    author "fugu-ultra"
+    created_at 2026-08-18
+}
+
 record jpegxl-rs.papercut.akr-check-strict-exits-1-on-akr-g004-alone-when/1 : papercut {
     title "akr check --strict exits 1 on AKR-G004 alone when watched paths have…"
     state verified

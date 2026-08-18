@@ -302,6 +302,31 @@ fn full_refinement_reserve(max_prices: u32) -> u32 {
     }
 }
 
+/// Largest frame on which post-ceiling Quality may reinvest one saved bracket
+/// price in an exact density top-off.
+///
+/// One Full alternative price is cheap enough to be a net win on the standing
+/// 4.3 MP frames, but costs seconds on the 12 MP frame. The guard is therefore
+/// a work bound, not a quality heuristic: larger frames keep the caller's
+/// tolerance as their stop, while moderate frames may spend exactly one
+/// already-budgeted correction after first entering that band.
+const QUALITY_TOPOFF_MAX_PIXELS: u64 = 5_000_000;
+
+fn quality_topoff_prices(
+    preset: crate::request::RateSearchPreset,
+    finalist: Rung,
+    pixels: u64,
+) -> u32 {
+    if preset == crate::request::RateSearchPreset::Quality
+        && finalist.get() >= MAX_GLOBAL_SCALE
+        && pixels <= QUALITY_TOPOFF_MAX_PIXELS
+    {
+        1
+    } else {
+        0
+    }
+}
+
 /// Discrete `quant_lf` values tried during [`RatePhase::LfFill`].
 ///
 /// All are representable under I.2.1's `U32(16, 1+u(5), 1+u(8), 1+u(16))`.
@@ -722,6 +747,33 @@ fn local_step(current: Rung, ratio: f64, up: bool) -> Rung {
     }
 }
 
+/// The next rung up or down for a [`BracketMode::Cold`] bracket.
+///
+/// Cold search promises geometric movement in *effective scale*. That is the
+/// same as doubling/halving the rung index below `MAX_GLOBAL_SCALE`, but not
+/// above it: Phase Q3 made the post-ceiling ladder dense by interleaving
+/// `(global_scale, HfMul)` pairs, so a doubled index can jump more than three
+/// times in effective scale and spend several exact prices bisecting back.
+///
+/// Clamp through [`rung_for_effective_scale`] and force one-rung progress at a
+/// representability gap. The latter also keeps the floor/top boundary cases
+/// terminating without relying on floating-point rounding.
+fn cold_step(current: Rung, up: bool) -> Rung {
+    let scale = effective_scale(current);
+    let aimed = if up {
+        scale.saturating_mul(2)
+    } else {
+        scale / 2
+    }
+    .max(1);
+    let rung = rung_for_effective_scale(aimed);
+    if up {
+        rung.max(Rung::new(current.get().saturating_add(1)))
+    } else {
+        rung.min(Rung::new(current.get().saturating_sub(1)))
+    }
+}
+
 /// The effective quantizer fineness at a rung: `global_scale * HfMul`.
 ///
 /// The rung *index* is not proportional to the quantizer. Below
@@ -930,6 +982,13 @@ impl<F: FnMut(QuantizerChoice) -> Result<u64>> Search<F> {
 
     /// Prices one rung, records it, and updates the incumbent.
     ///
+    /// A rung already present in the trace is returned from the trace rather
+    /// than priced again. This matters when an infeasible aimed probe cannot
+    /// tighten `hi` and the following mandatory midpoint lands on the same
+    /// rung: the cached exact result can tighten the bracket without paying a
+    /// second full encode. The trace therefore remains a record of actual
+    /// price calls, and its length remains the hard-budget counter.
+    ///
     /// The incumbent is the largest feasible size **ever seen**, not the last
     /// one accepted: that single choice is what makes the loop indifferent to
     /// the order the phases visit candidates in, and is what a non-monotone
@@ -937,6 +996,9 @@ impl<F: FnMut(QuantizerChoice) -> Result<u64>> Search<F> {
     /// quantizer, because two candidates that cost the same are not equally
     /// good: the finer one spends the same bytes on a better reconstruction.
     fn eval(&mut self, rung: Rung, phase: RatePhase) -> Result<u64> {
+        if let Some(step) = self.trace.iter().find(|step| step.quantizer.rung == rung) {
+            return Ok(step.bytes);
+        }
         let quantizer = QuantizerChoice::at(rung, self.quant_lf)?;
         let bytes = (self.price)(quantizer)?;
         let feasible = bytes <= self.target;
@@ -984,9 +1046,7 @@ impl<F: FnMut(QuantizerChoice) -> Result<u64>> Search<F> {
             let mut current = start;
             while current < Rung::TOP && self.affordable() {
                 let next = match bracket {
-                    BracketMode::Cold => {
-                        Rung::new(current.get().saturating_mul(2).saturating_add(1))
-                    }
+                    BracketMode::Cold => cold_step(current, true),
                     BracketMode::Local => {
                         let next = local_step(current, ratio, true);
                         ratio *= ratio;
@@ -1018,7 +1078,7 @@ impl<F: FnMut(QuantizerChoice) -> Result<u64>> Search<F> {
                 // `current` is not the floor here, so `div_ceil` halves the
                 // *scale* — rung `r` is scale `r + 1`.
                 let next = match bracket {
-                    BracketMode::Cold => Rung::new(current.get().div_ceil(2).saturating_sub(1)),
+                    BracketMode::Cold => cold_step(current, false),
                     BracketMode::Local => {
                         let next = local_step(current, ratio, false);
                         ratio *= ratio;
@@ -1172,11 +1232,15 @@ impl<F: FnMut(QuantizerChoice) -> Result<u64>> Search<F> {
         let (rung, bytes) = self.best.ok_or(PolicyError::SearchBudgetExhausted {
             prices: self.trace.len(),
         })?;
+        let saturated = self
+            .trace
+            .iter()
+            .any(|step| step.quantizer.rung == Rung::TOP && step.feasible);
         Ok(LadderSearch {
             rung,
             bytes,
             trace: core::mem::take(&mut self.trace),
-            saturated: rung == Rung::TOP,
+            saturated,
         })
     }
 }
@@ -1867,6 +1931,9 @@ fn search_frame_two_anchor(
     prepared.stats.full = aggregate.full;
     prepared.stats.writer = jpxl_encode::vardct::diagnostics::snapshot();
 
+    let saturated = trace
+        .iter()
+        .any(|step| step.quantizer.rung == Rung::TOP && step.feasible);
     Ok(Some(RateOutcome {
         codestream: emission.bytes,
         plan: chosen_plan,
@@ -1874,7 +1941,7 @@ fn search_frame_two_anchor(
         chosen: chosen_quantizer,
         target: target_bytes,
         trace,
-        saturated: chosen_quantizer.rung == Rung::TOP,
+        saturated,
         stats: prepared.stats,
     }))
 }
@@ -2132,12 +2199,14 @@ fn search_frame_exhaustive(
     }
 
     let slack = request.tolerance.bytes_for(target_bytes);
+    let pixels = u64::from(frame.width()) * u64::from(frame.height());
+    let mut topoff_prices = quality_topoff_prices(request.rate_preset, finalist.rung, pixels);
     let mut chosen = finalist;
     let mut plan = finalist_plan;
     let mut emission = finalist_emission;
     if exact_slots >= 2
         && finalist.rung < Rung::TOP
-        && target_bytes.saturating_sub(finalist_bytes) > slack
+        && (target_bytes.saturating_sub(finalist_bytes) > slack || topoff_prices > 0)
     {
         // Full alternatives can only shrink the default navigation price, so
         // aim through the already-priced navigation bracket after accounting
@@ -2160,6 +2229,16 @@ fn search_frame_exhaustive(
             },
         );
         for _ in 0..exact_slots.saturating_sub(1) {
+            // Once the exact incumbent is already inside the requested band,
+            // Quality may spend at most one saved post-ceiling price to try a
+            // denser legal rung. An over-target top-off is simply discarded;
+            // it never opens a second correction window.
+            if target_bytes.saturating_sub(emission.sizing.total) <= slack {
+                if topoff_prices == 0 {
+                    break;
+                }
+                topoff_prices -= 1;
+            }
             if correction_rung <= lower_rung
                 || search
                     .trace
@@ -2194,7 +2273,7 @@ fn search_frame_exhaustive(
                 upper = Some((correction.rung, correction_bytes));
             }
 
-            if target_bytes.saturating_sub(emission.sizing.total) <= slack {
+            if target_bytes.saturating_sub(emission.sizing.total) <= slack && topoff_prices == 0 {
                 break;
             }
             correction_rung = if let Some(upper) = upper {
@@ -2230,6 +2309,10 @@ fn search_frame_exhaustive(
     prepared.stats.full = aggregate.full;
     prepared.stats.writer = jpxl_encode::vardct::diagnostics::snapshot();
 
+    let saturated = search
+        .trace
+        .iter()
+        .any(|step| step.quantizer.rung == Rung::TOP && step.feasible);
     Ok(RateOutcome {
         codestream: emission.bytes,
         chosen,
@@ -2237,7 +2320,7 @@ fn search_frame_exhaustive(
         plan,
         target: target_bytes,
         trace: search.trace,
-        saturated: navigation.is_some_and(|result| result.saturated) || chosen.rung == Rung::TOP,
+        saturated,
         stats: prepared.stats,
     })
 }
@@ -2407,6 +2490,87 @@ mod tests {
         assert_eq!(Rung::for_global_scale(32_768).get(), 32_767);
     }
 
+    #[test]
+    fn cold_bracketing_is_geometric_in_effective_scale_across_the_ceiling() {
+        let below = Rung::for_global_scale(65_536);
+        let doubled = cold_step(below, true);
+        assert_eq!(effective_scale(below), 65_536);
+        assert_eq!(effective_scale(doubled), 131_072);
+        assert_eq!(cold_step(doubled, false), below);
+
+        // The old raw-index doubling landed much farther into the third
+        // HfMul segment. Pin that the cold step follows the documented scale
+        // geometry rather than accidentally returning to index geometry.
+        let old_index_step = Rung::new(below.get().saturating_mul(2).saturating_add(1));
+        assert!(effective_scale(old_index_step) > effective_scale(doubled));
+
+        assert_eq!(cold_step(Rung::FLOOR, false), Rung::FLOOR);
+        assert_eq!(cold_step(Rung::TOP, true), Rung::TOP);
+    }
+
+    #[test]
+    fn an_already_priced_rung_is_reused_without_spending_the_budget_twice() {
+        let calls = core::cell::Cell::new(0u32);
+        let mut search = Search {
+            price: |quantizer: QuantizerChoice| {
+                calls.set(calls.get().saturating_add(1));
+                Ok(u64::from(quantizer.global_scale.get()))
+            },
+            quant_lf: quant_lf(),
+            target: u64::MAX,
+            max_prices: 2,
+            trace: Vec::new(),
+            best: None,
+        };
+        let rung = Rung::for_global_scale(4_096);
+        let first = search.eval(rung, RatePhase::Bracket).expect("first price");
+        let reused = search.eval(rung, RatePhase::Bisect).expect("cached price");
+        assert_eq!(reused, first);
+        assert_eq!(calls.get(), 1);
+        assert_eq!(search.trace.len(), 1);
+        assert_eq!(
+            search.trace.first().map(|step| step.phase),
+            Some(RatePhase::Bracket)
+        );
+    }
+
+    #[test]
+    fn quality_topoff_is_one_price_and_bounded_to_moderate_frames() {
+        assert_eq!(
+            quality_topoff_prices(
+                crate::request::RateSearchPreset::Quality,
+                Rung::new(MAX_GLOBAL_SCALE),
+                QUALITY_TOPOFF_MAX_PIXELS,
+            ),
+            1
+        );
+        assert_eq!(
+            quality_topoff_prices(
+                crate::request::RateSearchPreset::Quality,
+                Rung::new(MAX_GLOBAL_SCALE - 1),
+                QUALITY_TOPOFF_MAX_PIXELS,
+            ),
+            0
+        );
+        assert_eq!(
+            quality_topoff_prices(
+                crate::request::RateSearchPreset::Balanced,
+                Rung::new(MAX_GLOBAL_SCALE),
+                QUALITY_TOPOFF_MAX_PIXELS,
+            ),
+            0
+        );
+        assert_eq!(
+            quality_topoff_prices(
+                crate::request::RateSearchPreset::Quality,
+                Rung::new(MAX_GLOBAL_SCALE),
+                QUALITY_TOPOFF_MAX_PIXELS + 1,
+            ),
+            0,
+            "large frames keep the requested tolerance as their stop"
+        );
+    }
+
     /// A smooth, strictly increasing size function: the easy case, and the one
     /// that pins the tolerance claim.
     fn smooth(q: QuantizerChoice) -> u64 {
@@ -2543,12 +2707,8 @@ mod tests {
     /// The point of the change: on a smooth curve the search now reaches the
     /// target in materially fewer full encodes than blind bisection needed.
     /// Targets are drawn from the `global_scale` segment, as
-    /// `the_loop_lands_under_a_target_and_close_to_it` does. Above
-    /// `MAX_GLOBAL_SCALE` the ladder steps by whole `HfMul` multiples, so
-    /// adjacent rungs differ by a large factor and *no* search can land within
-    /// a 1% tolerance there — that is the ladder's own resolution, not a
-    /// property of the stepping rule, and
-    /// `a_target_above_the_ceiling_saturates_at_the_finest_rung` covers it.
+    /// `the_loop_lands_under_a_target_and_close_to_it` does; the separate cold
+    /// bracket test pins the dense post-ceiling segment's scale geometry.
     #[test]
     fn aimed_stepping_reaches_the_target_in_fewer_prices() {
         for target in [1_000u64, 50_000, 98_404] {
@@ -2610,6 +2770,34 @@ mod tests {
         .expect("the ceiling is feasible");
         assert!(result.saturated);
         assert_eq!(result.rung, Rung::TOP);
+    }
+
+    #[test]
+    fn saturation_reports_a_feasible_top_even_when_a_coarser_pocket_is_closer() {
+        let result = search_ladder(
+            Rung::FLOOR,
+            quant_lf(),
+            1_000,
+            RateTolerance {
+                bytes: 0,
+                fraction: 0.0,
+            },
+            budget(),
+            |q| Ok(if q.rung == Rung::TOP { 1 } else { 900 }),
+        )
+        .expect("every rung is feasible");
+        assert!(result.rung < Rung::TOP, "the coarser 900-byte pocket wins");
+        assert_eq!(result.bytes, 900);
+        assert!(
+            result
+                .trace
+                .iter()
+                .any(|step| step.quantizer.rung == Rung::TOP && step.feasible)
+        );
+        assert!(
+            result.saturated,
+            "saturation describes the priced top rung, not the incumbent identity"
+        );
     }
 
     /// **The bracketing test.** A size function with a deep, wide pocket: a

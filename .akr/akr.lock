@@ -5,8 +5,7 @@ build {
     tool "akr 0.3.1"
     grammar "0.1"
     vocabulary "0.2"
-    commit git:5fd8e357577b11f62f9d244448af17fc20cead64
-    source_graph "sha256:49eac7f1b14f5b307764583f662f67c74eb050308842f1219daa9697958404cc"
+    source_graph "sha256:df411d08dbecf793b12e24b240325cb5b637e3e5235624c45d0dbf657f51a018"
 }
 
 source ".akr/project.akr" {
@@ -45,8 +44,8 @@ source ".akr/records/jpegxl-rs/observations.akr" {
 }
 
 source ".akr/records/jpegxl-rs/papercuts.akr" {
-    hash "sha256:3ade00f184b8dc890d8cc6ce2a5afb9a4303654c1d62e7b8706cfe87205d0a3a"
-    records 27
+    hash "sha256:bd4f1ab7383598e70bebd846d2f2fe863f477e20365424d74b85e9137fa6b022"
+    records 28
 }
 
 source ".akr/records/jpegxl-rs/policies.akr" {
@@ -65,8 +64,8 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:5e51cc61efffb72225486fb3f30f705fdca0874c570c4b12eab34cb5f6c847d3"
-    records 142
+    hash "sha256:ca99c235ebaa306ff0319cfa607417edbd16d5d282a3813d38bed645f960f635"
+    records 143
 }
 
 resolution @jpegxl-rs.decision.encoder-architecture-phases/1 {
@@ -5977,6 +5976,11 @@ seal @jpegxl-rs.observation.windows-msvc-avx2-fallback-not-bit-identical-2026-08
 seal @jpegxl-rs.observation.windows-msvc-avx2-fallback-not-bit-identical-2026-08-18/2 {
     state verified
     hash "sha256:35839ace8ad78df8f13d6ff3440cae9dca536662950fc9c77fa974ef43428ce5"
+}
+
+seal @jpegxl-rs.papercut.a-harmless-scratch-setup-command-was-rejected/1 {
+    state verified
+    hash "sha256:02b2818aed32aa725a64082233cdf17902c2e392312d3bf0efc844f9c7a82fca"
 }
 
 seal @jpegxl-rs.papercut.akr-check-strict-exits-1-on-akr-g004-alone-when/1 {
