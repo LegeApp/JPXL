@@ -117,9 +117,9 @@ pub use rate::{
     search_frame,
 };
 pub use request::{
-    AdaptiveSharpness, ChromaHfPolicy, CoverFrequencyWeight, CoverMode, CoverSizePenalty,
-    EncodeRequest, EpfSharpnessMode, QuantizerChoiceMode, RateSearchBudget, RateSearchPreset,
-    RateTarget, RateTolerance, SearchBudget,
+    AdaptiveSharpness, ChromaHfPolicy, CoverFrequencyWeight, CoverMode, CoverRateModel,
+    CoverSizePenalty, EncodeRequest, EpfSharpnessMode, QuantizerChoiceMode, RateSearchBudget,
+    RateSearchPreset, RateTarget, RateTolerance, SearchBudget,
 };
 pub use source::PreparedFrame;
 // Re-export so callers can set [`EncodeRequest::restoration`] without a
@@ -524,7 +524,8 @@ fn plan_at_with_cfl_workspace(
         quantizer_transforms,
     )?
     .with_dead_zone_scale(request.dead_zone_scale)
-    .with_zero_token_bits(request.zero_token_bits);
+    .with_zero_token_bits(request.zero_token_bits)
+    .with_rate_model(request.cover_rate_model);
     cache.prepare(&geometry)?;
 
     // Fast navigation is deliberately allowed a cheaper structural policy.
@@ -1811,6 +1812,9 @@ struct HfQuantizers {
     /// keyed by coefficient edge. Empty under `Flat`, which is what keeps the
     /// shipped objective bit-identical.
     frequency_weights: Vec<(usize, Vec<f32>)>,
+    /// Phase Q4's rate model: per-size scale on the residual-bit proxy and
+    /// per-varblock fixed bits. `Legacy` is exactly the shipped constants.
+    rate_model: CoverRateModel,
 }
 
 impl HfQuantizers {
@@ -1970,6 +1974,7 @@ impl HfQuantizers {
             lambda,
             size_penalty,
             frequency_weights,
+            rate_model: CoverRateModel::Legacy,
         };
 
         // Phase 7.0: hand each quantizer the *same* Lagrange weight
@@ -2022,6 +2027,23 @@ impl HfQuantizers {
     /// coefficient edge. Exactly `1.0` under the neutral production policy.
     fn size_penalty(&self, transform: TransformType) -> f64 {
         self.size_penalty.multiplier(transform.coeff_cols())
+    }
+
+    /// Installs Phase Q4's cover rate model (`Legacy` leaves the objective
+    /// bit-identical).
+    fn with_rate_model(mut self, model: CoverRateModel) -> Self {
+        self.rate_model = model;
+        self
+    }
+
+    /// The rate model's multiplier on a candidate's residual-bit sum.
+    fn rate_scale(&self, transform: TransformType) -> f64 {
+        self.rate_model.scale(transform.coeff_cols())
+    }
+
+    /// The rate model's fixed bits for one candidate varblock.
+    fn rate_fixed_bits(&self, transform: TransformType) -> f64 {
+        self.rate_model.fixed_bits(transform.coeff_cols())
     }
 
     /// Widens (or narrows) every quantizer's zero threshold by `scale`
@@ -4060,19 +4082,21 @@ fn quantize_group(
     })
 }
 
-/// The share of §4.3's `metadata_bits` every varblock pays: its two
-/// `BlockInfo` Modular samples and three `non_zeros` symbols. Small, because
-/// under the current single-context entropy model a run of identical samples
-/// is nearly free.
-const PER_VARBLOCK_BITS: f64 = 2.0;
+/// The share of §4.3's `metadata_bits` every varblock pays under the legacy
+/// rate model: its two `BlockInfo` Modular samples and three `non_zeros`
+/// symbols. Small, because under the original single-context entropy model a
+/// run of identical samples was nearly free. The cover search now reads this
+/// through `CoverRateModel::fixed_bits` (whose `Legacy` arm is exactly these
+/// constants); the Phase 32 regret harness still charges it directly.
+pub(crate) const PER_VARBLOCK_BITS: f64 = 2.0;
 
-/// The extra `metadata_bits` a non-DCT8x8 varblock pays: its DctSelect sample
-/// breaks the all-zeros run G.2.4's default map codes for free, twice (the
-/// gradient residual entering and leaving the value). Measured on the current
-/// coder at ~8 bits per merged block net; charged higher so a merge must be
-/// paid for by real coefficient savings, not a rounding whim. Re-derive when
-/// slice 18 trains the entropy model.
-const NON_DCT8X8_SIGNAL_BITS: f64 = 32.0;
+/// The extra `metadata_bits` a non-DCT8x8 varblock pays under the legacy rate
+/// model: its DctSelect sample breaks the all-zeros run G.2.4's default map
+/// codes for free, twice. Measured on the original coder at ~8 bits per merged
+/// block net; charged higher so a merge must be paid for by real coefficient
+/// savings. Phase Q4's audit put the real figure at a few bits
+/// (`CoverRateModel::Calibrated`).
+pub(crate) const NON_DCT8X8_SIGNAL_BITS: f64 = 32.0;
 
 /// The `metadata_bits` a non-baseline `HfMul` pays: like DctSelect, its `mul`
 /// sample breaks a constant run in `BlockInfo`'s second row. Charged at the
@@ -4456,6 +4480,9 @@ fn block_cost_bounded(
     // Phase 6.3: empty under the flat production policy, and `cell_weight`
     // then returns exactly 1.0, so the shipped objective is untouched.
     let freq = hf_quants.frequency_weights(transform);
+    // Phase Q4: exactly 1.0 under the legacy rate model, so the shipped
+    // objective -- and its pruning arithmetic -- is bit-identical.
+    let rate_scale = hf_quants.rate_scale(transform);
     let [cx, cy, cb] = fwd.coeffs;
     let mut bits = 0u64;
     let mut weighted_sse = 0.0f64;
@@ -4465,7 +4492,7 @@ fn block_cost_bounded(
                 clippy::cast_precision_loss,
                 reason = "bit counts stay far inside f64's exact integer range"
             )]
-            let partial = bits as f64 + weighted_sse;
+            let partial = bits as f64 * rate_scale + weighted_sse;
             // Ties keep the split, so >= is a correct prune.
             partial >= cut
         } else {
@@ -4566,7 +4593,7 @@ fn block_cost_bounded(
         clippy::cast_precision_loss,
         reason = "bit counts stay far inside f64's exact integer range"
     )]
-    Ok(Some(bits as f64 + weighted_sse))
+    Ok(Some(bits as f64 * rate_scale + weighted_sse))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -4654,7 +4681,7 @@ fn tile_region_with(
             cache,
             scratch,
             d_y_hf,
-        )? + PER_VARBLOCK_BITS
+        )? + hf_quants.rate_fixed_bits(TransformType::Dct8x8)
             + aq.mul_signal_bits(hf_mul);
         return Ok((
             cost,
@@ -4686,7 +4713,7 @@ fn tile_region_with(
     let single = match square_transform(size) {
         Some(transform) if fits => {
             let hf_mul = aq.mul_for_footprint(x0 / 8 + bx, y0 / 8 + by, size, size);
-            let fixed = PER_VARBLOCK_BITS + NON_DCT8X8_SIGNAL_BITS + aq.mul_signal_bits(hf_mul);
+            let fixed = hf_quants.rate_fixed_bits(transform) + aq.mul_signal_bits(hf_mul);
             // Fixed metadata alone can already lose to the split.
             if fixed >= split_cost {
                 return Ok((split_cost, split_blocks));

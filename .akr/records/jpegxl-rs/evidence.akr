@@ -4367,6 +4367,70 @@ record jpegxl-rs.evidence.quality-q3-speed-budget-2026-08-18/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.quality-q4-compatibility-determinism-2026-08-18/1 : evidence {
+    title "Q4 compatibility control and thread determinism"
+    state verified
+    result pass
+    method command
+    observed_at git:95f5464ce6a75fe55a81ff289a94962c3afc5c29
+    command "jpxl encode --bpp 1 --lossy-preset balanced --cover-rate-model legacy mid-photo.ppm (sha16 636c33907922d029 == Phase Q3); default encodes of mid 1 / large 0.5 quality / mid2 2 fast / mid 0.5 reproduce the q4-calibrated arm hashes; --threads 1 vs 4 on mid 1, large 0.5, mid2 2 Balanced"
+    artifact ".agent/scratch/quality-track/out/ladder-q4-calibrated.tsv"
+    summary """
+        --cover-rate-model legacy reproduces the Phase Q3 stream (636c33907922d029); the promoted default reproduces the screened arm's hashes cell for cell; one- and four-thread outputs are byte-identical (22a57d34875f0737, c0c5f8b34045651b, 7c32fa1f26993c52); the request tests pin defaults() to Legacy and for_target to Calibrated.
+        """
+}
+
+record jpegxl-rs.evidence.quality-q4-corpus-gates-2026-08-18/1 : evidence {
+    title "Q4 corpus gates: calibrated rate model against Phase Q3"
+    state verified
+    result pass
+    method observation
+    observed_at git:95f5464ce6a75fe55a81ff289a94962c3afc5c29
+    artifact ".agent/scratch/quality-track/out/ladder-q4p-calibrated.tsv"
+    summary """
+        Photo ladder (27 cells) SSIMULACRA2 mean +0.048 worst -0.195; Butteraugli max-norm mean +0.04% worst +6.26%; 3-norm mean -0.15% worst +3.22%; scenes (14 cells) +0.059 / -0.05, +0.61% / +2.52%, -0.13% / +0.08%; every stream accepted by djxl and jxl-oxide (summarise.py verdict PASS; scenes-q4p-calibrated.tsv). The size-ordering-only variant (ladder-q4p-relative.tsv) was +0.036 / +0.083 SSIMULACRA2 but +0.50% / +1.22% max-norm and was not promoted.
+        """
+}
+
+record jpegxl-rs.evidence.quality-q4-rate-audit-2026-08-18/1 : evidence {
+    title "Q4 rate-proxy audit on the three standing photos"
+    state verified
+    result pass
+    method command
+    observed_at git:95f5464ce6a75fe55a81ff289a94962c3afc5c29
+    command "JPXL_RATE_AUDIT_PPM=<mid;mid2;large ppm> cargo test -p jpxl-encode-policy --profile fast-debug --test rate_proxy_audit -- --ignored --nocapture"
+    artifact "JPXL/crates/jpxl-encode-policy/tests/rate_proxy_audit.rs"
+    summary """
+        Per-transform actual-vs-proxy bits, token splits and per-varblock fits recorded for mid, large and mid2 at 1 bpp Balanced (tables in the Phase Q4 section of JPXL/docs/optimize.md); the Calibrated constants 1.56/1.63/1.88 and 5.5/12.4/10.5 derive from the mid photo rows.
+        """
+}
+
+record jpegxl-rs.evidence.quality-q4-rust-gates-2026-08-18/1 : evidence {
+    title "Q4 Rust workspace gates (with the 16-bit API work in the tree)"
+    state verified
+    result pass
+    method command
+    observed_at git:95f5464ce6a75fe55a81ff289a94962c3afc5c29
+    command "cargo fmt --all --check; cargo clippy --workspace --all-targets --profile fast-debug -- -D warnings; JPXL_JXLINFO=<oracle-bin jxlinfo.exe> test-workspace-windows.ps1 -DisableAvx2 -CargoArgs test,--workspace,--profile,fast-debug,--no-fail-fast; cargo check --workspace --no-default-features"
+    artifact ".agent/scratch/q3/q4-test.log"
+    summary """
+        fmt clean, clippy clean, 1429 tests passed / 0 failed with fixture links materialised, AVX2 disabled and the pinned jxlinfo, no-default-features check clean.
+        """
+}
+
+record jpegxl-rs.evidence.quality-q4-speed-budget-2026-08-18/1 : evidence {
+    title "Q4 A/B timing: calibrated rate model vs legacy"
+    state verified
+    result pass
+    method command
+    observed_at git:95f5464ce6a75fe55a81ff289a94962c3afc5c29
+    command "B_FLAGS=\"--cover-rate-model calibrated\" bash .agent/scratch/quality-track/q3-ab-time.sh 3 mid-photo.ppm; ... 1 large-photo.ppm (alternating, --threads 4, Balanced)"
+    artifact ".agent/scratch/q3/timing-q4-mid1.txt"
+    summary """
+        Alternating medians: mid 1 bpp 477.5 ms legacy vs 470 ms calibrated (4x3), large 1 bpp 886.5 vs 889 ms (4x1): neutral within noise; the cumulative quality-track cost stays at ~+9% of Phase 42.
+        """
+}
+
 record jpegxl-rs.evidence.retire-handoff-durable-facts-2026-08-11/1 : evidence {
     title "HANDOFF permanent facts are represented in AKR"
     state verified

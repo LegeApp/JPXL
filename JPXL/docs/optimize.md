@@ -1190,6 +1190,115 @@ off; full tables in
 free) is the natural target for the merge-decision lever; the two-anchor
 second-anchor exponent is the speed follow-up at high rates.
 
+## Phase Q4 — pricing the cover objective's rate the way the writer spends it (2026-08-18)
+
+Q3 left one lever that moved PSNR and Butteraugli in the same direction as
+SSIMULACRA2 did not: the cover's merge decisions. Q4 asked the writer what a
+varblock actually costs. `tests/rate_proxy_audit.rs` (an ignored measurement
+harness, `JPXL_RATE_AUDIT_PPM=<ppm>`) walks the chosen plan of a real
+target-rate encode with a costing `HfEventSink` — the new no-op
+`varblock(transform, hf_mul)` hook on the trait attributes each I.4 event to
+its transform — and prices every `non_zeros` symbol and coefficient token at
+`-log2 p(token | cluster)` plus its hybrid-uint extra bits under the plan's
+own trained histograms. Against the shipped proxy (`bitlen(|q|) + 1` per
+nonzero, zeros free, 2 bits per varblock, 32 per merged transform), 1 bpp
+Balanced:
+
+| photo | side | varblocks | actual / proxy | `non_zeros` bits/sym | nonzero bits/tok | zero bits/tok | zeros per vb |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| mid | 8 | 28,268 | 1.63 | 1.84 | 3.54 | 1.07 | 8.8 |
+| mid | 16 | 6,432 | 1.37 | 2.81 | 3.76 | 0.78 | 49.0 |
+| mid | 32 | 844 | 1.27 | 2.17 | 3.57 | 0.55 | 45.2 |
+| large | 8 | 38,976 | 1.60 | 2.35 | 3.84 | 1.11 | 8.8 |
+| large | 16 | 18,767 | 1.35 | 3.17 | 4.10 | 0.81 | 42.3 |
+| large | 32 | 4,591 | 1.53 | 3.27 | 3.75 | 0.60 | 105.9 |
+| mid2 | 8 | 12,356 | 1.89 | 1.72 | 3.32 | 0.87 | 18.9 |
+| mid2 | 16 | 6,126 | 1.60 | 2.58 | 3.42 | 0.68 | 106.2 |
+| mid2 | 32 | 1,915 | 1.78 | 3.69 | 3.26 | 0.40 | 289.3 |
+
+Interior zeros are not free (0.4–1.1 bits each), a nonzero token costs
+3.3–4.1 bits rather than `bitlen + 1`, the three `non_zeros` symbols cost
+5–11 bits per varblock rather than 2, and the `DctSelect` signalling of a
+merged block is a few bits, not 32. Net of the per-varblock constants the
+residual proxy under-prices DCT8x8 / DCT16x16 / DCT32x32 by 1.56× / 1.63× /
+1.88× on the mid photo (1.52 / 1.58 / 1.76 large, 1.84 / 1.89 / 2.0 mid2):
+the ordering is stable, so the legacy proxy over-charges merging through its
+32-bit constant and under-charges large transforms per coefficient.
+
+**Promoted: `CoverRateModel::Calibrated`** for target-rate requests
+(`--cover-rate-model legacy` reproduces the Phase Q3 streams; the
+fixed-quantizer defaults keep the legacy proxy). It scales a candidate's
+residual bits by 1.56 / 1.63 / 1.88 and charges 5.5 / 12.4 / 10.5 fixed bits
+per varblock; the pruning arithmetic scales with it, so `Legacy` is
+bit-identical. On the mid photo at 1 bpp the cover moves from 42/38/20% of
+the area in DCT8/16/32 to 33/52/16% — more 16×16 merges, fewer 32×32 — and
+the standing gate against Phase Q3:
+
+| corpus | SSIMULACRA2 mean / worst | Butteraugli max mean / worst | 3-norm mean / worst | bytes |
+|---|---:|---:|---:|---:|
+| photos (27 cells) | +0.048 / −0.19 | +0.04% / +6.26% | −0.15% / +3.22% | −0.06% |
+| scenes (14 cells) | +0.059 / −0.05 | +0.61% / +2.52% | −0.13% / +0.08% | −0.13% |
+
+Every stream decodes in `djxl` and `jxl-oxide`; one- and four-thread outputs
+are byte-identical; alternating A/B timing is neutral (mid 1 bpp 470 vs
+478 ms, large 1 bpp 889 vs 887 ms). Fast cells are unchanged (fixed cover).
+A "relative" variant that keeps only the size ordering (1.0 / 1.045 / 1.2 with
+scaled constants) was SSIMULACRA2 +0.036 / +0.083 but Butteraugli max +0.50% /
++1.22% — the absolute scale matters, because it also lowers the cover's
+effective λ by 1.56× against the residual proxy Phase 7.2's λ×4 was tuned on.
+This is a small win on every metric at once, not a seesaw: the first change
+since Q1 that improves SSIMULACRA2 and Butteraugli 3-norm together.
+
+**Standing against `cjxl -e 7` at matched bytes (Balanced, Q4 head; cjxl
+points from the Q3 match, JPXL bytes within 0.2%):**
+
+| image | bpp | bytes JPXL / cjxl | PSNR JPXL / cjxl (Δ dB) | SSIMULACRA2 JPXL / cjxl (Δ) | Butteraugli max JPXL / cjxl (Δ%) | 3-norm JPXL / cjxl (Δ%) |
+|---|---:|---:|---:|---:|---:|---:|
+| mid-photo | 0.5 | 266,625 / 266,650 | 31.58 / 31.62 (-0.03) | 57.05 / 54.51 (+2.55) | 4.833 / 5.121 (-5.6%) | 1.7123 / 1.7258 (-0.8%) |
+| mid-photo | 1 | 539,680 / 539,684 | 35.38 / 35.51 (-0.13) | 77.31 / 75.68 (+1.63) | 2.739 / 2.228 (+22.9%) | 0.8701 / 0.8387 (+3.7%) |
+| mid-photo | 2 | 1,077,350 / 1,077,129 | 39.27 / 39.43 (-0.16) | 88.77 / 87.53 (+1.24) | 1.286 / 0.897 (+43.4%) | 0.4070 / 0.3562 (+14.3%) |
+| large-photo | 0.5 | 749,731 / 748,369 | 35.58 / 35.81 (-0.23) | 73.09 / 71.48 (+1.61) | 3.440 / 3.116 (+10.4%) | 1.0498 / 1.0129 (+3.6%) |
+| large-photo | 1 | 1,495,833 / 1,495,703 | 38.91 / 39.15 (-0.24) | 86.35 / 84.88 (+1.47) | 1.643 / 1.419 (+15.8%) | 0.5195 / 0.4888 (+6.3%) |
+| large-photo | 2 | 2,998,384 / 2,999,060 | 42.49 / 42.93 (-0.44) | 92.59 / 92.14 (+0.44) | 0.874 / 0.669 (+30.6%) | 0.2673 / 0.2456 (+8.8%) |
+| mid2-photo | 0.5 | 269,767 / 269,949 | 40.62 / 40.78 (-0.16) | 80.14 / 78.66 (+1.49) | 2.157 / 2.161 (-0.2%) | 0.9925 / 0.9974 (-0.5%) |
+| mid2-photo | 1 | 533,688 / 533,687 | 42.70 / 43.24 (-0.54) | 86.02 / 85.44 (+0.58) | 1.611 / 1.495 (+7.7%) | 0.7347 / 0.7027 (+4.6%) |
+| mid2-photo | 2 | 1,079,897 / 1,080,066 | 46.85 / 46.81 (+0.04) | 91.14 / 90.46 (+0.68) | 0.922 / 0.916 (+0.6%) | 0.4222 / 0.4098 (+3.0%) |
+
+SSIMULACRA2 ahead in 9/9 (+0.4 … +2.6); PSNR behind in 8/9 (0.03–0.54 dB);
+Butteraugli max-norm behind in 7/9 (mid 0.5 and mid2 0.5 now ahead), 3-norm
+behind in 7/9. The picture is the same as after Q3, a notch better on the
+low-rate mid cells; the busy mid photo at 1–2 bpp remains the largest gap.
+
+**Why the metrics diverge this much.** SSIMULACRA2 is a multi-scale
+structural-similarity score: it averages, over the whole image and over
+scales, how well local means, contrasts and structural correlations are
+preserved, so it rewards an encoder that keeps texture and edges
+statistically right everywhere and it forgives a moderate, localised error.
+Butteraugli is a psychovisual difference model reported as a *max-norm*
+(and, in the 3-norm, a high-power mean): a single 16×16 patch with a visible
+error sets the score, and its masking model punishes error next to flat
+content far more than error inside texture. PSNR is plain mean-square error
+and rewards nothing perceptual. Two encoders can therefore rank oppositely
+without either being "wrong": JPXL's target-rate policy was promoted
+SSIMULACRA2-first (Phases 5G–Q2: quant_lf 4, the quant-donor frequency
+weight, trailing truncation at λ×4, uniform EPF 7, hierarchical merges), each
+of which improves the average structural score while accepting occasional
+localised errors — exactly what Q3 found at edge/flat DCT8×8 blocks — and
+several of which (truncation, the perceptual frequency weight, merges) trade
+MSE for structure, which is the PSNR gap. `cjxl` targets Butteraugli distance
+directly, so at matched bytes it holds the local worst case down at the price
+of the average structural score. The two encoders sit at different points of
+the same tradeoff surface; "matching libjxl across the board" would mean
+finding changes that move the local worst case without giving back the
+average — Q4's rate calibration is one such change, small; the per-block
+allocation levers of Q3 were not.
+
+**Next.** (1) The two-anchor controller's second-anchor exponent (speed above
+the ceiling; observation recorded in Q3). (2) A zero-run-aware proxy inside
+the scoring kernel (interior zeros priced at their coding-order position)
+would replace the per-size averages with a per-candidate count; the audit
+harness is the tool to check whether it is worth the kernel cost.
+
 ### Open architectural questions
 
 1. How can the finalist refresh only structurally unstable cover decisions?

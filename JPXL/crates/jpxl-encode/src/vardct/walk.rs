@@ -336,6 +336,7 @@ pub fn walk_pass_group(
         let order_id = vb.transform.order_id();
         let num_blocks = vb.transform.num_blocks();
         let size = vb.transform.coeff_rows() * vb.transform.coeff_cols();
+        sink.varblock(vb.transform, vb.hf_mul);
 
         for &channel in &CHANNEL_WALK_ORDER {
             let block_ctx =

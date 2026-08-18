@@ -113,11 +113,11 @@ comparison are recorded in
 
 At matched bytes on the three standing photographs at 0.5, 1 and 2 bpp
 (`Balanced` against `cjxl -e 7`, 2026-08-18), JPXL is ahead on SSIMULACRA2 in
-all nine cells (+0.4 to +2.4), behind on PSNR in eight (by 0.04–0.53 dB), and
-behind on Butteraugli in all nine on the max-norm (0.7–44%) and seven on the
-3-norm (up to 14%). The per-cell table, its localisation, and the levers that
-did not close it are in the Phase Q3 section of
-[JPXL/docs/optimize.md](JPXL/docs/optimize.md).
+all nine cells (+0.4 to +2.6), behind on PSNR in eight (by 0.03–0.54 dB), and
+behind on Butteraugli in seven of nine on both the max-norm (up to 43%) and
+the 3-norm (up to 14%). The per-cell table, its localisation, why the metrics
+diverge, and the levers that did and did not close the gap are in the Phase
+Q3 and Q4 sections of [JPXL/docs/optimize.md](JPXL/docs/optimize.md).
 Raw artifacts stay in `.agent/scratch/` so reports remain reviewable without
 committing test images or generated streams.
 

@@ -6388,6 +6388,69 @@ record jpegxl-rs.work.quality-q3-ladder-ceiling-and-allocation-screens/1 : work 
     part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
 }
 
+record jpegxl-rs.work.quality-q4-cover-rate-model/1 : work {
+    title "Phase Q4: audit and calibrate the cover objective's rate proxy against the writer's actual token costs"
+    state completed
+    scope [
+        path ".agent/scratch/quality-track/**",
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/request.rs",
+        path "JPXL/crates/jpxl-encode-policy/tests/rate_proxy_audit.rs",
+        path "JPXL/crates/jpxl-encode/src/vardct/sink.rs",
+        path "JPXL/crates/jpxl-encode/src/vardct/walk.rs",
+        path "JPXL/docs/optimize.md"
+    ]
+    intent """
+        Q3 identified the cover's merge decisions as the one lever that moves PSNR and Butteraugli together. Q4 measures how the cover objective's rate proxy (bitlen+1 per nonzero, zeros free, 2 bits per varblock, 32 per merged transform) compares with what the writer actually spends per varblock and per transform size, by walking the chosen plan with a costing HfEventSink under its own trained histograms; derives per-size residual scales and per-varblock fixed bits from that audit; screens the calibrated model (and a size-ordering-only variant) on the standing corpus against Phase Q3; and promotes it only if it improves SSIMULACRA2 and Butteraugli together (the operator's rule: a seesaw against SSIMULACRA2 is not accepted).
+        """
+    note """
+        Opened 2026-08-18 after Q3. The audit needed a no-op varblock(transform, hf_mul) hook on HfEventSink (jpxl-encode). Calibrated constants come from the mid photo at 1 bpp; the same ordering holds on large and mid2. Promoted as the target-rate default; the fixed-quantizer defaults keep the legacy proxy so Contract A fingerprints do not move; --cover-rate-model legacy reproduces the Q3 streams.
+        """
+    acceptance {
+        check audit-recorded {
+            statement """
+                The rate-proxy audit reports, per transform size, actual bits versus proxy bits and the split into non_zeros symbols, nonzero tokens and interior-zero tokens on the three standing photos, and the calibrated constants are derived from it.
+                """
+            method command
+            command "JPXL_RATE_AUDIT_PPM=<ppm> cargo test -p jpxl-encode-policy --profile fast-debug --test rate_proxy_audit -- --ignored --nocapture"
+            verified_by [ @jpegxl-rs.evidence.quality-q4-rate-audit-2026-08-18/1 ]
+        }
+        check compatibility-determinism {
+            statement """
+                --cover-rate-model legacy reproduces the Phase Q3 hashes, the fixed-quantizer defaults keep the legacy proxy, and promoted outputs are byte-identical across one and four threads.
+                """
+            method command
+            verified_by [
+                @jpegxl-rs.evidence.quality-q4-compatibility-determinism-2026-08-18/1
+            ]
+        }
+        check gates {
+            statement """
+                cargo fmt --check, clippy -D warnings, the full workspace test suite (Windows fixture links, JPXL_DISABLE_AVX2=1) and the no-default-features check pass.
+                """
+            method command
+            verified_by [ @jpegxl-rs.evidence.quality-q4-rust-gates-2026-08-18/1 ]
+        }
+        check quality-gate {
+            statement """
+                The calibrated rate model passes the standing ladder and seven-scene Contract B gate against Phase Q3 with SSIMULACRA2 mean and Butteraugli 3-norm mean both improving (no seesaw), every stream accepted by djxl and jxl-oxide.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.quality-q4-corpus-gates-2026-08-18/1 ]
+        }
+        check speed-budget {
+            statement """
+                Alternating A/B timing of the calibrated model against legacy is neutral on the standing mid 1 bpp and large 1 bpp Balanced cells.
+                """
+            method command
+            verified_by [ @jpegxl-rs.evidence.quality-q4-speed-budget-2026-08-18/1 ]
+        }
+    }
+    depends_on [ @jpegxl-rs.work.quality-q3-ladder-ceiling-and-allocation-screens/1 ]
+    part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+}
+
 record jpegxl-rs.work.retire-handoff-ledger/1 : work {
     title "Retire HANDOFF.md as a duplicate ledger after AKR migration"
     state completed

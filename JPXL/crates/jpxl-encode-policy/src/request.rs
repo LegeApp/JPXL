@@ -374,6 +374,103 @@ impl CoverSizePenalty {
     }
 }
 
+/// Research policy for how the cover objective prices *rate* per candidate.
+///
+/// [`Self::Legacy`] is the shipped proxy: `bitlen(|q|) + 1` per nonzero
+/// coefficient, nothing per zero, 2 bits per varblock and 32 bits per
+/// non-DCT8x8 transform. Phase Q4's audit
+/// (`tests/rate_proxy_audit.rs`) priced the chosen plan's I.4 events under
+/// its own trained histograms and found the writer spends about 1.56x /
+/// 1.63x / 1.88x that residual proxy on DCT8x8 / DCT16x16 / DCT32x32
+/// varblocks (interior zeros and hybrid-uint tokens are not free), about
+/// 5.5 / 8.4 / 6.5 bits of `non_zeros` symbols per varblock, and only a few
+/// bits of `DctSelect` signalling per merged block -- so the legacy proxy
+/// over-charges merging by its 32-bit constant and under-charges large
+/// transforms per coefficient.
+///
+/// [`Self::Calibrated`] applies those measured per-size scales and
+/// constants; [`Self::Custom`] lets a sweep move them.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum CoverRateModel {
+    /// The shipped proxy, bit-identical.
+    #[default]
+    Legacy,
+    /// Phase Q4's measured constants (mid photo, 1 bpp Balanced).
+    Calibrated,
+    /// Explicit `(scale, fixed_bits)` per coefficient edge 8 / 16 / 32.
+    Custom {
+        /// Multiplier on the residual-bit sum for DCT8x8.
+        scale8: f64,
+        /// Multiplier on the residual-bit sum for DCT16x16.
+        scale16: f64,
+        /// Multiplier on the residual-bit sum for DCT32x32.
+        scale32: f64,
+        /// Per-varblock fixed bits for DCT8x8.
+        fixed8: f64,
+        /// Per-varblock fixed bits for DCT16x16 (signalling included).
+        fixed16: f64,
+        /// Per-varblock fixed bits for DCT32x32 (signalling included).
+        fixed32: f64,
+    },
+}
+
+impl CoverRateModel {
+    /// The multiplier on a candidate's residual-bit sum, by coefficient edge.
+    /// Exactly `1.0` under [`Self::Legacy`].
+    #[must_use]
+    pub fn scale(self, coeff_edge: usize) -> f64 {
+        match self {
+            Self::Legacy => 1.0,
+            Self::Calibrated => match coeff_edge {
+                16 => 1.63,
+                32 => 1.88,
+                _ => 1.56,
+            },
+            Self::Custom {
+                scale8,
+                scale16,
+                scale32,
+                ..
+            } => match coeff_edge {
+                16 => scale16,
+                32 => scale32,
+                _ => scale8,
+            },
+        }
+    }
+
+    /// The fixed bits a candidate varblock pays (per-varblock overhead plus,
+    /// for merged transforms, the `DctSelect` signalling), by coefficient
+    /// edge. `2` / `34` / `34` under [`Self::Legacy`].
+    #[must_use]
+    pub fn fixed_bits(self, coeff_edge: usize) -> f64 {
+        match self {
+            Self::Legacy => {
+                if coeff_edge == 8 {
+                    2.0
+                } else {
+                    34.0
+                }
+            }
+            Self::Calibrated => match coeff_edge {
+                16 => 8.4 + 4.0,
+                32 => 6.5 + 4.0,
+                _ => 5.5,
+            },
+            Self::Custom {
+                fixed8,
+                fixed16,
+                fixed32,
+                ..
+            } => match coeff_edge {
+                16 => fixed16,
+                32 => fixed32,
+                _ => fixed8,
+            },
+        }
+    }
+}
+
 /// Research policy for the cover objective's per-cell frequency weight.
 ///
 /// [`Self::Flat`] is the shipped objective: every coefficient cell of every
@@ -512,6 +609,9 @@ pub struct EncodeRequest {
     /// Production stays at [`CoverFrequencyWeight::Flat`], which is
     /// bit-identical to the pre-Phase-6 objective.
     pub cover_frequency_weight: CoverFrequencyWeight,
+    /// Research policy for how the cover objective prices rate. Production
+    /// stays at [`CoverRateModel::Legacy`], which is bit-identical.
+    pub cover_rate_model: CoverRateModel,
     /// Research policy for how the HF quantizer picks an integer. Production
     /// stays at [`QuantizerChoiceMode::Nearest`], which is bit-identical.
     pub quantizer_choice: QuantizerChoiceMode,
@@ -643,6 +743,14 @@ impl EncodeRequest {
         request.quantizer_choice = QuantizerChoiceMode::TrailingTruncation;
         request.lambda_scale = 4.0;
         request.chroma_hf_policy = ChromaHfPolicy::QualityLowRateB5;
+        // Phase Q4: price the cover objective's rate the way the writer
+        // spends it (per-size residual scales and per-varblock fixed bits
+        // measured by tests/rate_proxy_audit.rs). Passed the standing photo
+        // ladder and seven-scene gate: SSIMULACRA2 +0.048 / +0.059 mean with
+        // worst -0.19, Butteraugli 3-norm -0.15% / -0.13%, max-norm mean
+        // +0.04% / +0.61%, timing neutral. `--cover-rate-model legacy`
+        // reproduces the Phase Q3 streams.
+        request.cover_rate_model = CoverRateModel::Calibrated;
         request
     }
 
@@ -709,6 +817,22 @@ mod tests {
             QuantizerChoiceMode::Nearest,
             "fixed-quantizer defaults must stay nearest"
         );
+        // Phase Q4: the calibrated cover rate model is a target-rate policy;
+        // the fixed-quantizer defaults keep the bit-identical legacy proxy.
+        assert_eq!(
+            EncodeRequest::defaults().cover_rate_model,
+            CoverRateModel::Legacy,
+            "fixed-quantizer defaults must keep the legacy rate proxy"
+        );
+        assert_eq!(
+            EncodeRequest::for_target(RateTarget::BitsPerPixel(1.0)).cover_rate_model,
+            CoverRateModel::Calibrated,
+            "target-rate policy carries the Phase Q4 calibrated rate model"
+        );
+        assert!((CoverRateModel::Legacy.scale(8) - 1.0).abs() < f64::EPSILON);
+        assert!((CoverRateModel::Legacy.scale(32) - 1.0).abs() < f64::EPSILON);
+        assert!((CoverRateModel::Legacy.fixed_bits(8) - 2.0).abs() < f64::EPSILON);
+        assert!((CoverRateModel::Legacy.fixed_bits(16) - 34.0).abs() < f64::EPSILON);
         assert!(
             (EncodeRequest::defaults().lambda_scale - 1.0).abs() < f32::EPSILON,
             "fixed-quantizer defaults must stay at unit lambda"

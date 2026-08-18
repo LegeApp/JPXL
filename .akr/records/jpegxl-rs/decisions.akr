@@ -38,6 +38,26 @@ record jpegxl-rs.decision.c26-alias-mapping/1 : decision {
     author "GitHub Uploader"
 }
 
+record jpegxl-rs.decision.cover-rate-model-calibrated-for-target-rate/1 : decision {
+    title "Target-rate requests price the cover objective's rate with the Phase Q4 calibrated model; fixed-quantizer defaults keep the legacy proxy"
+    state proposed
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/request.rs"
+    ]
+    topic cover-rate-model
+    decision """
+        EncodeRequest::for_target sets cover_rate_model = CoverRateModel::Calibrated: a candidate's residual-bit proxy is scaled by 1.56 / 1.63 / 1.88 for DCT8x8 / DCT16x16 / DCT32x32 and each varblock is charged 5.5 / 12.4 / 10.5 fixed bits (non_zeros symbols plus a few bits of DctSelect signalling for merged blocks), replacing 1.0 / 1.0 / 1.0 and 2 / 34 / 34. block_cost_bounded scales its pruning arithmetic by the same factor, so CoverRateModel::Legacy is bit-identical to the Phase Q3 objective and remains the fixed-quantizer default and an explicit --cover-rate-model legacy control.
+        """
+    context """
+        tests/rate_proxy_audit.rs priced the chosen plan's I.4 events under the plan's own trained histograms on the three standing photos at 1 bpp Balanced: interior zeros cost 0.4-1.1 bits, nonzero tokens 3.3-4.1 bits, the three non_zeros symbols 5-11 bits per varblock, DctSelect signalling a few bits; the legacy proxy under-priced DCT8x8/16x16/32x32 residuals by 1.56x/1.63x/1.88x (mid), 1.52/1.58/1.76 (large), 1.84/1.89/2.0 (mid2), so it over-charged merging by its 32-bit constant and under-charged large transforms per coefficient.
+        """
+    consequences """
+        Against Phase Q3 the photo ladder moves SSIMULACRA2 +0.048 (worst -0.19), Butteraugli 3-norm -0.15%, max-norm mean +0.04%; the scenes +0.059 / -0.13% / +0.61%; timing neutral; Fast cells unchanged (fixed cover). The cover mix on the mid photo shifts from 42/38/20% DCT8/16/32 area to 33/52/16%. Phase 7.2's lambda_scale 4 was tuned against the legacy proxy; the absolute 1.56x scale therefore also lowers the cover's effective lambda, and a size-ordering-only variant (1.0/1.045/1.2) was worse on Butteraugli max-norm, so the absolute constants are the promoted ones.
+        """
+    implements [ @jpegxl-rs.decision.optimization-determinism-contract/1 ]
+}
+
 record jpegxl-rs.decision.encoder-architecture-phases/1 : decision {
     title "Reorient encoder work to architecture phases 0-6 (outside-advice)"
     state active

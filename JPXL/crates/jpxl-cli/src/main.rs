@@ -109,6 +109,11 @@ Lossy options (8-bit RGB only; either one selects the VarDCT path):
     --sections                    After a lossy encode, print where the bytes
                                   went by section kind (headers/TOC, LfGlobal,
                                   LF groups, HfGlobal, pass groups)
+    --cover-rate-model <mode>     Cover objective's rate proxy: calibrated
+                                  (target-rate default after Phase Q4: measured
+                                  per-size scales and fixed bits), legacy (the
+                                  Phase Q3 proxy; fixed-quantizer default), or
+                                  custom:s8,s16,s32,f8,f16,f32; research control
     --cover-freq-weight <mode>    Cover objective's per-cell frequency weight:
                                   flat (default), csf (Mannos-Sakrison at 60
                                   ppd, rejected by Phase 6.3), or quant-donor
@@ -362,6 +367,7 @@ fn cmd_encode(args: &[String]) -> u8 {
     let mut epf_sharpness: Option<jpxl_encode_policy::EpfSharpnessMode> = None;
     let mut cover_size_penalty: Option<jpxl_encode_policy::CoverSizePenalty> = None;
     let mut cover_frequency_weight: Option<jpxl_encode_policy::CoverFrequencyWeight> = None;
+    let mut cover_rate_model: Option<jpxl_encode_policy::CoverRateModel> = None;
     let mut quantizer_choice: Option<jpxl_encode_policy::QuantizerChoiceMode> = None;
     let mut lambda_scale: Option<f32> = None;
     let mut dead_zone_scale: Option<f32> = None;
@@ -552,6 +558,43 @@ fn cmd_encode(args: &[String]) -> u8 {
                     }
                 });
             }
+            "--cover-rate-model" => {
+                let Some(value) = rest.next() else {
+                    fail(
+                        "`--cover-rate-model` needs one of: legacy, calibrated, custom:s8,s16,s32,f8,f16,f32",
+                    );
+                    return EXIT_ERROR;
+                };
+                cover_rate_model = Some(match value.as_str() {
+                    "legacy" => jpxl_encode_policy::CoverRateModel::Legacy,
+                    "calibrated" => jpxl_encode_policy::CoverRateModel::Calibrated,
+                    custom if custom.starts_with("custom:") => {
+                        let nums: Vec<f64> = custom["custom:".len()..]
+                            .split(',')
+                            .filter_map(|n| n.parse().ok())
+                            .collect();
+                        let [scale8, scale16, scale32, fixed8, fixed16, fixed32] = nums.as_slice()
+                        else {
+                            fail(
+                                "`--cover-rate-model custom:` needs six numbers s8,s16,s32,f8,f16,f32",
+                            );
+                            return EXIT_ERROR;
+                        };
+                        jpxl_encode_policy::CoverRateModel::Custom {
+                            scale8: *scale8,
+                            scale16: *scale16,
+                            scale32: *scale32,
+                            fixed8: *fixed8,
+                            fixed16: *fixed16,
+                            fixed32: *fixed32,
+                        }
+                    }
+                    _ => {
+                        fail("`--cover-rate-model` needs one of: legacy, calibrated, custom:...");
+                        return EXIT_ERROR;
+                    }
+                });
+            }
             "--quantizer-choice" => {
                 let Some(value) = rest.next() else {
                     fail(
@@ -726,6 +769,7 @@ fn cmd_encode(args: &[String]) -> u8 {
                     epf_sharpness,
                     cover_size_penalty,
                     cover_frequency_weight,
+                    cover_rate_model,
                     quantizer_choice,
                     lambda_scale,
                     dead_zone_scale,
@@ -1694,6 +1738,7 @@ struct LossyOverrides {
     epf_sharpness: Option<jpxl_encode_policy::EpfSharpnessMode>,
     cover_size_penalty: Option<jpxl_encode_policy::CoverSizePenalty>,
     cover_frequency_weight: Option<jpxl_encode_policy::CoverFrequencyWeight>,
+    cover_rate_model: Option<jpxl_encode_policy::CoverRateModel>,
     quantizer_choice: Option<jpxl_encode_policy::QuantizerChoiceMode>,
     lambda_scale: Option<f32>,
     dead_zone_scale: Option<f32>,
@@ -1768,6 +1813,9 @@ fn encode_lossy_to_target(
     }
     if let Some(weight) = overrides.cover_frequency_weight {
         request.cover_frequency_weight = weight;
+    }
+    if let Some(model) = overrides.cover_rate_model {
+        request.cover_rate_model = model;
     }
     if let Some(mode) = overrides.quantizer_choice {
         request.quantizer_choice = mode;

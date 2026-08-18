@@ -29,6 +29,7 @@
 //! [`HfEventSink`] event shape.
 
 use crate::vardct::ids::PreContextId;
+use jpxl_core::varblock::TransformType;
 
 /// A consumer of I.4's coefficient events.
 ///
@@ -36,6 +37,11 @@ use crate::vardct::ids::PreContextId;
 /// cluster is the sink's business — the census sink does not map at all, and
 /// the writer maps through the context map it was built with.
 pub trait HfEventSink {
+    /// The walk is about to emit one varblock's three channels: its
+    /// `DctSelect` transform and `HfMul`. A no-op by default; a research sink
+    /// that attributes tokens to transforms overrides it.
+    fn varblock(&mut self, _transform: TransformType, _hf_mul: u32) {}
+
     /// I.4's leading per-channel `non_zeros` symbol for one varblock.
     fn nonzeros(&mut self, context: PreContextId, value: u32);
 
