@@ -842,7 +842,7 @@ tests/rate_proxy_audit.rs now fits actual ~ s*proxy + z*zeros per varblock on th
 
 **supersedes** `@jpegxl-rs.observation.q6-zero-run-term-explains-dct8-residual-only-2026-08-18/1` · **derived_from** `@jpegxl-rs.observation.q4-rate-proxy-audit-and-metric-divergence-2026-08-18/3`
 
-> **At risk** at depth 2 via `derived_from` → `@jpegxl-rs.observation.q4-rate-proxy-audit-and-metric-divergence-2026-08-18/3` → `@jpegxl-rs.observation.q3-butteraugli-deficit-localisation-2026-08-18/3` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/lib.rs"` was matched by `547da94d`, which touched `JPXL/crates/jpxl-encode-policy/src/lib.rs`.). See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#q6-a-per-varblock-interior-zero-term-halves-the-dct8x8-rate-proxy-residuals-p90-but-explains-little-for-dct1632-deferred-rather-than-built-into-the-scoring-kernel).
+> **Stale** — `watches "JPXL/crates/jpxl-encode-policy/tests/rate_proxy_audit.rs"` was matched by `5fd8e357`, which touched `JPXL/crates/jpxl-encode-policy/tests/rate_proxy_audit.rs`. See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#q6-a-per-varblock-interior-zero-term-halves-the-dct8x8-rate-proxy-residuals-p90-but-explains-little-for-dct1632-deferred-rather-than-built-into-the-scoring-kernel).
 
 ### The standard's own quant matrices carry a third of the frequency weighting; measuring distortion in quantizer-normalised units cuts Y mispricing 2.65x to 1.86x
 

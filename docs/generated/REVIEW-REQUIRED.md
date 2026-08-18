@@ -7,7 +7,7 @@
 
 What should not be trusted without re-checking: records the build flagged `stale` or `at_risk`. Neither flag means a record is wrong (D-003); both mean look at it. This view is generated on every successful build, including one that exits 0 with a long queue (D-024). An empty file on an active project is more often a sign the `watches` globs are wrong than a sign the knowledge is perfect.
 
-## Stale (39)
+## Stale (40)
 
 ### The cover/CfL objective misprices Y-channel error by 2.65x across DCT8x8 frequency; the mispricing is in the ruler, not the lever
 
@@ -116,6 +116,12 @@ What should not be trusted without re-checking: records the build flagged `stale
 `verified` · `@jpegxl-rs.observation.q3-per-block-fields-lose-on-a-fine-lattice-2026-08-18/2` · observation · **stale** · [Q3: no variance-based per-block HfMul field or activity-adaptive EPF sharpness beats the frame-uniform quantizer, even on a sixteenth-octave lattice; the size penalty and X scale 3 stay negative on the corpus](CURRENT-STATE.md#q3-no-variance-based-per-block-hfmul-field-or-activity-adaptive-epf-sharpness-beats-the-frame-uniform-quantizer-even-on-a-sixteenth-octave-lattice-the-size-penalty-and-x-scale-3-stay-negative-on-the-corpus)
 
 **Cause** — `watches "JPXL/crates/jpxl-encode-policy/src/lib.rs"` was matched by `547da94d`, which touched `JPXL/crates/jpxl-encode-policy/src/lib.rs`.
+
+### Q6: a per-varblock interior-zero term halves the DCT8x8 rate-proxy residual's p90 but explains little for DCT16/32; deferred rather than built into the scoring kernel
+
+`verified` · `@jpegxl-rs.observation.q6-zero-run-term-explains-dct8-residual-only-2026-08-18/2` · observation · **stale** · [Q6: a per-varblock interior-zero term halves the DCT8x8 rate-proxy residual's p90 but explains little for DCT16/32; deferred rather than built into the scoring kernel](CURRENT-STATE.md#q6-a-per-varblock-interior-zero-term-halves-the-dct8x8-rate-proxy-residuals-p90-but-explains-little-for-dct1632-deferred-rather-than-built-into-the-scoring-kernel)
+
+**Cause** — `watches "JPXL/crates/jpxl-encode-policy/tests/rate_proxy_audit.rs"` was matched by `5fd8e357`, which touched `JPXL/crates/jpxl-encode-policy/tests/rate_proxy_audit.rs`.
 
 ### Cropped frames, orientation, kBlack channels
 
@@ -243,7 +249,7 @@ What should not be trusted without re-checking: records the build flagged `stale
 
 **Cause** — `watches "JPXL/crates/jpxl-encode-policy/src/rate.rs"` was matched by `cd721fc5`, which touched `JPXL/crates/jpxl-encode-policy/src/rate.rs`.
 
-## At risk (5)
+## At risk (4)
 
 ### Optimize for SSIMULACRA2 first; butteraugli becomes a secondary axis to refine later
 
@@ -268,9 +274,3 @@ What should not be trusted without re-checking: records the build flagged `stale
 `verified` · `@jpegxl-rs.observation.q4-rate-proxy-audit-and-metric-divergence-2026-08-18/3` · observation · **depth 1** · [Q4: the writer spends 1.5-2.0x the cover proxy's residual bits with a stable DCT8 < DCT16 < DCT32 ordering; SSIMULACRA2 and Butteraugli diverge because JPXL's SSIMULACRA2-first policy accepts localised worst-case error that Butteraugli's max-norm and masking model punish](CURRENT-STATE.md#q4-the-writer-spends-15-20x-the-cover-proxys-residual-bits-with-a-stable-dct8--dct16--dct32-ordering-ssimulacra2-and-butteraugli-diverge-because-jpxls-ssimulacra2-first-policy-accepts-localised-worst-case-error-that-butterauglis-max-norm-and-masking-model-punish)
 
 **Via** `derived_from` → `@jpegxl-rs.observation.q3-butteraugli-deficit-localisation-2026-08-18/3` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/lib.rs"` was matched by `547da94d`, which touched `JPXL/crates/jpxl-encode-policy/src/lib.rs`.)
-
-### Q6: a per-varblock interior-zero term halves the DCT8x8 rate-proxy residual's p90 but explains little for DCT16/32; deferred rather than built into the scoring kernel
-
-`verified` · `@jpegxl-rs.observation.q6-zero-run-term-explains-dct8-residual-only-2026-08-18/2` · observation · **depth 2** · [Q6: a per-varblock interior-zero term halves the DCT8x8 rate-proxy residual's p90 but explains little for DCT16/32; deferred rather than built into the scoring kernel](CURRENT-STATE.md#q6-a-per-varblock-interior-zero-term-halves-the-dct8x8-rate-proxy-residuals-p90-but-explains-little-for-dct1632-deferred-rather-than-built-into-the-scoring-kernel)
-
-**Via** `derived_from` → `@jpegxl-rs.observation.q4-rate-proxy-audit-and-metric-divergence-2026-08-18/3` → `@jpegxl-rs.observation.q3-butteraugli-deficit-localisation-2026-08-18/3` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/lib.rs"` was matched by `547da94d`, which touched `JPXL/crates/jpxl-encode-policy/src/lib.rs`.)
