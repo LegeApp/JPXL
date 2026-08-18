@@ -1339,6 +1339,50 @@ points (the exhaustive controller currently restarts its geometric bracket
 from scratch, ~20 prices), which would keep the hidden quality on those cells
 at a fraction of the cost. Recorded as the next controller item.
 
+## Phase Q6 — a cheaper fresh-structure exhaustive search: local brackets, seeded fallback, fill only outside the band (2026-08-18)
+
+Q5 left the fix that keeps the hidden quality: make the exhaustive controller
+cheaper rather than avoid it. Three output-preserving-in-spirit changes to
+the ladder search, all measured on the standing corpus against Q4:
+
+* **`BracketMode::Local`.** The Full-refinement navigation starts at the Fast
+  winner — next to the crossing — yet bracketed by doubling the index and
+  bisecting back (mid2 at 2 bpp: 100,355 → 50,177 → …). It now steps the
+  effective scale by an expanding ratio (1.1, 1.21, 1.46, 2.14…), so a
+  crossing within a few percent is bracketed in one or two prices. When the
+  short bracket holds no point as far up as the shrink-inflated target, the
+  exact correction extrapolates along the navigation's own log-log slope
+  instead of notching one rung at a time (the 300×260 rate-loop fixture,
+  where the Full alternatives shrink 17%, exposed that).
+* **Seeded fallback.** When the anchored controller misses its band it now
+  hands the exhaustive search the crossing estimate from its two exact points
+  (local slope), and that search starts there with a local bracket instead
+  of at `global_scale` 32768 with a doubling one.
+* **Fill only outside the tolerance band.** Bisection stops as soon as the
+  incumbent is within `slack`; the four notch probes that followed cost four
+  full encodes for tens of bytes on a dense ladder (a third of every
+  exhaustive search). They still run when the incumbent is outside the band
+  (a pocket between adjacent rungs, or an exhausted budget), which is the
+  case they were built for and the unit fixture still pins.
+
+Prices on the exhaustive path (Fast + Full): mid 1 bpp Quality 20 → 12,
+large 0.5 bpp Quality 21 → 13, mid2 2 bpp Quality 23 → 15, mid2 2 bpp
+Balanced fallback 26 → 12, the 20240503_105759 scene at Fast 25 → 5.
+Alternating A/B against the Phase Q3 controller: Quality mid 1 bpp
+3.9 → 2.5 s, large 0.5 bpp 6.8 → 4.7 s, mid2 2 bpp 6.5 → 4.6 s; the mid2
+2 bpp Balanced fallback 6.3 → 4.9 s; the scene at Fast 1.93 → 0.59 s.
+Fast/Balanced cells that do not fall back are byte-identical (`mid` 1 bpp
+Balanced `22a57d34…`).
+
+Corpus vs Q4 (only Quality cells and the fallback cells change): photos
+SSIMULACRA2 +0.003 mean / −0.06 worst, Butteraugli 3-norm −0.12%, max-norm
+−0.03%; scenes +0.015 / +0.00, +0.02%, −0.02%. Promoted: this is the
+speed side of Q5's finding without giving up the fallback's fresh structure.
+The mid2 2 bpp Balanced cell remains ~5 s because a fresh-structure price at
+2 bpp on a 4 MP photo costs ~0.4 s and the fallback still pays a dozen; the
+next step there, if wanted, is the Q5 controller constants (0.8 s, −0.25
+SSIMULACRA2 on that cell).
+
 ### Open architectural questions
 
 1. How can the finalist refresh only structurally unstable cover decisions?

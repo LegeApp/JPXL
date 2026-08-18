@@ -644,6 +644,51 @@ pub fn search_ladder(
     budget: RateSearchBudget,
     price: impl FnMut(QuantizerChoice) -> Result<u64>,
 ) -> Result<LadderSearch> {
+    search_ladder_with(
+        start,
+        BracketMode::Cold,
+        quant_lf,
+        target,
+        tolerance,
+        budget,
+        price,
+    )
+}
+
+/// How the first phase of [`search_ladder`] brackets the crossing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BracketMode {
+    /// Double or halve the effective scale from `start` (the request's
+    /// default rung is typically far from the crossing).
+    Cold,
+    /// `start` is believed close to the crossing (a Fast winner being
+    /// re-priced under a finer entropy model, or a seed from an anchored
+    /// attempt): step the effective scale by an expanding ratio
+    /// ([`LOCAL_BRACKET_RATIO`], squared each step) so a crossing within a
+    /// few percent is bracketed in one or two prices instead of a doubling
+    /// that then needs a dozen bisections back (Phase Q6).
+    Local,
+}
+
+/// The first step of a [`BracketMode::Local`] bracket, as a ratio of
+/// effective scale; each further step squares it (1.1, 1.21, 1.46, 2.14…)
+/// so a badly seeded start still reaches a doubling walk in four prices.
+pub const LOCAL_BRACKET_RATIO: f64 = 1.1;
+
+/// [`search_ladder`] with an explicit [`BracketMode`].
+///
+/// # Errors
+///
+/// As [`search_ladder`].
+pub fn search_ladder_with(
+    start: Rung,
+    bracket: BracketMode,
+    quant_lf: QuantLf,
+    target: u64,
+    tolerance: RateTolerance,
+    budget: RateSearchBudget,
+    price: impl FnMut(QuantizerChoice) -> Result<u64>,
+) -> Result<LadderSearch> {
     let mut search = Search {
         price,
         quant_lf,
@@ -652,7 +697,29 @@ pub fn search_ladder(
         trace: Vec::new(),
         best: None,
     };
-    search.run(start, tolerance, budget)
+    search.run(start, bracket, tolerance, budget)
+}
+
+/// The next rung up or down from `current` for a [`BracketMode::Local`]
+/// step of `ratio` in effective scale (never `current` itself).
+fn local_step(current: Rung, ratio: f64, up: bool) -> Rung {
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "effective scales are far below f64's exact-integer range"
+    )]
+    let scale = effective_scale(current) as f64;
+    let aimed = if up { scale * ratio } else { scale / ratio };
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "finite positive scale, clamped through the ladder constructor"
+    )]
+    let rung = rung_for_effective_scale(aimed.round().clamp(1.0, u64::MAX as f64) as u64);
+    if up {
+        rung.max(Rung::new(current.get().saturating_add(1)))
+    } else {
+        rung.min(Rung::new(current.get().saturating_sub(1)))
+    }
 }
 
 /// The effective quantizer fineness at a rung: `global_scale * HfMul`.
@@ -804,7 +871,34 @@ fn correction_rung_from_navigation(
         .min_by_key(|step| step.quantizer.rung)
         .map(|step| (step.quantizer.rung, step.bytes));
     let Some(upper) = upper else {
-        return Rung::new(minimum);
+        // Phase Q6: a locally bracketed navigation may hold no priced point
+        // as far up as the shrink-inflated target (the Full alternatives can
+        // save a large share on small frames). Extrapolate along the
+        // navigation's own log-log slope instead of notching one rung at a
+        // time from the finalist.
+        let above = navigation
+            .trace
+            .iter()
+            .filter(|step| step.quantizer.rung > finalist && step.bytes > navigation.bytes)
+            .max_by_key(|step| step.quantizer.rung)
+            .map(|step| (step.quantizer.rung, step.bytes));
+        let extrapolated = above.and_then(|(hi_rung, hi_bytes)| {
+            #[allow(
+                clippy::cast_precision_loss,
+                reason = "scales and byte counts stay inside f64's exact-integer range"
+            )]
+            let slope = ((hi_bytes as f64).ln() - (navigation.bytes as f64).ln())
+                / ((effective_scale(hi_rung) as f64).ln()
+                    - (effective_scale(finalist) as f64).ln());
+            target_rung_from_slope(
+                (finalist, navigation.bytes),
+                estimated_default_target,
+                slope,
+            )
+        });
+        return extrapolated.map_or(Rung::new(minimum), |rung| {
+            Rung::new(rung.get().max(minimum))
+        });
     };
     interpolated_rung(
         (finalist, navigation.bytes),
@@ -864,10 +958,12 @@ impl<F: FnMut(QuantizerChoice) -> Result<u64>> Search<F> {
     fn run(
         &mut self,
         start: Rung,
+        bracket: BracketMode,
         tolerance: RateTolerance,
         budget: RateSearchBudget,
     ) -> Result<LadderSearch> {
         let slack = tolerance.bytes_for(self.target);
+        let mut ratio = LOCAL_BRACKET_RATIO;
 
         // --- Phase 1: bracket, geometrically ---
         //
@@ -887,7 +983,16 @@ impl<F: FnMut(QuantizerChoice) -> Result<u64>> Search<F> {
             lo = Some((start, first));
             let mut current = start;
             while current < Rung::TOP && self.affordable() {
-                let next = Rung::new(current.get().saturating_mul(2).saturating_add(1));
+                let next = match bracket {
+                    BracketMode::Cold => {
+                        Rung::new(current.get().saturating_mul(2).saturating_add(1))
+                    }
+                    BracketMode::Local => {
+                        let next = local_step(current, ratio, true);
+                        ratio *= ratio;
+                        next
+                    }
+                };
                 if next <= current {
                     break;
                 }
@@ -912,7 +1017,14 @@ impl<F: FnMut(QuantizerChoice) -> Result<u64>> Search<F> {
                 }
                 // `current` is not the floor here, so `div_ceil` halves the
                 // *scale* — rung `r` is scale `r + 1`.
-                let next = Rung::new(current.get().div_ceil(2).saturating_sub(1));
+                let next = match bracket {
+                    BracketMode::Cold => Rung::new(current.get().div_ceil(2).saturating_sub(1)),
+                    BracketMode::Local => {
+                        let next = local_step(current, ratio, false);
+                        ratio *= ratio;
+                        next
+                    }
+                };
                 let bytes = self.eval(next, RatePhase::Bracket)?;
                 if bytes <= self.target {
                     lo = Some((next, bytes));
@@ -1028,7 +1140,18 @@ impl<F: FnMut(QuantizerChoice) -> Result<u64>> Search<F> {
         // notch is the entire point: that is what a non-monotone pocket looks
         // like from inside the loop, and stopping at the first refusal would
         // hand the pocket back.
-        if let Some((base, _)) = self.best {
+        // Phase Q6: the fill closes what the tolerance still cares about.
+        // Bisection stops as soon as the incumbent is within `slack` of the
+        // target, and on a dense ladder — a 4 MP photo at 1 bpp sits near
+        // effective scale 20,000-140,000 — a notch is worth tens of bytes, so
+        // notching from inside the band paid four full encodes for nothing
+        // (about a third of every exhaustive search). The fill still runs
+        // when the incumbent is outside the band: the bracket closed to
+        // adjacent rungs around a pocket, or the budget ran out early.
+        let fill_worthwhile = self
+            .best
+            .is_some_and(|(_, bytes)| self.target.saturating_sub(bytes) > slack);
+        if let Some((base, _)) = self.best.filter(|_| fill_worthwhile) {
             for offset in 1..=budget.fill_probes {
                 if !self.affordable() {
                     break;
@@ -1216,13 +1339,23 @@ pub fn search_frame_with_executor(
     #[cfg(feature = "anchor-sketch")]
     {
         if request.rate_preset == RateSearchPreset::Quality {
-            return search_frame_exhaustive(frame, atlas, request, target, executor);
+            return search_frame_exhaustive(frame, atlas, request, target, executor, None);
         }
         let mut attempted = RateProbeStats::default();
-        match search_frame_two_anchor(frame, atlas, request, target, &mut attempted, executor)? {
+        let mut seed = None;
+        match search_frame_two_anchor(
+            frame,
+            atlas,
+            request,
+            target,
+            &mut attempted,
+            &mut seed,
+            executor,
+        )? {
             Some(outcome) => Ok(outcome),
             None => {
-                let mut outcome = search_frame_exhaustive(frame, atlas, request, target, executor)?;
+                let mut outcome =
+                    search_frame_exhaustive(frame, atlas, request, target, executor, seed)?;
                 let attempted_first_finalist = attempted.anchor_first_finalist_bytes;
                 let attempted_correction = attempted.anchor_correction_bytes;
                 outcome.stats.add_attempted_work(attempted);
@@ -1244,7 +1377,7 @@ pub fn search_frame_with_executor(
                 what: "an anchored rate preset without the anchor-sketch crate feature",
             });
         }
-        search_frame_exhaustive(frame, atlas, request, target, executor)
+        search_frame_exhaustive(frame, atlas, request, target, executor, None)
     }
 }
 
@@ -1275,7 +1408,6 @@ fn two_anchor_target_rung(first: (Rung, u64), second: (Rung, u64), target: u64) 
     target_rung_from_slope((lo_rung, lo_bytes), target, slope)
 }
 
-#[cfg(feature = "anchor-sketch")]
 fn target_rung_from_slope(anchor: (Rung, u64), target: u64, slope: f64) -> Option<Rung> {
     if anchor.1 == 0 || target == 0 || !slope.is_finite() || slope <= 0.0 {
         return None;
@@ -1419,6 +1551,7 @@ fn search_frame_two_anchor(
     request: &EncodeRequest,
     target: RateTarget,
     attempted: &mut RateProbeStats,
+    seed: &mut Option<Rung>,
     executor: &jpxl_encode::EncodeExecutor,
 ) -> Result<Option<RateOutcome>> {
     diagnostics::reset_search_diag();
@@ -1700,6 +1833,20 @@ fn search_frame_two_anchor(
         }
         let Some(selected) = selected else {
             *attempted = prepared.stats;
+            // Seed the exhaustive fallback with the crossing estimate from
+            // the two exact points nearest the target: the local slope
+            // between them, or the last exact point when there is only one.
+            *seed = match last {
+                Some(exact) => two_anchor_correction_rung(exact, previous, previous, target_bytes)
+                    .or(Some(previous.0)),
+                None => two_anchor_correction_rung(
+                    (first_quantizer.rung, first_size.total),
+                    (second_quantizer.rung, second_size.total),
+                    previous,
+                    target_bytes,
+                )
+                .or(Some(previous.0)),
+            };
             return Ok(None);
         };
         selected
@@ -1759,10 +1906,20 @@ fn search_frame_exhaustive(
     request: &EncodeRequest,
     target: RateTarget,
     executor: &jpxl_encode::EncodeExecutor,
+    seed: Option<Rung>,
 ) -> Result<RateOutcome> {
     diagnostics::reset_search_diag();
     let target_bytes = target.bytes_for(frame.width(), frame.height());
-    let start = QuantizerChoice::from_request(request).rung;
+    // Phase Q6: an anchored attempt that missed its band still knows where
+    // the crossing is to within a few percent; start there with a local
+    // bracket instead of the request's default rung with a doubling one.
+    let (start, bracket) = match seed {
+        Some(seed) => (seed, BracketMode::Local),
+        None => (
+            QuantizerChoice::from_request(request).rung,
+            BracketMode::Cold,
+        ),
+    };
 
     // Inverse-Gaborish is quantizer-independent: once per request, not per probe.
     let precond_owned;
@@ -1795,8 +1952,9 @@ fn search_frame_exhaustive(
     // identity carries into Full refinement.
     let mut kept: Option<(Rung, QuantLf, CodestreamSizing)> = None;
 
-    let mut search = search_ladder(
+    let mut search = search_ladder_with(
         start,
+        bracket,
         request.quant_lf,
         target_bytes,
         request.tolerance,
@@ -1917,8 +2075,11 @@ fn search_frame_exhaustive(
         let mut navigation_budget_request = request.budget.rate;
         navigation_budget_request.max_prices = navigation_budget;
         navigation_budget_request.lf_fill_probes = 0;
-        Some(search_ladder(
+        // Phase Q6: the Fast winner is next to the crossing, so bracket
+        // locally instead of doubling away from it and bisecting back.
+        Some(search_ladder_with(
             rung,
+            BracketMode::Local,
             quant_lf,
             target_bytes,
             request.tolerance,

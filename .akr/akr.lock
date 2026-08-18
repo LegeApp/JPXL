@@ -5,7 +5,7 @@ build {
     tool "akr 0.3.1"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:4d2956f1542577002f424de0a3e788dcfb711ef963123d7e422c0736b3822dd9"
+    source_graph "sha256:df53e0dc90414842c4876358f4d819e098284f79781e0f92ed92426b19852b86"
 }
 
 source ".akr/project.akr" {
@@ -29,8 +29,8 @@ source ".akr/records/jpegxl-rs/decisions.akr" {
 }
 
 source ".akr/records/jpegxl-rs/evidence.akr" {
-    hash "sha256:fa088fe1f46730fc2059680037abcbb2f1c050eb79ef1e5bede623cd52c52ee0"
-    records 369
+    hash "sha256:90e5ac8ce750bec4518283c212da021de1cddb1b6a82c848959896f40453a6a9"
+    records 372
 }
 
 source ".akr/records/jpegxl-rs/milestones.akr" {
@@ -64,8 +64,8 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:e9e91bd7dd9f0ddc7749969cb8a37b3a42eebb1c037b6f2a48ca9ee3ef9eb048"
-    records 141
+    hash "sha256:5e51cc61efffb72225486fb3f30f705fdca0874c570c4b12eab34cb5f6c847d3"
+    records 142
 }
 
 resolution @jpegxl-rs.decision.encoder-architecture-phases/1 {
@@ -5333,6 +5333,21 @@ seal @jpegxl-rs.evidence.quality-q5-rust-gates-2026-08-18/1 {
     hash "sha256:93bc63375ebfbbeae145098fd1fb9dad07c120626ea24c1e6aa283bcb1765a54"
 }
 
+seal @jpegxl-rs.evidence.quality-q6-corpus-gates-2026-08-18/1 {
+    state verified
+    hash "sha256:8eb841296e29ccd9510aa189097910f6d87b3a4ec583c1feacfcff26ec03977b"
+}
+
+seal @jpegxl-rs.evidence.quality-q6-determinism-gates-2026-08-18/1 {
+    state verified
+    hash "sha256:8b2b688738233cb7a6d7527c8ff389c8843e67be194c8072b3eea89e3cb6a850"
+}
+
+seal @jpegxl-rs.evidence.quality-q6-price-reduction-2026-08-18/1 {
+    state verified
+    hash "sha256:8da48dd2fd0fa3e541d06815f3af682d9bb6037a09555de9c20e80397c442518"
+}
+
 seal @jpegxl-rs.evidence.retire-handoff-durable-facts-2026-08-11/1 {
     state verified
     hash "sha256:d5bdf84076bed194a4be6e7e9ea15569dbed84339827e224b936cd8feeb95a65"
@@ -6781,6 +6796,11 @@ seal @jpegxl-rs.work.quality-q4-cover-rate-model/1 {
 seal @jpegxl-rs.work.quality-q5-anchored-controller-above-ceiling/1 {
     state completed
     hash "sha256:2fdb6aa2dce3bcff4556e7ed22fc3ef0185a8009088ccd73beef8d1c60796b36"
+}
+
+seal @jpegxl-rs.work.quality-q6-cheaper-exhaustive-search/1 {
+    state completed
+    hash "sha256:0e2fde76c520695ad6ec09a696d440e5f3adfa051ec881925d8ad696e9947cce"
 }
 
 seal @jpegxl-rs.work.retire-handoff-ledger/1 {

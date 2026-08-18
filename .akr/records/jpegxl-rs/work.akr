@@ -6486,6 +6486,48 @@ record jpegxl-rs.work.quality-q5-anchored-controller-above-ceiling/1 : work {
     part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
 }
 
+record jpegxl-rs.work.quality-q6-cheaper-exhaustive-search/1 : work {
+    title "Phase Q6: cheaper fresh-structure exhaustive search — local navigation bracket, seeded fallback, fill only outside the tolerance band"
+    state completed
+    scope [
+        path ".agent/scratch/quality-track/**",
+        path "JPXL/crates/jpxl-encode-policy/src/rate.rs",
+        path "JPXL/crates/jpxl-encode-policy/tests/rate_loop.rs",
+        path "JPXL/docs/optimize.md"
+    ]
+    intent """
+        Take the speed side of Q5's finding without giving up the fallback's fresh structure: make the exhaustive controller (Quality preset and Fast/Balanced fallbacks) spend fewer prices for the same landing. Bracket locally when the start is known to be near the crossing (Full-refinement navigation from the Fast winner; a fallback seeded with the anchored attempt's crossing estimate), extrapolate the exact correction along the navigation slope when its short bracket lacks a far point, and run the discrete notch fill only when the incumbent is still outside the tolerance band. Promote if the standing corpus stays within Contract B against Q4 and the price counts drop.
+        """
+    note """
+        Screened and promoted 2026-08-18. Fast/Balanced cells that do not fall back are byte-identical to Q4; Quality cells and fallback cells move within noise (photos +0.003 / -0.06, scenes +0.015 / +0.00). Exhaustive-path prices: mid 1 bpp Quality 20 -> 12, large 0.5 bpp Quality 21 -> 13, mid2 2 bpp Quality 23 -> 15, mid2 2 bpp Balanced fallback 26 -> 12, the 20240503_105759 scene at Fast 25 -> 5; A/B against the Phase Q3 controller: Quality mid 1 bpp 3.9 -> 2.5 s, large 0.5 bpp 6.8 -> 4.7 s, mid2 2 bpp 6.5 -> 4.6 s, fallback 6.3 -> 4.9 s, scene Fast 1.93 -> 0.59 s.
+        """
+    acceptance {
+        check determinism-gates {
+            statement """
+                One- and four-thread outputs are byte-identical on a Quality cell and a fallback cell; cargo fmt --check, clippy -D warnings and the encode-policy suite (including the rate-loop fixtures) pass.
+                """
+            method command
+            verified_by [ @jpegxl-rs.evidence.quality-q6-determinism-gates-2026-08-18/1 ]
+        }
+        check price-reduction {
+            statement """
+                Exhaustive-path price counts and alternating A/B wall time drop on Quality cells and on the fallback cells, with raw traces and timings retained.
+                """
+            method command
+            verified_by [ @jpegxl-rs.evidence.quality-q6-price-reduction-2026-08-18/1 ]
+        }
+        check quality-gate {
+            statement """
+                Against Phase Q4 the standing photo ladder and seven-scene screen stay within Contract B (SSIMULACRA2 mean non-negative, worst above -0.5, Butteraugli max-norm mean within +2%, 3-norm worst within +5%), every stream accepted by djxl and jxl-oxide, and Fast/Balanced non-fallback cells are byte-identical.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.quality-q6-corpus-gates-2026-08-18/1 ]
+        }
+    }
+    depends_on [ @jpegxl-rs.work.quality-q5-anchored-controller-above-ceiling/1 ]
+    part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+}
+
 record jpegxl-rs.work.retire-handoff-ledger/1 : work {
     title "Retire HANDOFF.md as a duplicate ledger after AKR migration"
     state completed

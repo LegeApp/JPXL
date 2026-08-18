@@ -301,7 +301,16 @@ fn a_bits_per_pixel_target_lands_the_byte_budget_it_implies() {
             .expect("reachable");
     assert_eq!(outcome.target, bytes);
     assert!(outcome.achieved() <= bytes);
-    assert!(outcome.undershoot_fraction() <= MAX_UNDERSHOOT);
+    assert!(
+        outcome.undershoot_fraction() <= MAX_UNDERSHOOT,
+        "undershoot {} > {MAX_UNDERSHOOT} (trace {:?})",
+        outcome.undershoot_fraction(),
+        outcome
+            .trace
+            .iter()
+            .map(|s| (s.quantizer.rung.get(), s.bytes))
+            .collect::<Vec<_>>()
+    );
 }
 
 /// Slice 17's exit condition on the rate side: the target contract survives
@@ -466,7 +475,16 @@ fn the_lf_hf_ratio_is_a_distortion_knob_the_loop_holds_fixed() {
             "quant_lf {quant_lf}: {} bytes",
             outcome.achieved()
         );
-        assert!(outcome.undershoot_fraction() <= MAX_UNDERSHOOT);
+        assert!(
+            outcome.undershoot_fraction() <= MAX_UNDERSHOOT,
+            "undershoot {} > {MAX_UNDERSHOOT} (trace {:?})",
+            outcome.undershoot_fraction(),
+            outcome
+                .trace
+                .iter()
+                .map(|s| (s.quantizer.rung.get(), s.bytes))
+                .collect::<Vec<_>>()
+        );
         assert_eq!(
             outcome.chosen.quant_lf.get(),
             quant_lf,
