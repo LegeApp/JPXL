@@ -704,7 +704,7 @@ record jpegxl-rs.observation.lf-quant-channel-order/1 : observation {
 
 record jpegxl-rs.observation.libjxl-comparison-2026-08-18/1 : observation {
     title "Reproducible JPXL versus libjxl VarDCT baseline on 4 MP and 12 MP photographs"
-    state verified
+    state superseded
     scope [
         path "JPXL/docs/experiments/2026-08-18-libjxl-comparison.md",
         path "JPXL/tools/compare-libjxl.ps1"
@@ -732,6 +732,31 @@ record jpegxl-rs.observation.libjxl-comparison-2026-08-18/1 : observation {
             Frozen raw results, commands, hashes, and interpretation.
             """
     }
+}
+
+record jpegxl-rs.observation.libjxl-comparison-2026-08-18/2 : observation {
+    title "Reproducible JPXL versus libjxl VarDCT baseline on 4 MP and 12 MP photographs"
+    state verified
+    scope [
+        path "JPXL/docs/experiments/2026-08-18-speed-parity-reconciliation.md",
+        path "JPXL/tools/compare-libjxl.ps1"
+    ]
+    statement """
+        The public comparison previously conflated the exhaustive JPXL Quality preset at 1 bpp, four JPXL workers, and cjxl's default thread count with the optimized parity result. Phase 42 instead measured Balanced/Fast at an SSIMULACRA2-matched operating point with both encoders constrained to four P-cores and cjxl -e 7; it found Balanced roughly 15-25% faster and Fast roughly 30-40% faster on the 4 MP and 12 MP anchors. Speed parity is limited to that equal-resource window; quality, density, and Butteraugli still favour cjxl.
+        """
+    observed_at git:e987c4e5d17f42fa09052a39443865245d74d90d
+    method command
+    watches [
+        "JPXL/tools/compare-libjxl.ps1",
+        "JPXL/crates/jpxl-cli/**",
+        "JPXL/crates/jpxl-encode/**",
+        "JPXL/crates/jpxl-encode-policy/**"
+    ]
+    derived_from [
+        @jpegxl-rs.policy.jpxl-bench-entry-points,
+        @jpegxl-rs.policy.performance-baseline-rules
+    ]
+    supersedes [ @jpegxl-rs.observation.libjxl-comparison-2026-08-18/1 ]
 }
 
 record jpegxl-rs.observation.libjxl-headsup-modular-2026-08-10/1 : observation {

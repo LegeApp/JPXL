@@ -7,9 +7,10 @@ than accepted merely because it round-trips through itself.
 
 **Status:** actively developed and not yet a drop-in replacement for libjxl.
 The implemented subset is substantial, but it deliberately rejects several
-valid JPEG XL feature combinations instead of guessing. The lossy encoder is
-also currently much slower and less rate-distortion efficient than libjxl;
-see the measured comparison below.
+valid JPEG XL feature combinations instead of guessing. Its optimized lossy
+`Balanced` and `Fast` paths have reached a matched-SSIMULACRA2 speed-parity
+window against the pinned libjxl build on the project’s two photo anchors;
+quality and density still trail libjxl on important perceptual axes.
 
 ## What works today
 
@@ -75,26 +76,40 @@ jpxl info output.jxl
 Run `jpxl --help` and `jpxl bench --help` for the supported options and
 isolated encoder timing modes.
 
-## Quality and speed versus libjxl
+## Quality, density, and speed versus libjxl
 
-JPXL and `cjxl` expose different encoder controls: JPXL targets a byte rate,
-whereas `cjxl -d` targets Butteraugli distance. The meaningful comparison is
-therefore a rate/distortion curve, not a same-setting shootout. The tracked
-harness alternates timed JPXL and `cjxl` runs on identical P6 PPM inputs,
-decodes both streams with `djxl`, and reports file size, PSNR, SSIMULACRA2,
-Butteraugli, hashes, and timing dispersion.
+The project has two distinct comparison modes. They must not be conflated.
+
+- **Speed-parity window:** `Balanced`/`Fast` JPXL and `cjxl -e 7`, with the
+  same four pinned P-cores and SSIMULACRA2-matched outputs. The Phase 42
+  result recorded 0.42–0.43 s JPXL Balanced versus 0.49–0.51 s `cjxl` on
+  2400×1800, and 1.05–1.43 s versus 1.51–1.66 s on 4000×3000. `Fast` was
+  quicker still. These runs were about 13% larger and Butteraugli still
+  favoured `cjxl`, so “speed parity” is not “codec parity.”
+- **Quality/density curves:** JPXL targets a byte rate, while `cjxl -d`
+  targets Butteraugli. Sweep each curve and compare rate, PSNR,
+  SSIMULACRA2, Butteraugli, and output size; a same-setting comparison is not
+  a quality claim. The exhaustive JPXL `Quality` preset is deliberately much
+  slower and is not the speed-parity path.
+
+The tracked harness alternates the encoders on identical P6 PPM inputs,
+uses an explicit equal thread count, decodes both streams with `djxl`, and
+records provenance, hashes, bitrate, quality metrics, and timing dispersion.
 
 ```powershell
 cd JPXL
 pwsh ./tools/compare-libjxl.ps1 `
-  -Input ..\.agent\scratch\quality-track\q2-inputs\mid-photo.ppm,` 
-         ..\.agent\scratch\quality-track\q2-inputs\large-photo.ppm `
-  -JpxlBpp 1.0 -CjxlDistance 1.0 -Runs 3
+  -Input ..\.agent\scratch\quality-track\q2-inputs\mid-photo.ppm `
+  -JpxlBpp 1.0 -CjxlDistance 2.25 `
+  -JpxlPreset balanced -Threads 4 -CjxlThreads 4 -CjxlEffort 7 -Runs 3
 ```
 
-The frozen current run, its exact host/oracle/build provenance, and its
-interpretation are recorded in
-[JPXL/docs/experiments/2026-08-18-libjxl-comparison.md](JPXL/docs/experiments/2026-08-18-libjxl-comparison.md).
+For the 4000×3000 anchor, rerun with `large-photo.ppm` and
+`-CjxlDistance 1.25`.
+
+The measured parity window and the correction to the earlier mismatched
+comparison are recorded in
+[JPXL/docs/experiments/2026-08-18-speed-parity-reconciliation.md](JPXL/docs/experiments/2026-08-18-speed-parity-reconciliation.md).
 Raw artifacts stay in `.agent/scratch/` so reports remain reviewable without
 committing test images or generated streams.
 

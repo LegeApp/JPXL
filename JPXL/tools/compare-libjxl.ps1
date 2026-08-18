@@ -16,7 +16,9 @@ param(
     [double[]]$CjxlDistance = @(0.5, 1.0, 2.0),
     [ValidateRange(3, 99)] [int]$Runs = 3,
     [ValidateRange(1, 256)] [int]$Threads = [Environment]::ProcessorCount,
-    [ValidateSet('quality', 'balanced', 'fast')] [string]$JpxlPreset = 'quality',
+    [ValidateSet('quality', 'balanced', 'fast')] [string]$JpxlPreset = 'balanced',
+    [ValidateRange(1, 256)] [int]$CjxlThreads = $Threads,
+    [ValidateRange(1, 9)] [int]$CjxlEffort = 7,
     [string]$JpxlPath, [string]$CjxlPath, [string]$DjxlPath,
     [string]$OutputDir, [switch]$SkipBuild
 )
@@ -64,16 +66,16 @@ $header = "input`tinput_sha256`twidth`theight`tcodec`tsetting`titerations`tthrea
 $jpxlVersion = (& $JpxlPath --version) -join ' '
 $cjxlVersion = (& $CjxlPath --version 2>&1 | Select-Object -First 1)
 $djxlVersion = (& $DjxlPath --version 2>&1 | Select-Object -First 1)
-@("created_utc=$((Get-Date).ToUniversalTime().ToString('o'))", "host=$env:COMPUTERNAME", "os=$([Environment]::OSVersion.VersionString)", "cpu=$((Get-CimInstance Win32_Processor | Select-Object -First 1 -ExpandProperty Name).Trim())", "logical_processors=$([Environment]::ProcessorCount)", "runs=$Runs (one warm-up per codec/point, then alternating JPXL/cjxl timed runs)", 'cache_regime=warm-process; encode timing excludes decode and metrics', "jpxl_path=$JpxlPath", "jpxl_sha256=$(Sha256 $JpxlPath)", "jpxl_version=$jpxlVersion", "cjxl_path=$CjxlPath", "cjxl_sha256=$(Sha256 $CjxlPath)", "cjxl_version=$cjxlVersion", "djxl_path=$DjxlPath", "djxl_sha256=$(Sha256 $DjxlPath)", "djxl_version=$djxlVersion") | Set-Content -LiteralPath $metaPath
+@("created_utc=$((Get-Date).ToUniversalTime().ToString('o'))", "host=$env:COMPUTERNAME", "os=$([Environment]::OSVersion.VersionString)", "cpu=$((Get-CimInstance Win32_Processor | Select-Object -First 1 -ExpandProperty Name).Trim())", "logical_processors=$([Environment]::ProcessorCount)", "runs=$Runs (one warm-up per codec/point, then alternating JPXL/cjxl timed runs)", 'cache_regime=warm-process; encode timing excludes decode and metrics', "jpxl_threads=$Threads", "cjxl_threads=$CjxlThreads", "cjxl_effort=$CjxlEffort", "jpxl_path=$JpxlPath", "jpxl_sha256=$(Sha256 $JpxlPath)", "jpxl_version=$jpxlVersion", "cjxl_path=$CjxlPath", "cjxl_sha256=$(Sha256 $CjxlPath)", "cjxl_version=$cjxlVersion", "djxl_path=$DjxlPath", "djxl_sha256=$(Sha256 $DjxlPath)", "djxl_version=$djxlVersion") | Set-Content -LiteralPath $metaPath
 
 foreach ($source in $Source) {
     $sourcePath = (Resolve-Path -LiteralPath $source).Path; Require-File $sourcePath 'Input PPM'; $d = Read-PpmDimensions $sourcePath
     $pixels = [int64]$d.Width * $d.Height; $sourceHash = Sha256 $sourcePath; $stem = [IO.Path]::GetFileNameWithoutExtension($sourcePath)
     for ($point = 0; $point -lt $JpxlBpp.Count; $point++) {
         $jb = $JpxlBpp[$point]; $cd = $CjxlDistance[$point]; $jo = Join-Path $OutputDir "$stem-jpxl-$jb.jxl"; $co = Join-Path $OutputDir "$stem-cjxl-d$cd.jxl"
-        [void](Invoke-Timed $JpxlPath @('encode', '--bpp', "$jb", '--threads', "$Threads", '--lossy-preset', $JpxlPreset, $sourcePath, $jo)); [void](Invoke-Timed $CjxlPath @($sourcePath, $co, '-d', "$cd"))
+        [void](Invoke-Timed $JpxlPath @('encode', '--bpp', "$jb", '--threads', "$Threads", '--lossy-preset', $JpxlPreset, $sourcePath, $jo)); [void](Invoke-Timed $CjxlPath @($sourcePath, $co, '-d', "$cd", '-e', "$CjxlEffort", '--num_threads', "$CjxlThreads"))
         $jt = New-Object 'System.Collections.Generic.List[double]'; $ct = New-Object 'System.Collections.Generic.List[double]'
-        for ($run = 0; $run -lt $Runs; $run++) { $jt.Add((Invoke-Timed $JpxlPath @('encode', '--bpp', "$jb", '--threads', "$Threads", '--lossy-preset', $JpxlPreset, $sourcePath, $jo))); $ct.Add((Invoke-Timed $CjxlPath @($sourcePath, $co, '-d', "$cd"))) }
+        for ($run = 0; $run -lt $Runs; $run++) { $jt.Add((Invoke-Timed $JpxlPath @('encode', '--bpp', "$jb", '--threads', "$Threads", '--lossy-preset', $JpxlPreset, $sourcePath, $jo))); $ct.Add((Invoke-Timed $CjxlPath @($sourcePath, $co, '-d', "$cd", '-e', "$CjxlEffort", '--num_threads', "$CjxlThreads"))) }
         foreach ($entry in @(@{ Codec = 'jpxl'; Setting = "bpp=$jb"; Output = $jo; Times = $jt; Decode = (Join-Path $OutputDir "$stem-jpxl-$jb.ppm") }, @{ Codec = 'cjxl'; Setting = "distance=$cd"; Output = $co; Times = $ct; Decode = (Join-Path $OutputDir "$stem-cjxl-d$cd.ppm") })) {
             & $DjxlPath $entry.Output $entry.Decode *> $null; if ($LASTEXITCODE -ne 0) { throw "djxl rejected $($entry.Output)" }; $m = Get-Metrics $sourcePath $entry.Decode
             $values = @([IO.Path]::GetFileName($sourcePath), $sourceHash, $d.Width, $d.Height, $entry.Codec, $entry.Setting, $Runs, $Threads, $JpxlPreset, ('{0:F3}' -f (($entry.Times | Measure-Object -Minimum).Minimum)), ('{0:F3}' -f (Median @($entry.Times))), ('{0:F3}' -f (($entry.Times | Measure-Object -Maximum).Maximum)), (Get-Item -LiteralPath $entry.Output).Length, ('{0:F6}' -f (((Get-Item -LiteralPath $entry.Output).Length * 8.0) / $pixels)), (Sha256 $entry.Output), $m.psnr_db, $m.ssimulacra2, $m.butteraugli, $m.butteraugli_pnorm3)

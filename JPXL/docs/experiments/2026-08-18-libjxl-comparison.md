@@ -1,5 +1,7 @@
 # JPXL VarDCT encoder versus libjxl: current comparison
 
+Superseded by: [speed-parity reconciliation](2026-08-18-speed-parity-reconciliation.md).
+
 ## Question
 
 On a 4 MP and a 12 MP photograph, what rate, decoded quality and encode time

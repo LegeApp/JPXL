@@ -5,7 +5,7 @@ build {
     tool "akr 0.3.1"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:e47a240aaaea4b494377c5e5c5b3d94d6da3d429d2b44110306e66017d4b18e1"
+    source_graph "sha256:b4b3e6abdb03a0f7a1d02c33a9b092bef72a199fc0a8e819c7ba4c67827adf68"
 }
 
 source ".akr/project.akr" {
@@ -39,8 +39,8 @@ source ".akr/records/jpegxl-rs/milestones.akr" {
 }
 
 source ".akr/records/jpegxl-rs/observations.akr" {
-    hash "sha256:8e84bc5f87829173bc280075797a04fa068b2f781ae0f43685cfcfdb3793a536"
-    records 73
+    hash "sha256:14c1612af7c47dda72c8c3422100d8e16a2655691347f84b1fc64f0ceff094b9"
+    records 74
 }
 
 source ".akr/records/jpegxl-rs/papercuts.akr" {
@@ -681,6 +681,18 @@ resolution @jpegxl-rs.observation.libjxl-comparison-2026-08-18/1 {
 }
 
 resolution @jpegxl-rs.observation.libjxl-comparison-2026-08-18/1 {
+    slot derived_from
+    to @jpegxl-rs.policy.performance-baseline-rules/1
+    hash "sha256:eaff83809eda0c81f6e11f6d433c32c7ca267fb1a1c6d389da50773e737cffd2"
+}
+
+resolution @jpegxl-rs.observation.libjxl-comparison-2026-08-18/2 {
+    slot derived_from
+    to @jpegxl-rs.policy.jpxl-bench-entry-points/1
+    hash "sha256:eb99b579379127f8f9b27a1d35622c3fd4558086ff825e2ea30b1b4e872488ee"
+}
+
+resolution @jpegxl-rs.observation.libjxl-comparison-2026-08-18/2 {
     slot derived_from
     to @jpegxl-rs.policy.performance-baseline-rules/1
     hash "sha256:eaff83809eda0c81f6e11f6d433c32c7ca267fb1a1c6d389da50773e737cffd2"
@@ -5577,8 +5589,13 @@ seal @jpegxl-rs.observation.lf-quant-channel-order/1 {
 }
 
 seal @jpegxl-rs.observation.libjxl-comparison-2026-08-18/1 {
+    state superseded
+    hash "sha256:e420eced9b9b0f44ba2f6bc5ce670497623f9eaaf6bac80900f5ec5aa538ae2e"
+}
+
+seal @jpegxl-rs.observation.libjxl-comparison-2026-08-18/2 {
     state verified
-    hash "sha256:d6119c9b169c32420b6f881878b1eb901c08c0bff95a32f864b8940c70adec8a"
+    hash "sha256:8c11a1a7cfe29f43f3a801c6444fcd9465c43115d2a3ec63636ec1f305da7031"
 }
 
 seal @jpegxl-rs.observation.libjxl-headsup-modular-2026-08-10/1 {
