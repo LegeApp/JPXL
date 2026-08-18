@@ -98,6 +98,16 @@ pub struct FrameDecision {
     pub group_size_shift: u32,
     /// F.6's `num_passes`.
     pub num_passes: u32,
+    /// D.3's `bit_depth`: the integer precision a decoder quantizes this
+    /// frame's reconstructed floats to.
+    ///
+    /// A kVarDCT frame is float XYB internally whatever this says, so it
+    /// changes no coefficient here — it decides only whether a >8-bit source
+    /// survives the round trip at its own precision or is crushed to 8-bit on
+    /// output. [`DEFAULT_BITS_PER_SAMPLE`] keeps the `all_default` header.
+    ///
+    /// [`DEFAULT_BITS_PER_SAMPLE`]: crate::vardct::headers::DEFAULT_BITS_PER_SAMPLE
+    pub bits_per_sample: u32,
 }
 
 impl FrameDecision {

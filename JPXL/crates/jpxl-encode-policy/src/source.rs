@@ -23,6 +23,11 @@ use crate::error::{PolicyError, Result};
 type SourceBand<'a> =
     std::sync::Mutex<Option<(&'a [u8], &'a mut [f32], &'a mut [f32], &'a mut [f32])>>;
 
+/// [`SourceBand`] for a high-precision source (see
+/// [`PreparedFrame::from_srgb16_with`]).
+type WideSourceBand<'a> =
+    std::sync::Mutex<Option<(&'a [u16], &'a mut [f32], &'a mut [f32], &'a mut [f32])>>;
+
 /// How a plane store holds its samples.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlaneStoreKind {
@@ -275,6 +280,140 @@ impl PreparedFrame {
                 let row = usize::try_from(width).unwrap_or(usize::MAX);
                 let band_len = row.saturating_mul(64).max(1);
                 let bands: Vec<SourceBand<'_>> = rgb
+                    .chunks(band_len * 3)
+                    .zip(r.chunks_mut(band_len))
+                    .zip(g.chunks_mut(band_len))
+                    .zip(b.chunks_mut(band_len))
+                    .map(|(((src, rs), gs), bs)| std::sync::Mutex::new(Some((src, rs, gs, bs))))
+                    .collect();
+                let flags = executor.map_ordered(bands.len(), |index| {
+                    let (src, rs, gs, bs) = bands
+                        .get(index)
+                        .ok_or(PolicyError::Unsupported {
+                            what: "a source band index outside the frame",
+                        })?
+                        .lock()
+                        .map_err(|_| PolicyError::Unsupported {
+                            what: "a poisoned source band",
+                        })?
+                        .take()
+                        .ok_or(PolicyError::Unsupported {
+                            what: "a source band converted twice",
+                        })?;
+                    Ok::<bool, PolicyError>(convert_band(src, rs, gs, bs))
+                })?;
+                flags.iter().all(|&flag| flag)
+            }
+            _ => convert_band(rgb, &mut r, &mut g, &mut b),
+        };
+        Self::from_xyb_planes(width, height, r, g, b, grayscale)
+    }
+
+    /// Converts a high-precision sRGB image, interleaved RGB, to XYB.
+    ///
+    /// The same two stages as [`Self::from_srgb8`] — the IEC 61966-2-1 EOTF to
+    /// linear light, then L.2's forward opsin transform — but reading samples
+    /// that carry more than eight bits each. `bits_per_sample` is the source's
+    /// own depth in `1..=16`; each sample is normalised by `2^bits - 1`, so a
+    /// 10-, 12-, 14- or 16-bit original keeps every code point it arrived with
+    /// instead of being rounded to 256 levels first.
+    ///
+    /// # Why this is not `from_srgb8` with wider inputs
+    ///
+    /// [`Self::from_srgb8`] evaluates the transfer curve through a 256-entry
+    /// lookup table, which is exact there because an 8-bit sample has exactly
+    /// 256 distinct values. That table cannot represent a 16-bit sample, and
+    /// quantizing to it would throw away the precision this constructor exists
+    /// to keep — so the curve is evaluated per sample here. The result is the
+    /// same function, at the source's own resolution.
+    ///
+    /// # Errors
+    ///
+    /// [`PolicyError::Unsupported`] for a zero dimension or a
+    /// `bits_per_sample` outside `1..=16`, and
+    /// [`PolicyError::SampleCountMismatch`] if `rgb` is not
+    /// `width * height * 3` long.
+    pub fn from_srgb16(width: u32, height: u32, rgb: &[u16], bits_per_sample: u32) -> Result<Self> {
+        Self::from_srgb16_with(width, height, rgb, bits_per_sample, None)
+    }
+
+    /// [`Self::from_srgb16`], spreading the conversion over `executor`'s
+    /// workers when one is given.
+    ///
+    /// As with [`Self::from_srgb8_with`], every operation is per pixel, so the
+    /// planes are bit-identical to the serial conversion whatever the band
+    /// size or worker count.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::from_srgb16`].
+    pub fn from_srgb16_with(
+        width: u32,
+        height: u32,
+        rgb: &[u16],
+        bits_per_sample: u32,
+        executor: Option<&jpxl_encode::EncodeExecutor>,
+    ) -> Result<Self> {
+        if width == 0 || height == 0 {
+            return Err(PolicyError::Unsupported {
+                what: "a zero frame dimension",
+            });
+        }
+        if bits_per_sample == 0 || bits_per_sample > 16 {
+            return Err(PolicyError::Unsupported {
+                what: "a source bit depth outside 1..=16",
+            });
+        }
+        let expected = u64::from(width) * u64::from(height) * 3;
+        let found = rgb.len() as u64;
+        if found != expected {
+            return Err(PolicyError::SampleCountMismatch { expected, found });
+        }
+        let pixels = rgb.len() / 3;
+        // `2^bits - 1` is the source's white point: a 16-bit sample is full
+        // scale at 65535, a 12-bit one at 4095. Normalising by anything else
+        // would shift the whole tone curve.
+        //
+        // This *divides* rather than multiplying by a precomputed reciprocal.
+        // `1.0 / 255.0` is not exactly representable, so `s * (1.0 / 255.0)`
+        // and `s / 255.0` disagree in the last bit for some samples — and that
+        // is enough to move a quantized coefficient and change the emitted
+        // bytes. Dividing keeps this path bit-identical to the 8-bit LUT in
+        // `from_srgb8_with`, which is what `the_wide_entry_point_agrees_with_
+        // the_8_bit_one_on_8_bit_input` pins.
+        let max = f32::from(u16::MAX).min(((1u32 << bits_per_sample) - 1) as f32);
+        let divisor = if max > 0.0 { max } else { 1.0 };
+
+        let convert_band = |src: &[u16], r: &mut [f32], g: &mut [f32], b: &mut [f32]| -> bool {
+            let mut grayscale = true;
+            for (((px, rs), gs), bs) in src
+                .chunks_exact(3)
+                .zip(r.iter_mut())
+                .zip(g.iter_mut())
+                .zip(b.iter_mut())
+            {
+                let (cr, cg, cb) = (
+                    px.first().copied().unwrap_or(0),
+                    px.get(1).copied().unwrap_or(0),
+                    px.get(2).copied().unwrap_or(0),
+                );
+                grayscale &= cr == cg && cg == cb;
+                *rs = jpxl_core::color::srgb_to_linear(f32::from(cr) / divisor);
+                *gs = jpxl_core::color::srgb_to_linear(f32::from(cg) / divisor);
+                *bs = jpxl_core::color::srgb_to_linear(f32::from(cb) / divisor);
+            }
+            linear_srgb_to_xyb_planes(r, g, b);
+            grayscale
+        };
+
+        let mut r = vec![0.0f32; pixels];
+        let mut g = vec![0.0f32; pixels];
+        let mut b = vec![0.0f32; pixels];
+        let grayscale = match executor {
+            Some(executor) if pixels > 0 => {
+                let row = usize::try_from(width).unwrap_or(usize::MAX);
+                let band_len = row.saturating_mul(64).max(1);
+                let bands: Vec<WideSourceBand<'_>> = rgb
                     .chunks(band_len * 3)
                     .zip(r.chunks_mut(band_len))
                     .zip(g.chunks_mut(band_len))

@@ -96,6 +96,7 @@ fn legal_plan(width: u32, height: u32, shift: u32) -> EmissionPlan {
         height,
         group_size_shift: shift,
         num_passes: 1,
+        bits_per_sample: jpxl_encode::vardct::headers::DEFAULT_BITS_PER_SAMPLE,
     };
     let geometry = frame.geometry().expect("a legal geometry");
     let mut lf_groups = Vec::new();

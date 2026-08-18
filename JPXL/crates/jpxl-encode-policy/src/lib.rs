@@ -459,6 +459,7 @@ fn plan_at_with_cfl_workspace(
         // rather than silently written into a field that does not exist.
         group_size_shift: VARDCT_GROUP_SIZE_SHIFT,
         num_passes: 1,
+        bits_per_sample: request.bits_per_sample,
     };
     let geometry = decision.geometry()?;
 
@@ -5066,6 +5067,68 @@ pub fn encode_srgb8_to_target(
     rate::search_frame_with_executor(&frame, &atlas, &resolved, target, &executor)
 }
 
+/// Encodes a high-precision sRGB image to a byte or bits-per-pixel target.
+///
+/// [`encode_srgb8_to_target`] for a source that carries more than eight bits
+/// per sample: `bits_per_sample` is the source's own depth in `1..=16`, used
+/// both to normalise the samples ([`PreparedFrame::from_srgb16`]) and as the
+/// `bit_depth` written into `ImageMetadata`, so a decoder reconstructs at the
+/// original precision instead of quantizing to 8-bit.
+///
+/// The VarDCT path itself is float XYB either way; what this changes is that
+/// nothing throws the extra precision away on the way in or on the way out.
+///
+/// # Errors
+///
+/// As [`encode_srgb8_to_target`], plus [`PolicyError::Unsupported`] for a
+/// `bits_per_sample` outside `1..=16`.
+pub fn encode_srgb16_to_target(
+    width: u32,
+    height: u32,
+    rgb: &[u16],
+    bits_per_sample: u32,
+    request: &EncodeRequest,
+    target: RateTarget,
+) -> Result<RateOutcome> {
+    let mut resolved = *request;
+    resolved.bits_per_sample = bits_per_sample;
+    resolved.b_qm_scale = request.effective_b_qm_scale(width, height, target);
+    let executor = resolved.resources.executor();
+    let frame =
+        PreparedFrame::from_srgb16_with(width, height, rgb, bits_per_sample, Some(&executor))?;
+    let atlas = AnalysisAtlas::analyze(&frame);
+    rate::search_frame_with_executor(&frame, &atlas, &resolved, target, &executor)
+}
+
+/// [`encode_srgb16_to_target`] without a rate target: the request's own
+/// quantizer scalars are emitted exactly as given.
+///
+/// # Errors
+///
+/// As [`encode_srgb16_to_target`].
+pub fn encode_srgb16_vardct(
+    width: u32,
+    height: u32,
+    rgb: &[u16],
+    bits_per_sample: u32,
+    request: &EncodeRequest,
+) -> Result<Vec<u8>> {
+    if let Some(target) = request.target {
+        return Ok(
+            encode_srgb16_to_target(width, height, rgb, bits_per_sample, request, target)?
+                .codestream,
+        );
+    }
+    let mut resolved = *request;
+    resolved.bits_per_sample = bits_per_sample;
+    let frame = PreparedFrame::from_srgb16(width, height, rgb, bits_per_sample)?;
+    let plan = plan_frame(&frame, &resolved)?;
+    Ok(jpxl_encode::vardct::write_codestream_with(
+        &plan,
+        resolved.resources,
+    )?)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5125,6 +5188,86 @@ mod tests {
         );
         let image = decode(&serial, &Limits::default()).expect("decodes");
         assert_eq!((image.width, image.height), (width, height));
+    }
+
+    /// A 16-bit version of [`synthetic_rgb`]: the same field, but resolved at
+    /// the full 0..=65535 range so the extra precision is real rather than an
+    /// 8-bit image in a wide container.
+    fn synthetic_rgb16(width: u32, height: u32) -> Vec<u16> {
+        let mut out = Vec::with_capacity(
+            usize::try_from(u64::from(width) * u64::from(height) * 3).unwrap_or(0),
+        );
+        for y in 0..height {
+            for x in 0..width {
+                let ramp = u32::from(u16::MAX) * x / width.max(1) / 2
+                    + u32::from(u16::MAX) * y / height.max(1) / 4;
+                let luma = u16::try_from(ramp.min(u32::from(u16::MAX))).unwrap_or(u16::MAX);
+                out.extend_from_slice(&[
+                    luma,
+                    luma.saturating_sub(4_096),
+                    luma.saturating_add(8_192),
+                ]);
+            }
+        }
+        out
+    }
+
+    /// The high-precision lossy path must declare — and decode back at — the
+    /// source's own bit depth. Without this the whole point of feeding 16-bit
+    /// samples in is lost at the last step, when the decoder quantizes the
+    /// reconstructed floats to Table D.3's default 8 bits.
+    #[test]
+    fn a_16_bit_source_round_trips_at_16_bit_precision() {
+        let (width, height) = (96u32, 72u32);
+        let rgb = synthetic_rgb16(width, height);
+        let request = EncodeRequest::for_target(RateTarget::BitsPerPixel(2.0));
+        let outcome = encode_srgb16_to_target(
+            width,
+            height,
+            &rgb,
+            16,
+            &request,
+            RateTarget::BitsPerPixel(2.0),
+        )
+        .expect("a 16-bit lossy encode");
+
+        let decoded = decode(&outcome.codestream, &Limits::default()).expect("decodes");
+        assert_eq!((decoded.width, decoded.height), (width, height));
+        assert_eq!(decoded.num_colour_channels, 3);
+        assert_eq!(
+            decoded.colour_bits_per_sample(),
+            16,
+            "the source depth must survive into the decoded planes"
+        );
+        // A kVarDCT frame is float XYB; the float planes are what proves the
+        // extra precision is actually carried rather than merely declared.
+        assert!(
+            decoded.float_planes.is_some(),
+            "a VarDCT frame reconstructs to floats"
+        );
+    }
+
+    /// The declared depth must not silently change what the encoder searches:
+    /// an 8-bit source fed through the wide entry point is the same image, so
+    /// only the declared precision may differ.
+    #[test]
+    fn the_wide_entry_point_agrees_with_the_8_bit_one_on_8_bit_input() {
+        let (width, height) = (64u32, 48u32);
+        let rgb8 = synthetic_rgb(width, height, false);
+        let widened: Vec<u16> = rgb8.iter().map(|&s| u16::from(s)).collect();
+        let target = RateTarget::BitsPerPixel(1.5);
+        let request = EncodeRequest::for_target(target);
+
+        let narrow = encode_srgb8_to_target(width, height, &rgb8, &request, target)
+            .expect("8-bit encode")
+            .codestream;
+        let wide = encode_srgb16_to_target(width, height, &widened, 8, &request, target)
+            .expect("8-bit-through-wide encode")
+            .codestream;
+        assert_eq!(
+            narrow, wide,
+            "the same samples at the same declared depth must emit the same bytes"
+        );
     }
 
     fn synthetic_rgb(width: u32, height: u32, grayscale: bool) -> Vec<u8> {

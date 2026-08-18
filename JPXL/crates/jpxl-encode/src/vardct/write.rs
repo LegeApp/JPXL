@@ -54,7 +54,9 @@ use crate::error::{EncodeError, Result};
 use crate::section::SectionStore;
 use crate::vardct::diagnostics;
 use crate::vardct::geometry::VardctGeometry;
-use crate::vardct::headers::{VARDCT_GROUP_SIZE_SHIFT, write_frame_header, write_image_headers};
+use crate::vardct::headers::{
+    VARDCT_GROUP_SIZE_SHIFT, write_frame_header, write_image_headers_with_depth,
+};
 use crate::vardct::ids::{ClusterId, LfGroupId, PreContextId};
 use crate::vardct::modular_out::{OutChannel, write_modular_stream};
 use crate::vardct::plan::{
@@ -380,7 +382,12 @@ fn emit_codestream_mode_inner(
         EmitMode::Store => BitWriter::new(),
         EmitMode::Count => BitWriter::counting(),
     };
-    write_image_headers(&mut w, geometry.width(), geometry.height())?;
+    write_image_headers_with_depth(
+        &mut w,
+        geometry.width(),
+        geometry.height(),
+        inner.spatial.frame.bits_per_sample,
+    )?;
     // F.1: every frame starts on a byte boundary, so this division is exact.
     w.zero_pad_to_byte();
     let image_headers = w.bit_len() / 8;
@@ -1542,6 +1549,7 @@ fn build_entropy_tables(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::vardct::headers::DEFAULT_BITS_PER_SAMPLE;
     use crate::vardct::ids::{GlobalScale, HfMul, QmScale, QuantLf};
     use crate::vardct::plan::{
         CflGrid, EntropyModelPlan, EntropyPlan, FrameDecision, HfPassEntropyPlan, HistogramPlan,
@@ -1559,6 +1567,7 @@ mod tests {
             height: 8,
             group_size_shift: VARDCT_GROUP_SIZE_SHIFT,
             num_passes: 1,
+            bits_per_sample: DEFAULT_BITS_PER_SAMPLE,
         };
         let geometry = frame.geometry().expect("legal geometry");
         let id = LfGroupId::new(0);

@@ -92,6 +92,29 @@ const NAME_LEN_SPEC: U32Spec = U32Spec::new([
     },
 ]);
 
+/// 18181-1 D.7: `U32(8, 10, 12, 1 + u(6))`, the integer-sample bit depth.
+const INT_BPS_SPEC: U32Spec = U32Spec::new([
+    U32Dist::Val(8),
+    U32Dist::Val(10),
+    U32Dist::Val(12),
+    U32Dist::BitsOffset { bits: 6, offset: 1 },
+]);
+
+/// 18181-1 D.3: `U32(0, 1, 2 + u(4), 1 + u(12))` for `num_extra`.
+const NUM_EXTRA_SPEC: U32Spec = U32Spec::new([
+    U32Dist::Val(0),
+    U32Dist::Val(1),
+    U32Dist::BitsOffset { bits: 4, offset: 2 },
+    U32Dist::BitsOffset {
+        bits: 12,
+        offset: 1,
+    },
+]);
+
+/// Table D.3's default `bit_depth`, and the depth at which the whole
+/// `ImageMetadata` bundle collapses to `all_default`.
+pub const DEFAULT_BITS_PER_SAMPLE: u32 = 8;
+
 /// Table F.5's `kSkipAdaptiveLFSmoothing` bit.
 pub const FLAG_SKIP_ADAPTIVE_LF_SMOOTHING: u64 = 0x80;
 
@@ -122,10 +145,83 @@ pub const NEUTRAL_QM_SCALE: u32 = 2;
 /// [`EncodeError::ValueOutOfRange`] for a zero or oversized dimension, or a bit
 /// writer error.
 pub fn write_image_headers(w: &mut BitWriter, width: u32, height: u32) -> Result<()> {
+    write_image_headers_with_depth(w, width, height, DEFAULT_BITS_PER_SAMPLE)
+}
+
+/// Writes the signature, `SizeHeader` and `ImageMetadata` of an XYB-encoded
+/// sRGB image whose *source* samples were `bits_per_sample` deep
+/// (18181-1 D.1, D.2, D.3).
+///
+/// # What the bit depth does and does not mean here
+///
+/// A kVarDCT frame reconstructs to **float XYB** whatever this field says: the
+/// coefficients are quantized in a float space and L.2's inverse opsin
+/// transform produces floats. `bit_depth` is what a decoder quantizes those
+/// floats to when it is asked for integer samples, so it is the field that
+/// decides whether a 16-bit source survives the round trip as 16-bit or is
+/// crushed to 8-bit on the way out. It changes no coefficient and no
+/// quantization decision inside this encoder — only the declared output
+/// precision.
+///
+/// At [`DEFAULT_BITS_PER_SAMPLE`] this is byte-identical to the two-bit
+/// `all_default` form the module documentation describes, because 8-bit
+/// integer is exactly Table D.3's default row. Any other depth breaks that
+/// row, and Table D.3's `all_default` is all-or-nothing, so the bundle is
+/// written out field by field — taking the table's own default for every row
+/// that can still keep it, in the Table D.3 order the decoder reads.
+///
+/// # Errors
+///
+/// [`EncodeError::ValueOutOfRange`] for a zero or oversized dimension, or a
+/// `bits_per_sample` outside `1..=`[`MAX_BITS_PER_SAMPLE`], or a bit writer
+/// error.
+pub fn write_image_headers_with_depth(
+    w: &mut BitWriter,
+    width: u32,
+    height: u32,
+    bits_per_sample: u32,
+) -> Result<()> {
+    if bits_per_sample == 0 || bits_per_sample > crate::MAX_BITS_PER_SAMPLE {
+        return Err(EncodeError::ValueOutOfRange {
+            what: "bits_per_sample",
+            value: i64::from(bits_per_sample),
+        });
+    }
+
     w.write_bits(16, SIGNATURE)?;
     write_size_header(w, width, height)?;
-    w.write_bool(true); // ImageMetadata all_default — see the module docs
-    w.write_bool(true); // default_m, read even under all_default
+
+    if bits_per_sample == DEFAULT_BITS_PER_SAMPLE {
+        w.write_bool(true); // ImageMetadata all_default — see the module docs
+        w.write_bool(true); // default_m, read even under all_default
+        return Ok(());
+    }
+
+    w.write_bool(false); // all_default: the bit depth row is no longer default
+    w.write_bool(false); // extra_fields: no orientation, preview or animation
+
+    // BitDepth (D.3.5, Table D.7): integer samples of the requested depth.
+    w.write_bool(false); // float_sample
+    w.write_u32(&INT_BPS_SPEC, bits_per_sample)?;
+
+    // D.3 defines this as a claim about the decoder's *modular* working
+    // buffers. A kVarDCT frame carries no modular colour data at all — only
+    // G.2.4's small per-block metadata planes (quant field, block types, CfL
+    // factors), every one of which stays far inside a signed 16-bit range
+    // whatever the colour bit depth is. So the table default holds here even
+    // though the modular track has to derive it from the sample depth.
+    w.write_bool(true);
+    w.write_u32(&NUM_EXTRA_SPEC, 0)?; // no extra channels
+    w.write_bool(true); // xyb_encoded: the point of a kVarDCT frame
+
+    // ColourEncoding (E.2, Table E.1): the defaults are exactly sRGB.
+    w.write_bool(true); // all_default
+
+    // tone_mapping is guarded by extra_fields, which is false.
+    w.write_u64(0)?; // extensions (B.3)
+
+    // Blank condition in Table D.3: read even under all_default.
+    w.write_bool(true); // default_m
     Ok(())
 }
 
@@ -225,6 +321,71 @@ mod tests {
     use jpxl_core::limits::{AllocGuard, Limits};
     use jpxl_decode::frame::{Encoding, FrameType, read_frame_header};
     use jpxl_decode::headers::decode_image_headers;
+
+    /// The whole point of the high-depth header: a 10/12/14/16-bit source is
+    /// declared at its own precision, still XYB-encoded sRGB, and the field
+    /// count matches so nothing downstream is shifted by a wrong conditional.
+    #[test]
+    fn a_high_depth_image_header_declares_its_own_precision() {
+        for (width, height) in [(1u32, 1u32), (13, 7), (600, 520)] {
+            for bits in [10u32, 12, 14, 16] {
+                let mut w = BitWriter::new();
+                write_image_headers_with_depth(&mut w, width, height, bits).expect("headers");
+                let written = w.bit_len();
+                w.zero_pad_to_byte();
+                let bytes = w.into_bytes();
+
+                let mut r = BitReader::new(&bytes);
+                let parsed = decode_image_headers(&mut r, &Limits::default())
+                    .unwrap_or_else(|e| panic!("{width}x{height} at {bits} bits: {e}"));
+                assert_eq!(
+                    r.total_bits_read(),
+                    written,
+                    "{width}x{height} at {bits} bits: field shift"
+                );
+                assert_eq!((parsed.width(), parsed.height()), (width, height));
+                assert_eq!(parsed.metadata.bit_depth.bits_per_sample(), bits);
+                assert!(parsed.metadata.xyb_encoded, "still a kVarDCT XYB frame");
+                assert!(!parsed.metadata.colour_encoding.is_grey());
+                assert!(parsed.metadata.ec_info.is_empty());
+                assert!(parsed.metadata.default_m);
+                assert!(parsed.metadata.preview.is_none());
+                assert!(parsed.metadata.animation.is_none());
+            }
+        }
+    }
+
+    /// The 8-bit spelling must stay the two-bit `all_default` form: the
+    /// depth parameter is an extension, not a rewrite of the shipped header.
+    #[test]
+    fn eight_bit_still_takes_the_all_default_shape() {
+        let mut defaulted = BitWriter::new();
+        write_image_headers(&mut defaulted, 64, 64).expect("headers");
+        let default_bits = defaulted.bit_len();
+        defaulted.zero_pad_to_byte();
+
+        let mut explicit = BitWriter::new();
+        write_image_headers_with_depth(&mut explicit, 64, 64, DEFAULT_BITS_PER_SAMPLE)
+            .expect("headers");
+        let explicit_bits = explicit.bit_len();
+        explicit.zero_pad_to_byte();
+
+        assert_eq!(default_bits, explicit_bits);
+        assert_eq!(defaulted.into_bytes(), explicit.into_bytes());
+    }
+
+    #[test]
+    fn an_unrepresentable_bit_depth_is_rejected() {
+        let mut w = BitWriter::new();
+        assert!(matches!(
+            write_image_headers_with_depth(&mut w, 64, 64, 0),
+            Err(EncodeError::ValueOutOfRange { .. })
+        ));
+        assert!(matches!(
+            write_image_headers_with_depth(&mut w, 64, 64, 17),
+            Err(EncodeError::ValueOutOfRange { .. })
+        ));
+    }
 
     #[test]
     fn the_image_headers_are_two_bits_of_metadata_and_decode_as_xyb_srgb() {

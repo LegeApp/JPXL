@@ -792,6 +792,7 @@ mod tests {
             height: frame.height(),
             group_size_shift: crate::VARDCT_GROUP_SIZE_SHIFT,
             num_passes: 1,
+            bits_per_sample: jpxl_encode::vardct::headers::DEFAULT_BITS_PER_SAMPLE,
         };
         let geometry = decision.geometry().expect("geometry");
         cache.prepare(&geometry).expect("cache geometry");
@@ -1098,6 +1099,7 @@ mod tests {
             height: frame.height(),
             group_size_shift: crate::VARDCT_GROUP_SIZE_SHIFT,
             num_passes: 1,
+            bits_per_sample: jpxl_encode::vardct::headers::DEFAULT_BITS_PER_SAMPLE,
         };
         let geometry = decision.geometry().expect("geometry");
         let mut cache = CandidateForwardCache::new();
@@ -1240,6 +1242,7 @@ mod tests {
             height: frame.height(),
             group_size_shift: crate::VARDCT_GROUP_SIZE_SHIFT,
             num_passes: 1,
+            bits_per_sample: jpxl_encode::vardct::headers::DEFAULT_BITS_PER_SAMPLE,
         };
         let geometry = decision.geometry().expect("geometry");
         let mut cache = CandidateForwardCache::new();
@@ -1335,6 +1338,7 @@ mod tests {
             height: frame.height(),
             group_size_shift: crate::VARDCT_GROUP_SIZE_SHIFT,
             num_passes: 1,
+            bits_per_sample: jpxl_encode::vardct::headers::DEFAULT_BITS_PER_SAMPLE,
         };
         let geometry = decision.geometry().expect("geometry");
         let mut cache_tr = CandidateForwardCache::new();
@@ -1446,6 +1450,7 @@ mod tests {
             height: frame.height(),
             group_size_shift: crate::VARDCT_GROUP_SIZE_SHIFT,
             num_passes: 1,
+            bits_per_sample: jpxl_encode::vardct::headers::DEFAULT_BITS_PER_SAMPLE,
         };
         let geometry = decision.geometry().expect("geometry");
         let mut cache = CandidateForwardCache::new();

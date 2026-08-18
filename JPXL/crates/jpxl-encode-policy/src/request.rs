@@ -549,6 +549,17 @@ pub struct EncodeRequest {
     /// builds one request-scoped executor and reuses this budget for exact
     /// Count pricing and the final Full Store emission.
     pub resources: jpxl_encode::EncodeResources,
+    /// D.3's `bit_depth`: the integer precision a decoder quantizes this
+    /// frame's reconstructed floats to.
+    ///
+    /// A kVarDCT frame is float XYB throughout, so this changes nothing the
+    /// encoder searches, prices or emits in the frame body — it decides only
+    /// what precision the *output* is declared at. Leave it at 8 for an 8-bit
+    /// source; raise it to the source's own depth (up to
+    /// [`jpxl_encode::MAX_BITS_PER_SAMPLE`]) when the caller fed high-precision
+    /// samples in, so the decoder does not quantize a 16-bit original down to
+    /// 8-bit on the way out.
+    pub bits_per_sample: u32,
 }
 
 impl EncodeRequest {
@@ -590,11 +601,13 @@ impl EncodeRequest {
             epf_sharpness: EpfSharpnessMode::default(),
             cover_size_penalty: CoverSizePenalty::default(),
             cover_frequency_weight: CoverFrequencyWeight::default(),
+            cover_rate_model: CoverRateModel::default(),
             quantizer_choice: QuantizerChoiceMode::default(),
             lambda_scale: 1.0,
             dead_zone_scale: 1.0,
             zero_token_bits: crate::ZERO_TOKEN_BITS,
             resources: jpxl_encode::EncodeResources::auto(),
+            bits_per_sample: jpxl_encode::vardct::headers::DEFAULT_BITS_PER_SAMPLE,
         }
     }
 
