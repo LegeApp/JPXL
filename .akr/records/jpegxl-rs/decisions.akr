@@ -109,6 +109,29 @@ record jpegxl-rs.decision.ledger-conventions/1 : decision {
     author "GitHub Uploader"
 }
 
+record jpegxl-rs.decision.mit-only-licensing/1 : decision {
+    title "License JPXL under MIT only"
+    state proposed
+    scope [ all ]
+    decision """
+        JPXL is licensed under MIT only. Repository license notices, workspace package metadata, SPDX headers, and public documentation must consistently use MIT; the former Apache-2.0 alternative is removed from the project distribution.
+        """
+    context """
+        User-directed licensing choice for publication to LegeApp/JPXL.
+        """
+    consequences """
+        Use LICENSE as the canonical root license and JPXL/LICENSE-MIT as the workspace mirror; do not retain or advertise an Apache-2.0 option.
+        """
+    source {
+        kind internal
+        role origin
+        path "LICENSE"
+        use """
+            User-directed project licensing decision.
+            """
+    }
+}
+
 record jpegxl-rs.decision.modular-lean-default/1 : decision {
     title "Modular default effort is the lean level 1; the full search is opt-in"
     state active

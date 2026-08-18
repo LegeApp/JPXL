@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
+// SPDX-License-Identifier: MIT
 //! End-to-end kModular displayed-frame gaps: L.2.2's `kModular` pre-step for
 //! an `xyb_encoded` displayed frame (`bicycles`), and K.3.2 patch blending on
 //! a non-`xyb_encoded` kModular frame reading back a non-`xyb_encoded`

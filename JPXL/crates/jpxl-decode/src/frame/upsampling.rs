@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
+// SPDX-License-Identifier: MIT
 //! Non-separable upsampling (18181-1 K.2) and simple upsampling (J.2).
 //!
 //! # Where this sits in the pipeline

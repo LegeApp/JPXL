@@ -1,4 +1,4 @@
-# Lessons for a clean MIT/Apache JPEG XL implementation
+# Lessons for a clean MIT JPEG XL implementation
 
 ## Purpose and scope
 
@@ -7,7 +7,7 @@ This document preserves the durable lessons from the abandoned
 new codebase. The old tree declares
 `AGPL-3.0-only OR LicenseRef-Imazen-Commercial`; do not copy its source,
 tests, comments, or documentation into a project intended to be
-`MIT OR Apache-2.0`.
+`MIT`.
 
 No on-disk `AGENTS.md` was present. The verbose developer record referred to
 in this review was `jxl-encoder/CLAUDE.md`, together with `CHANGELOG.md` and
@@ -24,8 +24,7 @@ reviewed by someone qualified to do so.
 ## Licensing and clean-room boundary
 
 1. Start the new encoder/decoder in a new repository with no copied history.
-2. Record the intended license (`MIT OR Apache-2.0`, if dual licensing is the
-   goal) before adding code.
+2. Record the intended license (`MIT` for this project) before adding code.
 3. Keep a provenance ledger for every normative document, test vector,
    constant table, and third-party dependency.
 4. Do not copy from this AGPL project, including “small” helpers, tests,

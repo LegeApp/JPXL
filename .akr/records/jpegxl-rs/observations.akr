@@ -702,6 +702,38 @@ record jpegxl-rs.observation.lf-quant-channel-order/1 : observation {
     }
 }
 
+record jpegxl-rs.observation.libjxl-comparison-2026-08-18/1 : observation {
+    title "Reproducible JPXL versus libjxl VarDCT baseline on 4 MP and 12 MP photographs"
+    state verified
+    scope [
+        path "JPXL/docs/experiments/2026-08-18-libjxl-comparison.md",
+        path "JPXL/tools/compare-libjxl.ps1"
+    ]
+    statement """
+        With the release metric-enabled JPXL CLI on an i7-13700H using four workers, three warm-process interleaved runs measured JPXL median encoding at 3.803 s versus cjxl 0.371 s on a 2400x1800 photograph, and 8.780 s versus 0.935 s on a 4000x3000 photograph. Each final stream decoded with pinned djxl. The 12 MP outputs were 0.998 and 1.074 bpp respectively; their quality metrics disagree by axis (JPXL higher PSNR/SSIMULACRA2; cjxl lower Butteraugli), so the run is a baseline, not a parity claim.
+        """
+    observed_at git:6697aa7a5022a938d64cd93cc582a9477e02ca9d
+    method command
+    watches [
+        "JPXL/tools/compare-libjxl.ps1",
+        "JPXL/crates/jpxl-cli/**",
+        "JPXL/crates/jpxl-encode/**",
+        "JPXL/crates/jpxl-encode-policy/**"
+    ]
+    derived_from [
+        @jpegxl-rs.policy.jpxl-bench-entry-points,
+        @jpegxl-rs.policy.performance-baseline-rules
+    ]
+    source {
+        kind internal
+        role evidence
+        path "JPXL/docs/experiments/2026-08-18-libjxl-comparison.md"
+        use """
+            Frozen raw results, commands, hashes, and interpretation.
+            """
+    }
+}
+
 record jpegxl-rs.observation.libjxl-headsup-modular-2026-08-10/1 : observation {
     title "Head-to-head vs cjxl 0.13: jpxl is at cjxl -e1 density, 5-24x slower, and its effort ladder is inert above level 1"
     state verified

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
+// SPDX-License-Identifier: MIT
 //! End-to-end K.5 noise synthesis, graded against the normative corpus.
 //!
 //! The corpus `noise`/`noise_5` case (500x606, `kVarDCT`, single frame,

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
+// SPDX-License-Identifier: MIT
 //! End-to-end progressive decoding: `kLFFrame` + `kUseLfFrame` (18181-1 F.2,
 //! G.2.2) and multi-pass HF coefficients (F.2 Table F.6, I.4), graded under
 //! 18181-3 §4.2.

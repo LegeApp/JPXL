@@ -6132,6 +6132,53 @@ record jpegxl-rs.work.optional-semantic-guidance-consumer/1 : work {
     part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
 }
 
+record jpegxl-rs.work.publish-readme-benchmark-mit/1 : work {
+    title "Publish-ready README, reproducible libjxl comparison, and MIT-only licensing"
+    state proposed
+    scope [
+        path "AGENTS.md",
+        path "JPEG_XL_CLEAN_IMPLEMENTATION_LESSONS.md",
+        path "JPXL/Cargo.toml",
+        path "JPXL/LICENSE-APACHE",
+        path "JPXL/LICENSE-MIT",
+        path "JPXL/crates/jpxl-cli/**",
+        path "JPXL/docs/experiments/**",
+        path "JPXL/tools/**",
+        path "LICENSE",
+        path "README.md",
+        path "docs/generated/**"
+    ]
+    intent """
+        Create a publish-ready repository surface: an accurate current-state README, a reproducible encoder quality-and-speed comparison with libjxl, MIT-only project licensing, and the local Git remote needed to publish the resulting verified work to LegeApp/JPXL.
+        """
+    acceptance {
+        check comparison-reproducible {
+            statement """
+                A documented command produces a quality-and-speed comparison using JPXL and cjxl/djxl on the same inputs with recorded provenance.
+                """
+            method command
+        }
+        check mit-only {
+            statement """
+                Workspace package metadata and repository licensing surface declare MIT-only terms.
+                """
+            method command
+        }
+        check readme-current-state {
+            statement """
+                README accurately describes the supported scope, known exclusions, clean-room policy, build instructions, and the recorded benchmark.
+                """
+            method manual
+        }
+        check workspace-gates {
+            statement """
+                The required workspace build, test, lint, and formatting gates pass.
+                """
+            method command
+        }
+    }
+}
+
 record jpegxl-rs.work.quality-q0-harness-attribution/1 : work {
     title "Phase Q0: quality/density harness, section-byte attribution and the promotion bounds for the quality track"
     state completed

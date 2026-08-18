@@ -625,7 +625,7 @@ Create or update:
 - llm-docs/most-recent-agent-trace.md
 - THIRD_PARTY_NOTICES.md
 
-Use MIT OR Apache-2.0 licensing only if all implementation code is compatible with that choice. Do not copy code from AGPL or other incompatible projects. If any BSD implementation material is adapted rather than independently derived, preserve required notices and document the exact source in THIRD_PARTY_NOTICES.md.
+Use MIT licensing only if all implementation code is compatible with that choice. Do not copy code from AGPL or other incompatible projects. If any BSD implementation material is adapted rather than independently derived, preserve required notices and document the exact source in THIRD_PARTY_NOTICES.md.
 
 ARCHITECTURAL RULES
 

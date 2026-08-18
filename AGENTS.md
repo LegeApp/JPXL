@@ -3,7 +3,7 @@
 ## 1. Project identity
 
 JPXL is a clean-room implementation of JPEG XL (ISO/IEC 18181) in Rust: a
-decoder and an encoder, dual-licensed `MIT OR Apache-2.0`. The Rust workspace
+decoder and an encoder, licensed under `MIT`. The Rust workspace
 lives in `JPXL/`; this file sits at the repo root and governs the whole tree.
 
 **Decoder first.** The standard specifies the decoder — the inverse process is
@@ -233,8 +233,7 @@ Work is dispatched as briefs that list whole files. Rules:
 
 ## 9. Legal
 
-- License: `MIT OR Apache-2.0`. Full texts in `JPXL/LICENSE-MIT` and
-  `JPXL/LICENSE-APACHE`.
+- License: `MIT`. Full text in `LICENSE` (mirrored at `JPXL/LICENSE-MIT`).
 - **Never commit ISO text.** Not in code comments, not in doc files, not in
   test data, not in commit messages. Clause-number citations ("per 18181-1
   §C.2") are fine and encouraged; quoted passages are not. Paraphrase

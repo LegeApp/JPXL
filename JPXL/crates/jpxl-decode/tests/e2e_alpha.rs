@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
+// SPDX-License-Identifier: MIT
 //! End-to-end extra-channel decoding and frame blending: extra channels in a
 //! `kVarDCT` frame (18181-1 G.1.3, G.2.3, G.4.2), Table F.8's blend modes over
 //! several regular frames (F.2), and K.3.2's per-channel patch blending — all

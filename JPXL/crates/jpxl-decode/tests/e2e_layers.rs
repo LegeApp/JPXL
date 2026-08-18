@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
+// SPDX-License-Identifier: MIT
 //! End-to-end **cropped frames** (18181-1 F.2), **image orientation**
 //! (D.3.2, Table D.4) and **`kBlack` extra channels** (D.3.6) — the three
 //! constructs a layered still image needs, all graded under 18181-3 §4.2.

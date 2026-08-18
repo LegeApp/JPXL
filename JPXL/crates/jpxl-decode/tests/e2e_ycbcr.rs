@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
+// SPDX-License-Identifier: MIT
 //! End-to-end `do_YCbCr` colour reconstruction (18181-1 L.3), for the two
 //! corpus streams with `jpeg_upsampling == [0, 0, 0]` (no J.2 chroma
 //! upsampling needed): `bench_oriented_brg`/`_5` and

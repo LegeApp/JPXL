@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
+// SPDX-License-Identifier: MIT
 //! End-to-end K.2 upsampling: `frame_header.upsampling` for the colour
 //! channels and `frame_header.ec_upsampling` for the extra channels, graded
 //! under 18181-3 §4.2.

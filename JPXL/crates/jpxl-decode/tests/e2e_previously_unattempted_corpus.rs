@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
+// SPDX-License-Identifier: MIT
 //! Corpus cases that no prior wave attempted grading for, discovered while
 //! auditing the remaining 21 gates for the 2026-08-04 K.5/kModular wave.
 //! None of them needed new code: `delta_palette` and `lz77_flower` are

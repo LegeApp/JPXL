@@ -5,7 +5,7 @@ build {
     tool "akr 0.3.1"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:6d6d90f386b28b9f5484e380818f2f86449bda538596403887ec488615a70dae"
+    source_graph "sha256:69a1c0c28d78a98d56b8db9e7d952f8bb5092df4d06e6725cb506eca781dc02b"
 }
 
 source ".akr/project.akr" {
@@ -24,8 +24,8 @@ source ".akr/records/jpegxl-rs/constraints.akr" {
 }
 
 source ".akr/records/jpegxl-rs/decisions.akr" {
-    hash "sha256:da5eadba2a6dbf670a9e274b928c3fa7fbe689ffb9c394abb86ca1da63c7e6ff"
-    records 14
+    hash "sha256:820e8b350a18ff206e80b0f8684fa390b2bec27ee0cd791abd4fc56166421c6f"
+    records 15
 }
 
 source ".akr/records/jpegxl-rs/evidence.akr" {
@@ -39,8 +39,8 @@ source ".akr/records/jpegxl-rs/milestones.akr" {
 }
 
 source ".akr/records/jpegxl-rs/observations.akr" {
-    hash "sha256:5d9cb8397610c5d40065d94bd260b6e26ddb8c9d13c807276a3870248915b754"
-    records 72
+    hash "sha256:8e84bc5f87829173bc280075797a04fa068b2f781ae0f43685cfcfdb3793a536"
+    records 73
 }
 
 source ".akr/records/jpegxl-rs/papercuts.akr" {
@@ -64,8 +64,8 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:3f60060102b6cfc70945e8eaed4581cd1fdc72cca21315505183c4c6441b8479"
-    records 137
+    hash "sha256:3a215085697f2eeaedf50e432aa85f54be6674a3911748a38e3934db742b6952"
+    records 138
 }
 
 resolution @jpegxl-rs.decision.encoder-architecture-phases/1 {
@@ -672,6 +672,18 @@ resolution @jpegxl-rs.observation.lambda-x4-is-the-operating-point-2026-08-12/2 
     slot verified_by
     to @jpegxl-rs.evidence.phase7-2-sweep-run-2026-08-12/1
     hash "sha256:6e4238a926794a0f56cd42cb12950b358aa4480642ded935b7064729cfc93b63"
+}
+
+resolution @jpegxl-rs.observation.libjxl-comparison-2026-08-18/1 {
+    slot derived_from
+    to @jpegxl-rs.policy.jpxl-bench-entry-points/1
+    hash "sha256:eb99b579379127f8f9b27a1d35622c3fd4558086ff825e2ea30b1b4e872488ee"
+}
+
+resolution @jpegxl-rs.observation.libjxl-comparison-2026-08-18/1 {
+    slot derived_from
+    to @jpegxl-rs.policy.performance-baseline-rules/1
+    hash "sha256:eaff83809eda0c81f6e11f6d433c32c7ca267fb1a1c6d389da50773e737cffd2"
 }
 
 resolution @jpegxl-rs.observation.lossy-harness-decoder-asymmetry-2026-08-11/1 {
@@ -5562,6 +5574,11 @@ seal @jpegxl-rs.observation.lf-frame-multipass/1 {
 seal @jpegxl-rs.observation.lf-quant-channel-order/1 {
     state verified
     hash "sha256:35ae8d247b0f95478a482ff19cedfb7bda0537aac68fed27490a5f4abfe5ffc1"
+}
+
+seal @jpegxl-rs.observation.libjxl-comparison-2026-08-18/1 {
+    state verified
+    hash "sha256:d6119c9b169c32420b6f881878b1eb901c08c0bff95a32f864b8940c70adec8a"
 }
 
 seal @jpegxl-rs.observation.libjxl-headsup-modular-2026-08-10/1 {
