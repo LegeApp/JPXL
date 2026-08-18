@@ -1293,11 +1293,51 @@ finding changes that move the local worst case without giving back the
 average — Q4's rate calibration is one such change, small; the per-block
 allocation levers of Q3 were not.
 
-**Next.** (1) The two-anchor controller's second-anchor exponent (speed above
-the ceiling; observation recorded in Q3). (2) A zero-run-aware proxy inside
-the scoring kernel (interior zeros priced at their coding-order position)
-would replace the per-size averages with a per-candidate count; the audit
-harness is the tool to check whether it is worth the kernel cost.
+**Next.** (1) The two-anchor controller above the ceiling (screened in Phase
+Q5 below). (2) A zero-run-aware proxy inside the scoring kernel (interior
+zeros priced at their coding-order position) would replace the per-size
+averages with a per-candidate count — the audit's per-varblock residual
+spread (p10…p90 of −0.5…+0.3 around the size fit for DCT8x8) is the size of
+the prize; the audit harness is the tool to check whether it is worth the
+kernel cost.
+
+## Phase Q5 — the anchored controller above the ceiling: a speed fix that exposes a hidden quality tier (2026-08-18)
+
+The Q3 follow-up: Balanced at mid2 2 bpp took 5.9 s (0.42 s at 1 bpp) because
+the two-anchor controller's finalist and its one correction missed the band
+and the search fell back to the exhaustive controller. Three changes were
+screened together, each byte-identical when set to its legacy value:
+
+* second-anchor exponent 1.5 instead of 2.0 (measured `1/alpha` is 1.57–1.80
+  on the busy photos, 0.95–1.05 on the smooth one);
+* rebuilding the structure (cover, CfL, entropy model) at the second anchor
+  when the first anchor priced more than 2× from the target;
+* a second exact correction aimed with the *local* slope between the two
+  exact points already priced.
+
+Only the second correction fixed the fallback: mid2 2 bpp Balanced went from
+5.9 s to 0.78 s (2 fast + 3 full prices) and the 20240503_105759 scene from
+23–25 prices to 4. A fresh structural finalist was also tried (`AnchorReuse::
+None` at the predicted rung): +0.10 / −0.03 SSIMULACRA2 on the standing 1 bpp
+cells for +6–22% time, and it made the anchors' curve a worse predictor of
+the finalist's bytes (mid2 at 1 bpp fell back), so it was dropped.
+
+The corpus arm against Q4: photos SSIMULACRA2 +0.021 (worst −0.25), 3-norm
++0.03%; scenes **−0.272 mean, worst −4.04**. The worst cells are exactly the
+ones that used to fall back. The exhaustive fallback re-plans cover, CfL and
+entropy at every probe, so those cells had been receiving Quality-tier output
+under a Fast/Balanced label (the 20240503_105759 scene at Fast: 44.5 with the
+fallback, 40.5 on the genuine Fast tier at the same bytes; mid2 2 bpp
+Balanced: 91.14 vs 90.89). Removing the fallback does not degrade the encoder,
+it reveals the tier — but it fails the Contract B bound on the scene, and the
+5.9 s cell predates this pass. Under the quality-first rule the defaults stay
+at the legacy behaviour; the mechanism (bounded correction loop, rebuild
+threshold, exponent) is kept as constants next to the screen's numbers.
+
+The clean fix is a cheaper *fresh-structure* fallback seeded from the anchored
+points (the exhaustive controller currently restarts its geometric bracket
+from scratch, ~20 prices), which would keep the hidden quality on those cells
+at a fraction of the cost. Recorded as the next controller item.
 
 ### Open architectural questions
 

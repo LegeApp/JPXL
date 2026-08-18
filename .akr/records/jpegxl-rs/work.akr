@@ -6451,6 +6451,41 @@ record jpegxl-rs.work.quality-q4-cover-rate-model/1 : work {
     part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
 }
 
+record jpegxl-rs.work.quality-q5-anchored-controller-above-ceiling/1 : work {
+    title "Phase Q5: anchored-controller fixes above the ceiling (second-anchor exponent, structure rebuild, second correction) — screened, mechanism kept, legacy defaults retained"
+    state completed
+    scope [
+        path ".agent/scratch/quality-track/**",
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/rate.rs",
+        path "JPXL/docs/optimize.md"
+    ]
+    intent """
+        Fix the Q3 speed follow-up (Balanced falls back to the exhaustive controller above the global_scale ceiling: 5.9 s on mid2 at 2 bpp) by improving the two-anchor controller: a lower second-anchor exponent, a structure rebuild at the second anchor when the first anchor is far from the target, and a bounded second exact correction aimed with the local slope; also screen a fresh structural finalist. Promote only if the standing corpus stays within Contract B against Phase Q4; otherwise keep the mechanism as documented constants at their legacy values.
+        """
+    note """
+        Screened 2026-08-18. The second correction removes every fallback on the standing corpus (mid2 2 bpp Balanced 5.9 s -> 0.78 s), but the fallback had been a hidden quality tier (fresh cover/CfL/entropy per probe), so the cells that used to fall back drop to their true Fast/Balanced tier: mid2 2 bpp Balanced -0.25 SSIMULACRA2, the 20240503_105759 scene at Fast -4.0, failing the Contract B worst-cell bound. Under the quality-first rule the defaults stay legacy (exponent 2.0, no rebuild, one correction) and the constants document the screen; the next controller item is a cheaper fresh-structure fallback seeded from the anchors. Committed state is byte-identical to Phase Q4.
+        """
+    acceptance {
+        check gates {
+            statement """
+                cargo fmt --check, clippy -D warnings and the encode-policy suite pass on the committed state.
+                """
+            method command
+            verified_by [ @jpegxl-rs.evidence.quality-q5-rust-gates-2026-08-18/1 ]
+        }
+        check screen-recorded {
+            statement """
+                The three controller changes and the fresh-finalist variant are screened on the standing corpus against Phase Q4 with per-cell numbers, the fallback-as-hidden-tier finding is documented, and the committed defaults reproduce the Phase Q4 hashes.
+                """
+            method command
+            verified_by [ @jpegxl-rs.evidence.quality-q5-controller-screen-2026-08-18/1 ]
+        }
+    }
+    depends_on [ @jpegxl-rs.work.quality-q4-cover-rate-model/1 ]
+    part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+}
+
 record jpegxl-rs.work.retire-handoff-ledger/1 : work {
     title "Retire HANDOFF.md as a duplicate ledger after AKR migration"
     state completed

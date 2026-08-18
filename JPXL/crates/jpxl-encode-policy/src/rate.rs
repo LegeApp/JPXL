@@ -1323,6 +1323,57 @@ fn two_anchor_correction_rung(
     target_rung_from_slope(finalist, target, slope)
 }
 
+/// Phase Q5 screened three changes to the anchored controller together and
+/// kept the mechanism but not the settings:
+///
+/// * a second-anchor exponent of `1.5` instead of `2.0` (the measured
+///   `bytes ~ E^alpha` exponents `1/alpha` are 1.57-1.80 on the busy photos
+///   and 0.95-1.05 on the smooth one, so `2.0` overshoots on smooth content);
+/// * rebuilding the structure (cover, CfL, entropy model) at the second
+///   anchor when the first anchor priced more than a factor of
+///   [`STRUCTURE_REBUILD_RATIO`] from the target;
+/// * a second exact correction aimed with the local slope between the two
+///   exact points already priced.
+///
+/// Together they removed every exhaustive fallback on the standing corpus —
+/// mid2 at 2 bpp Balanced went from 5.9 s to 0.8 s — but the fallback had been
+/// a hidden quality tier: its exhaustive path re-plans cover/CfL/entropy at
+/// every probe, so the cells that used to fall back (mid2 at 2 bpp, the
+/// 20240503_105759 scene at 1 bpp) had been getting Quality-tier output under
+/// a Fast/Balanced label. Removing the fallback showed the true tier there:
+/// −0.25 SSIMULACRA2 on mid2 2 bpp Balanced and −4.0 on the scene at Fast,
+/// which fails the Contract B bound, while every other cell moved within
+/// noise (photos +0.02 mean). Under the quality-first rule the defaults
+/// therefore stay at the legacy behaviour (`2.0`, no rebuild, one correction)
+/// and the settings below are the documented, screened alternative; the
+/// clean fix is a cheaper fresh-structure fallback seeded from the anchors,
+/// not a better predictor.
+#[cfg(feature = "anchor-sketch")]
+const SECOND_ANCHOR_EXPONENT: f64 = 2.0;
+
+/// How many exact corrections the anchored controller may pay after a
+/// finalist that missed the band before falling back to the exhaustive
+/// controller (see [`SECOND_ANCHOR_EXPONENT`] for the Phase Q5 screen of 2).
+#[cfg(feature = "anchor-sketch")]
+const MAX_ANCHOR_CORRECTIONS: u32 = 1;
+
+/// The byte ratio between the first anchor and the target beyond which the
+/// anchor's structure is rebuilt at the second anchor. `INFINITY` disables
+/// the rebuild (see [`SECOND_ANCHOR_EXPONENT`]); the Phase Q5 screen used 2.
+#[cfg(feature = "anchor-sketch")]
+const STRUCTURE_REBUILD_RATIO: f64 = f64::INFINITY;
+
+/// Whether the first anchor's structure is too far from the target to carry.
+#[cfg(feature = "anchor-sketch")]
+fn structure_is_stale(anchor_bytes: u64, target: u64) -> bool {
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "byte counts are far below f64's exact-integer range"
+    )]
+    let ratio = target.max(1) as f64 / anchor_bytes.max(1) as f64;
+    !(1.0 / STRUCTURE_REBUILD_RATIO..=STRUCTURE_REBUILD_RATIO).contains(&ratio)
+}
+
 #[cfg(feature = "anchor-sketch")]
 fn second_anchor_rung(start: Rung, anchor_bytes: u64, target: u64) -> Rung {
     #[allow(
@@ -1334,7 +1385,7 @@ fn second_anchor_rung(start: Rung, anchor_bytes: u64, target: u64) -> Rung {
         clippy::cast_precision_loss,
         reason = "wire-scale is far below f64's exact-integer range"
     )]
-    let proposed = effective_scale(start) as f64 * ratio * ratio;
+    let proposed = effective_scale(start) as f64 * ratio.powf(SECOND_ANCHOR_EXPONENT);
     #[allow(
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss,
@@ -1429,7 +1480,25 @@ fn search_frame_two_anchor(
 
     let second_rung = second_anchor_rung(start, first_size.total, target_bytes);
     let second_quantizer = QuantizerChoice::at(second_rung, request.quant_lf)?;
-    let second_plan = {
+    // Phase Q5: when the first anchor priced far from the target, its cover,
+    // CfL and entropy model were chosen for a very different operating point,
+    // and a finalist that reuses them prices structurally worse than a fresh
+    // plan at the same rung (mid2 at 2 bpp: 1.18 MB reused against 1.05 MB
+    // fresh, so the anchored path missed its band and fell back to the
+    // exhaustive controller). Rebuild the structure at the second anchor in
+    // that case and let the finalist reuse *that*; near the target the first
+    // anchor is kept, so the standing cells are untouched.
+    let rebuild_structure = structure_is_stale(first_size.total, target_bytes);
+    let mut second_captured = None;
+    let second_plan = if rebuild_structure {
+        prepared.plan_anchor(
+            second_quantizer,
+            enable_cfl,
+            EntropySearch::Fast,
+            AnchorReuse::None,
+            Some(&mut second_captured),
+        )?
+    } else {
         let plan = prepared.plan_anchor(
             second_quantizer,
             false,
@@ -1446,6 +1515,13 @@ fn search_frame_two_anchor(
         } else {
             plan
         }
+    };
+    let (anchor, first_entropy) = match second_captured {
+        Some(fresh) => {
+            prepared.stats.structural_builds = 2;
+            (fresh, second_plan.plan().entropy.clone())
+        }
+        None => (anchor, first_entropy),
     };
     let second_size =
         diagnostics::with_search_phase(diagnostics::SearchDiagnosticPhase::Fast, || {
@@ -1490,6 +1566,11 @@ fn search_frame_two_anchor(
     } else {
         final_entropy
     };
+    // A fresh structural finalist was screened in Phase Q5 (cover, CfL and
+    // entropy model re-planned at the predicted rung): +0.10 / -0.03
+    // SSIMULACRA2 on the standing 1 bpp cells for +6-22% time, and it made
+    // the anchors' curve a worse predictor of the finalist's bytes (mid2 at
+    // 1 bpp fell back). The reused structure stays.
     let finalist_plan = prepared.plan_anchor(
         finalist_quantizer,
         false,
@@ -1504,7 +1585,7 @@ fn search_frame_two_anchor(
         // stream contract unchanged while Balanced banks the repeated walk.
         finalist_plan
     };
-    prepared.stats.structural_builds = 1;
+    prepared.stats.structural_builds = if rebuild_structure { 2 } else { 1 };
     let finalist_emission =
         diagnostics::with_search_phase(diagnostics::SearchDiagnosticPhase::Full, || {
             emit_codestream_with_executor(&finalist, prepared.executor)
@@ -1544,19 +1625,14 @@ fn search_frame_two_anchor(
     } else {
         // Fast entropy is an upper-bound navigation mode, so its calibrated
         // crossing can miss after the anchored structural finalist. Spend
-        // the remaining exact candidate on a bounded quantizer correction
-        // while preserving that finalist's cover and CfL decisions.
+        // bounded exact corrections on quantizer moves that preserve the
+        // finalist's cover and CfL decisions. The first correction aims with
+        // the anchors' log-log slope from the finalist; a second (Phase Q5)
+        // aims with the *local* slope between the two exact points already
+        // priced, which is what a curve that is not one power law over the
+        // anchor span needs — before that, mid2 at 2 bpp missed by 1.8% after
+        // one correction and paid the ~5 s exhaustive fallback.
         let correction_target = target_bytes.saturating_sub(slack / 2);
-        let Some(correction_rung) = two_anchor_correction_rung(
-            (first_quantizer.rung, first_size.total),
-            (second_quantizer.rung, second_size.total),
-            (finalist_quantizer.rung, finalist_bytes),
-            correction_target,
-        ) else {
-            *attempted = prepared.stats;
-            return Ok(None);
-        };
-        let correction_quantizer = QuantizerChoice::at(correction_rung, request.quant_lf)?;
         let anchor = finalist_anchor.as_ref().ok_or(PolicyError::Unsupported {
             what: "an anchored finalist that failed to capture its structure",
         })?;
@@ -1564,37 +1640,69 @@ fn search_frame_two_anchor(
         // coefficient views before building the correction so that the same
         // reusable arena can serve the final probe.
         drop(finalist);
-        let correction_plan = prepared.plan_anchor(
-            correction_quantizer,
-            true,
-            finalist_entropy,
-            AnchorReuse::CoverAndCfl(anchor),
-            None,
-        )?;
-        let correction = if reuse_entropy_model {
-            reuse_entropy(correction_plan, &first_entropy)?
-        } else {
-            correction_plan
-        };
-        let correction_emission =
-            diagnostics::with_search_phase(diagnostics::SearchDiagnosticPhase::Full, || {
-                emit_codestream_with_executor(&correction, prepared.executor)
-            })?;
-        let correction_bytes = correction_emission.sizing.total;
-        prepared.stats.full_prices = 2;
-        prepared.stats.exact_candidates = 2;
-        prepared.stats.anchor_correction_bytes = correction_bytes;
-        trace.push(RateStep {
-            phase: RatePhase::Final,
-            quantizer: correction_quantizer,
-            bytes: correction_bytes,
-            feasible: correction_bytes <= target_bytes,
-        });
-        if !within_target(correction_bytes) {
+        let mut previous = (finalist_quantizer.rung, finalist_bytes);
+        let mut last: Option<(Rung, u64)> = None;
+        let mut selected = None;
+        for attempt in 0..MAX_ANCHOR_CORRECTIONS {
+            let correction_rung = match last {
+                None => two_anchor_correction_rung(
+                    (first_quantizer.rung, first_size.total),
+                    (second_quantizer.rung, second_size.total),
+                    previous,
+                    correction_target,
+                ),
+                Some(exact) => {
+                    two_anchor_correction_rung(exact, previous, exact, correction_target)
+                }
+            };
+            let Some(correction_rung) = correction_rung else {
+                break;
+            };
+            if trace
+                .iter()
+                .any(|step| step.quantizer.rung == correction_rung)
+            {
+                break;
+            }
+            let correction_quantizer = QuantizerChoice::at(correction_rung, request.quant_lf)?;
+            let correction_plan = prepared.plan_anchor(
+                correction_quantizer,
+                true,
+                finalist_entropy,
+                AnchorReuse::CoverAndCfl(anchor),
+                None,
+            )?;
+            let correction = if reuse_entropy_model {
+                reuse_entropy(correction_plan, &first_entropy)?
+            } else {
+                correction_plan
+            };
+            let correction_emission =
+                diagnostics::with_search_phase(diagnostics::SearchDiagnosticPhase::Full, || {
+                    emit_codestream_with_executor(&correction, prepared.executor)
+                })?;
+            let correction_bytes = correction_emission.sizing.total;
+            prepared.stats.full_prices = 2 + attempt;
+            prepared.stats.exact_candidates = 2 + attempt;
+            prepared.stats.anchor_correction_bytes = correction_bytes;
+            trace.push(RateStep {
+                phase: RatePhase::Final,
+                quantizer: correction_quantizer,
+                bytes: correction_bytes,
+                feasible: correction_bytes <= target_bytes,
+            });
+            if within_target(correction_bytes) {
+                selected = Some((correction_quantizer, correction, correction_emission));
+                break;
+            }
+            last = Some(previous);
+            previous = (correction_quantizer.rung, correction_bytes);
+        }
+        let Some(selected) = selected else {
             *attempted = prepared.stats;
             return Ok(None);
-        }
-        (correction_quantizer, correction, correction_emission)
+        };
+        selected
     };
 
     if emission.sizing.total != trace.last().map_or(0, |step| step.bytes) {

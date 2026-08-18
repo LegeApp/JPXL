@@ -4431,6 +4431,31 @@ record jpegxl-rs.evidence.quality-q4-speed-budget-2026-08-18/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.quality-q5-controller-screen-2026-08-18/1 : evidence {
+    title "Q5 anchored-controller screen recorded; committed defaults reproduce Q4"
+    state verified
+    result pass
+    method command
+    observed_at git:3744717be36a92f15ab52ff6eb9fee8d11bbec69
+    command "bash .agent/scratch/quality-track/q3-arm.sh q5-anchor (exponent 1.5, rebuild ratio 2, two corrections); pair-arms.py q4-calibrated q5-anchor; then with legacy constants: default encodes of mid 1/mid2 2/mid2 1/mid 0.5 Balanced, large 0.5 Fast and the 20240503_105759 scene at Fast compared by sha16 with ladder-q4-calibrated.tsv / scenes-q4-calibrated.tsv"
+    artifact ".agent/scratch/quality-track/out/ladder-q5p-anchor.tsv"
+    summary """
+        Screen: photos +0.021 / -0.25 SSIMULACRA2, scenes -0.272 / -4.04 (former fallback cells), mid2 2 bpp Balanced 5.9 s -> 0.78 s; committed legacy constants reproduce the Q4 hashes on all six checked cells (22a57d34875f0737, 7c32fa1f26993c52, 2c62b5b5a7dec7d2, 9a7b843a4cca58ea, 8a74ce5763ba9474, 2304b4adb0f5076a).
+        """
+}
+
+record jpegxl-rs.evidence.quality-q5-rust-gates-2026-08-18/1 : evidence {
+    title "Q5 Rust gates"
+    state verified
+    result pass
+    method command
+    observed_at git:3744717be36a92f15ab52ff6eb9fee8d11bbec69
+    command "cargo fmt --all --check; cargo clippy --workspace --all-targets --profile fast-debug -- -D warnings; cargo test -p jpxl-encode-policy --profile fast-debug"
+    summary """
+        fmt clean, clippy clean, encode-policy suite 148 passed / 0 failed on the committed (legacy-constant) state.
+        """
+}
+
 record jpegxl-rs.evidence.retire-handoff-durable-facts-2026-08-11/1 : evidence {
     title "HANDOFF permanent facts are represented in AKR"
     state verified

@@ -832,6 +832,14 @@ fn cmd_encode(args: &[String]) -> u8 {
                     dump_cover_map(&report.plan, &path.to_string_lossy());
                 }
                 if std::env::var_os("JPXL_RATE_TRACE").is_some() {
+                    println!(
+                        "  anchor: fallbacks={} first_finalist_bytes={} correction_bytes={}                          fast_prices={} full_prices={}",
+                        report.stats.anchor_fallbacks,
+                        report.stats.anchor_first_finalist_bytes,
+                        report.stats.anchor_correction_bytes,
+                        report.stats.fast_prices,
+                        report.stats.full_prices
+                    );
                     for step in &report.trace {
                         println!(
                             "  trace: {:?} rung={} scale={} hf_mul={} bytes={} feasible={}",
@@ -1678,6 +1686,8 @@ struct LossyReport {
     trace: Vec<jpxl_encode_policy::RateStep>,
     /// The chosen plan, for the `JPXL_COVER_DUMP` research dump.
     plan: jpxl_encode::vardct::ValidatedEmissionPlan,
+    /// The search's multiplicity counters, for the `JPXL_RATE_TRACE` dump.
+    stats: jpxl_encode_policy::RateProbeStats,
 }
 
 /// Research aid: writes the chosen cover as a P5 map with one sample per 8x8
@@ -1852,6 +1862,7 @@ fn encode_lossy_to_target(
         saturated: outcome.saturated,
         fast_prices: outcome.stats.fast_prices,
         full_prices: outcome.stats.full_prices,
+        stats: outcome.stats,
         sizing: outcome.sizing,
         trace: outcome.trace,
         plan: outcome.plan,
