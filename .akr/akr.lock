@@ -5,7 +5,7 @@ build {
     tool "akr 0.3.1"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:a48816f60c2ac4c644830adce77e18a54076cdd286393877d399b3ceb2d76e01"
+    source_graph "sha256:2d56dd798cde06dd2bb59bfa1f78f3c25060a27d82e4f5211dee04e0d93393eb"
 }
 
 source ".akr/project.akr" {
@@ -29,8 +29,8 @@ source ".akr/records/jpegxl-rs/decisions.akr" {
 }
 
 source ".akr/records/jpegxl-rs/evidence.akr" {
-    hash "sha256:188df3fbc989c8581473d1d6a008ca4d226d4ba0da980de4e5caae038ea102a6"
-    records 376
+    hash "sha256:6954c6a2437d4d434996dc7480ace098b22a552c5f090660ee2c9d846a66ff60"
+    records 380
 }
 
 source ".akr/records/jpegxl-rs/milestones.akr" {
@@ -64,7 +64,7 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:c0f3803a44619f2232d34a7c2c1528bf8b70ed7c795eb447b3e83270173b3041"
+    hash "sha256:e9df33e64277f88db6246f99047e052d9565158959663d96004764d450a87988"
     records 144
 }
 
@@ -5368,6 +5368,26 @@ seal @jpegxl-rs.evidence.quality-q7-workspace-gates-2026-08-18/1 {
     hash "sha256:56f1c63ecc828de93e84180cca196a2d3d01a9cfe453ea6c35faebb5571c843e"
 }
 
+seal @jpegxl-rs.evidence.quality-q8-byte-identity-2026-08-18/1 {
+    state verified
+    hash "sha256:349d6417f61611c1692d3a49ffa9eee1cbe118034741fc73d152fc65f8407270"
+}
+
+seal @jpegxl-rs.evidence.quality-q8-corpus-gate-2026-08-18/1 {
+    state verified
+    hash "sha256:0f7a06fee528677afd2c8b4ebb2855a68c48cde1af2b32e247364532db1e01e7"
+}
+
+seal @jpegxl-rs.evidence.quality-q8-policy-invariants-2026-08-18/1 {
+    state verified
+    hash "sha256:069d960136be495a54ec1953fb1266611b18fe441ef62076fc36b63fab55dccc"
+}
+
+seal @jpegxl-rs.evidence.quality-q8-workspace-gates-2026-08-18/1 {
+    state verified
+    hash "sha256:2b50d0a08386ab4eb02be82e3fcfab69c09a3280afc34137865d9aebeee4930c"
+}
+
 seal @jpegxl-rs.evidence.retire-handoff-durable-facts-2026-08-11/1 {
     state verified
     hash "sha256:d5bdf84076bed194a4be6e7e9ea15569dbed84339827e224b936cd8feeb95a65"
@@ -6841,6 +6861,11 @@ seal @jpegxl-rs.work.quality-q6-cheaper-exhaustive-search/1 {
 seal @jpegxl-rs.work.quality-q7-effective-scale-controller/1 {
     state completed
     hash "sha256:db5a45efad5627aa32315db3ebc8d6229085d4b18cedb543576aac6c913e4ce1"
+}
+
+seal @jpegxl-rs.work.quality-q8-chroma-allocation/1 {
+    state completed
+    hash "sha256:e1fe11cafcefcebf86e300b4754cb96320a8d197294860524aaeae35c8c7e519"
 }
 
 seal @jpegxl-rs.work.retire-handoff-ledger/1 {

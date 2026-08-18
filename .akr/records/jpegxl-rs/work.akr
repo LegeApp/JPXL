@@ -6582,7 +6582,7 @@ record jpegxl-rs.work.quality-q7-effective-scale-controller/1 : work {
 
 record jpegxl-rs.work.quality-q8-chroma-allocation/1 : work {
     title "Phase Q8: graduate the Quality-only chroma QM allocation — B=4 above 1 bpp and X=3 at or below it"
-    state proposed
+    state completed
     scope [
         path ".agent/scratch/quality-track/**",
         path "JPXL/crates/jpxl-cli/src/main.rs",
@@ -6602,12 +6602,14 @@ record jpegxl-rs.work.quality-q8-chroma-allocation/1 : work {
                 Fast, Balanced, and every fixed-quantizer stream stay byte-identical to Phase Q7; the compiled Quality policy reproduces the equivalent manual-flag streams, and the changed Quality cells are byte-identical at one and four threads.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.quality-q8-byte-identity-2026-08-18/1 ]
         }
         check corpus-gate {
             statement """
                 The standing photo ladder and seven-scene screen pass the Contract B bounds against the frozen Phase Q7 binary, with djxl and jxl-oxide accepting every changed Quality stream.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.quality-q8-corpus-gate-2026-08-18/1 ]
         }
         check policy-invariants {
             statement """
@@ -6615,6 +6617,7 @@ record jpegxl-rs.work.quality-q8-chroma-allocation/1 : work {
                 """
             method command
             command "cargo test -p jpxl-encode-policy --lib request:: --profile fast-debug"
+            verified_by [ @jpegxl-rs.evidence.quality-q8-policy-invariants-2026-08-18/1 ]
         }
         check workspace-gates {
             statement """
@@ -6622,6 +6625,7 @@ record jpegxl-rs.work.quality-q8-chroma-allocation/1 : work {
                 """
             method command
             command "cargo build --workspace && cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all --check"
+            verified_by [ @jpegxl-rs.evidence.quality-q8-workspace-gates-2026-08-18/1 ]
         }
     }
     depends_on [ @jpegxl-rs.work.quality-q7-effective-scale-controller/1 ]

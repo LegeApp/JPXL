@@ -4544,6 +4544,58 @@ record jpegxl-rs.evidence.quality-q7-workspace-gates-2026-08-18/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.quality-q8-byte-identity-2026-08-18/1 : evidence {
+    title "Q8 byte-identity: Fast/Balanced unchanged, compiled==manual, thread-stable"
+    state verified
+    result pass
+    method command
+    observed_at git:b77a3060f645218c4a4a3458822b9251a7bee8f4
+    command "release jpxl.exe encode + Get-FileHash SHA-256 across presets/threads/flags"
+    artifact ".agent/scratch/qx-verify"
+    summary """
+        On mid-photo: Fast and Balanced 1 bpp are byte-identical to the frozen Q7 baseline (07D71108DE1FC69F, 22A57D34875F0737); the compiled Quality policy reproduces the manual-flag arms (1 bpp x3/b5 = 42B1F6253D7B750D, 2 bpp b4 = C3C7CC974C869C1E); and both changed Quality cells are byte-identical at one and four threads. Quality 1 bpp differs from Q7 baseline as intended.
+        """
+}
+
+record jpegxl-rs.evidence.quality-q8-corpus-gate-2026-08-18/1 : evidence {
+    title "Q8 photo ladder and seven-scene Contract B screen"
+    state verified
+    result pass
+    method command
+    observed_at git:b77a3060f645218c4a4a3458822b9251a7bee8f4
+    command "ladder.ps1 + scenes.ps1 + summarise.py, base jpxl-q7-base vs cand jpxl-q8"
+    artifact ".agent/scratch/quality-track/out/summary-q8-chroma.md"
+    summary """
+        Against the frozen Q7 binary the 27-cell photo ladder passed with SSIMULACRA2 mean +0.038 / worst -0.026, Butteraugli max mean -0.26% (improves) / worst +0.92%, 3-norm worst +3.12%; only the nine Quality cells change and the 14-cell scene screen is byte-identical. djxl and jxl-oxide accepted every changed stream. Quality BD-rate -0.8% / -0.8% / -0.1%; mid 2 bpp Quality +0.586 SSIMULACRA2 at -0.3% Butteraugli max.
+        """
+}
+
+record jpegxl-rs.evidence.quality-q8-policy-invariants-2026-08-18/1 : evidence {
+    title "Q8 chroma-policy unit invariants"
+    state verified
+    result pass
+    method command
+    observed_at git:b77a3060f645218c4a4a3458822b9251a7bee8f4
+    command "cargo test -p jpxl-encode-policy --lib request:: --profile fast-debug"
+    artifact "JPXL/crates/jpxl-encode-policy/src/request.rs"
+    summary """
+        All 7 request-policy tests passed, including the graduated Quality chroma test: B=5 at/below 1 bpp and B=4 above it, X=3 at/below 1 bpp and neutral above, neutral for Fast/Balanced at every rate, and Manual bypass for both X and B.
+        """
+}
+
+record jpegxl-rs.evidence.quality-q8-workspace-gates-2026-08-18/1 : evidence {
+    title "Q8 Rust workspace gates"
+    state verified
+    result pass
+    method command
+    observed_at git:b77a3060f645218c4a4a3458822b9251a7bee8f4
+    command "cargo build --workspace; cargo clippy --workspace --all-targets -- -D warnings; cargo fmt --all --check; test-workspace-windows.ps1 (fast-debug, with and without -DisableAvx2)"
+    artifact "JPXL"
+    summary """
+        Workspace build, strict Clippy, and formatting passed clean. The full workspace suite passed with the AVX2 fallback disabled (all 59 test binaries ok). With AVX2 enabled the only failures were jpxl-core's simd::avx2_cbrt_matches_std and color::planes_match_single_pixel_bitwise, both 1-ULP AVX2 cbrt/color mismatches (the known windows-msvc-avx2-fallback-not-bit-identical condition) in a crate this change does not touch.
+        """
+}
+
 record jpegxl-rs.evidence.retire-handoff-durable-facts-2026-08-11/1 : evidence {
     title "HANDOFF permanent facts are represented in AKR"
     state verified
