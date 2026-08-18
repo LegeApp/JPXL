@@ -2082,7 +2082,7 @@ record jpegxl-rs.observation.q5-exhaustive-fallback-is-a-hidden-quality-tier-202
 
 record jpegxl-rs.observation.q5-exhaustive-fallback-is-a-hidden-quality-tier-2026-08-18/2 : observation {
     title "Q5: the anchored controller's exhaustive fallback re-plans structure per probe, so cells that fall back receive Quality-tier output under a Fast/Balanced label; removing the fallback (second correction) costs up to -4 SSIMULACRA2 there while cutting mid2 2 bpp from 5.9 s to 0.8 s"
-    state verified
+    state superseded
     scope [ path "JPXL/crates/jpxl-encode-policy/src/rate.rs" ]
     statement """
         With SECOND_ANCHOR_EXPONENT 1.5, STRUCTURE_REBUILD_RATIO 2 and MAX_ANCHOR_CORRECTIONS 2, no standing cell falls back: mid2 2 bpp Balanced 784 ms (2 fast + 3 full prices) against 5,920 ms; the 20240503_105759 scene 4 prices against 23-25. Corpus against Q4: photos SSIMULACRA2 +0.021 mean / -0.25 worst, 3-norm +0.03%, max-norm +0.36%; scenes -0.272 mean / -4.04 worst (fails the -0.5 bound). The worst cells are the former fallback cells: on the scene the genuine Fast tier scores 40.5 at 95.1 KB and Balanced 44.0 where the fallback (fresh hierarchical cover, trailing truncation, full entropy) scored 44.5; on mid2 2 bpp Balanced 90.89 against the fallback's 91.14 (also 1% under target by design). Only the second correction removed the fallback; exponent 1.5 or the rebuild alone did not (finalist 1.18-1.19 MB against a 1.08 MB target: the anchors' log-log fit overshoots on this convex-then-concave curve, and reusing a structure planned 1.8-3.7x away in effective scale prices 13% worse than a fresh plan at the same rung). A fresh structural finalist gave +0.10 / -0.03 SSIMULACRA2 on the standing 1 bpp cells for +6-22% time and made mid2 1 bpp fall back. The rebuild helped large 2 bpp (+0.26 SSIMULACRA2, -4.5% Butteraugli) and was neutral or slightly negative on mid/large 0.5 bpp. Defaults stay legacy (2.0 / INFINITY / 1); committed output is byte-identical to Q4. The clean fix is a cheaper fresh-structure fallback seeded from the anchored points instead of a bracket restarted from scratch. Raw rows: .agent/scratch/quality-track/out/ladder-q5p-anchor.tsv, scenes-q5p-anchor.tsv.
@@ -2096,6 +2096,25 @@ record jpegxl-rs.observation.q5-exhaustive-fallback-is-a-hidden-quality-tier-202
     ]
     supersedes [
         @jpegxl-rs.observation.q5-exhaustive-fallback-is-a-hidden-quality-tier-2026-08-18/1
+    ]
+}
+
+record jpegxl-rs.observation.q5-exhaustive-fallback-is-a-hidden-quality-tier-2026-08-18/3 : observation {
+    title "Q5: the anchored controller's exhaustive fallback re-plans structure per probe, so cells that fall back receive Quality-tier output under a Fast/Balanced label; removing the fallback (second correction) costs up to -4 SSIMULACRA2 there while cutting mid2 2 bpp from 5.9 s to 0.8 s"
+    state verified
+    scope [ path "JPXL/crates/jpxl-encode-policy/src/rate.rs" ]
+    statement """
+        With SECOND_ANCHOR_EXPONENT 1.5, STRUCTURE_REBUILD_RATIO 2 and MAX_ANCHOR_CORRECTIONS 2, no standing cell falls back: mid2 2 bpp Balanced 784 ms (2 fast + 3 full prices) against 5,920 ms; the 20240503_105759 scene 4 prices against 23-25. Corpus against Q4: photos SSIMULACRA2 +0.021 mean / -0.25 worst, 3-norm +0.03%, max-norm +0.36%; scenes -0.272 mean / -4.04 worst (fails the -0.5 bound). The worst cells are the former fallback cells: on the scene the genuine Fast tier scores 40.5 at 95.1 KB and Balanced 44.0 where the fallback (fresh hierarchical cover, trailing truncation, full entropy) scored 44.5; on mid2 2 bpp Balanced 90.89 against the fallback's 91.14 (also 1% under target by design). Only the second correction removed the fallback; exponent 1.5 or the rebuild alone did not (finalist 1.18-1.19 MB against a 1.08 MB target: the anchors' log-log fit overshoots on this convex-then-concave curve, and reusing a structure planned 1.8-3.7x away in effective scale prices 13% worse than a fresh plan at the same rung). A fresh structural finalist gave +0.10 / -0.03 SSIMULACRA2 on the standing 1 bpp cells for +6-22% time and made mid2 1 bpp fall back. The rebuild helped large 2 bpp (+0.26 SSIMULACRA2, -4.5% Butteraugli) and was neutral or slightly negative on mid/large 0.5 bpp. Defaults stay legacy (2.0 / INFINITY / 1); committed output is byte-identical to Q4. The clean fix is a cheaper fresh-structure fallback seeded from the anchored points instead of a bracket restarted from scratch. Raw rows: .agent/scratch/quality-track/out/ladder-q5p-anchor.tsv, scenes-q5p-anchor.tsv. Observed on the Phase Q5 commit cf31a7e8.
+        """
+    observed_at git:cf31a7e8ca563290404ace79c4f6c14692ffa7f3
+    method command
+    watches [ "JPXL/crates/jpxl-encode-policy/src/rate.rs" ]
+    review_after 2026-09-30
+    derived_from [
+        @jpegxl-rs.observation.q3-balanced-second-anchor-overshoots-above-the-ceiling-2026-08-18/2
+    ]
+    supersedes [
+        @jpegxl-rs.observation.q5-exhaustive-fallback-is-a-hidden-quality-tier-2026-08-18/2
     ]
 }
 

@@ -5,7 +5,7 @@ build {
     tool "akr 0.3.1"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:94be53dbf707457b875b8afa15ce2d0c9cc7d822ffb25d79cb33039faf4999fc"
+    source_graph "sha256:4d2956f1542577002f424de0a3e788dcfb711ef963123d7e422c0736b3822dd9"
 }
 
 source ".akr/project.akr" {
@@ -39,8 +39,8 @@ source ".akr/records/jpegxl-rs/milestones.akr" {
 }
 
 source ".akr/records/jpegxl-rs/observations.akr" {
-    hash "sha256:db59454f5d1b634486e3dc21ae1b54ea0a52076406a0d7624c9acf958d701fb9"
-    records 86
+    hash "sha256:a36349808e1e8c69b53e75c18f50c0a99618213486ca6d00c9b653fed6054da4"
+    records 87
 }
 
 source ".akr/records/jpegxl-rs/papercuts.akr" {
@@ -5894,8 +5894,13 @@ seal @jpegxl-rs.observation.q5-exhaustive-fallback-is-a-hidden-quality-tier-2026
 }
 
 seal @jpegxl-rs.observation.q5-exhaustive-fallback-is-a-hidden-quality-tier-2026-08-18/2 {
+    state superseded
+    hash "sha256:f392e392cef8da9c283470a6269c002acf59f5bc51ae41f170af54d75d3512e9"
+}
+
+seal @jpegxl-rs.observation.q5-exhaustive-fallback-is-a-hidden-quality-tier-2026-08-18/3 {
     state verified
-    hash "sha256:778c45d883727a48b82f46afe3cd30d4a4e471b9c40bf93f3c07c00c578e16d8"
+    hash "sha256:b627557e5baa72028406519cd1d69b876770f7a9bc3268d677f4fcada03ab772"
 }
 
 seal @jpegxl-rs.observation.quantizer-normalised-distortion-is-the-lever-2026-08-12/1 {
