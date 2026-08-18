@@ -6636,6 +6636,40 @@ record jpegxl-rs.work.quality-q8-chroma-allocation/1 : work {
     part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
 }
 
+record jpegxl-rs.work.quality-q8-preserve-chroma-policy-api/1 : work {
+    title "Q8 follow-up: preserve the public ChromaHfPolicy variant spelling"
+    state proposed
+    scope [ path "JPXL/crates/jpxl-encode-policy/src/request.rs", path "JPXL/docs/optimize.md" ]
+    intent """
+        Repair the source-compatibility regression introduced when Phase Q8 renamed the public ChromaHfPolicy::QualityLowRateB5 enum variant. Retain the historical variant as the actual enum discriminant, expose QualityChroma as a descriptive associated-constant alias for new code and documentation, keep the graduated Q8 X/B behavior and all codestream outputs unchanged, and correct the Q8 optimization note to describe the compatibility alias accurately. Add tests pinning both spellings and exhaustive matching through the legacy variant.
+        """
+    acceptance {
+        check legacy-source-compatibility {
+            statement """
+                Tests compile and exercise ChromaHfPolicy::QualityLowRateB5, prove it equals the QualityChroma alias, and preserve exhaustive matching over the historical enum variants.
+                """
+            method command
+            command "cargo test -p jpxl-encode-policy --lib request:: --profile fast-debug"
+        }
+        check output-identity {
+            statement """
+                Representative Q8 Quality outputs retain their pre-fix hashes and Fast/Balanced remain byte-identical to the frozen Q7 baseline.
+                """
+            method observation
+        }
+        check workspace-gates {
+            statement """
+                Workspace build, strict Clippy, formatting, and the full workspace/oracle suite pass under the established Windows AVX2 workaround.
+                """
+            method command
+            command "cargo build --workspace && cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all --check"
+        }
+    }
+    depends_on [ @jpegxl-rs.work.quality-q8-chroma-allocation/1 ]
+    implements [ @jpegxl-rs.decision.optimization-determinism-contract/1 ]
+    part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+}
+
 record jpegxl-rs.work.retire-handoff-ledger/1 : work {
     title "Retire HANDOFF.md as a duplicate ledger after AKR migration"
     state completed

@@ -1472,12 +1472,14 @@ policy reproduced with `--x-qm-scale`/`--b-qm-scale`) fixed the graduation:
   +5.5%, so the conservative X = 3 was chosen.
 
 The policy stays Quality-only; the two neutral surfaces above 1 bpp for X and
-at every rate for the other presets are untouched. `ChromaHfPolicy::QualityLowRateB5`
-became `QualityChroma`, `effective_b_qm_scale` graduates 5 → 4 across the 1 bpp
-boundary, and a new `effective_x_qm_scale` mirrors it; both resolve to neutral
-for Fast/Balanced and take the supplied scale verbatim under `Manual`. The CLI
-now pins `Manual` when `--x-qm-scale` is set (it already did for `--b-qm-scale`),
-so an explicit research override still wins.
+at every rate for the other presets are untouched. The public
+`ChromaHfPolicy::QualityLowRateB5` variant is retained for source compatibility,
+with `QualityChroma` as a descriptive associated-constant alias;
+`effective_b_qm_scale` graduates 5 → 4 across the 1 bpp boundary, and a new
+`effective_x_qm_scale` mirrors it. Both resolve to neutral for Fast/Balanced
+and take the supplied scale verbatim under `Manual`. The CLI now pins `Manual`
+when `--x-qm-scale` is set (it already did for `--b-qm-scale`), so an explicit
+research override still wins.
 
 **Standing Contract B screen, candidate vs the frozen Q7 binary.** Only the
 nine Quality photo cells change; every Fast, Balanced, and seven-scene stream

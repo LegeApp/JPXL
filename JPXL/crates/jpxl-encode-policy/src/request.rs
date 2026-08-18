@@ -163,8 +163,11 @@ pub enum ChromaHfPolicy {
     /// exactly as supplied.
     #[default]
     Manual,
-    /// Rate-graduated, Quality-only chroma refinement (Phase Q2, extended in
-    /// Phase Q8):
+    /// Quality-only chroma refinement.
+    ///
+    /// The historical name is retained as the actual enum variant for source
+    /// compatibility. Phase Q2 originally used it only for B=5 at or below
+    /// 1 bpp; Phase Q8 graduated the behavior:
     ///
     /// * B channel — scale 5 at or below 1 bpp (Phase Q2); scale 4 above it
     ///   (Phase Q8). At high rate the ladder had been leaving budget unspent,
@@ -174,7 +177,21 @@ pub enum ChromaHfPolicy {
     ///
     /// Every non-Quality preset and every fixed-quantizer stream stays on the
     /// neutral Phase Q1 chroma scales.
-    QualityChroma,
+    QualityLowRateB5,
+}
+
+impl ChromaHfPolicy {
+    /// Descriptive alias for the graduated Quality-only chroma policy.
+    ///
+    /// [`Self::QualityLowRateB5`] remains the enum variant so existing callers
+    /// and exhaustive matches keep compiling. New code may use this name to
+    /// describe the Phase Q8 behavior without depending on the historical
+    /// low-rate-only wording.
+    #[allow(
+        non_upper_case_globals,
+        reason = "variant-style compatibility alias for a public enum policy"
+    )]
+    pub const QualityChroma: Self = Self::QualityLowRateB5;
 }
 
 impl RateSearchPreset {
@@ -985,6 +1002,20 @@ mod tests {
         manual.x_qm_scale = QmScale::new(6).expect("research scale is legal");
         assert_eq!(manual.effective_b_qm_scale(64, 64, high), manual.b_qm_scale);
         assert_eq!(manual.effective_x_qm_scale(64, 64, low), manual.x_qm_scale);
+    }
+
+    #[test]
+    fn the_legacy_chroma_policy_variant_remains_source_compatible() {
+        let legacy = ChromaHfPolicy::QualityLowRateB5;
+        assert_eq!(legacy, ChromaHfPolicy::QualityChroma);
+        match legacy {
+            ChromaHfPolicy::Manual => panic!("the Quality policy became Manual"),
+            ChromaHfPolicy::QualityLowRateB5 => {}
+        }
+        assert!(matches!(
+            ChromaHfPolicy::QualityLowRateB5,
+            ChromaHfPolicy::QualityChroma
+        ));
     }
 
     #[test]
