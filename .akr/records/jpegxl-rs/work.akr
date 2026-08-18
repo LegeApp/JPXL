@@ -6530,7 +6530,7 @@ record jpegxl-rs.work.quality-q6-cheaper-exhaustive-search/1 : work {
 
 record jpegxl-rs.work.quality-q7-effective-scale-controller/1 : work {
     title "Phase Q7: effective-scale cold bracketing, duplicate-price suppression, bounded Quality top-off, and exact saturation reporting"
-    state proposed
+    state completed
     scope [
         path ".agent/scratch/quality-track/**",
         path "JPXL/crates/jpxl-encode-policy/src/rate.rs",
@@ -6550,18 +6550,21 @@ record jpegxl-rs.work.quality-q7-effective-scale-controller/1 : work {
                 """
             method command
             command "cargo test -p jpxl-encode-policy --lib rate::tests --profile fast-debug"
+            verified_by [ @jpegxl-rs.evidence.quality-q7-controller-invariants-2026-08-18/1 ]
         }
         check corpus-gate {
             statement """
                 The standing photo ladder and scene screen remain within Contract B against Phase Q6, with decoder acceptance intact.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.quality-q7-corpus-gates-2026-08-18/1 ]
         }
         check price-reduction {
             statement """
                 At least one standing exhaustive high-rate cell uses fewer exact prices or lower interleaved wall time without a material quality regression.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.quality-q7-price-and-speed-2026-08-18/1 ]
         }
         check workspace-gates {
             statement """
@@ -6569,6 +6572,7 @@ record jpegxl-rs.work.quality-q7-effective-scale-controller/1 : work {
                 """
             method command
             command "cargo build --workspace && cargo test --workspace --profile fast-debug && cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all --check"
+            verified_by [ @jpegxl-rs.evidence.quality-q7-workspace-gates-2026-08-18/1 ]
         }
     }
     depends_on [ @jpegxl-rs.work.quality-q6-cheaper-exhaustive-search/1 ]

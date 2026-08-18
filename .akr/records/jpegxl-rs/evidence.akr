@@ -4492,6 +4492,58 @@ record jpegxl-rs.evidence.quality-q6-price-reduction-2026-08-18/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.quality-q7-controller-invariants-2026-08-18/1 : evidence {
+    title "Q7 controller invariants and edge cases"
+    state verified
+    result pass
+    method command
+    observed_at git:08f6c4a0289cd0e0b5a7f154e58ca66ee541bed8
+    command "cargo test -p jpxl-encode-policy --lib rate::tests --profile fast-debug"
+    artifact "JPXL/crates/jpxl-encode-policy/src/rate.rs"
+    summary """
+        All 22 rate controller tests passed, including effective-scale stepping across the ceiling, duplicate-price reuse, hard-budget accounting, floor/top progress, non-monotone pockets, exact saturation semantics, and the one-price moderate-frame Quality top-off guard.
+        """
+}
+
+record jpegxl-rs.evidence.quality-q7-corpus-gates-2026-08-18/1 : evidence {
+    title "Q7 photo ladder and scene corpus gates"
+    state verified
+    result pass
+    method command
+    observed_at git:08f6c4a0289cd0e0b5a7f154e58ca66ee541bed8
+    command "ladder.ps1 + scenes.ps1 + summarise.py against frozen Phase Q6 and final Q7 binaries"
+    artifact ".agent/scratch/quality-track/out/summary-q7-controller.md"
+    summary """
+        Against Phase Q6, the 27-cell photo ladder passed with SSIMULACRA2 mean +0.00042 and worst -0.005, Butteraugli max mean +0.12%, pnorm3 worst +0.55%; the 14-cell scene screen was byte-identical. All streams decoded with djxl and jxl-oxide; 25/27 photo cells were byte-identical.
+        """
+}
+
+record jpegxl-rs.evidence.quality-q7-price-and-speed-2026-08-18/1 : evidence {
+    title "Q7 high-rate Quality price and wall-time reduction"
+    state verified
+    result pass
+    method command
+    observed_at git:08f6c4a0289cd0e0b5a7f154e58ca66ee541bed8
+    command "JPXL_RATE_TRACE=1 selected encodes plus four-pair alternating native-Windows A/B timing"
+    artifact ".agent/scratch/quality-track/out/q7-final-speed.csv"
+    summary """
+        High-rate Quality exact prices fell 12->10 on mid, 15->14 on mid2, and 11->7 on large. Alternating medians fell 3918->2713 ms (-30.8%), 5161->4945 ms (-4.2%), and 9298->6623 ms (-28.8%) respectively.
+        """
+}
+
+record jpegxl-rs.evidence.quality-q7-workspace-gates-2026-08-18/1 : evidence {
+    title "Q7 Rust workspace gates"
+    state verified
+    result pass
+    method command
+    observed_at git:08f6c4a0289cd0e0b5a7f154e58ca66ee541bed8
+    command "cargo build --workspace; test-workspace-windows.ps1 -DisableAvx2 -CargoArgs test --workspace --profile fast-debug; cargo clippy --workspace --all-targets -- -D warnings; cargo fmt --all --check; cargo check -p jpxl-encode-policy --no-default-features"
+    artifact "JPXL"
+    summary """
+        Workspace build passed; the complete workspace and oracle suite passed with fixture links materialized and AVX2 disabled; strict Clippy and formatting passed; no-default-features check completed with only the known feature-disabled dead-code warnings.
+        """
+}
+
 record jpegxl-rs.evidence.retire-handoff-durable-facts-2026-08-11/1 : evidence {
     title "HANDOFF permanent facts are represented in AKR"
     state verified
