@@ -792,7 +792,7 @@ second_anchor_rung places the second anchor at effective scale E1 * (target/byte
 
 **supersedes** `@jpegxl-rs.observation.q3-balanced-second-anchor-overshoots-above-the-ceiling-2026-08-18/1`
 
-> **Stale** — `watches "JPXL/crates/jpxl-encode-policy/src/rate.rs"` was matched by `cf31a7e8`, which touched `JPXL/crates/jpxl-encode-policy/src/rate.rs`. See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#q3-the-two-anchor-controllers-second-anchor-extrapolates-with-exponent-2-and-overshoots-on-smooth-photos-so-balanced-falls-back-to-the-exhaustive-controller-above-the-ceiling-mid2-2-bpp-59-s-vs-042-s-at-1-bpp).
+> **Stale** — `watches "JPXL/crates/jpxl-encode-policy/src/rate.rs"` was matched by `cd721fc5`, which touched `JPXL/crates/jpxl-encode-policy/src/rate.rs`. See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#q3-the-two-anchor-controllers-second-anchor-extrapolates-with-exponent-2-and-overshoots-on-smooth-photos-so-balanced-falls-back-to-the-exhaustive-controller-above-the-ceiling-mid2-2-bpp-59-s-vs-042-s-at-1-bpp).
 
 ### Q3: at matched bytes JPXL leads cjxl -e7 on SSIMULACRA2 in every cell and trails on Butteraugli and PSNR; the deficit sits in low-to-mid activity blocks, worst where an edge meets flat content
 
@@ -832,7 +832,7 @@ With SECOND_ANCHOR_EXPONENT 1.5, STRUCTURE_REBUILD_RATIO 2 and MAX_ANCHOR_CORREC
 
 **supersedes** `@jpegxl-rs.observation.q5-exhaustive-fallback-is-a-hidden-quality-tier-2026-08-18/2` · **derived_from** `@jpegxl-rs.observation.q3-balanced-second-anchor-overshoots-above-the-ceiling-2026-08-18/2`
 
-> **At risk** at depth 1 via `derived_from` → `@jpegxl-rs.observation.q3-balanced-second-anchor-overshoots-above-the-ceiling-2026-08-18/2` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/rate.rs"` was matched by `cf31a7e8`, which touched `JPXL/crates/jpxl-encode-policy/src/rate.rs`.). See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#q5-the-anchored-controllers-exhaustive-fallback-re-plans-structure-per-probe-so-cells-that-fall-back-receive-quality-tier-output-under-a-fastbalanced-label-removing-the-fallback-second-correction-costs-up-to--4-ssimulacra2-there-while-cutting-mid2-2-bpp-from-59-s-to-08-s).
+> **Stale** — `watches "JPXL/crates/jpxl-encode-policy/src/rate.rs"` was matched by `cd721fc5`, which touched `JPXL/crates/jpxl-encode-policy/src/rate.rs`. See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#q5-the-anchored-controllers-exhaustive-fallback-re-plans-structure-per-probe-so-cells-that-fall-back-receive-quality-tier-output-under-a-fastbalanced-label-removing-the-fallback-second-correction-costs-up-to--4-ssimulacra2-there-while-cutting-mid2-2-bpp-from-59-s-to-08-s).
 
 ### The standard's own quant matrices carry a third of the frequency weighting; measuring distortion in quantizer-normalised units cuts Y mispricing 2.65x to 1.86x
 
