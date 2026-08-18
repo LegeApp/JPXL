@@ -6139,13 +6139,13 @@ record jpegxl-rs.work.publish-readme-benchmark-mit/1 : work {
         path "AGENTS.md",
         path "JPEG_XL_CLEAN_IMPLEMENTATION_LESSONS.md",
         path "JPXL/Cargo.toml",
-        path "JPXL/LICENSE-APACHE",
         path "JPXL/LICENSE-MIT",
         path "JPXL/crates/jpxl-cli/**",
         path "JPXL/docs/experiments/**",
         path "JPXL/tools/**",
         path "LICENSE",
         path "README.md",
+        path "RUST_JXL_ENCODER_ROADMAP.md",
         path "docs/generated/**"
     ]
     intent """
