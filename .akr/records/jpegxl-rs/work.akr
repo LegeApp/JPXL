@@ -5874,7 +5874,7 @@ record jpegxl-rs.work.encoder-optimization-plan/1 : work {
 
 record jpegxl-rs.work.native-windows-quality-tooling/1 : work {
     title "Native Windows equivalents for the last bash-only quality/conformance tooling (cjxl-match, fetch-conformance)"
-    state proposed
+    state completed
     scope [
         path ".agent/scratch/quality-track/**",
         path "JPXL/docs/CONFORMANCE.md",
@@ -5890,18 +5890,21 @@ record jpegxl-rs.work.native-windows-quality-tooling/1 : work {
                 cjxl-match.ps1 bisects cjxl -e7 to JPXL's candidate bytes per (image,bpp) and writes a summarise.py-compatible cjxl TSV natively (no WSL/awk/wslpath), reproducing the documented ahead-on-SSIMULACRA2/behind-on-Butteraugli split.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.native-cjxl-match-2026-08-19/1 ]
         }
         check fetch-conformance-native {
             statement """
                 tools/fetch-conformance.ps1 mirrors fetch-conformance.sh at the same pinned commit and is idempotent (no-ops when the checkout is already at the pin).
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.native-fetch-conformance-2026-08-19/1 ]
         }
         check no-codec-change {
             statement """
                 No Rust source changed; cargo fmt --check and cargo build --workspace stay green and the tracked docs point at the native equivalents.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.native-tooling-no-codec-change-2026-08-19/1 ]
         }
     }
     depends_on [ @jpegxl-rs.work.quality-q9-production-presets/1 ]

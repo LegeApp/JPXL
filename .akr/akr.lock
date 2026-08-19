@@ -5,7 +5,7 @@ build {
     tool "akr 0.3.1"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:c6c9303e3f14944012495484216dea2f68acd1d96d5d21cafa933217a0cd2117"
+    source_graph "sha256:bba6ee6a79068e99f41e307b0a66ed2c17535f21f06180870fc6d74489bf0d7f"
 }
 
 source ".akr/project.akr" {
@@ -29,8 +29,8 @@ source ".akr/records/jpegxl-rs/decisions.akr" {
 }
 
 source ".akr/records/jpegxl-rs/evidence.akr" {
-    hash "sha256:53202ba2855b8edba153494d0008ae34a437ff10ad428a18fd6574f8a6526c79"
-    records 389
+    hash "sha256:9b23ddd1fc4b5aa2080a9f3ec60843be93a050a4d5e16b1dec38193a8d858686"
+    records 392
 }
 
 source ".akr/records/jpegxl-rs/milestones.akr" {
@@ -64,7 +64,7 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:7030467cf610bed3c68e65100e1fea6fd54134f02a351f9ebd6b58a6006dba37"
+    hash "sha256:005138acd0685508b270ef9e89c15b280545b1f36312309168e32daa7c7e54b8"
     records 147
 }
 
@@ -3653,6 +3653,21 @@ seal @jpegxl-rs.evidence.modular-search-chaff-2026-08-10/1 {
     hash "sha256:a4833fa291e1afa6f1cb66d12b6bbf69970a863ef0ccf76d5c102d17de002152"
 }
 
+seal @jpegxl-rs.evidence.native-cjxl-match-2026-08-19/1 {
+    state verified
+    hash "sha256:e80c224aee6b06dd421be7054bc50623074ebbd3bccd9b16b46ace7725714d78"
+}
+
+seal @jpegxl-rs.evidence.native-fetch-conformance-2026-08-19/1 {
+    state verified
+    hash "sha256:14117f5aa9a31f12a1343057cb4c59666e9c208dbb643b5bd0ed7cb1e21b4821"
+}
+
+seal @jpegxl-rs.evidence.native-tooling-no-codec-change-2026-08-19/1 {
+    state verified
+    hash "sha256:d697db38f2651c29a824a9a0c7c726e862fa9696a1c8cbef0dd18e450a10204c"
+}
+
 seal @jpegxl-rs.evidence.opt-b-bulk-bitwriter/1 {
     state verified
     hash "sha256:f3f94a0f298fd327cf4453ad898f95db1f6109c217f49e06d5e872293201b3c0"
@@ -6846,6 +6861,11 @@ seal @jpegxl-rs.work.dispose-performance-md/1 {
 seal @jpegxl-rs.work.dispose-performance-md/2 {
     state completed
     hash "sha256:304de6bdd82fce91cd1748f08b762169efea055535577673dc696cbfead85bfe"
+}
+
+seal @jpegxl-rs.work.native-windows-quality-tooling/1 {
+    state completed
+    hash "sha256:32381a6237cf21c76162f2b8c666262d29a970603310d53ac7f5116173ee1095"
 }
 
 seal @jpegxl-rs.work.opt-benches-and-counters/1 {

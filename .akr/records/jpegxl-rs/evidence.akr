@@ -245,6 +245,44 @@ record jpegxl-rs.evidence.modular-search-chaff-2026-08-10/1 : evidence {
     author "GitHub Uploader"
 }
 
+record jpegxl-rs.evidence.native-cjxl-match-2026-08-19/1 : evidence {
+    title "cjxl-match.ps1 runs the matched-byte comparison natively"
+    state verified
+    result pass
+    method command
+    observed_at git:dcc8877c8d1bd4a9da24364c170badc0946827d5
+    command ".agent/scratch/quality-track/cjxl-match.ps1 -Ladder ...ladder-cjxlmatch-smoke.tsv -Compare jpxl-q9-windows.exe, then summarise.py with the produced cjxl TSV"
+    artifact ".agent/scratch/quality-track/out/cjxl-cjxlmatch-smoke.tsv"
+    summary """
+        Native PowerShell cjxl-match (no WSL/awk/wslpath) bisected cjxl -e7 to 534,303 B against JPXL's 539,958 B mid-photo 1 bpp target and emitted a summarise.py-compatible cjxl TSV; the matched-bytes table renders JPXL 77.92 vs cjxl 75.51 SSIMULACRA2 and Butteraugli 2.744 vs 2.425, the documented ahead-on-SSIMULACRA2/behind-on-Butteraugli split.
+        """
+}
+
+record jpegxl-rs.evidence.native-fetch-conformance-2026-08-19/1 : evidence {
+    title "fetch-conformance.ps1 mirrors the pinned corpus fetch and is idempotent"
+    state verified
+    result pass
+    method command
+    observed_at git:dcc8877c8d1bd4a9da24364c170badc0946827d5
+    command "JPXL/tools/fetch-conformance.ps1"
+    artifact "JPXL/tools/fetch-conformance.ps1"
+    summary """
+        The native fetch-conformance.ps1 resolves the same pinned commit 4bf053529c7cefd2951be453475bb3dccc7e7be8 as fetch-conformance.sh and no-ops cleanly when the checkout is already at the pin, requiring no WSL or network for the already-present corpus.
+        """
+}
+
+record jpegxl-rs.evidence.native-tooling-no-codec-change-2026-08-19/1 : evidence {
+    title "Native tooling additions touch no Rust source"
+    state verified
+    result pass
+    method command
+    observed_at git:dcc8877c8d1bd4a9da24364c170badc0946827d5
+    command "cargo fmt --all --check; cargo build --workspace (native Windows), git show --stat"
+    summary """
+        The change adds JPXL/tools/fetch-conformance.ps1 and doc notes plus gitignored scratch cjxl-match.ps1; no crate source, preset, or codestream output changed, and cargo fmt --check and cargo build --workspace stay green.
+        """
+}
+
 record jpegxl-rs.evidence.opt-b-bulk-bitwriter/1 : evidence {
     title "Bulk write_bits, append_writer, counting writer; modular append_bits uses append_writer; bitstream unit tests green including bulk_write_bits_matches_legacy_bit_loop."
     state verified
