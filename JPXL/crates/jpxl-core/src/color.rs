@@ -89,9 +89,9 @@ pub fn linear_srgb_to_xyb(rgb: [f32; 3]) -> [f32; 3] {
     let mm_ = mm[0] * r + mm[1] * g + mm[2] * b + OPSIN_BIAS;
     let sm = ms[0] * r + ms[1] * g + ms[2] * b + OPSIN_BIAS;
 
-    let lg = lm.cbrt() - OPSIN_BIAS_CBRT;
-    let mg = mm_.cbrt() - OPSIN_BIAS_CBRT;
-    let sg = sm.cbrt() - OPSIN_BIAS_CBRT;
+    let lg = crate::simd::reproducible_cbrt(lm) - OPSIN_BIAS_CBRT;
+    let mg = crate::simd::reproducible_cbrt(mm_) - OPSIN_BIAS_CBRT;
+    let sg = crate::simd::reproducible_cbrt(sm) - OPSIN_BIAS_CBRT;
 
     [0.5 * (lg - mg), 0.5 * (lg + mg), sg]
 }
@@ -163,10 +163,11 @@ pub fn linear_srgb_to_xyb_planes(r: &mut [f32], g: &mut [f32], b: &mut [f32]) {
 ///
 /// The mixing arithmetic runs on [`crate::simd::avx2::F32x8`] in exactly
 /// [`linear_srgb_to_xyb`]'s operation order, and the cube root is
-/// `F32x8::cbrt`, which is `f32::cbrt` bit for bit for normal inputs; a chunk
-/// containing a zero, subnormal, infinite or NaN cone value goes through the
-/// scalar function instead. So the whole path is bit-identical to the
-/// single-pixel one (`tests::avx2_planes_match_scalar` pins it).
+/// `F32x8::cbrt`, which matches the software-defined scalar cube root for
+/// normal inputs; a chunk containing a zero, subnormal, infinite or NaN cone
+/// value goes through the scalar function instead. So the whole path is
+/// bit-identical to the single-pixel one
+/// (`tests::planes_match_single_pixel_bitwise` pins it).
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
 mod avx2 {
     use super::{OPSIN_ABSORBANCE_MATRIX, OPSIN_BIAS, OPSIN_BIAS_CBRT, linear_srgb_to_xyb};
@@ -276,13 +277,29 @@ fn linear_srgb_to_xyb_planes_simd(r: &mut [f32], g: &mut [f32], b: &mut [f32]) {
             f32x4::splat(mm[0]) * rv + f32x4::splat(mm[1]) * gv + f32x4::splat(mm[2]) * bv + bias;
         let sm =
             f32x4::splat(ms[0]) * rv + f32x4::splat(ms[1]) * gv + f32x4::splat(ms[2]) * bv + bias;
-        // Scalar cbrt per lane so nonlinearities match linear_srgb_to_xyb.
+        // The software-defined scalar cbrt per lane keeps this fallback
+        // identical to both linear_srgb_to_xyb and the AVX2 path.
         let lma = lm.to_array();
         let mma = mm_.to_array();
         let sma = sm.to_array();
-        let lg = f32x4::new([lma[0].cbrt(), lma[1].cbrt(), lma[2].cbrt(), lma[3].cbrt()]) - bias_c;
-        let mg = f32x4::new([mma[0].cbrt(), mma[1].cbrt(), mma[2].cbrt(), mma[3].cbrt()]) - bias_c;
-        let sg = f32x4::new([sma[0].cbrt(), sma[1].cbrt(), sma[2].cbrt(), sma[3].cbrt()]) - bias_c;
+        let lg = f32x4::new([
+            crate::simd::reproducible_cbrt(lma[0]),
+            crate::simd::reproducible_cbrt(lma[1]),
+            crate::simd::reproducible_cbrt(lma[2]),
+            crate::simd::reproducible_cbrt(lma[3]),
+        ]) - bias_c;
+        let mg = f32x4::new([
+            crate::simd::reproducible_cbrt(mma[0]),
+            crate::simd::reproducible_cbrt(mma[1]),
+            crate::simd::reproducible_cbrt(mma[2]),
+            crate::simd::reproducible_cbrt(mma[3]),
+        ]) - bias_c;
+        let sg = f32x4::new([
+            crate::simd::reproducible_cbrt(sma[0]),
+            crate::simd::reproducible_cbrt(sma[1]),
+            crate::simd::reproducible_cbrt(sma[2]),
+            crate::simd::reproducible_cbrt(sma[3]),
+        ]) - bias_c;
         let x = half * (lg - mg);
         let y = half * (lg + mg);
         let xa = x.to_array();
@@ -635,7 +652,11 @@ impl OpsinInverse {
         Self {
             matrix,
             bias,
-            bias_cbrt: [bias[0].cbrt(), bias[1].cbrt(), bias[2].cbrt()],
+            bias_cbrt: [
+                crate::simd::reproducible_cbrt(bias[0]),
+                crate::simd::reproducible_cbrt(bias[1]),
+                crate::simd::reproducible_cbrt(bias[2]),
+            ],
             itscale: NOMINAL_INTENSITY_TARGET / target,
         }
     }
@@ -740,7 +761,7 @@ mod tests {
     /// Sanity-check that the tabulated cube root of the bias is right.
     #[test]
     fn bias_cbrt_matches_bias() {
-        assert!((OPSIN_BIAS_CBRT - OPSIN_BIAS.cbrt()).abs() < 1e-7);
+        assert!((OPSIN_BIAS_CBRT - crate::simd::reproducible_cbrt(OPSIN_BIAS)).abs() < 1e-7);
     }
 
     #[test]

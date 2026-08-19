@@ -69,6 +69,13 @@ script from `tests/fixtures/conformance/` after cloning; it downloads the
 Google-Cloud-Storage object pool once into `.objects/` and symlinks each
 test case's files in from there.
 
+On native Windows, if one of those links appears as a small `IntxLNK` file
+rather than a usable symlink, run
+`tools/materialize-conformance-links.ps1`. It performs no network access: it
+repairs each testcase name as an NTFS hard link to an already present
+same-SHA reference or `.objects` payload, and falls back to a copy only when a
+hard link is unavailable.
+
 | Stream set | Revision | Result |
 | --- | --- | --- |
 | `tests/fixtures/conformance/` | pinned commit at clone time (see the submodule/checkout's own git log) | References downloaded via `download_and_symlink_using_curl.sh` (85 objects, ~1.2 GB, all 39 test cases linked). `bike_5`'s `reference_image.npy` (shape `(1, 2560, 2048, 3)`, sha256-verified) and `test.json` (`peak_error: 0.06`, `rms_error: 0.02`) are readable end to end by `jpxl_conformance::FloatImage::from_npy` — see `crates/jpxl-conformance/tests/corpus.rs`. **Thirty test cases pass their own `test.json` thresholds against JPXL's decoder**: `grayscale` / `grayscale_5` (peak 2.3e-4), `bike` / `bike_5` (2.5e-4), `progressive` / `progressive_5` (2.0e-5), `alpha_nonpremultiplied` / `alpha_triangles` (1.2e-7), `alpha_premultiplied` (2.6e-6), `patches` / `patches_5` (7.8e-6 / 2.4e-2), `blendmodes` / `blendmodes_5` (1.9e-6), `upsampling` / `upsampling_5` (4.3e-5 / 1.6e-2), `spot` (6.0e-8), `cmyk_layers` (1.2e-7), `sunset_logo` (4.8e-7), `noise` / `noise_5` (4.9e-5 vs a 0.004 budget), `bicycles` (2.5e-5 vs 9.8e-4), `patches_lossless` (1.2e-7 vs 9.8e-4), `delta_palette` (1.2e-7), `lz77_flower` (6.0e-8), `opsin_inverse` / `opsin_inverse_5` (6.9e-4), `bench_oriented_brg` / `_5` (1.9e-6), `grayscale_jpeg` / `_5` (1.9e-6) — tests in `crates/jpxl-decode/tests/{e2e_vardct.rs,e2e_progressive.rs,e2e_alpha.rs,e2e_upsampling.rs,e2e_layers.rs,e2e_noise.rs,e2e_modular_displayed.rs,e2e_previously_unattempted_corpus.rs,e2e_ycbcr.rs}`, zero ignores. `delta_palette`/`lz77_flower`/`opsin_inverse`/`_5` needed no new code — nobody had graded them before this wave; see `e2e_previously_unattempted_corpus.rs`'s module doc. Remaining 9: animation ×5 (`animation_icos4d`/`_5`, `animation_newtons_cradle`, `animation_spline`/`_5`), do_YCbCr-with-chroma-subsampling ×2 (`cafe`/`_5`, needs J.2), plus two probed-but-failing cases outside this wave's scope — `lossless_pfm` (peak 1.75 vs a 0.0 lossless budget) and `grayscale_public_university` (peak 0.27 vs 9.8e-4) — see `e2e_previously_unattempted_corpus.rs`'s module doc for the numbers. |

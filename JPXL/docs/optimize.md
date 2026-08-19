@@ -1499,6 +1499,75 @@ the axis Q3 measured JPXL trailing `cjxl -e7` on. Fast/Balanced and every
 fixed-quantizer stream are unchanged, so the cumulative quality-track speed
 budget is untouched.
 
+## Phase Q9 — production defaults and Balanced chroma allocation (2026-08-19)
+
+Q8 improved only the exhaustive Quality tier. The preset contract is now
+explicit: **Balanced and Fast are the production paths; Quality is the
+exhaustive reference path.** Target-rate API and CLI defaults therefore move
+from Quality to Balanced, while every explicit preset remains available and
+the fixed-quantizer path is unchanged.
+
+The strongest unused production candidate was already visible in the Q2
+chroma sweep: X=3/B=3 was helpful on Balanced, but the old broad arm also
+applied it to Fast and failed there. Q9 scopes that same conservative
+allocation to Balanced only, at every target. It adds no search point, pass,
+allocation, content analysis, or extra coefficient traversal; it only changes
+the two QM exponents resolved before the existing planner runs. Fast stays at
+neutral X=2/B=2. Quality keeps Q8's graduated policy (X=3 at or below 1 bpp;
+B=5 there and B=4 above it).
+
+The full native-Windows standing screen against the frozen Q8 binary changes
+only the nine Balanced photo cells and seven Balanced scene cells:
+
+| corpus | SSIMULACRA2 mean / worst | Butteraugli max mean / worst | 3-norm mean / worst | unchanged tiers |
+|---|---:|---:|---:|---|
+| photos (27 cells) | **+0.101 / -0.013** | +0.89% / +8.59% | +0.34% / +2.06% | Fast + Quality byte-identical |
+| scenes (14 cells) | **+0.066 / -0.078** | +1.58% / +12.02% | +0.31% / +1.14% | Fast byte-identical |
+
+Every stream was accepted by `djxl` and `jxl-oxide`. Balanced BD-rate moved
+-3.2% on the large photo, -2.1% on the mid photo, and -1.1% on mid2. The
+automatic policy is byte-identical to explicit `--x-qm-scale 3
+--b-qm-scale 3` in all nine cells; one- and four-thread outputs agree on both
+the normal and forced-fallback dispatch paths. The historical public
+`ChromaHfPolicy::QualityLowRateB5` enum variant and `QualityChroma` alias remain
+source-compatible, with `PresetChroma` added as the accurate name for new
+code.
+
+Native-Windows interleaved four-thread medians at 1 bpp were 399.463 ms Q8
+versus 401.977 ms Q9 on the 2400x1800 photo (+0.6%) and 956.404 versus
+905.530 ms on the 4000x3000 photo (-5.3%). The mixed direction is noise-level
+for a policy that adds no encoder work, and remains well inside the standing
+speed budget. The fixed-quantizer fingerprint stayed `3d494c6540a3e67f`.
+
+The Windows gate also reproduced the stale one-ULP AVX2/fallback colour
+difference. Its source was narrower than the preset change: Rust's platform
+`f32::cbrt` rounded some normal inputs differently from the already
+software-defined AVX2 algorithm. Q9 now uses that same integer estimate plus
+two ordered `f64` Newton steps for the scalar and baseline-SIMD paths as well;
+subnormals use the algorithm's exact 2^24 scaling and special values return
+unchanged. The normal AVX2 production hashes did not move, while all nine
+Balanced photo cells are now byte-identical across one/four threads,
+automatic/manual X=3/B=3, and AVX2/forced fallback. The previously failing
+Windows colour and cbrt bit-identity tests pass.
+
+Changing the default also exercised a Balanced fallback path that the old
+Quality default skipped: inverse-Gaborish was being built once for the
+anchored attempt and again for exhaustive fallback. The request boundary now
+owns the preconditioned transform frame and passes it through both controllers,
+so the existing `gaborish_preconditions == 1` invariant holds even on fallback.
+Rejected anchored prices are prepended to the fallback trace, keeping
+`RateOutcome::trace` truthful ("every candidate priced, in order") and its
+phase counts aligned with the aggregate multiplicity counters.
+
+The native workspace gate found one final Windows setup issue: the downloaded
+`bike_5/reference_image.npy` link had become a 166-byte `IntxLNK` placeholder.
+`tools/materialize-conformance-links.ps1` now scans the corpus's declared
+SHA-256 values and repairs such entries as NTFS hard links to an existing
+same-hash testcase or `.objects` payload (copy fallback, no network). The
+conformance wiring test also recognises an unmaterialized placeholder as the
+missing external reference it is, rather than reporting a misleading NPY
+`BadMagic`.
+
 ### Open architectural questions
 
 1. How can the finalist refresh only structurally unstable cover decisions?

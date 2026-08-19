@@ -76,6 +76,11 @@ jpxl info output.jxl
 Run `jpxl --help` and `jpxl bench --help` for the supported options and
 isolated encoder timing modes.
 
+Target-rate encoding defaults to the production `Balanced` preset. Use
+`--lossy-preset fast` when lower latency matters more than the extra quality,
+or `--lossy-preset quality` for the deliberately exhaustive reference path;
+`Quality` is not the production speed preset.
+
 ## Quality, density, and speed versus libjxl
 
 The project has two distinct comparison modes. They must not be conflated.

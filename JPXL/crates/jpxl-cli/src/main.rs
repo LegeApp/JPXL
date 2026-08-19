@@ -56,9 +56,9 @@ Encode options:
 Lossy options (8-bit RGB only; either one selects the VarDCT path):
     --bpp <f>                     Target bits per pixel
     --target-bytes <n>            Target output size in bytes
-    --lossy-preset <mode>         Rate controller: quality (default,
-                                  exhaustive), balanced (anchored fast-final),
-                                  or fast (bounded two-anchor)
+    --lossy-preset <mode>         Rate controller: balanced (default production
+                                  path), fast (lower-latency production path),
+                                  or quality (exhaustive reference)
     --aq-mode <mode>              Per-block HF allocation: off (target-rate
                                   default), masking, uniform, fine-masking,
                                   fine-uniform, or edge-refine (Phase Q3 fields
@@ -73,13 +73,12 @@ Lossy options (8-bit RGB only; either one selects the VarDCT path):
                                   secondary LF fill (target-rate default 4
                                   after Phase Q1; 8 was Phase 5G's); research
                                   control
-    --x-qm-scale <0..7>           X-channel QM exponent (default 2); research
-                                  chroma-allocation control (Quality defaults
-                                  to 3 at <=1 bpp after Phase Q8; setting it
-                                  pins the manual chroma policy)
-    --b-qm-scale <0..7>           B-channel QM exponent (Quality defaults to 5
-                                  at <=1 bpp per Phase Q2 and 4 above it per
-                                  Phase Q8; otherwise 2); research
+    --x-qm-scale <0..7>           X-channel QM exponent (Balanced defaults to 3;
+                                  Quality defaults to 3 at <=1 bpp and 2 above
+                                  it); setting it pins the manual chroma policy
+    --b-qm-scale <0..7>           B-channel QM exponent (Balanced defaults to 3;
+                                  Quality defaults to 5 at <=1 bpp and 4 above
+                                  it; Fast defaults to 2); research
                                   chroma-allocation control
     --epf-iters <0..3>            Decoder EPF iteration count (target-rate
                                   default 1); research control
@@ -159,7 +158,7 @@ Options:
     --height <n>          Synthetic frame height (default 256)
     --iters <n>           Timed iterations after one warm-up (default 3)
     --bpp <f>             Target bits/pixel for vardct-rate (default 1.0)
-    --lossy-preset <mode> Rate controller: quality (default), balanced, or fast
+    --lossy-preset <mode> Rate controller: balanced (default), fast, or quality
     --threads <n>         Section-parallel workers (default: auto; 1 = serial)
     --input <path.ppm>    Use a real P6 image instead of the synthetic RGB
     --effort <1..9>       Modular search effort (default 1; modular mode only)
@@ -999,7 +998,7 @@ fn cmd_bench(args: &[String]) -> u8 {
     let mut height = 256u32;
     let mut iters = 3usize;
     let mut bpp = 1.0f64;
-    let mut rate_preset = jpxl_encode_policy::RateSearchPreset::Quality;
+    let mut rate_preset = jpxl_encode_policy::RateSearchPreset::default();
     let mut input: Option<&str> = None;
     let mut resources = jpxl_encode::EncodeResources::auto();
     let mut diag = false;
@@ -1802,7 +1801,7 @@ fn encode_lossy_to_target(
     }
     if let Some(value) = overrides.x_qm_scale {
         // An explicit chroma scale is a research override: pin Manual so the
-        // automatic Quality policy does not resolve X back to its own value.
+        // automatic preset policy does not resolve X back to its own value.
         request.chroma_hf_policy = jpxl_encode_policy::ChromaHfPolicy::Manual;
         request.x_qm_scale = jpxl_encode::vardct::ids::QmScale::new(value)
             .map_err(|_| format!("x_qm_scale {value} is outside the wire range"))?;

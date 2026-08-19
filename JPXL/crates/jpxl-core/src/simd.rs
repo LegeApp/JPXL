@@ -20,6 +20,53 @@
 
 use core::ops::{Add, Div, Mul, Sub};
 
+/// Software-defined cube root used at SIMD/scalar boundaries.
+///
+/// Rust's `f32::cbrt` delegates to the target C math library, and the Windows
+/// implementation can round a normal input one ULP differently from the
+/// FreeBSD/musl algorithm used by the AVX2 path below. For finite normal
+/// values, this function spells that algorithm out directly: the 5-bit
+/// integer estimate followed by two Newton steps in `f64` and one final
+/// rounding to `f32`. Subnormals use the same estimate after an exact 2^24
+/// scaling; signed zeroes, infinities, and NaNs return unchanged. The AVX2
+/// caller declines all of those special chunks and reaches this same scalar
+/// path.
+#[inline]
+#[must_use]
+pub(crate) fn reproducible_cbrt(value: f32) -> f32 {
+    /// `(127 - 127/3 - 0.03306235651) * 2^23`.
+    const B1: u32 = 709_958_130;
+    /// B1 adjusted for the exact 2^24 scaling used on subnormal inputs.
+    const B2: u32 = 642_849_266;
+
+    let bits = value.to_bits();
+    let magnitude = bits & 0x7fff_ffff;
+    if magnitude == 0 || magnitude >= 0x7f80_0000 {
+        return value;
+    }
+
+    let estimate = if magnitude < 0x0080_0000 {
+        let scaled = value * 16_777_216.0;
+        (scaled.to_bits() & 0x7fff_ffff) / 3 + B2
+    } else {
+        magnitude / 3 + B1
+    };
+    let estimate_bits = (bits & 0x8000_0000) | estimate;
+    let x = f64::from(value);
+    let mut t = f64::from(f32::from_bits(estimate_bits));
+    for _ in 0..2 {
+        let r = (t * t) * t;
+        t = (t * ((x + x) + r)) / ((x + r) + r);
+    }
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "the algorithm's final operation is the intentional one-time f64-to-f32 rounding"
+    )]
+    {
+        t as f32
+    }
+}
+
 /// One value per lane, with the operations the codec's kernels need.
 ///
 /// See the module documentation for the bit-identity contract every
@@ -342,14 +389,11 @@ pub mod avx2 {
     pub struct F32x8(__m256);
 
     impl F32x8 {
-        /// Per-lane cube root, bit-identical to Rust's `f32::cbrt` (the
-        /// FreeBSD/musl algorithm in `compiler_builtins`: a 5-bit integer
-        /// estimate, then two Newton steps in `f64`, then one rounding to
-        /// `f32`), for lanes that are finite, normal and non-zero. Returns
-        /// `None` when any lane is zero, subnormal, infinite or NaN — the
-        /// scalar function's special cases — so the caller can fall back to
-        /// `f32::cbrt` for that chunk. `tests::avx2_cbrt_matches_std` pins
-        /// the identity.
+        /// Per-lane cube root, bit-identical to
+        /// [`super::reproducible_cbrt`] for lanes that are finite, normal and
+        /// non-zero. Returns `None` when any lane is zero, subnormal, infinite
+        /// or NaN, so the caller can fall back to the same scalar function for
+        /// that chunk. `tests::avx2_cbrt_matches_software` pins the identity.
         #[inline(always)]
         #[must_use]
         pub fn cbrt(self) -> Option<Self> {
@@ -664,13 +708,13 @@ mod tests {
         assert_same::<wide::f32x8>("f32x8");
     }
 
-    /// The AVX2 cube root is `f32::cbrt` bit for bit on every normal input
-    /// tried (positive and negative, across the exponent range and around
-    /// the opsin bias the XYB conversion feeds it), and declines exactly the
-    /// scalar special cases.
+    /// The AVX2 cube root matches the software-defined scalar operation on
+    /// every normal input tried (positive and negative, across the exponent
+    /// range and around the opsin bias the XYB conversion feeds it), and
+    /// declines exactly the scalar special cases.
     #[cfg(all(feature = "simd", target_arch = "x86_64"))]
     #[test]
-    fn avx2_cbrt_matches_std() {
+    fn avx2_cbrt_matches_software() {
         if !crate::cpu::has_avx2() {
             return;
         }
@@ -703,7 +747,7 @@ mod tests {
                 let mut out = [0.0f32; 8];
                 got.store(&mut out);
                 for (x, g) in chunk.iter().zip(out.iter()) {
-                    assert_eq!(x.cbrt().to_bits(), g.to_bits(), "cbrt({x})");
+                    assert_eq!(reproducible_cbrt(*x).to_bits(), g.to_bits(), "cbrt({x})");
                 }
             }
             for special in [

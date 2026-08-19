@@ -6673,6 +6673,76 @@ record jpegxl-rs.work.quality-q8-preserve-chroma-policy-api/1 : work {
     part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
 }
 
+record jpegxl-rs.work.quality-q9-production-presets/1 : work {
+    title "Phase Q9: make Balanced the production default and promote Balanced-only chroma refinement"
+    state proposed
+    scope [
+        path ".agent/scratch/quality-track/**",
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/crates/jpxl-conformance/tests/corpus.rs",
+        path "JPXL/crates/jpxl-core/src/color.rs",
+        path "JPXL/crates/jpxl-core/src/simd.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/rate.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/request.rs",
+        path "JPXL/crates/jpxl-encode-policy/tests/rate_loop.rs",
+        path "JPXL/docs/CONFORMANCE.md",
+        path "JPXL/docs/optimize.md",
+        path "JPXL/tools/materialize-conformance-links.ps1",
+        path "README.md"
+    ]
+    intent """
+        Act on the production-preset clarification by making Balanced, not exhaustive Quality, the default target-rate preset and by promoting the strongest zero-search-cost chroma candidate measured on the current Q8 head: X=3 and B=3 for automatic Balanced target-rate requests at every screened rate. Preserve explicit Quality as the exhaustive reference path, preserve Fast and fixed-quantizer outputs, preserve the historical ChromaHfPolicy enum variant and aliases, add a descriptive preset-wide alias without adding an enum discriminant, and keep explicit manual QM controls authoritative. Build and screen only with native Windows binaries and PowerShell harnesses. Repair the stale Windows AVX2/scalar cbrt mismatch with a shared software-defined operation, materialize Windows conformance link placeholders natively, and preserve the request-scoped inverse-Gaborish invariant when the now-default Balanced controller falls back to exhaustive search by sharing the already-preconditioned transform frame across both controller stages.
+        """
+    note """
+        The quality, timing, and dispatch gates pass. Exact workspace testing then exposed two native-Windows/default-path setup defects: bike_5 had one materializable IntxLNK reference placeholder, and Balanced fallback rebuilt inverse-Gaborish so RateProbeStats reported two request-scoped preconditions. Both are direct efficiency/testability follow-ups, not changes to the promoted chroma decision.
+        """
+    acceptance {
+        check determinism {
+            statement """
+                Changed Balanced outputs are byte-identical at one and four threads and the Windows non-AVX2 workspace tests pass.
+                """
+            method command
+        }
+        check preset-scope {
+            statement """
+                The compiled automatic policy reproduces manual X=3/B=3 for Balanced, while Fast, explicit Quality, manual-QM requests, and fixed-quantizer outputs remain byte-identical to Q8 where claimed.
+                """
+            method command
+        }
+        check production-default {
+            statement """
+                Default target-rate requests and the CLI select Balanced, while explicit Quality and Fast remain selectable and Quality still enters the exhaustive reference controller.
+                """
+            method observation
+        }
+        check quality-gate {
+            statement """
+                The full standing native-Windows 27-photo-cell plus 14-scene-cell screen passes Contract B against the frozen Q8 binary, with djxl and jxl-oxide accepting every changed stream.
+                """
+            method command
+        }
+        check speed-budget {
+            statement """
+                Native-Windows interleaved timing shows no material Balanced regression and remains inside the cumulative +15% quality-track budget.
+                """
+            method command
+        }
+        check workspace-gates {
+            statement """
+                cargo build --workspace, cargo test --workspace, cargo clippy --workspace --all-targets -- -D warnings, and cargo fmt --all --check pass on Windows.
+                """
+            method command
+        }
+    }
+    depends_on [ @jpegxl-rs.work.quality-q8-preserve-chroma-policy-api/1 ]
+    implements [
+        @jpegxl-rs.decision.lossy-production-presets/1,
+        @jpegxl-rs.decision.optimization-determinism-contract/1,
+        @jpegxl-rs.decision.ssimulacra2-is-the-primary-promotion-metric/1
+    ]
+    part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+}
+
 record jpegxl-rs.work.retire-handoff-ledger/1 : work {
     title "Retire HANDOFF.md as a duplicate ledger after AKR migration"
     state completed

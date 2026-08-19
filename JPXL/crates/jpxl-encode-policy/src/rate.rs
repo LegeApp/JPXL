@@ -1400,32 +1400,76 @@ pub fn search_frame_with_executor(
     target: RateTarget,
     executor: &jpxl_encode::EncodeExecutor,
 ) -> Result<RateOutcome> {
+    #[cfg(not(feature = "anchor-sketch"))]
+    if matches!(
+        request.rate_preset,
+        crate::request::RateSearchPreset::Fast | crate::request::RateSearchPreset::Balanced
+    ) {
+        return Err(PolicyError::Unsupported {
+            what: "an anchored rate preset without the anchor-sketch crate feature",
+        });
+    }
+
+    // Inverse-Gaborish is quantizer- and controller-independent. Own it at the
+    // request boundary so a rejected anchored attempt and its exhaustive
+    // fallback share the same transform frame instead of paying twice.
+    let transform_owned = if request.restoration.gaborish {
+        Some(crate::prepare_gaborish_frame(frame)?)
+    } else {
+        None
+    };
+    let transform_frame = transform_owned.as_ref().unwrap_or(frame);
+    let gaborish_preconditions = u32::from(transform_owned.is_some());
+
     #[cfg(feature = "anchor-sketch")]
     {
         if request.rate_preset == RateSearchPreset::Quality {
-            return search_frame_exhaustive(frame, atlas, request, target, executor, None);
+            return search_frame_exhaustive(
+                frame,
+                transform_frame,
+                atlas,
+                request,
+                target,
+                executor,
+                None,
+                gaborish_preconditions,
+            );
         }
         let mut attempted = RateProbeStats::default();
+        let mut attempted_trace = Vec::new();
         let mut seed = None;
         match search_frame_two_anchor(
             frame,
+            transform_frame,
             atlas,
             request,
             target,
             &mut attempted,
+            &mut attempted_trace,
             &mut seed,
             executor,
+            gaborish_preconditions,
         )? {
             Some(outcome) => Ok(outcome),
             None => {
-                let mut outcome =
-                    search_frame_exhaustive(frame, atlas, request, target, executor, seed)?;
+                let mut outcome = search_frame_exhaustive(
+                    frame,
+                    transform_frame,
+                    atlas,
+                    request,
+                    target,
+                    executor,
+                    seed,
+                    0,
+                )?;
                 let attempted_first_finalist = attempted.anchor_first_finalist_bytes;
                 let attempted_correction = attempted.anchor_correction_bytes;
                 outcome.stats.add_attempted_work(attempted);
                 outcome.stats.anchor_fallbacks = 1;
                 outcome.stats.anchor_first_finalist_bytes = attempted_first_finalist;
                 outcome.stats.anchor_correction_bytes = attempted_correction;
+                attempted_trace.append(&mut outcome.trace);
+                outcome.trace = attempted_trace;
                 Ok(outcome)
             }
         }
@@ -1433,15 +1477,16 @@ pub fn search_frame_with_executor(
 
     #[cfg(not(feature = "anchor-sketch"))]
     {
-        if matches!(
-            request.rate_preset,
-            crate::request::RateSearchPreset::Fast | crate::request::RateSearchPreset::Balanced
-        ) {
-            return Err(PolicyError::Unsupported {
-                what: "an anchored rate preset without the anchor-sketch crate feature",
-            });
-        }
-        search_frame_exhaustive(frame, atlas, request, target, executor, None)
+        search_frame_exhaustive(
+            frame,
+            transform_frame,
+            atlas,
+            request,
+            target,
+            executor,
+            None,
+            gaborish_preconditions,
+        )
     }
 }
 
@@ -1609,27 +1654,30 @@ fn reuse_entropy(
 }
 
 #[cfg(feature = "anchor-sketch")]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "controller plumbing keeps request-scoped frame/executor state and \
+              fallback telemetry explicit at the one anchored entry point"
+)]
 fn search_frame_two_anchor(
     frame: &crate::PreparedFrame,
+    transform_frame: &crate::PreparedFrame,
     atlas: &crate::AnalysisAtlas,
     request: &EncodeRequest,
     target: RateTarget,
     attempted: &mut RateProbeStats,
+    attempted_trace: &mut Vec<RateStep>,
     seed: &mut Option<Rung>,
     executor: &jpxl_encode::EncodeExecutor,
+    gaborish_preconditions: u32,
 ) -> Result<Option<RateOutcome>> {
     diagnostics::reset_search_diag();
     let target_bytes = target.bytes_for(frame.width(), frame.height());
     let start = QuantizerChoice::from_request(request).rung;
 
-    let precond_owned;
-    let mut stats = RateProbeStats::default();
-    let transform_frame: &crate::PreparedFrame = if request.restoration.gaborish {
-        precond_owned = crate::prepare_gaborish_frame(frame)?;
-        stats.gaborish_preconditions = 1;
-        &precond_owned
-    } else {
-        frame
+    let stats = RateProbeStats {
+        gaborish_preconditions,
+        ..RateProbeStats::default()
     };
     let mut prepared = PreparedSearch {
         frame,
@@ -1730,6 +1778,20 @@ fn search_frame_two_anchor(
     prepared.stats.fast_prices = 2;
     prepared.stats.exact_candidates = 2;
     drop(second_plan);
+    let mut trace = vec![
+        RateStep {
+            phase: RatePhase::Bracket,
+            quantizer: first_quantizer,
+            bytes: first_size.total,
+            feasible: first_size.total <= target_bytes,
+        },
+        RateStep {
+            phase: RatePhase::Bracket,
+            quantizer: second_quantizer,
+            bytes: second_size.total,
+            feasible: second_size.total <= target_bytes,
+        },
+    ];
 
     // Bias the one-shot prediction a little below the ceiling. Fast already
     // permits a 3% undershoot, so reserving one eighth of that band avoids a
@@ -1748,6 +1810,7 @@ fn search_frame_two_anchor(
         prediction_target,
     ) else {
         *attempted = prepared.stats;
+        *attempted_trace = trace;
         return Ok(None);
     };
     let finalist_quantizer = QuantizerChoice::at(finalist_rung, request.quant_lf)?;
@@ -1797,26 +1860,12 @@ fn search_frame_two_anchor(
         .bytes_for(target_bytes);
     let within_target =
         |bytes: u64| bytes <= target_bytes && target_bytes.saturating_sub(bytes) <= slack;
-    let mut trace = vec![
-        RateStep {
-            phase: RatePhase::Bracket,
-            quantizer: first_quantizer,
-            bytes: first_size.total,
-            feasible: first_size.total <= target_bytes,
-        },
-        RateStep {
-            phase: RatePhase::Bracket,
-            quantizer: second_quantizer,
-            bytes: second_size.total,
-            feasible: second_size.total <= target_bytes,
-        },
-        RateStep {
-            phase: RatePhase::Final,
-            quantizer: finalist_quantizer,
-            bytes: finalist_bytes,
-            feasible: finalist_bytes <= target_bytes,
-        },
-    ];
+    trace.push(RateStep {
+        phase: RatePhase::Final,
+        quantizer: finalist_quantizer,
+        bytes: finalist_bytes,
+        feasible: finalist_bytes <= target_bytes,
+    });
     let (chosen_quantizer, chosen_plan, emission) = if within_target(finalist_bytes) {
         (finalist_quantizer, finalist, finalist_emission)
     } else {
@@ -1897,6 +1946,7 @@ fn search_frame_two_anchor(
         }
         let Some(selected) = selected else {
             *attempted = prepared.stats;
+            *attempted_trace = trace;
             // Seed the exhaustive fallback with the crossing estimate from
             // the two exact points nearest the target: the local slope
             // between them, or the last exact point when there is only one.
@@ -1946,7 +1996,7 @@ fn search_frame_two_anchor(
     }))
 }
 
-/// Exact target controller retained as the production path and fallback.
+/// Exact target controller retained as the reference path and fallback.
 ///
 /// Two entropy pricing modes share the price budget:
 ///
@@ -1967,13 +2017,20 @@ fn search_frame_two_anchor(
 /// # Errors
 ///
 /// As [`search_ladder`], plus anything the planner or writer refuses.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the exhaustive controller receives the same request-scoped \
+              transform state explicitly so anchored fallback cannot rebuild it"
+)]
 fn search_frame_exhaustive(
     frame: &crate::PreparedFrame,
+    transform_frame: &crate::PreparedFrame,
     atlas: &crate::AnalysisAtlas,
     request: &EncodeRequest,
     target: RateTarget,
     executor: &jpxl_encode::EncodeExecutor,
     seed: Option<Rung>,
+    gaborish_preconditions: u32,
 ) -> Result<RateOutcome> {
     diagnostics::reset_search_diag();
     let target_bytes = target.bytes_for(frame.width(), frame.height());
@@ -1988,15 +2045,9 @@ fn search_frame_exhaustive(
         ),
     };
 
-    // Inverse-Gaborish is quantizer-independent: once per request, not per probe.
-    let precond_owned;
-    let mut stats = RateProbeStats::default();
-    let transform_frame: &crate::PreparedFrame = if request.restoration.gaborish {
-        precond_owned = crate::prepare_gaborish_frame(frame)?;
-        stats.gaborish_preconditions = 1;
-        &precond_owned
-    } else {
-        frame
+    let stats = RateProbeStats {
+        gaborish_preconditions,
+        ..RateProbeStats::default()
     };
     let mut prepared = PreparedSearch {
         frame,

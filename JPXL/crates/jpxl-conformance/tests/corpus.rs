@@ -17,6 +17,16 @@ use std::path::{Path, PathBuf};
 
 use jpxl_conformance::FloatImage;
 
+/// Interix/Windows' on-disk stand-in for a symbolic link.
+///
+/// Some Windows checkouts materialize the corpus download script's relative
+/// links as a small `IntxLNK\x01` file when the external `.objects` payload is
+/// absent. That is a missing reference under this test's documented contract,
+/// not a corrupt NPY file to feed the parser.
+fn is_windows_symlink_placeholder(bytes: &[u8]) -> bool {
+    bytes.starts_with(b"IntxLNK\x01")
+}
+
 /// `JPXL/tests/fixtures/conformance`.
 fn corpus_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -54,6 +64,15 @@ fn bike_5_reference_npy_and_thresholds_are_readable() {
 
     let npy_path = case_dir.join("reference_image.npy");
     let npy_bytes = match std::fs::read(&npy_path) {
+        Ok(bytes) if is_windows_symlink_placeholder(&bytes) => {
+            eprintln!(
+                "skipping: {} is a Windows symlink placeholder whose downloaded \
+                 object is absent (run tools/materialize-conformance-links.ps1 \
+                 after downloading the corpus references)",
+                npy_path.display()
+            );
+            return;
+        }
         Ok(bytes) if !bytes.is_empty() => bytes,
         _ => {
             eprintln!(
@@ -94,4 +113,12 @@ fn bike_5_reference_npy_and_thresholds_are_readable() {
         "bike_5: reference {}x{}x{}x{} f32, thresholds peak<={peak_error} rms<={rms_error}",
         reference.frames, reference.height, reference.width, reference.channels
     );
+}
+
+#[test]
+fn windows_symlink_placeholder_is_not_treated_as_npy() {
+    assert!(is_windows_symlink_placeholder(
+        b"IntxLNK\x01.\0.\0/\0.\0o\0b\0j\0e\0c\0t\0s\0"
+    ));
+    assert!(!is_windows_symlink_placeholder(b"\x93NUMPY\x01\x00"));
 }

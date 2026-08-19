@@ -5,7 +5,7 @@ build {
     tool "akr 0.3.1"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:7e02b4bcc565406e3f10a2b728fe882e2fa15906a4f8ff70169cccfd87423b1a"
+    source_graph "sha256:40e176d94aead3094adbc26540eb2c6b85c3b431c2865cc508b32734b649afb2"
 }
 
 source ".akr/project.akr" {
@@ -24,8 +24,8 @@ source ".akr/records/jpegxl-rs/constraints.akr" {
 }
 
 source ".akr/records/jpegxl-rs/decisions.akr" {
-    hash "sha256:a71d80d4527c2939066be54573018457cc03ffc606cf2f9af22aa87cf9d97726"
-    records 17
+    hash "sha256:94edfc4832a5b25bce637896f83ab143a50f4dd48a0b6e26d30ae65508fb0e0b"
+    records 18
 }
 
 source ".akr/records/jpegxl-rs/evidence.akr" {
@@ -44,8 +44,8 @@ source ".akr/records/jpegxl-rs/observations.akr" {
 }
 
 source ".akr/records/jpegxl-rs/papercuts.akr" {
-    hash "sha256:bd4f1ab7383598e70bebd846d2f2fe863f477e20365424d74b85e9137fa6b022"
-    records 28
+    hash "sha256:8b137e00b1117e920cf45a93430dbdd4f43f40a47f0447bbe1650fc2495e0f05"
+    records 30
 }
 
 source ".akr/records/jpegxl-rs/policies.akr" {
@@ -64,8 +64,8 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:bfac2c1e61ef00fe2d0ebdd32b19dc5be9b622325b53136ff2cb87cdb3fed726"
-    records 145
+    hash "sha256:b0765a9a463083436213a7c2e8c3e68815c36d3d4a441d2d5255ebaa24b94d20"
+    records 146
 }
 
 resolution @jpegxl-rs.decision.encoder-architecture-phases/1 {
@@ -6133,6 +6133,11 @@ seal @jpegxl-rs.papercut.orienting-on-this-project-through-the-knowledge/1 {
     hash "sha256:27a86404e0099e336fc997b06b9ad945925d2e625517ab9207afea6a4f0b62f0"
 }
 
+seal @jpegxl-rs.papercut.the-checked-in-quality-track-readme-points/1 {
+    state verified
+    hash "sha256:0e748483d5b27d25ffeabc331678b891178f7ca34e5477c12165160810524098"
+}
+
 seal @jpegxl-rs.papercut.the-first-phase-25-work-proposal-was-rejected/1 {
     state verified
     hash "sha256:9fd38bff4d4789d15817215125749a3931ccec161e1412aa76acdc5915b55495"
@@ -6146,6 +6151,11 @@ seal @jpegxl-rs.papercut.the-first-phase-26-diagnostic-harness-run/1 {
 seal @jpegxl-rs.papercut.the-installed-akr-0-3-1-rejected-four-existing/1 {
     state verified
     hash "sha256:afd89dd7ff8b6d1849dd88765b833898038ff37d09b17d51edb174065b593850"
+}
+
+seal @jpegxl-rs.papercut.the-native-windows-workspace-test-gate-treated/1 {
+    state verified
+    hash "sha256:d19c505dfadd64bc19d8e8e563fb84804e47b9fb7535ade82f3d11df068637ee"
 }
 
 seal @jpegxl-rs.papercut.the-photo-measurement-used-paths-relative-to/1 {

@@ -231,6 +231,17 @@ record jpegxl-rs.papercut.orienting-on-this-project-through-the-knowledge/1 : pa
     created_at 2026-08-12
 }
 
+record jpegxl-rs.papercut.the-checked-in-quality-track-readme-points/1 : papercut {
+    title "The checked-in quality-track README points ladder.ps1 at…"
+    state verified
+    statement """
+        The checked-in quality-track README points ladder.ps1 at `.agent/scratch/quality-track/inputs`, but the current `mid-photo.ppm` there is not a valid P5/P6 image and the run fails immediately; prior handoff outputs exist, so the fixture path or scratch retention is stale and needs a regeneration note/check.
+        """
+    observed_at git:0fbb8941f2c4fe3598b74ad602b3777c1e7e1ae1
+    author "fugu-ultra"
+    created_at 2026-08-19
+}
+
 record jpegxl-rs.papercut.the-first-phase-25-work-proposal-was-rejected/1 : papercut {
     title "The first Phase 25 work proposal was rejected because the work intent…"
     state verified
@@ -264,6 +275,17 @@ record jpegxl-rs.papercut.the-installed-akr-0-3-1-rejected-four-existing/1 : pap
     about "akr"
     author "codex"
     created_at 2026-08-15
+}
+
+record jpegxl-rs.papercut.the-native-windows-workspace-test-gate-treated/1 : papercut {
+    title "The native Windows workspace test gate treated the conformance corpus's…"
+    state verified
+    statement """
+        The native Windows workspace test gate treated the conformance corpus's 166-byte `IntxLNK` symlink placeholder as a downloaded `reference_image.npy` and failed with `BadMagic`; the test's documented missing-reference skip handled absent/empty files but not Windows symlink placeholders.
+        """
+    observed_at git:0fbb8941f2c4fe3598b74ad602b3777c1e7e1ae1
+    author "fugu-ultra"
+    created_at 2026-08-19
 }
 
 record jpegxl-rs.papercut.the-photo-measurement-used-paths-relative-to/1 : papercut {
