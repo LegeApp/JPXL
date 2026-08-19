@@ -2474,7 +2474,7 @@ record jpegxl-rs.observation.windows-msvc-avx2-fallback-not-bit-identical-2026-0
 
 record jpegxl-rs.observation.windows-msvc-avx2-fallback-not-bit-identical-2026-08-18/2 : observation {
     title "Windows MSVC AVX2 and fallback paths differ by one ULP"
-    state verified
+    state superseded
     scope [
         path "JPXL/crates/jpxl-core/src/color.rs",
         path "JPXL/crates/jpxl-core/src/simd.rs",
@@ -2492,5 +2492,28 @@ record jpegxl-rs.observation.windows-msvc-avx2-fallback-not-bit-identical-2026-0
     ]
     supersedes [
         @jpegxl-rs.observation.windows-msvc-avx2-fallback-not-bit-identical-2026-08-18/1
+    ]
+}
+
+record jpegxl-rs.observation.windows-msvc-avx2-fallback-not-bit-identical-2026-08-18/3 : observation {
+    title "Phase Q9 fixes Windows AVX2/fallback cube-root determinism without moving AVX2 production hashes"
+    state verified
+    scope [
+        path "JPXL/crates/jpxl-core/src/color.rs",
+        path "JPXL/crates/jpxl-core/src/simd.rs",
+        path "JPXL/crates/jpxl-encode-policy/**"
+    ]
+    statement """
+        The stale Windows one-ULP divergence was reproduced on the current native Windows GNU toolchain, then fixed in Phase Q9 by replacing platform f32::cbrt at scalar/SIMD boundaries with the same software-defined integer estimate and two ordered f64 Newton steps already used by the AVX2 path. The AVX2 production hashes stayed unchanged. Across all nine Balanced photo/rate cells, one and four threads, automatic and manual X=3/B=3, and AVX2 versus JPXL_DISABLE_AVX2 now produce identical codestream bytes; the previously failing color-plane and AVX2-cbrt identity tests pass.
+        """
+    observed_at git:9102a3666df57931bba8dc45acbec372a68f4a04
+    method command
+    watches [
+        "JPXL/crates/jpxl-core/src/color.rs",
+        "JPXL/crates/jpxl-core/src/simd.rs",
+        "JPXL/rust-toolchain.toml"
+    ]
+    supersedes [
+        @jpegxl-rs.observation.windows-msvc-avx2-fallback-not-bit-identical-2026-08-18/2
     ]
 }

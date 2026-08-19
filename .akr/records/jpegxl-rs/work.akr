@@ -6675,7 +6675,7 @@ record jpegxl-rs.work.quality-q8-preserve-chroma-policy-api/1 : work {
 
 record jpegxl-rs.work.quality-q9-production-presets/1 : work {
     title "Phase Q9: make Balanced the production default and promote Balanced-only chroma refinement"
-    state proposed
+    state completed
     scope [
         path ".agent/scratch/quality-track/**",
         path "JPXL/crates/jpxl-cli/src/main.rs",
@@ -6702,36 +6702,42 @@ record jpegxl-rs.work.quality-q9-production-presets/1 : work {
                 Changed Balanced outputs are byte-identical at one and four threads and the Windows non-AVX2 workspace tests pass.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.quality-q9-determinism-2026-08-19/1 ]
         }
         check preset-scope {
             statement """
                 The compiled automatic policy reproduces manual X=3/B=3 for Balanced, while Fast, explicit Quality, manual-QM requests, and fixed-quantizer outputs remain byte-identical to Q8 where claimed.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.quality-q9-preset-scope-2026-08-19/1 ]
         }
         check production-default {
             statement """
                 Default target-rate requests and the CLI select Balanced, while explicit Quality and Fast remain selectable and Quality still enters the exhaustive reference controller.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.quality-q9-production-default-2026-08-19/1 ]
         }
         check quality-gate {
             statement """
                 The full standing native-Windows 27-photo-cell plus 14-scene-cell screen passes Contract B against the frozen Q8 binary, with djxl and jxl-oxide accepting every changed stream.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.quality-q9-quality-screen-2026-08-19/1 ]
         }
         check speed-budget {
             statement """
                 Native-Windows interleaved timing shows no material Balanced regression and remains inside the cumulative +15% quality-track budget.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.quality-q9-speed-2026-08-19/1 ]
         }
         check workspace-gates {
             statement """
                 cargo build --workspace, cargo test --workspace, cargo clippy --workspace --all-targets -- -D warnings, and cargo fmt --all --check pass on Windows.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.quality-q9-workspace-gates-2026-08-19/1 ]
         }
     }
     depends_on [ @jpegxl-rs.work.quality-q8-preserve-chroma-policy-api/1 ]

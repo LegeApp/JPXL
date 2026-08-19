@@ -5,7 +5,7 @@ build {
     tool "akr 0.3.1"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:40e176d94aead3094adbc26540eb2c6b85c3b431c2865cc508b32734b649afb2"
+    source_graph "sha256:584d31ff1b0961aeb90bcbb3fb746e654e0730dd5f51be457b6d9b639ac1a5ef"
 }
 
 source ".akr/project.akr" {
@@ -24,13 +24,13 @@ source ".akr/records/jpegxl-rs/constraints.akr" {
 }
 
 source ".akr/records/jpegxl-rs/decisions.akr" {
-    hash "sha256:94edfc4832a5b25bce637896f83ab143a50f4dd48a0b6e26d30ae65508fb0e0b"
+    hash "sha256:f4168497b5f6e3a320e204fade6cbfd47f60cc132f0eb2ef5f9c24bd34aad1bc"
     records 18
 }
 
 source ".akr/records/jpegxl-rs/evidence.akr" {
-    hash "sha256:65750adc18014a3cde02e53b27214c88bfabe8239609f6d07c9b60a096e9bffb"
-    records 383
+    hash "sha256:53202ba2855b8edba153494d0008ae34a437ff10ad428a18fd6574f8a6526c79"
+    records 389
 }
 
 source ".akr/records/jpegxl-rs/milestones.akr" {
@@ -39,8 +39,8 @@ source ".akr/records/jpegxl-rs/milestones.akr" {
 }
 
 source ".akr/records/jpegxl-rs/observations.akr" {
-    hash "sha256:faa0c53985420d129e9b611be354b8a920f8d6d8bd607a2f77ab4d8c50d68332"
-    records 89
+    hash "sha256:0991aa250cddd08f11a48943f166be48628068dd7867192f9e21a11ae43f4924"
+    records 90
 }
 
 source ".akr/records/jpegxl-rs/papercuts.akr" {
@@ -64,7 +64,7 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:b0765a9a463083436213a7c2e8c3e68815c36d3d4a441d2d5255ebaa24b94d20"
+    hash "sha256:9a8f5d516d2096cd8f0e6756177f29bc1aec9059786ffcde2038b81ad7348d3e"
     records 146
 }
 
@@ -3563,6 +3563,11 @@ seal @jpegxl-rs.decision.encoder-architecture-phases/1 {
     hash "sha256:bebc6ba8560b5b033c8661d3025f45375dcd7f485639aba3dcc1338c845dcfa4"
 }
 
+seal @jpegxl-rs.decision.lossy-production-presets/1 {
+    state active
+    hash "sha256:d19c971ca05fd4c761b4f9708332d47476112140ec6a218e83baa890743a0a24"
+}
+
 seal @jpegxl-rs.decision.modular-lean-default/1 {
     state active
     hash "sha256:0b4e46003458674d0b4033eaec7a7fe16ac4c7d572c4b26eedb9da50a90cafc3"
@@ -5403,6 +5408,36 @@ seal @jpegxl-rs.evidence.quality-q8-workspace-gates-2026-08-18/1 {
     hash "sha256:2b50d0a08386ab4eb02be82e3fcfab69c09a3280afc34137865d9aebeee4930c"
 }
 
+seal @jpegxl-rs.evidence.quality-q9-determinism-2026-08-19/1 {
+    state verified
+    hash "sha256:a9b33d42eeb5d5d9a5256998ae8c1b4c18c9c37955ecb38630a120c77df3c554"
+}
+
+seal @jpegxl-rs.evidence.quality-q9-preset-scope-2026-08-19/1 {
+    state verified
+    hash "sha256:4718784a96f4ecfd14dea8c3ac382ac5b62b81c31bbb777a64b6db67b15ca54c"
+}
+
+seal @jpegxl-rs.evidence.quality-q9-production-default-2026-08-19/1 {
+    state verified
+    hash "sha256:fe39c17f6f446a93c52dbbeacd922d1252805eedd391bd69d51a8e205dc414b8"
+}
+
+seal @jpegxl-rs.evidence.quality-q9-quality-screen-2026-08-19/1 {
+    state verified
+    hash "sha256:f76c128fecf09f363ceb2d129987d8c03fd2d5fc4ef2e5dbd07d5112ba2b1b9d"
+}
+
+seal @jpegxl-rs.evidence.quality-q9-speed-2026-08-19/1 {
+    state verified
+    hash "sha256:24b669c8a24c99963f18e2dd373732f060dadb28f374bca1b1267fd8bb571a7a"
+}
+
+seal @jpegxl-rs.evidence.quality-q9-workspace-gates-2026-08-19/1 {
+    state verified
+    hash "sha256:d1bbe98a91c0b48febe3b5b154a670f0bc853cd46a916289f970596ed5727a79"
+}
+
 seal @jpegxl-rs.evidence.retire-handoff-durable-facts-2026-08-11/1 {
     state verified
     hash "sha256:d5bdf84076bed194a4be6e7e9ea15569dbed84339827e224b936cd8feeb95a65"
@@ -6029,8 +6064,13 @@ seal @jpegxl-rs.observation.windows-msvc-avx2-fallback-not-bit-identical-2026-08
 }
 
 seal @jpegxl-rs.observation.windows-msvc-avx2-fallback-not-bit-identical-2026-08-18/2 {
+    state superseded
+    hash "sha256:4e3be46ac70bd2595f8bba8b2ef249327cd2f97ca9632e85e616e26315423498"
+}
+
+seal @jpegxl-rs.observation.windows-msvc-avx2-fallback-not-bit-identical-2026-08-18/3 {
     state verified
-    hash "sha256:35839ace8ad78df8f13d6ff3440cae9dca536662950fc9c77fa974ef43428ce5"
+    hash "sha256:5295c94cb113b0e197af59ad032bf40eb8cb336b348d5670a2c935a048c764a7"
 }
 
 seal @jpegxl-rs.papercut.a-harmless-scratch-setup-command-was-rejected/1 {
@@ -6896,6 +6936,11 @@ seal @jpegxl-rs.work.quality-q8-chroma-allocation/1 {
 seal @jpegxl-rs.work.quality-q8-preserve-chroma-policy-api/1 {
     state completed
     hash "sha256:a75fe16b720018eb8ad476c6487806e765237ec1d115d75f7050099a24f5874d"
+}
+
+seal @jpegxl-rs.work.quality-q9-production-presets/1 {
+    state completed
+    hash "sha256:f6d7d067605f60d8e3a4f4e0d35b647b19ee4526305e72a491f5fe76cc86e5d5"
 }
 
 seal @jpegxl-rs.work.retire-handoff-ledger/1 {

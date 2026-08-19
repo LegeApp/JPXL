@@ -131,13 +131,12 @@ record jpegxl-rs.decision.ledger-conventions/1 : decision {
 
 record jpegxl-rs.decision.lossy-production-presets/1 : decision {
     title "Balanced and Fast are the production lossy presets; Quality is the exhaustive reference preset"
-    state proposed
+    state active
     scope [
         path "JPXL/crates/jpxl-cli/src/main.rs",
         path "JPXL/crates/jpxl-encode-policy/**",
         path "JPXL/docs/optimize.md"
     ]
-    topic lossy-presets
     decision """
         Treat RateSearchPreset::Balanced and RateSearchPreset::Fast as the production-intended lossy paths. RateSearchPreset::Quality remains an exhaustive reference/oracle path for comparison, fallback, and research; it is not the primary target for production quality, latency, or efficiency work. New quality passes should first seek bounded, measured improvements to Balanced and Fast without silently routing their normal operation through Quality-tier work.
         """
@@ -147,6 +146,10 @@ record jpegxl-rs.decision.lossy-production-presets/1 : decision {
     consequences """
         Quality-only gains may still be recorded, but they do not satisfy a request to improve production encoding. Promotion reports must state which preset changes, prove unchanged presets stay byte-identical where claimed, and measure native Windows behavior when that is the faster available host path.
         """
+    supported_by [
+        @jpegxl-rs.evidence.quality-q9-production-default-2026-08-19/1,
+        @jpegxl-rs.evidence.quality-q9-speed-2026-08-19/1
+    ]
 }
 
 record jpegxl-rs.decision.mit-only-licensing/1 : decision {
