@@ -1568,6 +1568,20 @@ conformance wiring test also recognises an unmaterialized placeholder as the
 missing external reference it is, rather than reporting a misleading NPY
 `BadMagic`.
 
+**The quality and conformance loops now run natively on Windows, no WSL.**
+Native encoding is materially faster than WSL here, so the last bash-only
+entry points gained PowerShell siblings: `cjxl-match.ps1` bisects `cjxl -e 7`
+to JPXL's candidate bytes per `(image, bpp)` and scores both, emitting the same
+`cjxl-<tag>.tsv` columns `summarise.py` consumes (validated: mid-photo 1 bpp
+matched to 534,303 B against a 539,958 B target, JPXL 77.92 vs cjxl 75.51
+SSIMULACRA2, Butteraugli 2.744 vs 2.425 — the documented "ahead on
+SSIMULACRA2, behind on Butteraugli" split); and tracked
+`tools/fetch-conformance.ps1` mirrors `fetch-conformance.sh` at the same pinned
+commit for corpus setup. `ladder.ps1`/`scenes.ps1`/`timing.ps1`/
+`verify-q9-production.ps1`/`materialize-conformance-links.ps1` already covered
+the rest, so `ladder.ps1 -> cjxl-match.ps1 -> summarise.py` is a WSL-free
+pipeline end to end.
+
 ### Open architectural questions
 
 1. How can the finalist refresh only structurally unstable cover decisions?

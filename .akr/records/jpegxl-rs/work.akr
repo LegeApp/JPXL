@@ -5872,6 +5872,42 @@ record jpegxl-rs.work.encoder-optimization-plan/1 : work {
     }
 }
 
+record jpegxl-rs.work.native-windows-quality-tooling/1 : work {
+    title "Native Windows equivalents for the last bash-only quality/conformance tooling (cjxl-match, fetch-conformance)"
+    state proposed
+    scope [
+        path ".agent/scratch/quality-track/**",
+        path "JPXL/docs/CONFORMANCE.md",
+        path "JPXL/docs/optimize.md",
+        path "JPXL/tools/fetch-conformance.ps1"
+    ]
+    intent """
+        Native Windows encoding is materially faster than WSL, and the user asked that any tester script or binary lacking a Windows equivalent be built for Windows. The standing quality loop and corpus setup had two remaining bash-only entry points: cjxl-match.sh (the cjxl -e7 matched-byte comparator that feeds summarise.py's 'cjxl at matched bytes' table) and the tracked tools/fetch-conformance.sh (pinned corpus clone). Add faithful PowerShell ports — cjxl-match.ps1 (gitignored scratch, beside its siblings) and tools/fetch-conformance.ps1 (tracked) — using the Windows oracle binaries, no awk/wslpath/WSL, keeping the fetch pin in lockstep with the .sh, and point the tracked docs and local harness README at the native equivalents. Do not change any codec code, preset, or output.
+        """
+    acceptance {
+        check cjxl-match-native {
+            statement """
+                cjxl-match.ps1 bisects cjxl -e7 to JPXL's candidate bytes per (image,bpp) and writes a summarise.py-compatible cjxl TSV natively (no WSL/awk/wslpath), reproducing the documented ahead-on-SSIMULACRA2/behind-on-Butteraugli split.
+                """
+            method command
+        }
+        check fetch-conformance-native {
+            statement """
+                tools/fetch-conformance.ps1 mirrors fetch-conformance.sh at the same pinned commit and is idempotent (no-ops when the checkout is already at the pin).
+                """
+            method command
+        }
+        check no-codec-change {
+            statement """
+                No Rust source changed; cargo fmt --check and cargo build --workspace stay green and the tracked docs point at the native equivalents.
+                """
+            method command
+        }
+    }
+    depends_on [ @jpegxl-rs.work.quality-q9-production-presets/1 ]
+    part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+}
+
 record jpegxl-rs.work.opt-benches-and-counters/1 : work {
     title "Add encode benches and multiplicity counters"
     state completed

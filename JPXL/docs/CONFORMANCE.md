@@ -57,7 +57,9 @@ restoration filter on a displayed kModular frame, a greyscale
 
 ## Official conformance corpus
 
-Cloned by `tools/fetch-conformance.sh` into `tests/fixtures/conformance/`,
+Cloned by `tools/fetch-conformance.sh` (or, natively on Windows,
+`tools/fetch-conformance.ps1` — same pinned commit, no WSL) into
+`tests/fixtures/conformance/`,
 pinned by the checkout's commit. That clone brings `input.jxl`, `test.json`
 and a preview `ref.png` for every test case, but the corpus's own big
 reference files — `reference_image.npy`, `reference_preview.npy`,
