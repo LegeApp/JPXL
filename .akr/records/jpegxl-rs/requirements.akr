@@ -1,0 +1,29 @@
+akr 0.1
+project jpegxl-rs
+
+record jpegxl-rs.requirement.general-use-integration-surface/1 : requirement {
+    title "Applications can use JPXL without Netpbm-only plumbing"
+    state superseded
+    scope [ path "JPXL/crates/jpxl-cli/**", path "JPXL/crates/jpxl/**", path "README.md" ]
+    statement """
+        JPXL shall provide a documented high-level Rust API over ordinary interleaved pixel buffers and a CLI that reads and writes common raster image formats, while reporting unsupported transparency or codec features explicitly rather than dropping data.
+        """
+    rationale """
+        OpenArc and other image-generating applications need on-demand encoder integration and ordinary image conversion; PGM/PPM-only file plumbing is not an acceptable end-user boundary.
+        """
+    author "GitHub Uploader"
+}
+
+record jpegxl-rs.requirement.general-use-integration-surface/2 : requirement {
+    title "Applications can use JPXL without Netpbm-only plumbing"
+    state active
+    scope [ path "JPXL/crates/**", path "README.md" ]
+    statement """
+        JPXL shall provide a documented high-level Rust API over ordinary interleaved pixel buffers and a CLI that reads and writes common raster image formats, while reporting unsupported transparency or codec features explicitly rather than dropping data.
+        """
+    rationale """
+        OpenArc and other image-generating applications need on-demand encoder integration and ordinary image conversion; PGM/PPM-only file plumbing is not an acceptable end-user boundary.
+        """
+    supersedes [ @jpegxl-rs.requirement.general-use-integration-surface/1 ]
+    author "GitHub Uploader"
+}

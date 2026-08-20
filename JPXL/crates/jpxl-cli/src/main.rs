@@ -11,12 +11,14 @@
 //! | 1 | I/O, usage, or decode error |
 //! | 2 | `info`: the file is not JPEG XL |
 
-use std::io::Write as _;
+use std::io::{Read as _, Write as _};
 use std::path::Path;
 use std::process::ExitCode;
 
 use jpxl_conformance::sniff;
 use jpxl_core::limits::Limits;
+
+mod image_io;
 
 /// Everything went as asked.
 const EXIT_OK: u8 = 0;
@@ -31,9 +33,12 @@ jpxl — JPEG XL codec (JPXL)
 Usage:
     jpxl info <file>              Identify a file and print its stream kind
     jpxl boxes <file.jxl>         List the Part 2 box structure of a container
-    jpxl decode <in.jxl> <out>    Decode to a binary PGM (P5) or PPM (P6)
-    jpxl encode [opts] <in> <out> Encode a binary PGM (P5) or PPM (P6); lossless
-                                  modular by default, lossy VarDCT with --bpp
+    jpxl decode [opts] <in.jxl> <out>
+                                  Decode to PNG, JPEG, WebP, TIFF, BMP, GIF,
+                                  ICO, TGA, QOI, PGM, or PPM
+    jpxl encode [opts] <in> <out> Encode PNG, JPEG, WebP, TIFF, BMP, GIF, ICO,
+                                  TGA, QOI, PGM, or PPM; lossless modular by
+                                  default, lossy VarDCT with --bpp
     jpxl compare <ref.ppm> <b.ppm>
                                   Print RMSE and PSNR between two decoded PPMs
                                   (plus SSIMULACRA2 and butteraugli, if built
@@ -43,6 +48,8 @@ Usage:
     jpxl --version                Show the version
 
 Encode options:
+    --background <#RRGGBB>       Explicitly flatten a transparent input;
+                                  transparent JPEG XL output is not yet encoded
     --container                   Wrap the codestream in a Part 2 container
     --effort <1..9>               Lossless search effort (default 1 = fastest).
                                   Higher is slower and only occasionally smaller;
@@ -53,7 +60,12 @@ Encode options:
     --threads <n>                 Section-parallel workers (default: host
                                   available_parallelism; 1 = serial)
 
-Lossy options (8-bit RGB only; either one selects the VarDCT path):
+Decode options:
+    -f, --format <name>           Output format; required for stdout (`-`),
+                                  otherwise inferred from the output extension
+    --background <#RRGGBB>       Flatten alpha when writing JPEG or PNM
+
+Lossy options (8- or 16-bit RGB; either one selects the VarDCT path):
     --bpp <f>                     Target bits per pixel
     --target-bytes <n>            Target output size in bytes
     --lossy-preset <mode>         Rate controller: balanced (default production
@@ -132,12 +144,12 @@ Exit codes:
     1  I/O, usage, or codec error
     2  info: not a JPEG XL stream
 
-`decode` picks P5 for a one-channel image and P6 for three, and writes
-16-bit big-endian samples when the bit depth exceeds 8, as Netpbm requires.
+Use `-` as an input or output path for pipelines. Binary output goes to stdout
+and the human-readable summary moves to stderr.
 
-`encode` accepts P5 and P6 with maxval 255 or 65535 and writes a lossless
-modular codestream: greyscale as-is, RGB through the reversible colour
-transform, split into groups when the image exceeds one group.
+`encode` preserves 8- or 16-bit greyscale/RGB precision where the input format
+provides it. Opaque alpha is discarded; non-opaque alpha must be flattened
+explicitly with `--background` so transparency is never lost silently.
 
 `bench` isolates Modular lossless, VarDCT fixed-quantizer, VarDCT target-rate,
 and a single VarDCT probe so flamegraphs are not mixed across paths.
@@ -204,6 +216,13 @@ fn run(args: &[String]) -> u8 {
         return EXIT_ERROR;
     };
 
+    // Every ordinary subcommand accepts the conventional help spelling.
+    // `bench` has a dedicated, longer help page and handles its own flag.
+    if command != "bench" && matches!(rest, [flag] if flag == "-h" || flag == "--help") {
+        print!("{USAGE}");
+        return EXIT_OK;
+    }
+
     match command.as_str() {
         "-h" | "--help" | "help" => {
             print!("{USAGE}");
@@ -258,14 +277,53 @@ fn cmd_info(args: &[String]) -> u8 {
     }
 }
 
-/// `jpxl decode <in.jxl> <out.pgm|out.ppm>`: decode to a binary Netpbm file.
+/// `jpxl decode [opts] <in.jxl> <out>`: decode to a common raster format.
 fn cmd_decode(args: &[String]) -> u8 {
-    let [input, output] = args else {
+    let mut format = None;
+    let mut background = None;
+    let mut positional = Vec::new();
+    let mut rest = args.iter();
+    while let Some(arg) = rest.next() {
+        match arg.as_str() {
+            "-f" | "--format" => {
+                let Some(value) = rest.next() else {
+                    fail("`--format` needs an output format name");
+                    return EXIT_ERROR;
+                };
+                match image_io::RasterFormat::parse(value) {
+                    Ok(value) => format = Some(value),
+                    Err(error) => {
+                        fail(&error);
+                        return EXIT_ERROR;
+                    }
+                }
+            }
+            "--background" => {
+                let Some(value) = rest.next() else {
+                    fail("`--background` needs #RGB or #RRGGBB");
+                    return EXIT_ERROR;
+                };
+                match image_io::parse_background(value) {
+                    Ok(value) => background = Some(value),
+                    Err(error) => {
+                        fail(&error);
+                        return EXIT_ERROR;
+                    }
+                }
+            }
+            other if other.starts_with('-') && other != "-" => {
+                fail(&format!("unknown `decode` option `{other}`"));
+                return EXIT_ERROR;
+            }
+            _ => positional.push(arg),
+        }
+    }
+    let [input, output] = positional.as_slice() else {
         fail("`decode` takes an input and an output path");
         return EXIT_ERROR;
     };
 
-    let bytes = match std::fs::read(Path::new(input)) {
+    let bytes = match read_path(input) {
         Ok(bytes) => bytes,
         Err(err) => {
             fail(&format!("{input}: {err}"));
@@ -273,7 +331,7 @@ fn cmd_decode(args: &[String]) -> u8 {
         }
     };
 
-    let image = match jpxl_decode::decode(&bytes, &Limits::default()) {
+    let image = match jpxl::decode(&bytes) {
         Ok(image) => image,
         Err(err) => {
             fail(&format!("{input}: {err}"));
@@ -281,14 +339,32 @@ fn cmd_decode(args: &[String]) -> u8 {
         }
     };
 
-    match std::fs::write(Path::new(output), encode_netpbm(&image)) {
+    let format = match format.or_else(|| image_io::RasterFormat::from_path(output).ok()) {
+        Some(format) => format,
+        None => {
+            fail("cannot infer the output format; pass `--format <name>`");
+            return EXIT_ERROR;
+        }
+    };
+    let raster = match image_io::encode_output(&bytes, &image, format, background) {
+        Ok(raster) => raster,
+        Err(error) => {
+            fail(&error);
+            return EXIT_ERROR;
+        }
+    };
+
+    match write_path(output, &raster) {
         Ok(()) => {
-            println!(
-                "{output}: {}x{}, {} channel(s), {} bits per sample",
-                image.width,
-                image.height,
-                image.num_colour_channels,
-                image.colour_bits_per_sample()
+            status_line(
+                output,
+                &format!(
+                    "{output}: {}x{}, {} colour channel(s), {} bits per sample",
+                    image.width,
+                    image.height,
+                    image.num_colour_channels,
+                    image.colour_bits_per_sample()
+                ),
             );
             EXIT_OK
         }
@@ -355,7 +431,7 @@ fn cmd_boxes(args: &[String]) -> u8 {
     EXIT_OK
 }
 
-/// `jpxl encode [opts] <in.pgm|in.ppm> <out.jxl>`: encode losslessly.
+/// `jpxl encode [opts] <raster> <out.jxl>`: encode a common raster image.
 fn cmd_encode(args: &[String]) -> u8 {
     let mut options = jpxl_encode::EncodeOptions::default();
     let mut rate_target: Option<jpxl_encode_policy::RateTarget> = None;
@@ -375,12 +451,26 @@ fn cmd_encode(args: &[String]) -> u8 {
     let mut dead_zone_scale: Option<f32> = None;
     let mut zero_token_bits: Option<f32> = None;
     let mut tolerance: Option<f64> = None;
+    let mut background = None;
     let mut sections = false;
     let mut positional: Vec<&String> = Vec::new();
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
         match arg.as_str() {
             "--container" => options.container = true,
+            "--background" => {
+                let Some(value) = rest.next() else {
+                    fail("`--background` needs #RGB or #RRGGBB");
+                    return EXIT_ERROR;
+                };
+                match image_io::parse_background(value) {
+                    Ok(value) => background = Some(value),
+                    Err(error) => {
+                        fail(&error);
+                        return EXIT_ERROR;
+                    }
+                }
+            }
             "--bpp" => {
                 let Some(v) = rest.next().and_then(|v| v.parse::<f64>().ok()) else {
                     fail("`--bpp` needs a positive bits-per-pixel target");
@@ -737,7 +827,7 @@ fn cmd_encode(args: &[String]) -> u8 {
         return EXIT_ERROR;
     };
 
-    let bytes = match std::fs::read(Path::new(input.as_str())) {
+    let bytes = match read_path(input) {
         Ok(bytes) => bytes,
         Err(err) => {
             fail(&format!("{input}: {err}"));
@@ -745,7 +835,7 @@ fn cmd_encode(args: &[String]) -> u8 {
         }
     };
 
-    let image = match decode_netpbm(&bytes) {
+    let image = match image_io::decode_input(&bytes, background) {
         Ok(image) => image,
         Err(err) => {
             fail(&format!("{input}: {err}"));
@@ -800,7 +890,7 @@ fn cmd_encode(args: &[String]) -> u8 {
         },
     };
 
-    match std::fs::write(Path::new(output.as_str()), &encoded) {
+    match write_path(output, &encoded) {
         Ok(()) => {
             let mode = match rate_target {
                 Some(jpxl_encode_policy::RateTarget::BitsPerPixel(b)) => {
@@ -811,13 +901,16 @@ fn cmd_encode(args: &[String]) -> u8 {
                 }
                 None => format!("lossless modular, effort {}", options.effort.level()),
             };
-            println!(
-                "{output}: {}x{}, {} channel(s), {} bits per sample, {mode}, {} bytes",
-                image.width(),
-                image.height(),
-                image.num_channels(),
-                image.bits_per_sample(),
-                encoded.len()
+            status_line(
+                output,
+                &format!(
+                    "{output}: {}x{}, {} channel(s), {} bits per sample, {mode}, {} bytes",
+                    image.width(),
+                    image.height(),
+                    image.num_channels(),
+                    image.bits_per_sample(),
+                    encoded.len()
+                ),
             );
             // A missed rate target is not a failure — the loop's contract is
             // "never over" — but it is silent unless said out loud, and the two
@@ -826,7 +919,7 @@ fn cmd_encode(args: &[String]) -> u8 {
             // means the search ran out of prices short of the target.
             if let Some(report) = lossy {
                 if sections {
-                    print_section_breakdown(&report.sizing);
+                    print_section_breakdown(&report.sizing, output);
                 }
                 // Research aid: `JPXL_RATE_TRACE=1` dumps every priced rung so a
                 // rate-search miss can be attributed to the ladder shape.
@@ -834,23 +927,29 @@ fn cmd_encode(args: &[String]) -> u8 {
                     dump_cover_map(&report.plan, &path.to_string_lossy());
                 }
                 if std::env::var_os("JPXL_RATE_TRACE").is_some() {
-                    println!(
-                        "  anchor: fallbacks={} first_finalist_bytes={} correction_bytes={}                          fast_prices={} full_prices={}",
-                        report.stats.anchor_fallbacks,
-                        report.stats.anchor_first_finalist_bytes,
-                        report.stats.anchor_correction_bytes,
-                        report.stats.fast_prices,
-                        report.stats.full_prices
+                    status_line(
+                        output,
+                        &format!(
+                            "  anchor: fallbacks={} first_finalist_bytes={} correction_bytes={}                          fast_prices={} full_prices={}",
+                            report.stats.anchor_fallbacks,
+                            report.stats.anchor_first_finalist_bytes,
+                            report.stats.anchor_correction_bytes,
+                            report.stats.fast_prices,
+                            report.stats.full_prices
+                        ),
                     );
                     for step in &report.trace {
-                        println!(
-                            "  trace: {:?} rung={} scale={} hf_mul={} bytes={} feasible={}",
-                            step.phase,
-                            step.quantizer.rung.get(),
-                            step.quantizer.global_scale.get(),
-                            step.quantizer.hf_mul.get(),
-                            step.bytes,
-                            step.feasible
+                        status_line(
+                            output,
+                            &format!(
+                                "  trace: {:?} rung={} scale={} hf_mul={} bytes={} feasible={}",
+                                step.phase,
+                                step.quantizer.rung.get(),
+                                step.quantizer.global_scale.get(),
+                                step.quantizer.hf_mul.get(),
+                                step.bytes,
+                                step.feasible
+                            ),
                         );
                     }
                 }
@@ -874,10 +973,13 @@ fn cmd_encode(args: &[String]) -> u8 {
                         "search ended short of target with budget spent, not at the \
                          ladder's limit"
                     };
-                    println!(
-                        "  note: undershot target by {miss} bytes ({pct:.1}%) — {why} \
-                         [prices: {} fast, {} full]",
-                        report.fast_prices, report.full_prices
+                    status_line(
+                        output,
+                        &format!(
+                            "  note: undershot target by {miss} bytes ({pct:.1}%) — {why} \
+                             [prices: {} fast, {} full]",
+                            report.fast_prices, report.full_prices
+                        ),
                     );
                 }
             }
@@ -1666,10 +1768,9 @@ fn synthetic_rgb8(width: u32, height: u32) -> Vec<u8> {
 
 /// Encodes `image` through the lossy VarDCT rate loop to `target`.
 ///
-/// The policy crate's façade takes interleaved sRGB8, so this re-interleaves
-/// the validated planes rather than re-reading the file. 8-bit RGB only: the
-/// VarDCT path converts sRGB8 to XYB and has no route for greyscale or deeper
-/// samples yet, so anything else is refused rather than silently mangled.
+/// The policy crate's high-precision façade takes interleaved sRGB samples, so
+/// this re-interleaves the validated planes rather than re-reading the file.
+/// Greyscale is refused rather than silently expanded to RGB.
 /// What a lossy encode did, beyond the bytes: enough to tell a *hit* target
 /// from a *missed* one and to say why it was missed.
 struct LossyReport {
@@ -1766,9 +1867,9 @@ fn encode_lossy_to_target(
     target: jpxl_encode_policy::RateTarget,
     overrides: LossyOverrides,
 ) -> Result<LossyReport, String> {
-    if image.num_channels() != 3 || image.bits_per_sample() != 8 {
+    if image.num_channels() != 3 {
         return Err(format!(
-            "lossy encoding needs 8-bit RGB (P6 with maxval 255); this is {} channel(s) at {} bits",
+            "lossy encoding needs RGB input; this is {} channel(s) at {} bits",
             image.num_channels(),
             image.bits_per_sample()
         ));
@@ -1777,13 +1878,19 @@ fn encode_lossy_to_target(
     let (Some(r), Some(g), Some(b)) = (planes.first(), planes.get(1), planes.get(2)) else {
         return Err("lossy encoding needs three colour planes".to_owned());
     };
+    let bits_per_sample = image.bits_per_sample();
+    let max = if bits_per_sample >= 16 {
+        i32::from(u16::MAX)
+    } else {
+        i32::try_from((1u32 << bits_per_sample) - 1).unwrap_or(i32::MAX)
+    };
     let mut rgb = Vec::with_capacity(r.len().saturating_mul(3));
     for i in 0..r.len() {
         for plane in [r, g, b] {
-            // Planes are validated to [0, 255] for an 8-bit image, so the
+            // Planes are validated to the declared bit depth, so the
             // clamp is belt-and-braces rather than load-bearing.
-            let v = plane.get(i).copied().unwrap_or(0).clamp(0, 255);
-            rgb.push(u8::try_from(v).unwrap_or(0));
+            let v = plane.get(i).copied().unwrap_or(0).clamp(0, max);
+            rgb.push(u16::try_from(v).unwrap_or(0));
         }
     }
     let mut request = jpxl_encode_policy::EncodeRequest::for_target(target);
@@ -1850,10 +1957,11 @@ fn encode_lossy_to_target(
             fraction,
         };
     }
-    jpxl_encode_policy::encode_srgb8_to_target(
+    jpxl_encode_policy::encode_srgb16_to_target(
         image.width(),
         image.height(),
         &rgb,
+        bits_per_sample,
         &request,
         target,
     )
@@ -1879,7 +1987,7 @@ fn encode_lossy_to_target(
 /// `encode --sections`: where the bytes of a lossy codestream went, by
 /// section kind (F.3.1), so a density change can be attributed to HF
 /// coefficients, LF/DC, entropy tables or headers.
-fn print_section_breakdown(sizing: &jpxl_encode::vardct::CodestreamSizing) {
+fn print_section_breakdown(sizing: &jpxl_encode::vardct::CodestreamSizing, output: &str) {
     use jpxl_encode::vardct::SectionKind;
     let pick = |f: &dyn Fn(SectionKind) -> bool| sizing.bytes_where(f);
     let lf_global = pick(&|k| matches!(k, SectionKind::LfGlobal));
@@ -1894,22 +2002,25 @@ fn print_section_breakdown(sizing: &jpxl_encode::vardct::CodestreamSizing) {
         reason = "byte counts stay far inside f64's exact integer range"
     )]
     let pct = |b: u64| b as f64 * 100.0 / total as f64;
-    println!(
-        "  sections: total={} headers_toc={} ({:.1}%) lf_global={} ({:.1}%) lf_groups={} \
-         ({:.1}%) hf_global={} ({:.1}%) pass_groups={} ({:.1}%) whole={} sections={}",
-        sizing.total,
-        headers_toc,
-        pct(headers_toc),
-        lf_global,
-        pct(lf_global),
-        lf_groups,
-        pct(lf_groups),
-        hf_global,
-        pct(hf_global),
-        pass_groups,
-        pct(pass_groups),
-        whole,
-        sizing.sections.len(),
+    status_line(
+        output,
+        &format!(
+            "  sections: total={} headers_toc={} ({:.1}%) lf_global={} ({:.1}%) lf_groups={} \
+             ({:.1}%) hf_global={} ({:.1}%) pass_groups={} ({:.1}%) whole={} sections={}",
+            sizing.total,
+            headers_toc,
+            pct(headers_toc),
+            lf_global,
+            pct(lf_global),
+            lf_groups,
+            pct(lf_groups),
+            hf_global,
+            pct(hf_global),
+            pass_groups,
+            pct(pass_groups),
+            whole,
+            sizing.sections.len(),
+        ),
     );
 }
 
@@ -2093,9 +2204,92 @@ pub fn encode_netpbm(image: &jpxl_decode::DecodedImage) -> Vec<u8> {
     out
 }
 
+/// Read a file, or stdin when `path` is `-`.
+fn read_path(path: &str) -> std::io::Result<Vec<u8>> {
+    if path == "-" {
+        let mut bytes = Vec::new();
+        std::io::stdin().lock().read_to_end(&mut bytes)?;
+        Ok(bytes)
+    } else {
+        std::fs::read(Path::new(path))
+    }
+}
+
+/// Write a file, or stdout when `path` is `-`.
+fn write_path(path: &str, bytes: &[u8]) -> std::io::Result<()> {
+    if path == "-" {
+        let mut stdout = std::io::stdout().lock();
+        stdout.write_all(bytes)?;
+        stdout.flush()
+    } else {
+        std::fs::write(Path::new(path), bytes)
+    }
+}
+
+/// Keep binary stdout clean in pipeline mode.
+fn status_line(output: &str, message: &str) {
+    if output == "-" {
+        let _ = writeln!(std::io::stderr().lock(), "{message}");
+    } else {
+        println!("{message}");
+    }
+}
+
 /// Print an error to stderr, with the usage hint.
 fn fail(message: &str) {
     let mut stderr = std::io::stderr().lock();
     let _ = writeln!(stderr, "jpxl: error: {message}");
     let _ = writeln!(stderr, "try `jpxl --help`");
+}
+
+#[cfg(test)]
+mod cli_tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use image::{DynamicImage, ImageBuffer, ImageFormat, Rgb};
+
+    use super::*;
+
+    static NEXT_TEMP: AtomicUsize = AtomicUsize::new(0);
+
+    fn temp_dir() -> std::path::PathBuf {
+        let id = NEXT_TEMP.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!("jpxl-cli-test-{}-{id}", std::process::id()))
+    }
+
+    #[test]
+    fn png_to_jxl_to_png_is_lossless() {
+        let temp = temp_dir();
+        std::fs::create_dir_all(&temp).expect("temp directory");
+        let input = temp.join("input.png");
+        let encoded = temp.join("encoded.jxl");
+        let output = temp.join("output.png");
+        let original = vec![1, 2, 3, 10, 20, 30, 100, 150, 200, 255, 254, 253];
+        let dynamic = DynamicImage::ImageRgb8(
+            ImageBuffer::<Rgb<u8>, _>::from_raw(2, 2, original.clone()).expect("shape"),
+        );
+        dynamic
+            .save_with_format(&input, ImageFormat::Png)
+            .expect("write input PNG");
+
+        let encode_args = vec![
+            "encode".to_owned(),
+            input.to_string_lossy().into_owned(),
+            encoded.to_string_lossy().into_owned(),
+        ];
+        assert_eq!(run(&encode_args), EXIT_OK);
+        let decode_args = vec![
+            "decode".to_owned(),
+            encoded.to_string_lossy().into_owned(),
+            output.to_string_lossy().into_owned(),
+        ];
+        assert_eq!(run(&decode_args), EXIT_OK);
+
+        let roundtrip = image::open(&output).expect("open output PNG").into_rgb8();
+        assert_eq!(roundtrip.into_raw(), original);
+
+        if temp.starts_with(std::env::temp_dir()) {
+            std::fs::remove_dir_all(&temp).expect("remove isolated test directory");
+        }
+    }
 }

@@ -1,0 +1,22 @@
+[package]
+name = "jpxl"
+description = "High-level, dependency-light Rust API for the JPXL JPEG XL codec"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+jpxl-core = { path = "../jpxl-core", version = "0.3.0", default-features = false }
+jpxl-decode.workspace = true
+jpxl-encode = { path = "../jpxl-encode", version = "0.3.0", default-features = false }
+jpxl-encode-policy = { path = "../jpxl-encode-policy", version = "0.3.0", default-features = false }
+
+[features]
+default = ["parallel", "simd", "anchor-sketch"]
+parallel = ["jpxl-encode/parallel", "jpxl-encode-policy/parallel"]
+simd = ["jpxl-core/simd", "jpxl-encode/simd", "jpxl-encode-policy/simd"]
+anchor-sketch = ["jpxl-encode-policy/anchor-sketch"]
+
+[lints]
+workspace = true

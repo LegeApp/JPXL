@@ -5,12 +5,14 @@ It is a correctness-first decoder and encoder workspace: the decoder follows
 the standard, and the encoder is tested against independent decoders rather
 than accepted merely because it round-trips through itself.
 
-**Status:** actively developed and not yet a drop-in replacement for libjxl.
-The implemented subset is substantial, but it deliberately rejects several
-valid JPEG XL feature combinations instead of guessing. Its optimized lossy
-`Balanced` and `Fast` paths have reached a matched-SSIMULACRA2 speed-parity
-window against the pinned libjxl build on the project’s two photo anchors;
-quality and density still trail libjxl on important perceptual axes.
+**Status:** ready for application integration within the supported feature
+set, but not yet a drop-in replacement for every libjxl codec feature. The
+Rust facade accepts ordinary pixel buffers and the CLI converts common image
+formats. The decoder still deliberately rejects several valid JPEG XL feature
+combinations instead of guessing. Its optimized lossy `Balanced` and `Fast`
+paths have reached a matched-SSIMULACRA2 speed-parity window against the pinned
+libjxl build on the project’s two photo anchors; quality and density still
+trail libjxl on important perceptual axes.
 
 ## What works today
 
@@ -38,9 +40,12 @@ and several less-exercised frame combinations. It does not silently substitute
 a result. See the conformance document for the complete list and coverage
 boundaries.
 
-The public CLI currently accepts binary PGM/PPM input and writes binary
-PGM/PPM output. It is a reference-oriented tool, not a polished end-user image
-converter.
+The encoder does not yet write alpha channels. Opaque alpha in raster inputs is
+accepted; non-opaque alpha is rejected unless the user explicitly flattens it
+with `--background`, so the CLI never discards transparency silently. The
+lossy encoder currently accepts RGB input; greyscale remains available on the
+lossless path. Quality/density parity with libjxl is a separate ongoing target,
+not a claim of this integration pass.
 
 ## Build and test
 
@@ -63,23 +68,61 @@ black-box validation tools.
 
 ```sh
 # Lossless Modular encode (default)
-jpxl encode input.ppm output.jxl
+jpxl encode input.png output.jxl
 
 # Lossy VarDCT encode to a byte rate
-jpxl encode --bpp 1.0 input.ppm output.jxl
+jpxl encode --bpp 1.0 input.jpg output.jxl
 
 # Decode and inspect
-jpxl decode output.jxl decoded.ppm
+jpxl decode output.jxl decoded.png
 jpxl info output.jxl
+
+# Transparency must be handled explicitly until alpha encoding lands
+jpxl encode --background '#ffffff' transparent.png flattened.jxl
+
+# Pipelines are supported; output format is explicit when there is no suffix
+cat output.jxl | jpxl decode --format png - - > decoded.png
 ```
 
-Run `jpxl --help` and `jpxl bench --help` for the supported options and
-isolated encoder timing modes.
+Raster input and output support PNG, JPEG, WebP, TIFF, BMP, GIF, ICO, TGA,
+QOI, PGM, and PPM. Input format is detected from its contents. Output format
+is inferred from the filename or selected with `--format`; `-` means stdin or
+stdout. PNG, TIFF, and PNM retain 16-bit samples. Run `jpxl --help` and
+`jpxl bench --help` for the full option set and isolated encoder timing modes.
 
 Target-rate encoding defaults to the production `Balanced` preset. Use
 `--lossy-preset fast` when lower latency matters more than the extra quality,
 or `--lossy-preset quality` for the deliberately exhaustive reference path;
 `Quality` is not the production speed preset.
+
+## Rust API
+
+Applications should depend on the `jpxl` facade crate. It keeps file-format
+dependencies out of the library path and presents the encoder as ordinary
+interleaved pixel buffers:
+
+```rust
+use jpxl::{Encoder, Preset};
+
+fn encode_generated(width: u32, height: u32, rgb: &[u8]) -> jpxl::Result<Vec<u8>> {
+    // Exact-lossless by default.
+    let lossless = Encoder::new().encode_rgb8(width, height, rgb)?;
+    let decoded = jpxl::decode(&lossless)?;
+    assert_eq!((decoded.width, decoded.height), (width, height));
+
+    // Production target-rate encoding. This is a byte ceiling, not a
+    // libjxl-style perceptual-distance promise.
+    Encoder::new()
+        .with_target_bpp(1.0)?
+        .with_preset(Preset::Balanced)
+        .encode_rgb8(width, height, rgb)
+}
+```
+
+The same builder accepts RGB16, greyscale 8/16-bit, explicit thread limits,
+Part 2 containers, target byte counts, and custom decoder resource limits.
+Low-level `jpxl-decode`, `jpxl-encode`, and `jpxl-encode-policy` crates remain
+available for callers that need syntax-level or research controls.
 
 ## Quality, density, and speed versus libjxl
 

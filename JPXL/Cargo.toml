@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = [
+    "crates/jpxl",
     "crates/jpxl-bitstream",
     "crates/jpxl-core",
     "crates/jpxl-entropy",
@@ -26,6 +27,7 @@ jpxl-decode = { path = "crates/jpxl-decode", version = "0.3.0" }
 jpxl-encode = { path = "crates/jpxl-encode", version = "0.3.0" }
 jpxl-encode-policy = { path = "crates/jpxl-encode-policy", version = "0.3.0" }
 jpxl-conformance = { path = "crates/jpxl-conformance", version = "0.3.0" }
+jpxl = { path = "crates/jpxl", version = "0.3.0" }
 # Coarse group/section parallelism (EncodeResources ordered_map).
 rayon = "1.10"
 # Portable SIMD for leaf kernels (DCT butterflies, Gaborish, quantize).
@@ -51,6 +53,9 @@ ssimulacra2 = "0.5.1"
 # our perceptual model a derivative of libjxl's rather than our own — and needs
 # recording as such before anyone does it.
 butteraugli = "0.9"
+# End-user raster-file adapters. This is used only by jpxl-cli; the public
+# jpxl facade and all normative codec crates remain pixel-buffer based.
+image = { version = "0.25", default-features = false, features = ["bmp", "gif", "ico", "jpeg", "png", "pnm", "qoi", "tga", "tiff", "webp"] }
 
 [workspace.lints.rust]
 unsafe_code = "deny"

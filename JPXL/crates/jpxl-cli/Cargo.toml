@@ -11,6 +11,9 @@ name = "jpxl"
 path = "src/main.rs"
 
 [dependencies]
+image.workspace = true
+jpxl = { path = "../jpxl", version = "0.3.0", default-features = false }
+jpxl-bitstream.workspace = true
 jpxl-core = { workspace = true }
 jpxl-decode.workspace = true
 jpxl-encode = { workspace = true }

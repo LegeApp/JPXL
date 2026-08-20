@@ -13,6 +13,75 @@ record jpegxl-rs.evidence.experiments-captured/1 : evidence {
     author "GitHub Uploader"
 }
 
+record jpegxl-rs.evidence.general-use-api-tests-2026-08-20/1 : evidence {
+    title "Facade tests, CLI raster-adapter tests, PNG-to-JXL-to-PNG integration, target-rate byte ceiling, and facade doctests all passed."
+    state verified
+    result pass
+    method command
+    observed_at git:b8cdd03b14e92ef1057a76c7766b2253296e1840
+    command "cargo test -p jpxl -p jpxl-cli --profile fast-debug"
+    artifact "JPXL/crates/jpxl/src/lib.rs"
+    summary """
+        Facade tests, CLI raster-adapter tests, PNG-to-JXL-to-PNG integration, target-rate byte ceiling, and facade doctests all passed.
+        """
+    author "GitHub Uploader"
+}
+
+record jpegxl-rs.evidence.general-use-docs-review-2026-08-20/1 : evidence {
+    title "README and changelog document common formats, facade examples, alpha handling, remaining codec subset limits, and explicitly leave libjxl quality/density parity as separate work."
+    state verified
+    result pass
+    method manual
+    observed_at git:b8cdd03b14e92ef1057a76c7766b2253296e1840
+    artifact "README.md"
+    summary """
+        README and changelog document common formats, facade examples, alpha handling, remaining codec subset limits, and explicitly leave libjxl quality/density parity as separate work.
+        """
+    author "GitHub Uploader"
+}
+
+record jpegxl-rs.evidence.general-use-workspace-build-test-2026-08-20/1 : evidence {
+    title "The complete workspace built and the full unoptimized test and doctest suite passed, including installed black-box oracle checks."
+    state verified
+    result pass
+    method command
+    observed_at git:b8cdd03b14e92ef1057a76c7766b2253296e1840
+    command "cargo build --workspace && cargo test --workspace"
+    artifact "JPXL/Cargo.toml"
+    summary """
+        The complete workspace built and the full unoptimized test and doctest suite passed, including installed black-box oracle checks.
+        """
+    author "GitHub Uploader"
+}
+
+record jpegxl-rs.evidence.general-use-workspace-gates-2026-08-20/1 : evidence {
+    title "All four required handoff gates passed on the completed general-use API and CLI worktree."
+    state verified
+    result pass
+    method command
+    observed_at git:b8cdd03b14e92ef1057a76c7766b2253296e1840
+    command "cargo build --workspace; cargo test --workspace; cargo clippy --workspace --all-targets -- -D warnings; cargo fmt --all --check"
+    artifact "JPXL/Cargo.toml"
+    summary """
+        All four required handoff gates passed on the completed general-use API and CLI worktree.
+        """
+    author "GitHub Uploader"
+}
+
+record jpegxl-rs.evidence.general-use-workspace-lint-format-2026-08-20/1 : evidence {
+    title "Strict Clippy and workspace formatting passed with no warnings or drift."
+    state verified
+    result pass
+    method command
+    observed_at git:b8cdd03b14e92ef1057a76c7766b2253296e1840
+    command "cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all --check"
+    artifact "JPXL/Cargo.toml"
+    summary """
+        Strict Clippy and workspace formatting passed with no warnings or drift.
+        """
+    author "GitHub Uploader"
+}
+
 record jpegxl-rs.evidence.history-backfilled/1 : evidence {
     title "M1-M8 render as completed in ROADMAP.md and akr check reports no diagnostics and zero AKR-R022"
     state verified

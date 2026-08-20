@@ -98,6 +98,41 @@ record jpegxl-rs.decision.encoder-architecture-phases/1 : decision {
     author "grok-build"
 }
 
+record jpegxl-rs.decision.image-io-at-cli-boundary/1 : decision {
+    title "Common raster format dependencies stay at the CLI boundary"
+    state superseded
+    scope [ path "JPXL/crates/jpxl-cli/**", path "JPXL/crates/jpxl/**" ]
+    decision """
+        The high-level jpxl library facade remains pixel-buffer based and dependency-light. Common raster file decoding and encoding is an adapter concern of jpxl-cli, where the Rust image crate may be used without entering the normative decoder, encoder, or policy crates.
+        """
+    context """
+        General-use file conversion needs maintained PNG, JPEG, WebP, TIFF, BMP, QOI, TGA, and PNM implementations, while the project keeps normative codec crates near-zero-dependency.
+        """
+    consequences """
+        Library consumers pass ordinary interleaved 8/16-bit buffers without paying for unrelated file codecs. The CLI gains external image-format dependencies and owns their security/version maintenance.
+        """
+    implements [ @jpegxl-rs.requirement.general-use-integration-surface/1 ]
+    author "GitHub Uploader"
+}
+
+record jpegxl-rs.decision.image-io-at-cli-boundary/2 : decision {
+    title "Common raster format dependencies stay at the CLI boundary"
+    state active
+    scope [ path "JPXL/crates/**" ]
+    decision """
+        The high-level jpxl library facade remains pixel-buffer based and dependency-light. Common raster file decoding and encoding is an adapter concern of jpxl-cli, where the Rust image crate may be used without entering the normative decoder, encoder, or policy crates.
+        """
+    context """
+        General-use file conversion needs maintained PNG, JPEG, WebP, TIFF, BMP, QOI, TGA, and PNM implementations, while the project keeps normative codec crates near-zero-dependency.
+        """
+    consequences """
+        Library consumers pass ordinary interleaved 8/16-bit buffers without paying for unrelated file codecs. The CLI gains external image-format dependencies and owns their security/version maintenance.
+        """
+    implements [ @jpegxl-rs.requirement.general-use-integration-surface ]
+    supersedes [ @jpegxl-rs.decision.image-io-at-cli-boundary/1 ]
+    author "GitHub Uploader"
+}
+
 record jpegxl-rs.decision.ledger-conventions/1 : decision {
     title "AKR ledger conventions for jpegxl-rs"
     state proposed
