@@ -5769,6 +5769,42 @@ record jpegxl-rs.work.arch-s8-phase-d-prune-wired/1 : work {
     part_of [ @jpegxl-rs.work.arch-s8-full-redesign-scoped ]
 }
 
+record jpegxl-rs.work.cli-netpbm-subtype-contract/1 : work {
+    title "Honor explicit PGM and PPM output subtypes"
+    state completed
+    scope [ path "JPXL/crates/jpxl-cli/src/image_io.rs" ]
+    intent """
+        Make explicit CLI pgm and ppm output requests emit binary P5 and P6 respectively, so the decoder output matches its advertised extension and the PPM output is directly consumable by jpxl compare; retain generic pnm as the image library's dynamically selected PNM subtype.
+        """
+    acceptance {
+        check explicit-subtypes {
+            statement """
+                Focused CLI tests prove explicit ppm emits P6 and explicit pgm emits P5.
+                """
+            method command
+            command "cd JPXL && cargo test -p jpxl-cli --profile fast-debug"
+            verified_by [ @jpegxl-rs.evidence.cli-netpbm-subtypes-2026-08-21/1 ]
+        }
+        check layout-errors {
+            statement """
+                Focused CLI tests prove incompatible RGB-to-PGM and grayscale-to-PPM layouts return errors.
+                """
+            method command
+            command "cd JPXL && cargo test -p jpxl-cli --profile fast-debug"
+            verified_by [ @jpegxl-rs.evidence.cli-netpbm-subtypes-2026-08-21/1 ]
+        }
+        check workspace-gates {
+            statement """
+                The full workspace build, tests, clippy, and formatting gates pass.
+                """
+            method command
+            command "cd JPXL && cargo build --workspace && cargo test --workspace --profile fast-debug && cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all --check"
+            verified_by [ @jpegxl-rs.evidence.cli-netpbm-workspace-gates-2026-08-21/1 ]
+        }
+    }
+    implements [ @jpegxl-rs.requirement.general-use-integration-surface ]
+}
+
 record jpegxl-rs.work.dispose-performance-md/1 : work {
     title "Dispose PERFORMANCE.md into AKR and scratch"
     state superseded

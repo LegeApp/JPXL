@@ -7,6 +7,7 @@
 use std::io::Cursor;
 use std::path::Path;
 
+use image::codecs::pnm::{PnmEncoder, PnmSubtype, SampleEncoding};
 use image::{DynamicImage, ImageBuffer, ImageFormat, Luma, LumaA, Rgb, Rgba};
 use jpxl_bitstream::BitReader;
 use jpxl_core::limits::{AllocGuard, Limits};
@@ -27,6 +28,8 @@ pub enum RasterFormat {
     Ico,
     Tga,
     Qoi,
+    Pgm,
+    Ppm,
     Pnm,
 }
 
@@ -42,7 +45,9 @@ impl RasterFormat {
             "ico" => Ok(Self::Ico),
             "tga" => Ok(Self::Tga),
             "qoi" => Ok(Self::Qoi),
-            "pnm" | "pgm" | "ppm" => Ok(Self::Pnm),
+            "pgm" => Ok(Self::Pgm),
+            "ppm" => Ok(Self::Ppm),
+            "pnm" => Ok(Self::Pnm),
             _ => Err(format!(
                 "unsupported output format `{name}`; choose png, jpg, webp, tiff, bmp, gif, ico, tga, qoi, pgm, or ppm"
             )),
@@ -70,16 +75,27 @@ impl RasterFormat {
             Self::Ico => ImageFormat::Ico,
             Self::Tga => ImageFormat::Tga,
             Self::Qoi => ImageFormat::Qoi,
-            Self::Pnm => ImageFormat::Pnm,
+            Self::Pgm | Self::Ppm | Self::Pnm => ImageFormat::Pnm,
         }
     }
 
     const fn supports_16_bit(self) -> bool {
-        matches!(self, Self::Png | Self::Tiff | Self::Pnm)
+        matches!(
+            self,
+            Self::Png | Self::Tiff | Self::Pgm | Self::Ppm | Self::Pnm
+        )
     }
 
     const fn supports_alpha(self) -> bool {
-        !matches!(self, Self::Jpeg | Self::Pnm)
+        !matches!(self, Self::Jpeg | Self::Pgm | Self::Ppm | Self::Pnm)
+    }
+
+    const fn pnm_subtype(self) -> Option<PnmSubtype> {
+        match self {
+            Self::Pgm => Some(PnmSubtype::Graymap(SampleEncoding::Binary)),
+            Self::Ppm => Some(PnmSubtype::Pixmap(SampleEncoding::Binary)),
+            _ => None,
+        }
     }
 }
 
@@ -330,9 +346,19 @@ pub fn encode_output(
     };
 
     let mut output = Cursor::new(Vec::new());
-    dynamic
-        .write_to(&mut output, format.image_format())
-        .map_err(|error| format!("cannot encode output image: {error}"))?;
+    if let Some(subtype) = format.pnm_subtype() {
+        // `DynamicImage::write_to(ImageFormat::Pnm)` deliberately chooses a
+        // generic PAM (`P7`) header.  An explicit `.pgm`/`.ppm` request is a
+        // stronger format contract, and the compare command consumes binary
+        // PPM (`P6`), so select the matching Netpbm subtype explicitly.
+        dynamic
+            .write_with_encoder(PnmEncoder::new(&mut output).with_subtype(subtype))
+            .map_err(|error| format!("cannot encode output image: {error}"))?;
+    } else {
+        dynamic
+            .write_to(&mut output, format.image_format())
+            .map_err(|error| format!("cannot encode output image: {error}"))?;
+    }
     Ok(output.into_inner())
 }
 
@@ -529,6 +555,50 @@ mod tests {
         assert_eq!(parse_background("#1aF"), Ok([0x11, 0xaa, 0xff]));
         assert_eq!(parse_background("102030"), Ok([0x10, 0x20, 0x30]));
         assert!(parse_background("white").is_err());
+    }
+
+    fn decoded_image(planes: Vec<Vec<i32>>, bits_per_sample: u32) -> jpxl_decode::DecodedImage {
+        let num_colour_channels = planes.len();
+        jpxl_decode::DecodedImage {
+            width: 2,
+            height: 1,
+            planes: planes
+                .into_iter()
+                .map(|samples| jpxl_decode::Plane {
+                    width: 2,
+                    height: 1,
+                    bits_per_sample,
+                    samples,
+                })
+                .collect(),
+            num_colour_channels,
+            icc_profile: None,
+            float_planes: None,
+        }
+    }
+
+    #[test]
+    fn explicit_ppm_and_pgm_requests_write_the_requested_binary_subtype() {
+        assert_eq!(RasterFormat::parse("ppm"), Ok(RasterFormat::Ppm));
+        assert_eq!(RasterFormat::parse("pgm"), Ok(RasterFormat::Pgm));
+        assert_eq!(RasterFormat::parse("pnm"), Ok(RasterFormat::Pnm));
+
+        let rgb = decoded_image(vec![vec![1, 2], vec![3, 4], vec![5, 6]], 8);
+        let ppm = encode_output(&[], &rgb, RasterFormat::Ppm, None).expect("binary PPM");
+        assert!(ppm.starts_with(b"P6\n"));
+
+        let gray = decoded_image(vec![vec![7, 8]], 8);
+        let pgm = encode_output(&[], &gray, RasterFormat::Pgm, None).expect("binary PGM");
+        assert!(pgm.starts_with(b"P5\n"));
+    }
+
+    #[test]
+    fn explicit_netpbm_subtype_rejects_the_wrong_channel_layout() {
+        let rgb = decoded_image(vec![vec![1, 2], vec![3, 4], vec![5, 6]], 8);
+        assert!(encode_output(&[], &rgb, RasterFormat::Pgm, None).is_err());
+
+        let gray = decoded_image(vec![vec![7, 8]], 8);
+        assert!(encode_output(&[], &gray, RasterFormat::Ppm, None).is_err());
     }
 
     #[test]

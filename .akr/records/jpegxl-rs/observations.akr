@@ -56,6 +56,19 @@ record jpegxl-rs.observation.aq-field-is-a-net-perceptual-loss-2026-08-10/2 : ob
     author "GitHub Uploader"
 }
 
+record jpegxl-rs.observation.balanced-zero-prediction-reserve-negative-2026-08-21/1 : observation {
+    title "Balanced direct-ceiling prediction is a measured quality regression"
+    state verified
+    scope [ path "JPXL/crates/jpxl-encode-policy/src/rate.rs" ]
+    statement """
+        A three-image 1 bpp Balanced screen replaced the anchored controller's one-eighth-tolerance prediction reserve with a direct target_bytes aim. It did not spend the target more reliably: scene moved 97,985 -> 97,874 bytes and SSIMULACRA2 44.9178 -> 44.8546; mid moved 539,958 -> 534,502 bytes and 77.8529 -> 77.6385; mid2 moved 533,641 -> 533,666 bytes and 86.1767 -> 86.1803. Butteraugli and pnorm3 also worsened on the two regressions. The candidate was rejected and the existing prediction reserve retained. Diagnostic details are in .agent/scratch/quality-pass-20260821/README.md; this is not a promoted baseline.
+        """
+    observed_at git:93000916c18ea7c3215f47ee2dc6a9c83b01b4f8
+    method command
+    watches [ "JPXL/crates/jpxl-encode-policy/src/rate.rs" ]
+    review_after 2026-11-30
+}
+
 record jpegxl-rs.observation.bpg-rs-aq-precedent-2026-08-10/1 : observation {
     title "Cross-project precedent: bpg-rs spent five phases on AQ, recorded no positive payoff, and ships it off by default on every tier"
     state superseded

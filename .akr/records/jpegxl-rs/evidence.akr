@@ -1,6 +1,30 @@
 akr 0.1
 project jpegxl-rs
 
+record jpegxl-rs.evidence.cli-netpbm-subtypes-2026-08-21/1 : evidence {
+    title "Focused CLI tests passed: explicit PPM/PGM output uses P6/P5 and incompatible channel layouts error."
+    state verified
+    result pass
+    method command
+    observed_at git:93000916c18ea7c3215f47ee2dc6a9c83b01b4f8
+    command "cd JPXL && cargo test -p jpxl-cli --profile fast-debug"
+    summary """
+        Focused CLI tests passed: explicit PPM/PGM output uses P6/P5 and incompatible channel layouts error.
+        """
+}
+
+record jpegxl-rs.evidence.cli-netpbm-workspace-gates-2026-08-21/1 : evidence {
+    title "The full JPXL build, optimized test suite, strict clippy, and formatting gates passed after the Netpbm subtype fix."
+    state verified
+    result pass
+    method command
+    observed_at git:93000916c18ea7c3215f47ee2dc6a9c83b01b4f8
+    command "cd JPXL && cargo build --workspace && cargo test --workspace --profile fast-debug && cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all --check"
+    summary """
+        The full JPXL build, optimized test suite, strict clippy, and formatting gates passed after the Netpbm subtype fix.
+        """
+}
+
 record jpegxl-rs.evidence.experiments-captured/1 : evidence {
     title "The dated docs/experiments notes are captured as 18 observations that watch the relevant crates; akr review-queue reflects the resulting stale/at-risk set"
     state verified
@@ -4817,6 +4841,18 @@ record jpegxl-rs.evidence.quality-q9-workspace-gates-2026-08-19/1 : evidence {
     artifact ".agent/scratch/quality-track/out/cargo-test-q9-final.log"
     summary """
         All required Rust workspace gates pass on native Windows. The conformance link materializer repaired bike_5 once and then reported records=103 repaired=0 on the idempotence run.
+        """
+}
+
+record jpegxl-rs.evidence.release-workspace-tests-2026-08-21/1 : evidence {
+    title "Release-mode workspace tests pass"
+    state verified
+    result pass
+    method command
+    observed_at git:93000916c18ea7c3215f47ee2dc6a9c83b01b4f8
+    command "cd JPXL && cargo test --workspace --release"
+    summary """
+        The full JPXL workspace test and doctest suite passed in the release profile after the Netpbm output fix and handoff-checklist update.
         """
 }
 

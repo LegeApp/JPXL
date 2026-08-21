@@ -5,7 +5,7 @@ build {
     tool "akr 0.3.3"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:14cb4c944e7a08b48e58a5dfa3d7b32366c300de5a7a2ac0de14545086f86696"
+    source_graph "sha256:67c44d1238c631adbcdf948b15071e61e576ac9c7d5cd7357611eb16288e43b7"
 }
 
 source ".akr/project.akr" {
@@ -29,8 +29,8 @@ source ".akr/records/jpegxl-rs/decisions.akr" {
 }
 
 source ".akr/records/jpegxl-rs/evidence.akr" {
-    hash "sha256:217135d89d2d9f06f61c203bdf25cb95b9c954b78ab0011d57734c4af84f6423"
-    records 397
+    hash "sha256:1adffb4c7847fbe538cca01717f476dd34de431d30f5100c652bae97c34ace54"
+    records 400
 }
 
 source ".akr/records/jpegxl-rs/milestones.akr" {
@@ -39,8 +39,8 @@ source ".akr/records/jpegxl-rs/milestones.akr" {
 }
 
 source ".akr/records/jpegxl-rs/observations.akr" {
-    hash "sha256:0991aa250cddd08f11a48943f166be48628068dd7867192f9e21a11ae43f4924"
-    records 90
+    hash "sha256:b7bec0b0e0325c3563ebf5effabf168f99d25d9643a3ca92b67d2a8abc58c1ca"
+    records 91
 }
 
 source ".akr/records/jpegxl-rs/papercuts.akr" {
@@ -69,8 +69,8 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:f352470fb1a6a410448d55cbe3e892bb43b803cf37a0c1c9c80b7b44cccb1f78"
-    records 149
+    hash "sha256:f1bb2692efb68abfa676eb63f00305ab40a87429d2b2d09192ded902e7dd3917"
+    records 150
 }
 
 resolution @jpegxl-rs.decision.encoder-architecture-phases/1 {
@@ -3367,6 +3367,12 @@ resolution @jpegxl-rs.work.arch-s8-phase-d-prune-wired/1 {
     hash "sha256:f570d029b19f32d077cab046ca308cc054b35c9252bdd737d9c82131c4d5b5f2"
 }
 
+resolution @jpegxl-rs.work.cli-netpbm-subtype-contract/1 {
+    slot implements
+    to @jpegxl-rs.requirement.general-use-integration-surface/2
+    hash "sha256:540f9f8226b27b8fc64b62502f583996d474e374cc34a10e79b6b77706b3b17f"
+}
+
 resolution @jpegxl-rs.work.dispose-performance-md/1 {
     slot implements
     to @jpegxl-rs.decision.retire-performance-md/1
@@ -3603,6 +3609,16 @@ seal @jpegxl-rs.decision.modular-lean-default/1 {
 seal @jpegxl-rs.decision.ssimulacra2-is-the-primary-promotion-metric/1 {
     state active
     hash "sha256:9aa847d339b8d732eb49a5f6bbd48a6c4e41819fd3824400c8c4681d7b4f8549"
+}
+
+seal @jpegxl-rs.evidence.cli-netpbm-subtypes-2026-08-21/1 {
+    state verified
+    hash "sha256:b2c54a89b5174895fb5955a8fedbec20f197f9fb970db914dffd48f3ef55525f"
+}
+
+seal @jpegxl-rs.evidence.cli-netpbm-workspace-gates-2026-08-21/1 {
+    state verified
+    hash "sha256:48a5ec34bc10a4d82dd2cb325034c1caa683b5672c0361ce0f2fd629641e23e5"
 }
 
 seal @jpegxl-rs.evidence.experiments-captured/1 {
@@ -5505,6 +5521,11 @@ seal @jpegxl-rs.evidence.quality-q9-workspace-gates-2026-08-19/1 {
     hash "sha256:d1bbe98a91c0b48febe3b5b154a670f0bc853cd46a916289f970596ed5727a79"
 }
 
+seal @jpegxl-rs.evidence.release-workspace-tests-2026-08-21/1 {
+    state verified
+    hash "sha256:0adca8daccad59afa3f6628047cfa6c0987dc2f28d25dbf22f85df15ccb46a49"
+}
+
 seal @jpegxl-rs.evidence.retire-handoff-durable-facts-2026-08-11/1 {
     state verified
     hash "sha256:d5bdf84076bed194a4be6e7e9ea15569dbed84339827e224b936cd8feeb95a65"
@@ -5698,6 +5719,11 @@ seal @jpegxl-rs.observation.aq-field-is-a-net-perceptual-loss-2026-08-10/1 {
 seal @jpegxl-rs.observation.aq-field-is-a-net-perceptual-loss-2026-08-10/2 {
     state verified
     hash "sha256:98ff2140bbfb2d6b47ddeaa8c8f357fb5b7aaefd3e812209b21a5bceec32c545"
+}
+
+seal @jpegxl-rs.observation.balanced-zero-prediction-reserve-negative-2026-08-21/1 {
+    state verified
+    hash "sha256:5ef1cb23d115f81acb1fe2cce9d1407328a48b853307606321d7cd0528ef785b"
 }
 
 seal @jpegxl-rs.observation.bpg-rs-aq-precedent-2026-08-10/1 {
@@ -6913,6 +6939,11 @@ seal @jpegxl-rs.work.arch-s8-phase-c-prune-bound/1 {
 seal @jpegxl-rs.work.arch-s8-phase-d-prune-wired/1 {
     state completed
     hash "sha256:9540dde47255eb372eef807f864fcaeaf5381e92a255d1291eaf5f15db4ae86f"
+}
+
+seal @jpegxl-rs.work.cli-netpbm-subtype-contract/1 {
+    state completed
+    hash "sha256:767cb0dd3daa9d7033de394225f51279b88ae8aec26b68fe4c06ee07a079a9e2"
 }
 
 seal @jpegxl-rs.work.dispose-performance-md/1 {
