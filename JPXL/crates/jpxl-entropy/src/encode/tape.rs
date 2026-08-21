@@ -26,18 +26,41 @@ use super::stream::{ClusterCodes, EncoderPlan, EntropyTables};
 use crate::error::{Result, encode_error};
 use crate::hybrid::HybridUintConfig;
 
-/// A recorded token stream: structure-of-arrays, one entry per symbol in
-/// emission order.
+/// One token's always-present fields packed into a single word.
 ///
-/// Clusters fit a byte (18181-1 C.2.2 clusters are at most 256) and ANS tokens
-/// fit a byte too, but prefix-coded tokens may need up to fifteen bits, so the
-/// token column is `u16`. Extra-bit counts are below 32.
+/// Clusters fit a byte (18181-1 C.2.2 clusters are at most 256), prefix-coded
+/// tokens need at most sixteen bits, and extra-bit counts fit a byte. Keeping
+/// these fields together halves the base tape's payload and lets replay fetch
+/// one cache-friendly word per symbol.
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct PackedToken(u32);
+
+impl PackedToken {
+    fn new(cluster: u8, token: u16, extra_bits: u8) -> Self {
+        Self((u32::from(cluster) << 24) | (u32::from(token) << 8) | u32::from(extra_bits))
+    }
+
+    fn cluster(self) -> usize {
+        usize::from((self.0 >> 24) as u8)
+    }
+
+    fn token(self) -> u32 {
+        (self.0 >> 8) & 0xffff
+    }
+
+    fn extra_bits(self) -> u32 {
+        self.0 & 0xff
+    }
+}
+
+/// A recorded token stream with one packed base word per symbol and a sparse
+/// sidecar containing values only for symbols whose extra-bit count is nonzero.
+/// Replay order determines the sidecar index, so no per-symbol index is stored.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TokenTape {
-    cluster: Vec<u8>,
-    token: Vec<u16>,
-    extra_bits: Vec<u8>,
-    extra: Vec<u32>,
+    base: Vec<PackedToken>,
+    extras: Vec<u32>,
 }
 
 impl TokenTape {
@@ -50,19 +73,33 @@ impl TokenTape {
     /// Number of recorded symbols.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.token.len()
+        self.base.len()
     }
 
     /// Whether nothing was recorded.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.token.is_empty()
+        self.base.is_empty()
     }
 
-    /// Bytes this tape occupies (for memory accounting).
+    /// Bytes of initialized payload this tape occupies (excluding spare
+    /// vector capacity and allocator bookkeeping).
     #[must_use]
     pub fn byte_size(&self) -> usize {
-        self.cluster.len() + self.token.len() * 2 + self.extra_bits.len() + self.extra.len() * 4
+        self.base.len() * core::mem::size_of::<PackedToken>()
+            + self.extras.len() * core::mem::size_of::<u32>()
+    }
+
+    /// Number of symbols carrying a sparse extra value.
+    #[must_use]
+    pub fn extra_len(&self) -> usize {
+        self.extras.len()
+    }
+
+    /// Payload bytes used by the former four-column representation.
+    #[must_use]
+    pub fn legacy_byte_size(&self) -> usize {
+        self.len() * 8
     }
 
     /// Appends one token.
@@ -83,10 +120,10 @@ impl TokenTape {
                 split.extra_bits
             )
         })?;
-        self.cluster.push(cluster);
-        self.token.push(token);
-        self.extra_bits.push(extra_bits);
-        self.extra.push(split.extra);
+        self.base.push(PackedToken::new(cluster, token, extra_bits));
+        if extra_bits != 0 {
+            self.extras.push(split.extra);
+        }
         Ok(())
     }
 
@@ -102,10 +139,10 @@ impl TokenTape {
                 split.extra_bits
             )
         })?;
-        self.cluster.push(cluster);
-        self.token.push(token);
-        self.extra_bits.push(extra_bits);
-        self.extra.push(split.extra);
+        self.base.push(PackedToken::new(cluster, token, extra_bits));
+        if extra_bits != 0 {
+            self.extras.push(split.extra);
+        }
         Ok(())
     }
 
@@ -121,37 +158,42 @@ impl TokenTape {
     pub fn write_stream(&self, tables: &EntropyTables, w: &mut BitWriter) -> Result<()> {
         match tables.codes() {
             ClusterCodes::Prefix(codes) => {
-                for (((&cluster, &token), &extra_bits), &extra) in self
-                    .cluster
-                    .iter()
-                    .zip(self.token.iter())
-                    .zip(self.extra_bits.iter())
-                    .zip(self.extra.iter())
-                {
-                    let code = codes.get(usize::from(cluster)).ok_or_else(|| {
+                let mut extra_cursor = 0usize;
+                for &packed in &self.base {
+                    let cluster = packed.cluster();
+                    let code = codes.get(cluster).ok_or_else(|| {
                         encode_error!("C.2.1: cluster {cluster} has no prefix code")
                     })?;
-                    code.write_symbol(w, u32::from(token))?;
+                    code.write_symbol(w, packed.token())?;
+                    let extra_bits = packed.extra_bits();
                     if extra_bits != 0 {
-                        w.write_bits(u32::from(extra_bits), extra)?;
+                        let extra = self.extras.get(extra_cursor).copied().ok_or_else(|| {
+                            encode_error!("C.3.3: token tape sparse extras ended early")
+                        })?;
+                        extra_cursor = extra_cursor.saturating_add(1);
+                        w.write_bits(extra_bits, extra)?;
                     }
                 }
+                debug_assert_eq!(extra_cursor, self.extras.len());
                 Ok(())
             }
             ClusterCodes::Ans { tables, .. } => {
                 let payload = encode_symbols_with(tables, self.len(), |index| AnsSymbol {
                     cluster: self
-                        .cluster
+                        .base
                         .get(index)
                         .copied()
-                        .map_or(usize::MAX, usize::from),
-                    token: self.token.get(index).copied().map_or(u32::MAX, u32::from),
+                        .map_or(usize::MAX, PackedToken::cluster),
+                    token: self
+                        .base
+                        .get(index)
+                        .copied()
+                        .map_or(u32::MAX, PackedToken::token),
                 })?;
                 // C.3.2 seeds the state from a u(32) at the start of the stream.
                 w.write_bits(32, payload.initial_state())?;
-                for (index, (&extra_bits, &extra)) in
-                    self.extra_bits.iter().zip(self.extra.iter()).enumerate()
-                {
+                let mut extra_cursor = 0usize;
+                for (index, &packed) in self.base.iter().enumerate() {
                     // The decoder renormalizes inside the symbol's decode step,
                     // before it reads that symbol's raw extra bits.
                     if let Some(word) = payload.renormalization(index) {
@@ -159,10 +201,16 @@ impl TokenTape {
                     }
                     // `write_bits(0, 0)` is a no-op; most tokens carry no extra
                     // bits, so skip the call rather than pay for it.
+                    let extra_bits = packed.extra_bits();
                     if extra_bits != 0 {
-                        w.write_bits(u32::from(extra_bits), extra)?;
+                        let extra = self.extras.get(extra_cursor).copied().ok_or_else(|| {
+                            encode_error!("C.3.3: token tape sparse extras ended early")
+                        })?;
+                        extra_cursor = extra_cursor.saturating_add(1);
+                        w.write_bits(extra_bits, extra)?;
                     }
                 }
+                debug_assert_eq!(extra_cursor, self.extras.len());
                 Ok(())
             }
         }
@@ -317,4 +365,45 @@ pub fn merge_token_counts(into: &mut [Vec<u64>], from: Vec<Vec<u64>>) -> Result<
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn packed_token_fields_round_trip_at_their_width_limits() {
+        let packed = PackedToken::new(u8::MAX, u16::MAX, u8::MAX);
+        assert_eq!(packed.cluster(), usize::from(u8::MAX));
+        assert_eq!(packed.token(), u32::from(u16::MAX));
+        assert_eq!(packed.extra_bits(), u32::from(u8::MAX));
+        assert_eq!(core::mem::size_of::<PackedToken>(), 4);
+    }
+
+    #[test]
+    fn extras_are_sparse_and_memory_accounting_is_exact() {
+        let mut tape = TokenTape::new();
+        tape.push(
+            3,
+            TokenSplit {
+                token: 7,
+                extra_bits: 0,
+                extra: 0,
+            },
+        )
+        .expect("literal token");
+        tape.push(
+            4,
+            TokenSplit {
+                token: 11,
+                extra_bits: 5,
+                extra: 19,
+            },
+        )
+        .expect("token with extras");
+        assert_eq!(tape.len(), 2);
+        assert_eq!(tape.extra_len(), 1);
+        assert_eq!(tape.byte_size(), 12);
+        assert_eq!(tape.legacy_byte_size(), 16);
+    }
 }

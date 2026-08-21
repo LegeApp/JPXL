@@ -1,6 +1,18 @@
 akr 0.1
 project jpegxl-rs
 
+record jpegxl-rs.papercut.a-completed-work-revision-retained-two-evidence/1 : papercut {
+    title "A completed work revision retained two evidence references observed…"
+    state verified
+    statement """
+        A completed work revision retained two evidence references observed before that revision; the earlier follow-up refreshed only the other two checks, so `akr build` later surfaced R022. A completion/update path that reports every stale acceptance reference together would make partial refreshes harder to miss.
+        """
+    observed_at git:498fa6af878cfd1cb17f552db464a060075ffa5d
+    about "akr"
+    author "codex"
+    created_at 2026-08-21
+}
+
 record jpegxl-rs.papercut.a-harmless-scratch-setup-command-was-rejected/1 : papercut {
     title "A harmless scratch setup command was rejected because it combined…"
     state verified
@@ -11,6 +23,18 @@ record jpegxl-rs.papercut.a-harmless-scratch-setup-command-was-rejected/1 : pape
     about "shell_command"
     author "fugu-ultra"
     created_at 2026-08-18
+}
+
+record jpegxl-rs.papercut.after-a-temporary-comparison-worktree-restored/1 : papercut {
+    title "After a temporary comparison worktree restored a modified source with…"
+    state verified
+    statement """
+        After a temporary comparison worktree restored a modified source with an older mtime, Cargo treated stale jpxl-entropy artifacts as fresh even after `cargo clean -p`; a meaningful source edit finally forced the dependency rebuild.
+        """
+    observed_at git:498fa6af878cfd1cb17f552db464a060075ffa5d
+    about "cargo"
+    author "codex"
+    created_at 2026-08-21
 }
 
 record jpegxl-rs.papercut.akr-check-strict-exits-1-on-akr-g004-alone-when/1 : papercut {

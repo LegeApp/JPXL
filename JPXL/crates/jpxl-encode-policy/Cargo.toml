@@ -19,7 +19,7 @@ jpxl-entropy.workspace = true
 wide = { workspace = true, optional = true }
 
 [features]
-default = ["parallel", "simd", "anchor-sketch"]
+default = ["parallel", "simd", "anchor-sketch", "g5-bounded-entropy"]
 parallel = ["jpxl-encode/parallel"]
 # Leaf SIMD for HF quantize choose (and transitive DCT/Gaborish).
 simd = ["dep:wide", "jpxl-encode/simd", "jpxl-core/simd"]
@@ -27,6 +27,10 @@ simd = ["dep:wide", "jpxl-encode/simd", "jpxl-core/simd"]
 # verification. The exhaustive Quality preset remains the behavioral default.
 # Keep the historical feature name so existing research scripts still work.
 anchor-sketch = []
+# G5: retain the legacy hybrid-uint configuration and add only the cheapest
+# alternative ranked from the near-target anchor and finalist censuses. The
+# feature remains explicit as a byte-identical-off control after promotion.
+g5-bounded-entropy = []
 # S8 Phase D (AKR source `outside-advice-2026-08-06` §8;
 # `jpegxl-rs.work.arch-s8-full-redesign-scoped`):
 # the Phase C-validated (zero safety violations, exhaustively checked)

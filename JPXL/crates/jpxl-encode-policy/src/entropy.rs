@@ -69,6 +69,10 @@ const CANDIDATE_CONFIGS: &[(u32, u32, u32)] = &[
 /// hybrid-uint candidates. Full/Quality still search [`CANDIDATE_CONFIGS`].
 const FAST_CANDIDATE_CONFIGS: &[(u32, u32, u32)] = &[(4, 2, 0)];
 
+/// Maximum configurations evaluated per context by the G5 bounded finalist.
+#[cfg(feature = "g5-bounded-entropy")]
+const BOUNDED_CONFIGS: usize = 2;
+
 /// Estimated fixed bits to serialize one histogram (C.2.5 preamble, counts
 /// header, ANS bookkeeping).
 const HISTOGRAM_FIXED_BITS: f64 = 40.0;
@@ -550,6 +554,58 @@ pub(crate) fn train_fast_with_executor(
     train_with_configs(census, FAST_CANDIDATE_CONFIGS, executor)
 }
 
+/// Trains with the legacy configuration plus the cheapest alternative under
+/// one frame-wide census ranking. The ranking evaluates all configurations
+/// once over aggregate raw-value statistics; the expensive per-context and
+/// merge-loop work sees at most two configurations.
+#[cfg(feature = "g5-bounded-entropy")]
+pub(crate) fn train_bounded_with_executor(
+    census: &CensusSink,
+    executor: Option<&jpxl_encode::EncodeExecutor>,
+) -> PlanResult<TrainedModel> {
+    let candidates = bounded_candidate_configs(census);
+    train_with_configs(census, &candidates, executor)
+}
+
+#[cfg(feature = "g5-bounded-entropy")]
+fn bounded_candidate_configs(census: &CensusSink) -> Vec<(u32, u32, u32)> {
+    let mut aggregate = std::collections::BTreeMap::<u32, u64>::new();
+    for index in 0..census.len() {
+        let Some(histogram) = census.histogram(jpxl_encode::vardct::ids::PreContextId::new(
+            u32::try_from(index).unwrap_or(u32::MAX),
+        )) else {
+            continue;
+        };
+        for (value, count) in histogram.iter() {
+            let slot = aggregate.entry(value).or_default();
+            *slot = slot.saturating_add(u64::from(count));
+        }
+    }
+    let values: Vec<(u32, u64)> = aggregate.into_iter().collect();
+    let Some(&legacy) = FAST_CANDIDATE_CONFIGS.first() else {
+        return Vec::new();
+    };
+    let mut ranked: Vec<(f64, usize, (u32, u32, u32))> = CANDIDATE_CONFIGS
+        .iter()
+        .copied()
+        .enumerate()
+        .filter_map(|(index, candidate)| {
+            data_cost(&values, candidate).map(|cost| (cost, index, candidate))
+        })
+        .collect();
+    ranked.sort_by(|a, b| a.0.total_cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+
+    let mut selected = Vec::with_capacity(BOUNDED_CONFIGS);
+    selected.push(legacy);
+    if let Some((_, _, alternative)) = ranked
+        .into_iter()
+        .find(|&(_, _, candidate)| candidate != legacy)
+    {
+        selected.push(alternative);
+    }
+    selected
+}
+
 /// Evaluates `f(0..n)` in index order, on the executor when one is given
 /// (Contract A: results are placed by index, so scheduling cannot reorder
 /// them).
@@ -1027,6 +1083,22 @@ mod tests {
                 "config {config:?} at {best_cost:.1} bits must not lose to \
                  the legacy (4, 2, 0) at {legacy:.1} bits for {values:?}"
             );
+        }
+    }
+
+    #[cfg(feature = "g5-bounded-entropy")]
+    #[test]
+    fn bounded_ranker_keeps_legacy_and_at_most_one_alternative() {
+        let census = census_with(&[
+            &[(0, 1000), (1, 100), (64, 20), (4096, 4)],
+            &[(0, 500), (7, 80), (511, 12)],
+        ]);
+        let candidates = bounded_candidate_configs(&census);
+        assert!(!candidates.is_empty());
+        assert!(candidates.len() <= BOUNDED_CONFIGS);
+        assert_eq!(candidates[0], FAST_CANDIDATE_CONFIGS[0]);
+        if let Some(alternative) = candidates.get(1) {
+            assert_ne!(*alternative, FAST_CANDIDATE_CONFIGS[0]);
         }
     }
 

@@ -217,6 +217,15 @@ pub(crate) enum EntropySearch {
     /// trained model; no census or entropy training is performed here.
     #[cfg(feature = "anchor-sketch")]
     Reuse,
+    /// G5 candidate used for bounded-controller navigation: natural orders,
+    /// the default context map, and at most two frame-ranked hybrid-uint
+    /// configurations per context.
+    #[cfg(feature = "g5-bounded-entropy")]
+    BoundedAnchor,
+    /// The same bounded model rebuilt at the exact finalist, separately
+    /// attributed from anchor navigation.
+    #[cfg(feature = "g5-bounded-entropy")]
+    BoundedFinal,
     /// Slice-18 alternatives with exact-price adopt gates.
     Full,
 }
@@ -228,6 +237,8 @@ impl EntropySearch {
             Self::FinalFast => true,
             #[cfg(feature = "anchor-sketch")]
             Self::Reuse => true,
+            #[cfg(feature = "g5-bounded-entropy")]
+            Self::BoundedAnchor | Self::BoundedFinal => true,
             Self::Full => false,
         }
     }
@@ -334,10 +345,11 @@ fn plan_at_on_with_workspace(
 ///
 /// Navigation captures the selected cover and CfL policy, then reuses those
 /// choices while retargeting quantizer-dependent `HfMul` values. The Fast
-/// preset deliberately captures a neutral-CfL/fixed-cover structure; the
-/// Balanced preset captures the configured hierarchical cover with CfL and
-/// uses the fast entropy model only for its anchored finalist. A bounded
-/// correction may retain that finalist structure after its exact size is known.
+/// preset deliberately captures a neutral-CfL/fixed-cover structure. Balanced
+/// captures the configured hierarchical cover with CfL, then trains at most
+/// two ranked hybrid-uint configurations at its near-target anchor and
+/// finalist. A bounded correction may retain that finalist structure and
+/// entropy model after its exact size is known.
 /// Fast-preset planning with rate-search-owned quantization storage and an
 /// explicit reusable spatial anchor.
 #[cfg(feature = "anchor-sketch")]
@@ -1203,6 +1215,18 @@ fn train_entropy_for_orders(
     } else {
         census_frame(&provisional, geometry)?
     };
+    #[cfg(feature = "g5-bounded-entropy")]
+    let model = if matches!(
+        entropy_search,
+        EntropySearch::BoundedAnchor | EntropySearch::BoundedFinal
+    ) {
+        entropy::train_bounded_with_executor(&census, executor)?
+    } else if fast_hybrid_uint && entropy_search.uses_fast_entropy() {
+        entropy::train_fast_with_executor(&census, executor)?
+    } else {
+        entropy::train_with_executor(&census, executor)?
+    };
+    #[cfg(not(feature = "g5-bounded-entropy"))]
     let model = if fast_hybrid_uint && entropy_search.uses_fast_entropy() {
         entropy::train_fast_with_executor(&census, executor)?
     } else {
@@ -1456,6 +1480,13 @@ pub(crate) enum AnchorReuse<'a> {
     )]
     CoverOnly(&'a StructuralAnchor),
     /// Reuse both cover and CfL from the captured probe.
+    #[cfg_attr(
+        not(feature = "anchor-sketch"),
+        allow(
+            dead_code,
+            reason = "the two-anchor controller is disabled with anchor-sketch"
+        )
+    )]
     CoverAndCfl(&'a StructuralAnchor),
 }
 

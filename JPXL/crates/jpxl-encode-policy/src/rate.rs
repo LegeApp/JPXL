@@ -1222,6 +1222,10 @@ impl<'a> PreparedSearch<'a> {
             EntropySearch::FinalFast | EntropySearch::Reuse | EntropySearch::Full => {
                 diagnostics::SearchDiagnosticPhase::Full
             }
+            #[cfg(feature = "g5-bounded-entropy")]
+            EntropySearch::BoundedAnchor => diagnostics::SearchDiagnosticPhase::Fast,
+            #[cfg(feature = "g5-bounded-entropy")]
+            EntropySearch::BoundedFinal => diagnostics::SearchDiagnosticPhase::Full,
         };
         diagnostics::with_search_phase(phase, || {
             diagnostics::time_search_plan(|| {
@@ -1484,6 +1488,12 @@ const SECOND_ANCHOR_EXPONENT: f64 = 2.0;
 /// rescue (see [`SECOND_ANCHOR_EXPONENT`] for the Phase Q5 screen of 2).
 #[cfg(feature = "anchor-sketch")]
 const MAX_ANCHOR_CORRECTIONS: u32 = 1;
+
+/// Below this target, entropy-table signaling dominates and changing the
+/// anchor model can make the bounded size curve discontinuous. Keep the
+/// legacy model rather than spending extra training on an unamortized stream.
+#[cfg(all(feature = "anchor-sketch", feature = "g5-bounded-entropy"))]
+const MIN_BOUNDED_ENTROPY_TARGET_BYTES: u64 = 4 * 1024;
 
 /// The byte ratio between the first anchor and the target beyond which the
 /// anchor's structure is rebuilt at the second anchor. `INFINITY` disables
@@ -1799,7 +1809,7 @@ fn search_frame_two_anchor(
         AnchorReuse::None,
         Some(&mut captured),
     )?;
-    let first_entropy = first_plan.plan().entropy.clone();
+    let first_entropy_model = first_plan.plan().entropy.clone();
     prepared.stats.structural_builds = 1;
     let anchor = captured.ok_or(PolicyError::Unsupported {
         what: "an anchor search that failed to capture its structure",
@@ -1829,6 +1839,11 @@ fn search_frame_two_anchor(
     // that case and let the finalist reuse *that*; near the target the first
     // anchor is kept, so the standing cells are untouched.
     let rebuild_structure = structure_is_stale(first_size.total, target_bytes);
+    #[cfg(feature = "g5-bounded-entropy")]
+    let refresh_bounded_entropy = request.rate_preset == RateSearchPreset::Balanced
+        && target_bytes >= MIN_BOUNDED_ENTROPY_TARGET_BYTES;
+    #[cfg(not(feature = "g5-bounded-entropy"))]
+    let refresh_bounded_entropy = false;
     let mut second_captured = None;
     let second_plan = if rebuild_structure {
         prepared.plan_anchor(
@@ -1839,29 +1854,41 @@ fn search_frame_two_anchor(
             Some(&mut second_captured),
         )?
     } else {
+        #[cfg(feature = "g5-bounded-entropy")]
+        let second_entropy = if refresh_bounded_entropy {
+            EntropySearch::BoundedAnchor
+        } else if reuse_entropy_model {
+            EntropySearch::Reuse
+        } else {
+            EntropySearch::Fast
+        };
+        #[cfg(not(feature = "g5-bounded-entropy"))]
+        let second_entropy = if reuse_entropy_model {
+            EntropySearch::Reuse
+        } else {
+            EntropySearch::Fast
+        };
         let plan = prepared.plan_anchor(
             second_quantizer,
             false,
-            if reuse_entropy_model {
-                EntropySearch::Reuse
-            } else {
-                EntropySearch::Fast
-            },
+            second_entropy,
             AnchorReuse::CoverAndCfl(&anchor),
             None,
         )?;
-        if reuse_entropy_model {
-            reuse_entropy(plan, &first_entropy)?
+        if reuse_entropy_model && !refresh_bounded_entropy {
+            reuse_entropy(plan, &first_entropy_model)?
         } else {
             plan
         }
     };
-    let (anchor, first_entropy) = match second_captured {
+    let second_entropy_model = second_plan.plan().entropy.clone();
+    let (anchor, anchor_entropy_model) = match second_captured {
         Some(fresh) => {
             prepared.stats.structural_builds = 2;
-            (fresh, second_plan.plan().entropy.clone())
+            (fresh, second_entropy_model)
         }
-        None => (anchor, first_entropy),
+        None if refresh_bounded_entropy => (anchor, second_entropy_model),
+        None => (anchor, first_entropy_model),
     };
     let second_size =
         diagnostics::with_search_phase(diagnostics::SearchDiagnosticPhase::Fast, || {
@@ -1888,16 +1915,21 @@ fn search_frame_two_anchor(
         },
     ];
 
-    // Bias the one-shot prediction a little below the ceiling. Fast already
-    // permits a 3% undershoot, so reserving one eighth of that band avoids a
-    // second full finalist on the common near-crossing case while the exact
-    // over-target check below remains the safety net for steep/non-monotone
-    // curves.
+    // Bias the one-shot prediction a little below the ceiling. Fast retains
+    // one eighth of its band. Balanced's bounded entropy model uses one
+    // quarter: the release corpus screen found that its smaller exact model
+    // otherwise crossed the ceiling by a few hundred bytes and paid a second
+    // finalist. The exact over-target check remains the safety net for
+    // steep/non-monotone curves.
+    #[cfg(feature = "g5-bounded-entropy")]
+    let prediction_slack_divisor = if refresh_bounded_entropy { 4 } else { 8 };
+    #[cfg(not(feature = "g5-bounded-entropy"))]
+    let prediction_slack_divisor = 8;
     let prediction_slack = request
         .rate_preset
         .tolerance(request.tolerance)
         .bytes_for(target_bytes)
-        / 8;
+        / prediction_slack_divisor;
     let prediction_target = target_bytes.saturating_sub(prediction_slack);
     let slack = request
         .rate_preset
@@ -1931,14 +1963,21 @@ fn search_frame_two_anchor(
     // Reuse the captured structure for the finalist instead of rebuilding
     // cover, forward coefficients, and (for the current anchored presets)
     // CfL. Fast intentionally uses the cheaper fixed-cover/nearest/fast-
-    // entropy policy; Balanced keeps the request's hierarchical/trailing
-    // policy while reusing its captured fast-entropy model. Quality remains
-    // the full-alternative oracle.
+    // entropy policy. Balanced keeps hierarchical/trailing structure and
+    // retrains only its two frame-ranked hybrid-uint configurations. Quality
+    // remains the full-alternative oracle.
     let finalist_entropy = if reuse_entropy_model {
         EntropySearch::Reuse
     } else {
         final_entropy
     };
+    #[cfg(feature = "g5-bounded-entropy")]
+    let finalist_entropy = if refresh_bounded_entropy {
+        EntropySearch::BoundedFinal
+    } else {
+        finalist_entropy
+    };
+    let reuse_finalist_entropy = matches!(finalist_entropy, EntropySearch::Reuse);
     // A fresh structural finalist was screened in Phase Q5 (cover, CfL and
     // entropy model re-planned at the predicted rung): +0.10 / -0.03
     // SSIMULACRA2 on the standing 1 bpp cells for +6-22% time, and it made
@@ -1951,13 +1990,14 @@ fn search_frame_two_anchor(
         AnchorReuse::CoverAndCfl(&anchor),
         Some(&mut finalist_anchor),
     )?;
-    let finalist = if reuse_entropy_model {
-        reuse_entropy(finalist_plan, &first_entropy)?
+    let finalist = if reuse_finalist_entropy {
+        reuse_entropy(finalist_plan, &anchor_entropy_model)?
     } else {
-        // Fast trains its own final model; this keeps the pre-Balanced Fast
-        // stream contract unchanged while Balanced banks the repeated walk.
+        // Fast trains its own final model. Balanced reaches this arm only for
+        // the bounded two-configuration finalist.
         finalist_plan
     };
+    let correction_entropy_model = finalist.plan().entropy.clone();
     prepared.stats.structural_builds = if rebuild_structure { 2 } else { 1 };
     let finalist_emission =
         diagnostics::with_search_phase(diagnostics::SearchDiagnosticPhase::Full, || {
@@ -2019,15 +2059,20 @@ fn search_frame_two_anchor(
                 break;
             }
             let correction_quantizer = QuantizerChoice::at(correction_rung, request.quant_lf)?;
+            let correction_entropy = if reuse_entropy_model || refresh_bounded_entropy {
+                EntropySearch::Reuse
+            } else {
+                finalist_entropy
+            };
             let correction_plan = prepared.plan_anchor(
                 correction_quantizer,
                 true,
-                finalist_entropy,
+                correction_entropy,
                 AnchorReuse::CoverAndCfl(anchor),
                 None,
             )?;
-            let correction = if reuse_entropy_model {
-                reuse_entropy(correction_plan, &first_entropy)?
+            let correction = if matches!(correction_entropy, EntropySearch::Reuse) {
+                reuse_entropy(correction_plan, &correction_entropy_model)?
             } else {
                 correction_plan
             };
