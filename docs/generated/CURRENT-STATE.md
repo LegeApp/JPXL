@@ -277,6 +277,8 @@ INTERPRETATION, sharpened by cross-project evidence (jpegxl-rs.observation.bpg-r
 
 A three-image 1 bpp Balanced screen replaced the anchored controller's one-eighth-tolerance prediction reserve with a direct target_bytes aim. It did not spend the target more reliably: scene moved 97,985 -> 97,874 bytes and SSIMULACRA2 44.9178 -> 44.8546; mid moved 539,958 -> 534,502 bytes and 77.8529 -> 77.6385; mid2 moved 533,641 -> 533,666 bytes and 86.1767 -> 86.1803. Butteraugli and pnorm3 also worsened on the two regressions. The candidate was rejected and the existing prediction reserve retained. Diagnostic details are in .agent/scratch/quality-pass-20260821/README.md; this is not a promoted baseline.
 
+> **Stale** — `watches "JPXL/crates/jpxl-encode-policy/src/rate.rs"` was matched by `64fa1a1e`, which touched `JPXL/crates/jpxl-encode-policy/src/rate.rs`. See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#balanced-direct-ceiling-prediction-is-a-measured-quality-regression).
+
 ### AQ precedent from bpg-rs: two-pass measured AQ pays 3-10%; every single-pass activity mode busted -- and ours is single-pass
 
 `verified` · `@jpegxl-rs.observation.bpg-rs-aq-precedent-2026-08-10/2`

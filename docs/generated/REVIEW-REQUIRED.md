@@ -7,7 +7,7 @@
 
 What should not be trusted without re-checking: records the build flagged `stale` or `at_risk`. Neither flag means a record is wrong (D-003); both mean look at it. This view is generated on every successful build, including one that exits 0 with a long queue (D-024). An empty file on an active project is more often a sign the `watches` globs are wrong than a sign the knowledge is perfect.
 
-## Stale (40)
+## Stale (41)
 
 ### The cover/CfL objective misprices Y-channel error by 2.65x across DCT8x8 frequency; the mispricing is in the ruler, not the lever
 
@@ -140,6 +140,12 @@ What should not be trusted without re-checking: records the build flagged `stale
 `verified` · `@jpegxl-rs.observation.q6-zero-run-term-explains-dct8-residual-only-2026-08-18/2` · observation · **stale** · [Q6: a per-varblock interior-zero term halves the DCT8x8 rate-proxy residual's p90 but explains little for DCT16/32; deferred rather than built into the scoring kernel](CURRENT-STATE.md#q6-a-per-varblock-interior-zero-term-halves-the-dct8x8-rate-proxy-residuals-p90-but-explains-little-for-dct1632-deferred-rather-than-built-into-the-scoring-kernel)
 
 **Cause** — `watches "JPXL/crates/jpxl-encode-policy/tests/rate_proxy_audit.rs"` was matched by `5fd8e357`, which touched `JPXL/crates/jpxl-encode-policy/tests/rate_proxy_audit.rs`.
+
+### Balanced direct-ceiling prediction is a measured quality regression
+
+`verified` · `@jpegxl-rs.observation.balanced-zero-prediction-reserve-negative-2026-08-21/1` · observation · **stale** · [Balanced direct-ceiling prediction is a measured quality regression](CURRENT-STATE.md#balanced-direct-ceiling-prediction-is-a-measured-quality-regression)
+
+**Cause** — `watches "JPXL/crates/jpxl-encode-policy/src/rate.rs"` was matched by `64fa1a1e`, which touched `JPXL/crates/jpxl-encode-policy/src/rate.rs`.
 
 ### Cropped frames, orientation, kBlack channels
 
