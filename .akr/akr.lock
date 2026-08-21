@@ -5,7 +5,7 @@ build {
     tool "akr 0.3.3"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:685b00d0d23259d15965f9b8ae89aed938879f7fe946246a852f706fb423a207"
+    source_graph "sha256:7d93a4b398094d78d2fbe975e249c32b5d33e37e87f7ccdbbfcbc28fab0bdcf4"
 }
 
 source ".akr/project.akr" {
@@ -29,8 +29,8 @@ source ".akr/records/jpegxl-rs/decisions.akr" {
 }
 
 source ".akr/records/jpegxl-rs/evidence.akr" {
-    hash "sha256:0398d74e093d1844fc183a357bb22d4d460deba460420a39b306580e33314e02"
-    records 411
+    hash "sha256:6d024819590fabd289e182c6d332ef29be44f44e751cd392f17a8716d2724697"
+    records 416
 }
 
 source ".akr/records/jpegxl-rs/milestones.akr" {
@@ -69,8 +69,8 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:448a3e0401d1a888fc92f4a49df5f9e5aebd13c03d92acbb5d40f70892d6aa06"
-    records 153
+    hash "sha256:ed58eddee98d00691d2740c5208e77c3d43eb556097c497731183224513708f7"
+    records 154
 }
 
 resolution @jpegxl-rs.decision.encoder-architecture-phases/1 {
@@ -3493,6 +3493,18 @@ resolution @jpegxl-rs.work.gap-g1-edge-risk-atlas/1 {
     hash "sha256:7adfac5e7124222f1a82fb5cb1dc2c2a65eecc89871159ab32cba4defcf27f1d"
 }
 
+resolution @jpegxl-rs.work.gap-g2-selective-coefficient-refinement/1 {
+    slot depends_on
+    to @jpegxl-rs.work.gap-g1-edge-risk-atlas/1
+    hash "sha256:17b2b82873a7f79c2f0ec782176b68a105c9721247e36c012f42eb2387fe6827"
+}
+
+resolution @jpegxl-rs.work.gap-g2-selective-coefficient-refinement/1 {
+    slot part_of
+    to @jpegxl-rs.track.encoder-optimization/1
+    hash "sha256:49975e17bd10998d72b08fccfe98fdea9bdf68ef56e4404dd68e94e1e2d75f23"
+}
+
 resolution @jpegxl-rs.work.general-use-api-cli/2 {
     slot implements
     to @jpegxl-rs.requirement.general-use-integration-surface/2
@@ -3754,6 +3766,31 @@ seal @jpegxl-rs.evidence.gap-g1-production-identity-2026-08-21/1 {
 seal @jpegxl-rs.evidence.gap-g1-release-gates-2026-08-21/1 {
     state verified
     hash "sha256:214a2a9f8e082dbe7d68008dac770b6987e69c63f2502575e0e82b800a1b0118"
+}
+
+seal @jpegxl-rs.evidence.gap-g2-candidate-rejected-2026-08-21/1 {
+    state verified
+    hash "sha256:0200b109ed09139b3f3be07a899a254b9bd59811a1b0ce1b3b7a265cefeb5f75"
+}
+
+seal @jpegxl-rs.evidence.gap-g2-entropy-cost-tests-2026-08-21/1 {
+    state verified
+    hash "sha256:087f62ee584488bc82a3ce58d40ff7d1b31f94ef28d839f683fcae9a557b6829"
+}
+
+seal @jpegxl-rs.evidence.gap-g2-rate-decoder-identity-2026-08-21/1 {
+    state verified
+    hash "sha256:b0a28f5d059a73f74be26afc7d564499fc5b29c78ee35c62095fed9243ea8ceb"
+}
+
+seal @jpegxl-rs.evidence.gap-g2-release-gates-2026-08-21/1 {
+    state verified
+    hash "sha256:ac9802d5c84d9b81db86b177c09e2664e5d227928a59b6a4ad31b1bfe69b419e"
+}
+
+seal @jpegxl-rs.evidence.gap-g2-run-aware-audit-2026-08-21/1 {
+    state verified
+    hash "sha256:697fdb7adf57ddf4a359e06378c5bb72308cf0d4e8f815bed649543cb8acc788"
 }
 
 seal @jpegxl-rs.evidence.general-use-api-tests-2026-08-20/1 {
@@ -7104,6 +7141,11 @@ seal @jpegxl-rs.work.gap-g0-comparison-truth/1 {
 seal @jpegxl-rs.work.gap-g1-edge-risk-atlas/1 {
     state completed
     hash "sha256:17b2b82873a7f79c2f0ec782176b68a105c9721247e36c012f42eb2387fe6827"
+}
+
+seal @jpegxl-rs.work.gap-g2-selective-coefficient-refinement/1 {
+    state completed
+    hash "sha256:1beb186c47a7c0ebfc68f831f34b0b3ba2564256dcc7d381714baea414cae0df"
 }
 
 seal @jpegxl-rs.work.general-use-api-cli/1 {

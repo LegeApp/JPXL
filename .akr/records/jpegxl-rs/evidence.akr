@@ -172,6 +172,67 @@ record jpegxl-rs.evidence.gap-g1-release-gates-2026-08-21/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.gap-g2-candidate-rejected-2026-08-21/1 : evidence {
+    title "G2 coefficient beam rejected"
+    state verified
+    result pass
+    method observation
+    observed_at git:82a13868bf7879a07d3f2067f683b4dd49298484
+    summary """
+        A bounded finalist-only DCT8 repair/donor prototype produced no retained exact-size stream on the frozen three-image screen; its request and CLI surfaces and implementation were removed, leaving no production policy change.
+        """
+}
+
+record jpegxl-rs.evidence.gap-g2-entropy-cost-tests-2026-08-21/1 : evidence {
+    title "G2 deterministic entropy cost tests"
+    state verified
+    result pass
+    method command
+    observed_at git:82a13868bf7879a07d3f2067f683b4dd49298484
+    command "cd JPXL && cargo test -p jpxl-encode-policy --release --lib"
+    summary """
+        EntropyCostView integer Q8 logarithm, monotone histogram pricing, hybrid extra-bit charging, and malformed-model rejection tests passed in release mode.
+        """
+}
+
+record jpegxl-rs.evidence.gap-g2-rate-decoder-identity-2026-08-21/1 : evidence {
+    title "G2 rate and decoder identity"
+    state verified
+    result pass
+    method command
+    observed_at git:82a13868bf7879a07d3f2067f683b4dd49298484
+    command "cd JPXL && target/release/jpxl encode --bpp 1 --lossy-preset balanced <mid.ppm> <final-mid.jxl> && sha256sum <final-mid.jxl> <g1-baseline.jxl> && target/release/jpxl decode <final-mid.jxl> <self.ppm> && jxl-oxide decode -q --output-format png -o <oxide.png> <final-mid.jxl>"
+    artifact ".agent/scratch/gap-g2-2026-08-21/final-mid.jxl"
+    summary """
+        The 2400x1800 production stream stayed at 539958 bytes with SHA-256 35b1e40a…31ab, identical to G1; JPXL and jxl-oxide both decoded it.
+        """
+}
+
+record jpegxl-rs.evidence.gap-g2-release-gates-2026-08-21/1 : evidence {
+    title "G2 release-mode handoff gates"
+    state verified
+    result pass
+    method command
+    observed_at git:82a13868bf7879a07d3f2067f683b4dd49298484
+    command "cd JPXL && cargo build --workspace --release && cargo test --workspace --release && cargo clippy --workspace --all-targets --release -- -D warnings && cargo fmt --all --check"
+    summary """
+        The full workspace release build and tests, release clippy with warnings denied, and formatting check passed.
+        """
+}
+
+record jpegxl-rs.evidence.gap-g2-run-aware-audit-2026-08-21/1 : evidence {
+    title "G2 canonical run-aware entropy audit"
+    state verified
+    result pass
+    method command
+    observed_at git:82a13868bf7879a07d3f2067f683b4dd49298484
+    command "cd JPXL && JPXL_RATE_AUDIT_PPM='<source.ppm>;<mid.ppm>;<large.ppm>' JPXL_RATE_AUDIT_BPP=1 cargo test -p jpxl-encode-policy --release --test rate_proxy_audit -- --ignored --nocapture"
+    artifact ".agent/scratch/gap-g2-2026-08-21/rate-audit-release.log"
+    summary """
+        The canonical I.4 walk used EntropyCostView on all three frozen 1 bpp Balanced images and attributed nonzero, nonzero-token, interior-zero, and per-transform costs.
+        """
+}
+
 record jpegxl-rs.evidence.general-use-api-tests-2026-08-20/1 : evidence {
     title "Facade tests, CLI raster-adapter tests, PNG-to-JXL-to-PNG integration, target-rate byte ceiling, and facade doctests all passed."
     state verified

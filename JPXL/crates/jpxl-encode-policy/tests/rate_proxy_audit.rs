@@ -23,27 +23,7 @@ use std::collections::BTreeMap;
 use jpxl_core::varblock::TransformType;
 use jpxl_encode::vardct::ids::PreContextId;
 use jpxl_encode::vardct::{HfEventSink, walk_frame};
-use jpxl_encode_policy::{EncodeRequest, RateSearchPreset, RateTarget};
-
-/// Ideal token cost under the plan's trained clusters.
-struct Coster {
-    /// Cluster per pre-context.
-    context_map: Vec<usize>,
-    /// Per cluster: log2 of the total count and per-symbol log2 counts.
-    log_totals: Vec<f64>,
-    log_counts: Vec<Vec<f64>>,
-    hybrid: Vec<jpxl_entropy::HybridUintConfig>,
-}
-
-impl Coster {
-    fn bits(&self, ctx: PreContextId, value: u32) -> f64 {
-        let cluster = self.context_map[ctx.get() as usize];
-        let split = self.hybrid[cluster].tokenize(value).expect("tokenizable");
-        let token = split.token as usize;
-        let log_count = self.log_counts[cluster].get(token).copied().unwrap_or(0.0);
-        (self.log_totals[cluster] - log_count).max(0.0) + f64::from(split.extra_bits)
-    }
-}
+use jpxl_encode_policy::{EncodeRequest, EntropyCostView, RateSearchPreset, RateTarget};
 
 #[derive(Default, Clone, Copy)]
 struct Bucket {
@@ -60,7 +40,7 @@ struct Bucket {
 }
 
 struct AuditSink<'a> {
-    coster: &'a Coster,
+    coster: &'a EntropyCostView,
     current: Option<TransformType>,
     per_transform: BTreeMap<u32, Bucket>,
     /// (side, proxy, actual, interior zeros) per varblock, for the fits.
@@ -97,7 +77,7 @@ impl HfEventSink for AuditSink<'_> {
         self.current = Some(transform);
     }
     fn nonzeros(&mut self, context: PreContextId, value: u32) {
-        let bits = self.coster.bits(context, value);
+        let bits = f64::from(self.coster.cost_q8(context, value).expect("price")) / 256.0;
         let side = self.current.map_or(0, |t| t.sample_cols() as u32);
         let b = self.per_transform.entry(side).or_default();
         b.nnz_symbols += 1;
@@ -105,7 +85,7 @@ impl HfEventSink for AuditSink<'_> {
         self.running_actual += bits;
     }
     fn coefficient(&mut self, context: PreContextId, value: u32) {
-        let bits = self.coster.bits(context, value);
+        let bits = f64::from(self.coster.cost_q8(context, value).expect("price")) / 256.0;
         let side = self.current.map_or(0, |t| t.sample_cols() as u32);
         let b = self.per_transform.entry(side).or_default();
         self.running_walk += 1;
@@ -159,36 +139,7 @@ fn rate_proxy_audit() {
         let geometry = outcome.plan.geometry().expect("geometry");
         let pass = plan.entropy.passes.first().expect("a pass");
         let dist = &pass.distributions;
-        let coster = Coster {
-            context_map: dist.context_map.iter().map(|c| c.get() as usize).collect(),
-            log_totals: dist
-                .histograms
-                .iter()
-                .map(|h| f64::from(h.counts().iter().sum::<u32>().max(1)).log2())
-                .collect(),
-            log_counts: dist
-                .histograms
-                .iter()
-                .map(|h| {
-                    h.counts()
-                        .iter()
-                        .map(|&c| f64::from(c.max(1)).log2())
-                        .collect()
-                })
-                .collect(),
-            hybrid: dist
-                .hybrid_uint
-                .iter()
-                .map(|u| {
-                    jpxl_entropy::HybridUintConfig::new(
-                        u32::from(u.split_exponent),
-                        u32::from(u.msb_in_token),
-                        u32::from(u.lsb_in_token),
-                    )
-                    .expect("valid config")
-                })
-                .collect(),
-        };
+        let coster = EntropyCostView::from_model(dist).expect("trained cost view");
         let mut sink = AuditSink {
             coster: &coster,
             current: None,

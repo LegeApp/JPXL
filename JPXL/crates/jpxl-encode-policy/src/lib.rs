@@ -67,6 +67,7 @@ pub mod block;
 pub mod csf;
 pub mod diagnostics;
 mod entropy;
+mod entropy_cost;
 pub mod error;
 pub mod field;
 pub mod quantize;
@@ -110,6 +111,7 @@ pub use analysis::{
 pub use diagnostics::{
     ChooseStage, EncodeDiag, last_encode_diag, reset_encode_diag, take_encode_diag,
 };
+pub use entropy_cost::{EntropyCostSink, EntropyCostView};
 pub use error::{PolicyError, Result};
 pub use field::{AqMode, AqTuning};
 
