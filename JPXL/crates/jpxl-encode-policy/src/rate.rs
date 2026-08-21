@@ -277,7 +277,37 @@ pub enum RatePhase {
     /// default model, then pay for real entropy alternatives at the finalist
     /// and in a bounded exact correction window.
     Final,
+    /// Bounded fresh-structure rescue after the anchored finalist missed.
+    Rescue,
 }
+
+/// Why a completed target-rate search stopped where it did.
+///
+/// Production presets report bounded misses instead of silently escalating to
+/// the exhaustive reference controller. Callers can therefore distinguish a
+/// target-band hit, an expressiveness limit, and a deliberate work cap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RateStatus {
+    /// The selected stream is within the preset's requested target band.
+    InsideBand,
+    /// Adjacent priced rungs straddle the target but the feasible one is
+    /// outside the requested undershoot band.
+    UnderTargetAdjacentRungs,
+    /// The bounded production controller stopped outside the target band.
+    UnderTargetWorkCap,
+    /// The finest representable rung is still below the target.
+    SaturatedTop,
+    /// A bounded fresh cover/CfL rescue supplied the selected stream.
+    RescuedFreshStructure,
+    /// The explicitly requested Quality reference controller was used.
+    ExhaustiveReference,
+}
+
+#[cfg(feature = "anchor-sketch")]
+const MAX_BOUNDED_EXACT_PRICES: usize = 6;
+
+#[cfg(feature = "anchor-sketch")]
+const MAX_FRESH_RESCUE_PRICES: u32 = 2;
 
 /// How many prices to hold back from the Fast ladder for finalist refinement.
 ///
@@ -390,16 +420,20 @@ pub struct RateProbeStats {
     pub candidate_payload_bytes: u64,
     /// Dense coefficient-arena allocations (one per populated transform bank).
     pub candidate_allocations: u64,
-    /// Cover/CfL builds on the anchored path (normal-path cap: two; fallback
-    /// totals include both the attempt and the exhaustive decision path).
+    /// Cover/CfL builds on the bounded anchored path.
     pub structural_builds: u32,
     /// Reserved legacy counter for approximate probes (zero in the two-anchor path).
     pub sketch_probes: u32,
-    /// Exact Count candidates on the anchor path, excluding retained Stores.
+    /// Exact writer prices on the bounded anchor path, including retained
+    /// Store emissions. Hard-capped by the controller.
     pub exact_candidates: u32,
-    /// One when the feature-gated anchor path rejected its estimate and used
-    /// the exhaustive exact controller; zero on normal-path success.
+    /// Legacy telemetry: always zero now that production presets cannot enter
+    /// the exhaustive controller.
     pub anchor_fallbacks: u32,
+    /// Number of fresh cover/CfL rescue sequences (zero or one).
+    pub fresh_structure_rescues: u32,
+    /// Exact rescue prices (at most two within the one rescue sequence).
+    pub rescue_prices: u32,
     /// Exact byte size of the first anchored finalist.
     pub anchor_first_finalist_bytes: u64,
     /// Exact byte size of the one anchored correction, or zero when the
@@ -430,124 +464,6 @@ impl RateProbeStats {
     pub fn dct_cache_reused(self) -> bool {
         self.dct_cache_hits > 0 && self.dct_cache_hits >= self.dct_cache_misses
     }
-
-    /// Adds work from an anchored attempt to the exhaustive fallback totals.
-    ///
-    /// Decision fields such as the selected finalist byte count are kept from
-    /// the attempted path separately; these counters describe additive work
-    /// and must not disappear merely because the attempt was rejected.
-    fn add_attempted_work(&mut self, attempted: Self) {
-        self.gaborish_preconditions = self
-            .gaborish_preconditions
-            .saturating_add(attempted.gaborish_preconditions);
-        self.fast_prices = self.fast_prices.saturating_add(attempted.fast_prices);
-        self.full_prices = self.full_prices.saturating_add(attempted.full_prices);
-        self.dct_cache_hits = self.dct_cache_hits.saturating_add(attempted.dct_cache_hits);
-        self.dct_cache_misses = self
-            .dct_cache_misses
-            .saturating_add(attempted.dct_cache_misses);
-        self.candidate_cache_entries = self
-            .candidate_cache_entries
-            .saturating_add(attempted.candidate_cache_entries);
-        self.candidate_payload_bytes = self
-            .candidate_payload_bytes
-            .saturating_add(attempted.candidate_payload_bytes);
-        self.candidate_allocations = self
-            .candidate_allocations
-            .saturating_add(attempted.candidate_allocations);
-        self.structural_builds = self
-            .structural_builds
-            .saturating_add(attempted.structural_builds);
-        self.sketch_probes = self.sketch_probes.saturating_add(attempted.sketch_probes);
-        self.exact_candidates = self
-            .exact_candidates
-            .saturating_add(attempted.exact_candidates);
-        self.fast = add_search_phase(self.fast, attempted.fast);
-        self.full = add_search_phase(self.full, attempted.full);
-        self.writer = add_writer_diagnostics(self.writer, attempted.writer);
-    }
-}
-
-fn add_search_phase(
-    mut total: diagnostics::SearchPhaseDiagnostics,
-    extra: diagnostics::SearchPhaseDiagnostics,
-) -> diagnostics::SearchPhaseDiagnostics {
-    total.plans = total.plans.saturating_add(extra.plans);
-    total.cover_passes = total.cover_passes.saturating_add(extra.cover_passes);
-    total.cfl_searches = total.cfl_searches.saturating_add(extra.cfl_searches);
-    total.quantize_group_passes = total
-        .quantize_group_passes
-        .saturating_add(extra.quantize_group_passes);
-    total.census_passes = total.census_passes.saturating_add(extra.census_passes);
-    total.entropy_trainings = total
-        .entropy_trainings
-        .saturating_add(extra.entropy_trainings);
-    total.order_candidates = total
-        .order_candidates
-        .saturating_add(extra.order_candidates);
-    total.block_context_candidates = total
-        .block_context_candidates
-        .saturating_add(extra.block_context_candidates);
-    total.preset_candidates = total
-        .preset_candidates
-        .saturating_add(extra.preset_candidates);
-    total.plan_ns = total.plan_ns.saturating_add(extra.plan_ns);
-    total.cover_ns = total.cover_ns.saturating_add(extra.cover_ns);
-    total.cfl_ns = total.cfl_ns.saturating_add(extra.cfl_ns);
-    total.quantize_ns = total.quantize_ns.saturating_add(extra.quantize_ns);
-    total.entropy_ns = total.entropy_ns.saturating_add(extra.entropy_ns);
-    total
-}
-
-fn add_writer_diagnostics(
-    mut total: jpxl_encode::vardct::diagnostics::WriterDiagnostics,
-    extra: jpxl_encode::vardct::diagnostics::WriterDiagnostics,
-) -> jpxl_encode::vardct::diagnostics::WriterDiagnostics {
-    total.fast = add_writer_phase(total.fast, extra.fast);
-    total.full = add_writer_phase(total.full, extra.full);
-    total.other = add_writer_phase(total.other, extra.other);
-    total
-}
-
-fn add_writer_phase(
-    mut total: jpxl_encode::vardct::diagnostics::WriterPhaseDiagnostics,
-    extra: jpxl_encode::vardct::diagnostics::WriterPhaseDiagnostics,
-) -> jpxl_encode::vardct::diagnostics::WriterPhaseDiagnostics {
-    total.internal_count_emissions = total
-        .internal_count_emissions
-        .saturating_add(extra.internal_count_emissions);
-    total.outer_count_emissions = total
-        .outer_count_emissions
-        .saturating_add(extra.outer_count_emissions);
-    total.other_count_emissions = total
-        .other_count_emissions
-        .saturating_add(extra.other_count_emissions);
-    total.stored_emissions = total
-        .stored_emissions
-        .saturating_add(extra.stored_emissions);
-    total.section_body_traversals = total
-        .section_body_traversals
-        .saturating_add(extra.section_body_traversals);
-    total.lf_section_encodes = total
-        .lf_section_encodes
-        .saturating_add(extra.lf_section_encodes);
-    total.pass_group_section_encodes = total
-        .pass_group_section_encodes
-        .saturating_add(extra.pass_group_section_encodes);
-    total.executor_pool_builds = total
-        .executor_pool_builds
-        .saturating_add(extra.executor_pool_builds);
-    total.count_emission_ns = total
-        .count_emission_ns
-        .saturating_add(extra.count_emission_ns);
-    total.tape_symbols = total.tape_symbols.saturating_add(extra.tape_symbols);
-    total.stored_emission_ns = total
-        .stored_emission_ns
-        .saturating_add(extra.stored_emission_ns);
-    total.executor_pool_build_ns = total
-        .executor_pool_build_ns
-        .saturating_add(extra.executor_pool_build_ns);
-    total
 }
 
 /// What a completed search chose.
@@ -568,6 +484,8 @@ pub struct RateOutcome {
     /// Whether the finest ladder rung was still under target, i.e. the target
     /// was unreachably generous and the loop returned the best it can express.
     pub saturated: bool,
+    /// Explicit terminal state of the controller that produced this stream.
+    pub status: RateStatus,
     /// Multiplicity counters for this search (Opt-V2).
     pub stats: RateProbeStats,
 }
@@ -579,7 +497,7 @@ impl RateOutcome {
         self.sizing.total
     }
 
-    /// How many exact prices — i.e. full encodes — the search paid for.
+    /// How many exact writer prices the search paid for.
     #[must_use]
     pub fn iterations(&self) -> usize {
         self.trace.len()
@@ -1371,9 +1289,8 @@ const fn lf_sample_fits_legacy_16bit(sample: i32) -> bool {
 ///
 /// Quality requests retain the exact final-price controller and use the
 /// default entropy model for refinement navigation. Fast and Balanced requests
-/// in a build with the research-only `anchor-sketch` feature attempt
-/// the bounded two-anchor controller and fall back whenever its anchored
-/// finalist does not satisfy the preset's exact target band.
+/// in a build with the `anchor-sketch` compatibility feature use the bounded
+/// two-anchor controller and never enter the exhaustive Quality path.
 pub fn search_frame(
     frame: &crate::PreparedFrame,
     atlas: &crate::AnalysisAtlas,
@@ -1411,8 +1328,8 @@ pub fn search_frame_with_executor(
     }
 
     // Inverse-Gaborish is quantizer- and controller-independent. Own it at the
-    // request boundary so a rejected anchored attempt and its exhaustive
-    // fallback share the same transform frame instead of paying twice.
+    // request boundary so every anchored probe and its bounded rescue share
+    // the same transform frame instead of paying twice.
     let transform_owned = if request.restoration.gaborish {
         Some(crate::prepare_gaborish_frame(frame)?)
     } else {
@@ -1435,44 +1352,15 @@ pub fn search_frame_with_executor(
                 gaborish_preconditions,
             );
         }
-        let mut attempted = RateProbeStats::default();
-        let mut attempted_trace = Vec::new();
-        let mut seed = None;
-        match search_frame_two_anchor(
+        search_frame_two_anchor(
             frame,
             transform_frame,
             atlas,
             request,
             target,
-            &mut attempted,
-            &mut attempted_trace,
-            &mut seed,
             executor,
             gaborish_preconditions,
-        )? {
-            Some(outcome) => Ok(outcome),
-            None => {
-                let mut outcome = search_frame_exhaustive(
-                    frame,
-                    transform_frame,
-                    atlas,
-                    request,
-                    target,
-                    executor,
-                    seed,
-                    0,
-                )?;
-                let attempted_first_finalist = attempted.anchor_first_finalist_bytes;
-                let attempted_correction = attempted.anchor_correction_bytes;
-                outcome.stats.add_attempted_work(attempted);
-                outcome.stats.anchor_fallbacks = 1;
-                outcome.stats.anchor_first_finalist_bytes = attempted_first_finalist;
-                outcome.stats.anchor_correction_bytes = attempted_correction;
-                attempted_trace.append(&mut outcome.trace);
-                outcome.trace = attempted_trace;
-                Ok(outcome)
-            }
-        }
+        )
     }
 
     #[cfg(not(feature = "anchor-sketch"))]
@@ -1584,17 +1472,16 @@ fn two_anchor_correction_rung(
 /// a Fast/Balanced label. Removing the fallback showed the true tier there:
 /// −0.25 SSIMULACRA2 on mid2 2 bpp Balanced and −4.0 on the scene at Fast,
 /// which fails the Contract B bound, while every other cell moved within
-/// noise (photos +0.02 mean). Under the quality-first rule the defaults
-/// therefore stay at the legacy behaviour (`2.0`, no rebuild, one correction)
-/// and the settings below are the documented, screened alternative; the
-/// clean fix is a cheaper fresh-structure fallback seeded from the anchors,
-/// not a better predictor.
+/// noise (photos +0.02 mean). G3 therefore keeps the proven predictor settings
+/// (`2.0`, no second-anchor rebuild, one correction) and replaces the hidden
+/// escalation with a cheaper, capped fresh-structure rescue seeded from those
+/// anchors.
 #[cfg(feature = "anchor-sketch")]
 const SECOND_ANCHOR_EXPONENT: f64 = 2.0;
 
 /// How many exact corrections the anchored controller may pay after a
-/// finalist that missed the band before falling back to the exhaustive
-/// controller (see [`SECOND_ANCHOR_EXPONENT`] for the Phase Q5 screen of 2).
+/// finalist that missed the band before entering the bounded fresh-structure
+/// rescue (see [`SECOND_ANCHOR_EXPONENT`] for the Phase Q5 screen of 2).
 #[cfg(feature = "anchor-sketch")]
 const MAX_ANCHOR_CORRECTIONS: u32 = 1;
 
@@ -1654,10 +1541,217 @@ fn reuse_entropy(
 }
 
 #[cfg(feature = "anchor-sketch")]
+fn bounded_status(
+    trace: &[RateStep],
+    target: u64,
+    slack: u64,
+    achieved: u64,
+    saturated: bool,
+) -> RateStatus {
+    if saturated {
+        return RateStatus::SaturatedTop;
+    }
+    if target.saturating_sub(achieved) <= slack {
+        return RateStatus::InsideBand;
+    }
+    let adjacent_crossing = trace.iter().any(|feasible| {
+        feasible.feasible
+            && trace.iter().any(|infeasible| {
+                !infeasible.feasible
+                    && feasible
+                        .quantizer
+                        .rung
+                        .get()
+                        .abs_diff(infeasible.quantizer.rung.get())
+                        == 1
+            })
+    });
+    if adjacent_crossing {
+        RateStatus::UnderTargetAdjacentRungs
+    } else {
+        RateStatus::UnderTargetWorkCap
+    }
+}
+
+#[cfg(feature = "anchor-sketch")]
+fn finish_bounded_outcome(
+    prepared: &mut PreparedSearch<'_>,
+    trace: Vec<RateStep>,
+    candidate: (QuantizerChoice, ValidatedEmissionPlan, Emission),
+    target: u64,
+    slack: u64,
+    rescued: bool,
+) -> Result<RateOutcome> {
+    let (chosen, plan, emission) = candidate;
+    if trace.len() > MAX_BOUNDED_EXACT_PRICES {
+        return Err(PolicyError::Unsupported {
+            what: "a bounded rate search that exceeded its exact-price cap",
+        });
+    }
+    prepared.stats.exact_candidates = u32::try_from(trace.len()).unwrap_or(u32::MAX);
+    prepared.stats.dct_cache_hits = prepared.fwd_cache.hits();
+    prepared.stats.dct_cache_misses = prepared.fwd_cache.misses();
+    prepared.stats.candidate_cache_entries = prepared.fwd_cache.entries();
+    prepared.stats.candidate_payload_bytes = prepared.fwd_cache.payload_bytes();
+    prepared.stats.candidate_allocations = prepared.fwd_cache.allocations();
+    let aggregate = diagnostics::search_diag();
+    prepared.stats.fast = aggregate.fast;
+    prepared.stats.full = aggregate.full;
+    prepared.stats.writer = jpxl_encode::vardct::diagnostics::snapshot();
+
+    let saturated = trace
+        .iter()
+        .any(|step| step.quantizer.rung == Rung::TOP && step.feasible);
+    let status = if rescued {
+        RateStatus::RescuedFreshStructure
+    } else {
+        bounded_status(&trace, target, slack, emission.sizing.total, saturated)
+    };
+    Ok(RateOutcome {
+        codestream: emission.bytes,
+        plan,
+        sizing: emission.sizing,
+        chosen,
+        target,
+        trace,
+        saturated,
+        status,
+        stats: prepared.stats,
+    })
+}
+
+/// One fresh cover/CfL build plus at most one exact correction on that fresh
+/// structure. This is the only miss path for production presets; it shares the
+/// frame, atlas, executor, DCT cache, and quantization workspace owned by the
+/// request and cannot enter the exhaustive controller.
+#[cfg(feature = "anchor-sketch")]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the rescue consumes the bounded controller's already-priced anchors and request state"
+)]
+fn search_frame_fresh_rescue(
+    prepared: &mut PreparedSearch<'_>,
+    request: &EncodeRequest,
+    target: u64,
+    slack: u64,
+    mut trace: Vec<RateStep>,
+    first: (Rung, u64),
+    second: (Rung, u64),
+    seed: Rung,
+    enable_cfl: bool,
+    entropy_search: EntropySearch,
+) -> Result<RateOutcome> {
+    prepared.stats.fresh_structure_rescues = 1;
+    let mut fresh_anchor = None;
+    let rescue_quantizer = QuantizerChoice::at(seed, request.quant_lf)?;
+    let rescue_plan = prepared.plan_anchor(
+        rescue_quantizer,
+        enable_cfl,
+        entropy_search,
+        AnchorReuse::None,
+        Some(&mut fresh_anchor),
+    )?;
+    prepared.stats.structural_builds = prepared.stats.structural_builds.saturating_add(1);
+    let rescue_emission =
+        diagnostics::with_search_phase(diagnostics::SearchDiagnosticPhase::Full, || {
+            emit_codestream_with_executor(&rescue_plan, prepared.executor)
+        })?;
+    prepared.stats.full_prices = prepared.stats.full_prices.saturating_add(1);
+    prepared.stats.rescue_prices = 1;
+    let rescue_bytes = rescue_emission.sizing.total;
+    trace.push(RateStep {
+        phase: RatePhase::Rescue,
+        quantizer: rescue_quantizer,
+        bytes: rescue_bytes,
+        feasible: rescue_bytes <= target,
+    });
+
+    let within_target = |bytes: u64| bytes <= target && target.saturating_sub(bytes) <= slack;
+    let mut selected = if rescue_bytes <= target {
+        Some((rescue_quantizer, rescue_plan, rescue_emission))
+    } else {
+        drop(rescue_plan);
+        drop(rescue_emission);
+        None
+    };
+    if !within_target(rescue_bytes)
+        && prepared.stats.rescue_prices < MAX_FRESH_RESCUE_PRICES
+        && trace.len() < MAX_BOUNDED_EXACT_PRICES
+    {
+        let correction_target = target.saturating_sub(slack / 2);
+        let prior_feasible_rung = trace
+            .iter()
+            .rev()
+            .find(|step| step.feasible && step.quantizer.rung != rescue_quantizer.rung)
+            .map(|step| step.quantizer.rung);
+        let correction_rung = if rescue_bytes > target {
+            // An already-priced feasible Fast rung is the best bounded
+            // correction aim available after a fresh plan crossed the target.
+            // With no feasible evidence, price FLOOR: that both
+            // returns a bounded answer when one exists and reports the real
+            // representable floor when the target is impossible.
+            prior_feasible_rung.unwrap_or(Rung::FLOOR)
+        } else {
+            two_anchor_correction_rung(
+                first,
+                second,
+                (rescue_quantizer.rung, rescue_bytes),
+                correction_target,
+            )
+            .unwrap_or_else(|| Rung::new(rescue_quantizer.rung.get().saturating_add(1)))
+        };
+        let fresh_anchor = fresh_anchor.as_ref().ok_or(PolicyError::Unsupported {
+            what: "a fresh rescue that failed to capture its structure",
+        })?;
+        let correction_quantizer = QuantizerChoice::at(correction_rung, request.quant_lf)?;
+        let correction_plan = prepared.plan_anchor(
+            correction_quantizer,
+            false,
+            entropy_search,
+            AnchorReuse::CoverAndCfl(fresh_anchor),
+            None,
+        )?;
+        let correction_emission =
+            diagnostics::with_search_phase(diagnostics::SearchDiagnosticPhase::Full, || {
+                emit_codestream_with_executor(&correction_plan, prepared.executor)
+            })?;
+        prepared.stats.full_prices = prepared.stats.full_prices.saturating_add(1);
+        prepared.stats.rescue_prices = 2;
+        let correction_bytes = correction_emission.sizing.total;
+        trace.push(RateStep {
+            phase: RatePhase::Rescue,
+            quantizer: correction_quantizer,
+            bytes: correction_bytes,
+            feasible: correction_bytes <= target,
+        });
+        if correction_bytes <= target
+            && selected
+                .as_ref()
+                .is_none_or(|(_, _, emission)| correction_bytes > emission.sizing.total)
+        {
+            selected = Some((correction_quantizer, correction_plan, correction_emission));
+        }
+    }
+
+    let Some((chosen, plan, emission)) = selected else {
+        let floor = trace.iter().map(|step| step.bytes).min().unwrap_or(0);
+        return Err(PolicyError::TargetUnreachable { target, floor });
+    };
+    finish_bounded_outcome(
+        prepared,
+        trace,
+        (chosen, plan, emission),
+        target,
+        slack,
+        true,
+    )
+}
+
+#[cfg(feature = "anchor-sketch")]
 #[allow(
     clippy::too_many_arguments,
     reason = "controller plumbing keeps request-scoped frame/executor state and \
-              fallback telemetry explicit at the one anchored entry point"
+              bounded-controller state explicit at the one anchored entry point"
 )]
 fn search_frame_two_anchor(
     frame: &crate::PreparedFrame,
@@ -1665,12 +1759,9 @@ fn search_frame_two_anchor(
     atlas: &crate::AnalysisAtlas,
     request: &EncodeRequest,
     target: RateTarget,
-    attempted: &mut RateProbeStats,
-    attempted_trace: &mut Vec<RateStep>,
-    seed: &mut Option<Rung>,
     executor: &jpxl_encode::EncodeExecutor,
     gaborish_preconditions: u32,
-) -> Result<Option<RateOutcome>> {
+) -> Result<RateOutcome> {
     diagnostics::reset_search_diag();
     let target_bytes = target.bytes_for(frame.width(), frame.height());
     let start = QuantizerChoice::from_request(request).rung;
@@ -1694,7 +1785,11 @@ fn search_frame_two_anchor(
     let (enable_cfl, reuse_entropy_model, final_entropy) = match request.rate_preset {
         RateSearchPreset::Fast => (false, false, EntropySearch::FinalFast),
         RateSearchPreset::Balanced => (true, true, EntropySearch::Reuse),
-        RateSearchPreset::Quality => return Ok(None),
+        RateSearchPreset::Quality => {
+            return Err(PolicyError::Unsupported {
+                what: "a Quality request routed into the bounded controller",
+            });
+        }
     };
     let mut captured = None;
     let first_plan = prepared.plan_anchor(
@@ -1804,14 +1899,32 @@ fn search_frame_two_anchor(
         .bytes_for(target_bytes)
         / 8;
     let prediction_target = target_bytes.saturating_sub(prediction_slack);
+    let slack = request
+        .rate_preset
+        .tolerance(request.tolerance)
+        .bytes_for(target_bytes);
     let Some(finalist_rung) = two_anchor_target_rung(
         (first_quantizer.rung, first_size.total),
         (second_quantizer.rung, second_size.total),
         prediction_target,
     ) else {
-        *attempted = prepared.stats;
-        *attempted_trace = trace;
-        return Ok(None);
+        let rescue_entropy = if reuse_entropy_model {
+            EntropySearch::Full
+        } else {
+            final_entropy
+        };
+        return search_frame_fresh_rescue(
+            &mut prepared,
+            request,
+            target_bytes,
+            slack,
+            trace,
+            (first_quantizer.rung, first_size.total),
+            (second_quantizer.rung, second_size.total),
+            second_quantizer.rung,
+            enable_cfl,
+            rescue_entropy,
+        );
     };
     let finalist_quantizer = QuantizerChoice::at(finalist_rung, request.quant_lf)?;
     let mut finalist_anchor = None;
@@ -1852,12 +1965,7 @@ fn search_frame_two_anchor(
         })?;
     let finalist_bytes = finalist_emission.sizing.total;
     prepared.stats.full_prices = 1;
-    prepared.stats.exact_candidates = 2;
     prepared.stats.anchor_first_finalist_bytes = finalist_bytes;
-    let slack = request
-        .rate_preset
-        .tolerance(request.tolerance)
-        .bytes_for(target_bytes);
     let within_target =
         |bytes: u64| bytes <= target_bytes && target_bytes.saturating_sub(bytes) <= slack;
     trace.push(RateStep {
@@ -1929,7 +2037,6 @@ fn search_frame_two_anchor(
                 })?;
             let correction_bytes = correction_emission.sizing.total;
             prepared.stats.full_prices = 2 + attempt;
-            prepared.stats.exact_candidates = 2 + attempt;
             prepared.stats.anchor_correction_bytes = correction_bytes;
             trace.push(RateStep {
                 phase: RatePhase::Final,
@@ -1945,23 +2052,37 @@ fn search_frame_two_anchor(
             previous = (correction_quantizer.rung, correction_bytes);
         }
         let Some(selected) = selected else {
-            *attempted = prepared.stats;
-            *attempted_trace = trace;
-            // Seed the exhaustive fallback with the crossing estimate from
-            // the two exact points nearest the target: the local slope
-            // between them, or the last exact point when there is only one.
-            *seed = match last {
+            // Seed the sole fresh-structure rescue from the crossing estimate
+            // between the exact points nearest the target. Production
+            // presets never call the exhaustive reference controller.
+            let rescue_seed = match last {
                 Some(exact) => two_anchor_correction_rung(exact, previous, previous, target_bytes)
-                    .or(Some(previous.0)),
+                    .unwrap_or(previous.0),
                 None => two_anchor_correction_rung(
                     (first_quantizer.rung, first_size.total),
                     (second_quantizer.rung, second_size.total),
                     previous,
                     target_bytes,
                 )
-                .or(Some(previous.0)),
+                .unwrap_or(previous.0),
             };
-            return Ok(None);
+            let rescue_entropy = if reuse_entropy_model {
+                EntropySearch::Full
+            } else {
+                final_entropy
+            };
+            return search_frame_fresh_rescue(
+                &mut prepared,
+                request,
+                target_bytes,
+                slack,
+                trace,
+                (first_quantizer.rung, first_size.total),
+                (second_quantizer.rung, second_size.total),
+                rescue_seed,
+                enable_cfl,
+                rescue_entropy,
+            );
         };
         selected
     };
@@ -1971,32 +2092,17 @@ fn search_frame_two_anchor(
             what: "a selected anchored emission whose recorded size changed",
         });
     }
-    prepared.stats.dct_cache_hits = prepared.fwd_cache.hits();
-    prepared.stats.dct_cache_misses = prepared.fwd_cache.misses();
-    prepared.stats.candidate_cache_entries = prepared.fwd_cache.entries();
-    prepared.stats.candidate_payload_bytes = prepared.fwd_cache.payload_bytes();
-    prepared.stats.candidate_allocations = prepared.fwd_cache.allocations();
-    let aggregate = diagnostics::search_diag();
-    prepared.stats.fast = aggregate.fast;
-    prepared.stats.full = aggregate.full;
-    prepared.stats.writer = jpxl_encode::vardct::diagnostics::snapshot();
-
-    let saturated = trace
-        .iter()
-        .any(|step| step.quantizer.rung == Rung::TOP && step.feasible);
-    Ok(Some(RateOutcome {
-        codestream: emission.bytes,
-        plan: chosen_plan,
-        sizing: emission.sizing,
-        chosen: chosen_quantizer,
-        target: target_bytes,
+    finish_bounded_outcome(
+        &mut prepared,
         trace,
-        saturated,
-        stats: prepared.stats,
-    }))
+        (chosen_quantizer, chosen_plan, emission),
+        target_bytes,
+        slack,
+        false,
+    )
 }
 
-/// Exact target controller retained as the reference path and fallback.
+/// Exact target controller retained as the explicit Quality reference path.
 ///
 /// Two entropy pricing modes share the price budget:
 ///
@@ -2019,8 +2125,8 @@ fn search_frame_two_anchor(
 /// As [`search_ladder`], plus anything the planner or writer refuses.
 #[allow(
     clippy::too_many_arguments,
-    reason = "the exhaustive controller receives the same request-scoped \
-              transform state explicitly so anchored fallback cannot rebuild it"
+    reason = "the explicit Quality controller receives request-scoped \
+              transform state rather than rebuilding it"
 )]
 fn search_frame_exhaustive(
     frame: &crate::PreparedFrame,
@@ -2372,6 +2478,7 @@ fn search_frame_exhaustive(
         target: target_bytes,
         trace: search.trace,
         saturated,
+        status: RateStatus::ExhaustiveReference,
         stats: prepared.stats,
     })
 }
@@ -2386,6 +2493,46 @@ mod tests {
 
     fn quant_lf() -> QuantLf {
         QuantLf::new(16).expect("legal")
+    }
+
+    #[cfg(feature = "anchor-sketch")]
+    #[test]
+    fn bounded_terminal_statuses_are_explicit() {
+        let feasible = RateStep {
+            phase: RatePhase::Final,
+            quantizer: QuantizerChoice::at(Rung::new(10), quant_lf()).expect("legal"),
+            bytes: 80,
+            feasible: true,
+        };
+        let adjacent_over = RateStep {
+            phase: RatePhase::Final,
+            quantizer: QuantizerChoice::at(Rung::new(11), quant_lf()).expect("legal"),
+            bytes: 105,
+            feasible: false,
+        };
+        let distant_over = RateStep {
+            phase: RatePhase::Final,
+            quantizer: QuantizerChoice::at(Rung::new(20), quant_lf()).expect("legal"),
+            bytes: 105,
+            feasible: false,
+        };
+
+        assert_eq!(
+            bounded_status(&[feasible], 100, 25, 80, false),
+            RateStatus::InsideBand
+        );
+        assert_eq!(
+            bounded_status(&[feasible, adjacent_over], 100, 5, 80, false),
+            RateStatus::UnderTargetAdjacentRungs
+        );
+        assert_eq!(
+            bounded_status(&[feasible, distant_over], 100, 5, 80, false),
+            RateStatus::UnderTargetWorkCap
+        );
+        assert_eq!(
+            bounded_status(&[feasible], 100, 5, 80, true),
+            RateStatus::SaturatedTop
+        );
     }
 
     #[test]

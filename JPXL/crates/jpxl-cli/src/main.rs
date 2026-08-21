@@ -935,8 +935,13 @@ fn cmd_encode(args: &[String]) -> u8 {
                     status_line(
                         output,
                         &format!(
-                            "  anchor: fallbacks={} first_finalist_bytes={} correction_bytes={}                          fast_prices={} full_prices={}",
+                            "  controller: status={:?} fallbacks={} fresh_rescues={} \
+                             rescue_prices={} first_finalist_bytes={} correction_bytes={} \
+                             fast_prices={} full_prices={}",
+                            report.status,
                             report.stats.anchor_fallbacks,
+                            report.stats.fresh_structure_rescues,
+                            report.stats.rescue_prices,
                             report.stats.anchor_first_finalist_bytes,
                             report.stats.anchor_correction_bytes,
                             report.stats.fast_prices,
@@ -971,12 +976,24 @@ fn cmd_encode(args: &[String]) -> u8 {
                         let f = (miss as f64) * 100.0 / (report.target_bytes as f64);
                         f
                     };
-                    let why = if report.saturated {
-                        "ladder saturated: the finest quantizer is still under target, \
-                         so no extra search budget can close this"
-                    } else {
-                        "search ended short of target with budget spent, not at the \
-                         ladder's limit"
+                    let why = match report.status {
+                        jpxl_encode_policy::RateStatus::SaturatedTop => {
+                            "ladder saturated: the finest quantizer is still under target, \
+                             so no extra search budget can close this"
+                        }
+                        jpxl_encode_policy::RateStatus::UnderTargetAdjacentRungs => {
+                            "adjacent priced rungs straddle the target"
+                        }
+                        jpxl_encode_policy::RateStatus::UnderTargetWorkCap
+                        | jpxl_encode_policy::RateStatus::RescuedFreshStructure => {
+                            "the bounded production controller reached its work cap"
+                        }
+                        jpxl_encode_policy::RateStatus::ExhaustiveReference => {
+                            "the exhaustive Quality reference ended outside its band"
+                        }
+                        jpxl_encode_policy::RateStatus::InsideBand => {
+                            "the selected stream is inside the requested band"
+                        }
                     };
                     status_line(
                         output,
@@ -1314,7 +1331,8 @@ fn cmd_bench(args: &[String]) -> u8 {
                             println!(
                                 "rate_diag=fast_prices={} full_prices={} \
                                  structural_builds={} sketch_probes={} \
-                                 exact_candidates={} anchor_fallbacks={} \
+                                 exact_candidates={} anchor_fallbacks={} fresh_rescues={} \
+                                 rescue_prices={} \
                                  anchor_first_finalist_bytes={} \
                                  anchor_correction_bytes={} \
                                  dct_cache_hits={} dct_cache_misses={} \
@@ -1326,6 +1344,8 @@ fn cmd_bench(args: &[String]) -> u8 {
                                 s.sketch_probes,
                                 s.exact_candidates,
                                 s.anchor_fallbacks,
+                                s.fresh_structure_rescues,
+                                s.rescue_prices,
                                 s.anchor_first_finalist_bytes,
                                 s.anchor_correction_bytes,
                                 s.dct_cache_hits,
@@ -1503,14 +1523,16 @@ impl RateTraceStats {
                 RatePhase::Bisect => out.bisect += 1,
                 RatePhase::Fill => out.fill += 1,
                 RatePhase::LfFill => out.lf_fill += 1,
-                RatePhase::Final => out.final_prices += 1,
+                RatePhase::Final | RatePhase::Rescue => out.final_prices += 1,
             }
         }
 
         let fast_best = outcome
             .trace
             .iter()
-            .filter(|step| step.phase != RatePhase::Final && step.feasible)
+            .filter(|step| {
+                !matches!(step.phase, RatePhase::Final | RatePhase::Rescue) && step.feasible
+            })
             .max_by_key(|step| (step.bytes, step.quantizer.rung));
         out.fast_best_rung = fast_best.map(|step| step.quantizer.rung.get());
         out.fast_best_quant_lf = fast_best.map(|step| step.quantizer.quant_lf.get());
@@ -1519,7 +1541,7 @@ impl RateTraceStats {
                 .trace
                 .iter()
                 .filter(|step| {
-                    step.phase != RatePhase::Final
+                    !matches!(step.phase, RatePhase::Final | RatePhase::Rescue)
                         && !step.feasible
                         && step.quantizer.rung > best.quantizer.rung
                 })
@@ -1529,7 +1551,7 @@ impl RateTraceStats {
         let full_start = outcome
             .trace
             .iter()
-            .find(|step| step.phase == RatePhase::Final);
+            .find(|step| matches!(step.phase, RatePhase::Final | RatePhase::Rescue));
         out.full_start_rung = full_start.map(|step| step.quantizer.rung.get());
         out.full_start_quant_lf = full_start.map(|step| step.quantizer.quant_lf.get());
         out
@@ -1785,9 +1807,8 @@ struct LossyReport {
     target_bytes: u64,
     achieved: u64,
     allowed_undershoot: u64,
-    /// The ladder ran out of rungs — the target is finer than the quantizer can
-    /// express. More search budget cannot help.
-    saturated: bool,
+    /// Explicit terminal state of the target-rate controller.
+    status: jpxl_encode_policy::RateStatus,
     fast_prices: u32,
     full_prices: u32,
     /// Every priced candidate, for the `JPXL_RATE_TRACE` research dump.
@@ -2107,7 +2128,7 @@ fn encode_lossy_to_target(
             .rate_preset
             .tolerance(request.tolerance)
             .bytes_for(outcome.target),
-        saturated: outcome.saturated,
+        status: outcome.status,
         fast_prices: outcome.stats.fast_prices,
         full_prices: outcome.stats.full_prices,
         stats: outcome.stats,

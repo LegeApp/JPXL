@@ -41,12 +41,12 @@ use jpxl_core::limits::Limits;
 use jpxl_decode::decode::decode;
 use jpxl_encode::vardct::SectionKind;
 use jpxl_encode::vardct::ids::{GlobalScale, QuantLf};
-#[cfg(feature = "anchor-sketch")]
-use jpxl_encode_policy::RateSearchPreset;
 use jpxl_encode_policy::{
     EncodeRequest, PolicyError, RateSearchBudget, RateTarget, RateTolerance, Rung,
     encode_srgb8_to_target, encode_srgb8_vardct, rate,
 };
+#[cfg(feature = "anchor-sketch")]
+use jpxl_encode_policy::{RateSearchPreset, RateStatus};
 
 /// The stated tolerance: how far under a target the loop may land.
 ///
@@ -162,12 +162,22 @@ fn target_rate_is_byte_identical_across_executor_widths() {
     assert_eq!(parallel.stats.candidate_allocations, 3);
     #[cfg(feature = "anchor-sketch")]
     for outcome in [&serial, &parallel] {
-        assert!(outcome.stats.anchor_fallbacks <= 1, "{:?}", outcome.stats);
-        if outcome.stats.anchor_fallbacks == 0 {
-            assert!(outcome.stats.structural_builds <= 2, "{:?}", outcome.stats);
-            assert!(outcome.stats.full_prices <= 2, "{:?}", outcome.stats);
-            assert!(outcome.stats.exact_candidates <= 4, "{:?}", outcome.stats);
-        }
+        assert_eq!(outcome.status, RateStatus::RescuedFreshStructure);
+        assert_eq!(outcome.stats.anchor_fallbacks, 0, "{:?}", outcome.stats);
+        assert_eq!(outcome.stats.fresh_structure_rescues, 1);
+        assert!(outcome.stats.rescue_prices <= 2, "{:?}", outcome.stats);
+        assert!(outcome.stats.structural_builds <= 2, "{:?}", outcome.stats);
+        assert!(outcome.stats.full_prices <= 4, "{:?}", outcome.stats);
+        assert!(outcome.stats.exact_candidates <= 6, "{:?}", outcome.stats);
+        assert_eq!(outcome.stats.exact_candidates as usize, outcome.trace.len());
+        assert_eq!(
+            (outcome.stats.fast_prices + outcome.stats.full_prices) as usize,
+            outcome.trace.len()
+        );
+        assert!(outcome.trace.iter().all(|step| matches!(
+            step.phase,
+            rate::RatePhase::Bracket | rate::RatePhase::Final | rate::RatePhase::Rescue
+        )));
     }
 }
 
@@ -189,12 +199,29 @@ fn balanced_anchor_is_exact_and_decodable() {
     );
     let image = decode(&outcome.codestream, &Limits::default()).expect("balanced stream decodes");
     assert_eq!((image.width, image.height), (width, height));
-    assert!(outcome.stats.anchor_fallbacks <= 1);
-    if outcome.stats.anchor_fallbacks == 0 {
-        assert!(outcome.stats.structural_builds <= 2);
-        assert!(outcome.stats.full_prices <= 2);
-        assert!(outcome.stats.exact_candidates <= 4);
-    }
+    assert_ne!(outcome.status, RateStatus::ExhaustiveReference);
+    assert_eq!(outcome.stats.anchor_fallbacks, 0);
+    assert!(outcome.stats.fresh_structure_rescues <= 1);
+    assert!(outcome.stats.rescue_prices <= 2);
+    assert!(outcome.stats.structural_builds <= 2);
+    assert!(outcome.stats.full_prices <= 4);
+    assert!(outcome.stats.exact_candidates <= 6);
+}
+
+#[cfg(feature = "anchor-sketch")]
+#[test]
+fn exhaustive_status_is_reserved_for_an_explicit_quality_request() {
+    let (width, height) = (64u32, 64u32);
+    let source = test_image(width, height);
+    let target = RateTarget::Bytes(900);
+    let mut request = EncodeRequest::for_target(target);
+    request.rate_preset = RateSearchPreset::Quality;
+
+    let outcome = encode_srgb8_to_target(width, height, &source, &request, target)
+        .expect("Quality reference search");
+    assert_eq!(outcome.status, RateStatus::ExhaustiveReference);
+    assert_eq!(outcome.stats.fresh_structure_rescues, 0);
+    assert_eq!(outcome.stats.rescue_prices, 0);
 }
 
 #[test]
@@ -401,7 +428,8 @@ fn a_target_no_quantizer_can_reach_is_refused_with_its_floor() {
         PolicyError::TargetUnreachable { target, floor } => {
             assert_eq!(target, 64);
             assert!(floor > 64, "the floor {floor} must exceed the target");
-            // The floor is a real, emittable stream, not a computed guess.
+            // The bounded controller priced the actual floor rung; this is
+            // writer evidence, not an arithmetic size estimate.
             let mut request = EncodeRequest::defaults();
             request.global_scale = GlobalScale::new(1).expect("legal");
             let coarsest = encode_srgb8_vardct(width, height, &source, &request).expect("encodes");
@@ -609,7 +637,7 @@ fn rate_probe_multiplicity_is_down() {
     let final_steps = outcome
         .trace
         .iter()
-        .filter(|s| s.phase == rate::RatePhase::Final)
+        .filter(|s| matches!(s.phase, rate::RatePhase::Final | rate::RatePhase::Rescue))
         .count();
     let non_final = outcome.iterations().saturating_sub(final_steps);
     assert_eq!(final_steps, stats.full_prices as usize);

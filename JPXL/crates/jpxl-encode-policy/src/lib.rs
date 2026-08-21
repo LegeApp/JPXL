@@ -117,8 +117,8 @@ pub use field::{AqMode, AqTuning};
 
 use field::{DesiredQuantField, mul_lattice_for};
 pub use rate::{
-    LadderSearch, QuantizerChoice, RateOutcome, RatePhase, RateProbeStats, RateStep, Rung,
-    search_frame,
+    LadderSearch, QuantizerChoice, RateOutcome, RatePhase, RateProbeStats, RateStatus, RateStep,
+    Rung, search_frame,
 };
 pub use request::{
     AdaptiveSharpness, ChromaHfPolicy, CoverFrequencyWeight, CoverMode, CoverRateModel,

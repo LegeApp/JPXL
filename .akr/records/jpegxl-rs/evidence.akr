@@ -233,6 +233,69 @@ record jpegxl-rs.evidence.gap-g2-run-aware-audit-2026-08-21/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.gap-g3-bounded-controller-tests-2026-08-21/1 : evidence {
+    title "Release tests prove Fast/Balanced use explicit terminal statuses, reserve ExhaustiveReference for an explicit Quality request, cap bounded searches at six exact prices, allow at most one two-price fresh-structure rescue, and preserve the never-over contract."
+    state verified
+    result pass
+    method command
+    observed_at git:d32b365cb46847844682a808693635c8bbbc87ed
+    command "cargo test -p jpxl-encode-policy --release --features anchor-sketch"
+    summary """
+        Release tests prove Fast/Balanced use explicit terminal statuses, reserve ExhaustiveReference for an explicit Quality request, cap bounded searches at six exact prices, allow at most one two-price fresh-structure rescue, and preserve the never-over contract.
+        """
+}
+
+record jpegxl-rs.evidence.gap-g3-decoder-parity-2026-08-21/1 : evidence {
+    title "JPXL and jxl-oxide both decoded the representative 2400x1800 G3 Balanced codestream successfully."
+    state verified
+    result pass
+    method command
+    observed_at git:d32b365cb46847844682a808693635c8bbbc87ed
+    command "JPXL/target/release/jpxl decode .agent/scratch/gap-g3-2026-08-21/mid.jxl /tmp/jpxl-g3-mid.ppm && jxl-oxide .agent/scratch/gap-g3-2026-08-21/mid.jxl -o /tmp/jpxl-g3-mid.png -f png8"
+    artifact ".agent/scratch/gap-g3-2026-08-21/mid.jxl"
+    summary """
+        JPXL and jxl-oxide both decoded the representative 2400x1800 G3 Balanced codestream successfully.
+        """
+}
+
+record jpegxl-rs.evidence.gap-g3-ordinary-path-identity-2026-08-21/1 : evidence {
+    title "All three frozen 1 bpp Balanced cells stayed on InsideBand with zero rescues and retained their G2 sizes; the 539,958-byte mid stream remained SHA-256 35b1e40af953744efc728b0e6aa81e6753fdafa33ef31e68013e7b98754a31ab."
+    state verified
+    result pass
+    method command
+    observed_at git:d32b365cb46847844682a808693635c8bbbc87ed
+    command "Release jpxl encode --bpp 1 --lossy-preset balanced on the frozen source/mid/large corpus, then sha256sum against the G2 mid artifact"
+    artifact ".agent/scratch/gap-g3-2026-08-21/corpus-release.log"
+    summary """
+        All three frozen 1 bpp Balanced cells stayed on InsideBand with zero rescues and retained their G2 sizes; the 539,958-byte mid stream remained SHA-256 35b1e40af953744efc728b0e6aa81e6753fdafa33ef31e68013e7b98754a31ab.
+        """
+}
+
+record jpegxl-rs.evidence.gap-g3-release-gates-2026-08-21/1 : evidence {
+    title "The complete release-mode workspace build, test suite including external decoder oracles, clippy warning gate, and formatting check passed."
+    state verified
+    result pass
+    method command
+    observed_at git:d32b365cb46847844682a808693635c8bbbc87ed
+    command "cargo build --workspace --release && cargo test --workspace --release && cargo clippy --workspace --all-targets --release -- -D warnings && cargo fmt --all --check"
+    summary """
+        The complete release-mode workspace build, test suite including external decoder oracles, clippy warning gate, and formatting check passed.
+        """
+}
+
+record jpegxl-rs.evidence.gap-g3-rescue-speed-2026-08-21/1 : evidence {
+    title "The forced Fast miss fixture fell from 1.18-1.26 s with the hidden exhaustive fallback to 0.09 s in all five G3 runs, while its tests prove one bounded fresh rescue and no Quality outcome."
+    state verified
+    result pass
+    method command
+    observed_at git:d32b365cb46847844682a808693635c8bbbc87ed
+    command "Five interleaved warm direct runs of rate_loop::target_rate_is_byte_identical_across_executor_widths at d32b365 and the G3 worktree"
+    artifact ".agent/scratch/gap-g3-2026-08-21/rescue-timing.log"
+    summary """
+        The forced Fast miss fixture fell from 1.18-1.26 s with the hidden exhaustive fallback to 0.09 s in all five G3 runs, while its tests prove one bounded fresh rescue and no Quality outcome.
+        """
+}
+
 record jpegxl-rs.evidence.general-use-api-tests-2026-08-20/1 : evidence {
     title "Facade tests, CLI raster-adapter tests, PNG-to-JXL-to-PNG integration, target-rate byte ceiling, and facade doctests all passed."
     state verified

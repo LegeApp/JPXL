@@ -129,10 +129,9 @@ impl Default for RateTolerance {
 /// [`Self::Balanced`] is the production default and [`Self::Fast`] is the
 /// lower-latency production tier. Both use the bounded two-anchor predictor
 /// (available in normal builds through the `anchor-sketch` compatibility
-/// feature), verify the selected stream exactly, and fall back to
-/// [`Self::Quality`] when they cannot satisfy their rate bands. Quality keeps
-/// the exhaustive exact search as a reference path rather than a production
-/// latency target.
+/// feature), verify the selected stream exactly, and may spend one bounded
+/// fresh-structure rescue when the anchored finalist misses. They never enter
+/// [`Self::Quality`], which remains an explicit exhaustive reference path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RateSearchPreset {
     /// Exhaustive exact rate search, preserving the highest-rate feasible
@@ -141,13 +140,13 @@ pub enum RateSearchPreset {
     /// [`Self::Balanced`].
     Quality,
     /// Two exact anchors, one predicted fast-entropy finalist, and at most one
-    /// exact correction before falling back to [`Self::Quality`].
+    /// exact correction and one bounded fresh-structure rescue sequence.
     Fast,
     /// Two exact anchors with the configured hierarchical cover and trailing
     /// HF quantizer, followed by one fast-entropy anchored finalist and at
-    /// most one exact correction before falling back to [`Self::Quality`].
-    /// This is the higher-quality speed preset; [`Self::Quality`] remains the
-    /// exhaustive reference path.
+    /// most one exact correction and one bounded fresh-structure rescue
+    /// sequence. This is the higher-quality speed preset; [`Self::Quality`]
+    /// remains the exhaustive reference path.
     #[default]
     Balanced,
 }
