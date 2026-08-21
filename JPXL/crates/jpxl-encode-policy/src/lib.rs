@@ -4349,7 +4349,8 @@ fn score_channel_lanes(
     Ok(false)
 }
 
-/// S8 Phase D (`sources/outside-advice.md` §8, feature `s8-cover-prune`):
+/// S8 Phase D (AKR source `outside-advice-2026-08-06` §8, feature
+/// `s8-cover-prune`):
 /// the staged cheap lower bound Phase C's `regret::validate_candidate_prune`
 /// proved safe (zero violations, exhaustively checked over every
 /// merge-candidate node a corpus fixture produced) — checked with the

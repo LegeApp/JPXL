@@ -198,7 +198,8 @@ wall_ms_median, wall_ms_mad, output_bytes, fingerprint. With --diag,
 additional stage and amplification lines follow.
 
 Note: vardct-fixed still uses EncodeRequest::defaults (hierarchical cover,
-CfL, AQ) — only the rate loop is off. See sources/outside-advice.md §2.
+CfL, AQ) — only the rate loop is off. See AKR source
+outside-advice-2026-08-06 §2.
 
 This is tooling, not a baseline: AKR performance-baseline-rules govern
 promoted numbers; raw logs live under .agent/scratch/.

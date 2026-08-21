@@ -295,7 +295,7 @@ record jpegxl-rs.policy.restoration-filter-off/1 : policy {
 
 record jpegxl-rs.policy.sources-advice-completion/1 : policy {
     title "Retain external advice under sources/; mark completion in AKR"
-    state active
+    state superseded
     scope [ all ]
     topic sources-advice
     rule """
@@ -314,6 +314,21 @@ record jpegxl-rs.policy.sources-advice-completion/1 : policy {
         large narrative files mid-implementation.
         """
     author "grok-build"
+}
+
+record jpegxl-rs.policy.sources-advice-completion/2 : policy {
+    title "Register outside advice; track adoption and completion only in AKR"
+    state active
+    scope [ all ]
+    rule """
+        External architecture and optimization advice is registered through the AKR source library and stored under sources/external with an immutable content hash. Top-level intake copies and Markdown status sidecars are removed after registration; AKR planning records are the only progress and completion surface. Do not rewrite advice into a checklist or parallel plan. A registered full source may be finalized only through the source-library workflow when its durable citations and metadata have been retained.
+        """
+    rationale """
+        Outside advice is durable source material. Living plans and completion
+        state belong in AKR so agents and views stay consistent without editing
+        large narrative files mid-implementation.
+        """
+    supersedes [ @jpegxl-rs.policy.sources-advice-completion/1 ]
 }
 
 record jpegxl-rs.policy.suspect-transcription-pipeline/1 : policy {

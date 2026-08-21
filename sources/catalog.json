@@ -1,5 +1,17 @@
 [
   {
+    "added_at": "2026-08-21",
+    "availability": "full",
+    "byte_len": 57302,
+    "content_hash": "sha256:ae1ed6578fa1b92c506d11ed1133245543fa35ca9c2f90a01347a13c012d9560",
+    "id": "jpxl-bridging-libjxl-gap-2026-08-21",
+    "media_type": "text/markdown",
+    "origin": "external",
+    "path": "sources/external/jpxl-bridging-libjxl-gap-2026-08-21--ae1ed657.md",
+    "scope": "JPXL/**",
+    "title": "JPXL: Guide to Bridging the Remaining Gap to libjxl"
+  },
+  {
     "added_at": "2026-08-13",
     "availability": "full",
     "byte_len": 24121,
@@ -10,5 +22,17 @@
     "path": "sources/external/optimize-roadmap-2026-08-13--62242d23.md",
     "scope": "JPXL/crates/jpxl-encode-policy/**",
     "title": "Target-rate encoder optimization roadmap"
+  },
+  {
+    "added_at": "2026-08-21",
+    "availability": "full",
+    "byte_len": 43068,
+    "content_hash": "sha256:945338a6158013cdc5aa06c3a7666a0bc62e0ff3da979de6d4d845a019e5fb8e",
+    "id": "outside-advice-2026-08-06",
+    "media_type": "text/markdown",
+    "origin": "external",
+    "path": "sources/external/outside-advice-2026-08-06--945338a6.md",
+    "scope": "JPXL/**",
+    "title": "JPXL encoder architecture outside advice"
   }
 ]

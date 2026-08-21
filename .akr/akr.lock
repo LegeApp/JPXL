@@ -5,7 +5,7 @@ build {
     tool "akr 0.3.3"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:67c44d1238c631adbcdf948b15071e61e576ac9c7d5cd7357611eb16288e43b7"
+    source_graph "sha256:d21535eb4172cd86841adda58f6528ecefdfda67d22e206592a5968daa0d9ee9"
 }
 
 source ".akr/project.akr" {
@@ -14,8 +14,8 @@ source ".akr/project.akr" {
 }
 
 source ".akr/records/jpegxl-rs/assessments.akr" {
-    hash "sha256:05128a4c1d8d8dcf04e375d5337037fa5c11d75dbca7e6da917a6463cbaedf54"
-    records 8
+    hash "sha256:b4b51d01f18c4d5095c6d2c24de395c553ace923f744edacd1ab02d6442df787"
+    records 9
 }
 
 source ".akr/records/jpegxl-rs/constraints.akr" {
@@ -24,13 +24,13 @@ source ".akr/records/jpegxl-rs/constraints.akr" {
 }
 
 source ".akr/records/jpegxl-rs/decisions.akr" {
-    hash "sha256:b634e80ca6480b3835c6f86325d04eb10f16ac60e2c092a4c77e1f491b21f26a"
-    records 20
+    hash "sha256:8e6eda7bd6bed8d4bbd11baedcd6503a8f0a58843c5b7c7fcc3e22f4c38bc2af"
+    records 21
 }
 
 source ".akr/records/jpegxl-rs/evidence.akr" {
-    hash "sha256:1adffb4c7847fbe538cca01717f476dd34de431d30f5100c652bae97c34ace54"
-    records 400
+    hash "sha256:58fe7800e8533a84ed4f41fd9d487e6401fd86f81b93ef0be72698762c2a84f6"
+    records 403
 }
 
 source ".akr/records/jpegxl-rs/milestones.akr" {
@@ -49,8 +49,8 @@ source ".akr/records/jpegxl-rs/papercuts.akr" {
 }
 
 source ".akr/records/jpegxl-rs/policies.akr" {
-    hash "sha256:0e5b5bca00c1bac9b90f3e24d046334c9322c27d9626143a543f9b19bbbc0fef"
-    records 16
+    hash "sha256:3afd597b22a72e8b0323d12d561fea39218b50134344439bdb7e56ee7edc41c2"
+    records 17
 }
 
 source ".akr/records/jpegxl-rs/questions.akr" {
@@ -69,8 +69,8 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:f1bb2692efb68abfa676eb63f00305ab40a87429d2b2d09192ded902e7dd3917"
-    records 150
+    hash "sha256:499dac271e86dd5ddf8055ed9c61f23bc28e5beced215fdf79ab553011b8b249"
+    records 153
 }
 
 resolution @jpegxl-rs.decision.encoder-architecture-phases/1 {
@@ -81,14 +81,32 @@ resolution @jpegxl-rs.decision.encoder-architecture-phases/1 {
 
 resolution @jpegxl-rs.decision.encoder-architecture-phases/1 {
     slot implements
-    to @jpegxl-rs.policy.sources-advice-completion/1
-    hash "sha256:97f87d49cd309168aee499b2c8ec7532071af7a263f4f360d6a47507c8ce3d9c"
+    to @jpegxl-rs.policy.sources-advice-completion/2
+    hash "sha256:9b676fb741104548636d13a7d0f748c521516370f179e7d0cbe592e39e9c34bc"
 }
 
 resolution @jpegxl-rs.decision.encoder-architecture-phases/1 {
     slot supported_by
     to @jpegxl-rs.assessment.encoder-architecture-outside-advice/1
     hash "sha256:15a89aad920190cfee2272b199c902901087b05ffd3693a1fedfecfa08640834"
+}
+
+resolution @jpegxl-rs.decision.encoder-architecture-phases/2 {
+    slot implements
+    to @jpegxl-rs.constraint.correctness-before-speed/1
+    hash "sha256:41af46bf313fa25332b694633290d7bd2756846cdaf90c785ed34dfefeee67ab"
+}
+
+resolution @jpegxl-rs.decision.encoder-architecture-phases/2 {
+    slot implements
+    to @jpegxl-rs.policy.sources-advice-completion/2
+    hash "sha256:9b676fb741104548636d13a7d0f748c521516370f179e7d0cbe592e39e9c34bc"
+}
+
+resolution @jpegxl-rs.decision.encoder-architecture-phases/2 {
+    slot supported_by
+    to @jpegxl-rs.assessment.gap-bridge-2026-08-21/1
+    hash "sha256:7adfac5e7124222f1a82fb5cb1dc2c2a65eecc89871159ab32cba4defcf27f1d"
 }
 
 resolution @jpegxl-rs.decision.image-io-at-cli-boundary/2 {
@@ -1539,14 +1557,14 @@ resolution @jpegxl-rs.question.which-perceptual-weight-crosses-the-cleanroom-lin
 
 resolution @jpegxl-rs.work.arch-phase0-instrumentation/1 {
     slot implements
-    to @jpegxl-rs.decision.encoder-architecture-phases/1
-    hash "sha256:bebc6ba8560b5b033c8661d3025f45375dcd7f485639aba3dcc1338c845dcfa4"
+    to @jpegxl-rs.decision.encoder-architecture-phases/2
+    hash "sha256:dd22de6cd5dfd38f6d9d3f4d2dd492581cffaabee4b478c3850b11f9a0225dd8"
 }
 
 resolution @jpegxl-rs.work.arch-phase0-instrumentation/1 {
     slot implements
-    to @jpegxl-rs.policy.sources-advice-completion/1
-    hash "sha256:97f87d49cd309168aee499b2c8ec7532071af7a263f4f360d6a47507c8ce3d9c"
+    to @jpegxl-rs.policy.sources-advice-completion/2
+    hash "sha256:9b676fb741104548636d13a7d0f748c521516370f179e7d0cbe592e39e9c34bc"
 }
 
 resolution @jpegxl-rs.work.arch-phase0-instrumentation/1 {
@@ -1563,14 +1581,14 @@ resolution @jpegxl-rs.work.arch-phase0-instrumentation/1 {
 
 resolution @jpegxl-rs.work.arch-phase1-output-preserving/1 {
     slot implements
-    to @jpegxl-rs.decision.encoder-architecture-phases/1
-    hash "sha256:bebc6ba8560b5b033c8661d3025f45375dcd7f485639aba3dcc1338c845dcfa4"
+    to @jpegxl-rs.decision.encoder-architecture-phases/2
+    hash "sha256:dd22de6cd5dfd38f6d9d3f4d2dd492581cffaabee4b478c3850b11f9a0225dd8"
 }
 
 resolution @jpegxl-rs.work.arch-phase1-output-preserving/1 {
     slot implements
-    to @jpegxl-rs.policy.sources-advice-completion/1
-    hash "sha256:97f87d49cd309168aee499b2c8ec7532071af7a263f4f360d6a47507c8ce3d9c"
+    to @jpegxl-rs.policy.sources-advice-completion/2
+    hash "sha256:9b676fb741104548636d13a7d0f748c521516370f179e7d0cbe592e39e9c34bc"
 }
 
 resolution @jpegxl-rs.work.arch-phase1-output-preserving/1 {
@@ -1671,8 +1689,8 @@ resolution @jpegxl-rs.work.arch-phase19-dequant-matrix-reuse/1 {
 
 resolution @jpegxl-rs.work.arch-phase1b-opt-in-diagnostics/1 {
     slot implements
-    to @jpegxl-rs.decision.encoder-architecture-phases/1
-    hash "sha256:bebc6ba8560b5b033c8661d3025f45375dcd7f485639aba3dcc1338c845dcfa4"
+    to @jpegxl-rs.decision.encoder-architecture-phases/2
+    hash "sha256:dd22de6cd5dfd38f6d9d3f4d2dd492581cffaabee4b478c3850b11f9a0225dd8"
 }
 
 resolution @jpegxl-rs.work.arch-phase1b-opt-in-diagnostics/1 {
@@ -1689,8 +1707,8 @@ resolution @jpegxl-rs.work.arch-phase1b-opt-in-diagnostics/1 {
 
 resolution @jpegxl-rs.work.arch-phase1b-opt-in-diagnostics/2 {
     slot implements
-    to @jpegxl-rs.decision.encoder-architecture-phases/1
-    hash "sha256:bebc6ba8560b5b033c8661d3025f45375dcd7f485639aba3dcc1338c845dcfa4"
+    to @jpegxl-rs.decision.encoder-architecture-phases/2
+    hash "sha256:dd22de6cd5dfd38f6d9d3f4d2dd492581cffaabee4b478c3850b11f9a0225dd8"
 }
 
 resolution @jpegxl-rs.work.arch-phase1b-opt-in-diagnostics/2 {
@@ -1707,14 +1725,14 @@ resolution @jpegxl-rs.work.arch-phase1b-opt-in-diagnostics/2 {
 
 resolution @jpegxl-rs.work.arch-phase2-cfl-quant/1 {
     slot implements
-    to @jpegxl-rs.decision.encoder-architecture-phases/1
-    hash "sha256:bebc6ba8560b5b033c8661d3025f45375dcd7f485639aba3dcc1338c845dcfa4"
+    to @jpegxl-rs.decision.encoder-architecture-phases/2
+    hash "sha256:dd22de6cd5dfd38f6d9d3f4d2dd492581cffaabee4b478c3850b11f9a0225dd8"
 }
 
 resolution @jpegxl-rs.work.arch-phase2-cfl-quant/1 {
     slot implements
-    to @jpegxl-rs.policy.sources-advice-completion/1
-    hash "sha256:97f87d49cd309168aee499b2c8ec7532071af7a263f4f360d6a47507c8ce3d9c"
+    to @jpegxl-rs.policy.sources-advice-completion/2
+    hash "sha256:9b676fb741104548636d13a7d0f748c521516370f179e7d0cbe592e39e9c34bc"
 }
 
 resolution @jpegxl-rs.work.arch-phase2-cfl-quant/1 {
@@ -1731,14 +1749,14 @@ resolution @jpegxl-rs.work.arch-phase2-cfl-quant/1 {
 
 resolution @jpegxl-rs.work.arch-phase2-cfl-quant/2 {
     slot implements
-    to @jpegxl-rs.decision.encoder-architecture-phases/1
-    hash "sha256:bebc6ba8560b5b033c8661d3025f45375dcd7f485639aba3dcc1338c845dcfa4"
+    to @jpegxl-rs.decision.encoder-architecture-phases/2
+    hash "sha256:dd22de6cd5dfd38f6d9d3f4d2dd492581cffaabee4b478c3850b11f9a0225dd8"
 }
 
 resolution @jpegxl-rs.work.arch-phase2-cfl-quant/2 {
     slot implements
-    to @jpegxl-rs.policy.sources-advice-completion/1
-    hash "sha256:97f87d49cd309168aee499b2c8ec7532071af7a263f4f360d6a47507c8ce3d9c"
+    to @jpegxl-rs.policy.sources-advice-completion/2
+    hash "sha256:9b676fb741104548636d13a7d0f748c521516370f179e7d0cbe592e39e9c34bc"
 }
 
 resolution @jpegxl-rs.work.arch-phase2-cfl-quant/2 {
@@ -1869,14 +1887,14 @@ resolution @jpegxl-rs.work.arch-phase29-srgb-linear-lut/1 {
 
 resolution @jpegxl-rs.work.arch-phase3-forward-cache/1 {
     slot implements
-    to @jpegxl-rs.decision.encoder-architecture-phases/1
-    hash "sha256:bebc6ba8560b5b033c8661d3025f45375dcd7f485639aba3dcc1338c845dcfa4"
+    to @jpegxl-rs.decision.encoder-architecture-phases/2
+    hash "sha256:dd22de6cd5dfd38f6d9d3f4d2dd492581cffaabee4b478c3850b11f9a0225dd8"
 }
 
 resolution @jpegxl-rs.work.arch-phase3-forward-cache/1 {
     slot implements
-    to @jpegxl-rs.policy.sources-advice-completion/1
-    hash "sha256:97f87d49cd309168aee499b2c8ec7532071af7a263f4f360d6a47507c8ce3d9c"
+    to @jpegxl-rs.policy.sources-advice-completion/2
+    hash "sha256:9b676fb741104548636d13a7d0f748c521516370f179e7d0cbe592e39e9c34bc"
 }
 
 resolution @jpegxl-rs.work.arch-phase3-forward-cache/1 {
@@ -1893,14 +1911,14 @@ resolution @jpegxl-rs.work.arch-phase3-forward-cache/1 {
 
 resolution @jpegxl-rs.work.arch-phase3-forward-cache/2 {
     slot implements
-    to @jpegxl-rs.decision.encoder-architecture-phases/1
-    hash "sha256:bebc6ba8560b5b033c8661d3025f45375dcd7f485639aba3dcc1338c845dcfa4"
+    to @jpegxl-rs.decision.encoder-architecture-phases/2
+    hash "sha256:dd22de6cd5dfd38f6d9d3f4d2dd492581cffaabee4b478c3850b11f9a0225dd8"
 }
 
 resolution @jpegxl-rs.work.arch-phase3-forward-cache/2 {
     slot implements
-    to @jpegxl-rs.policy.sources-advice-completion/1
-    hash "sha256:97f87d49cd309168aee499b2c8ec7532071af7a263f4f360d6a47507c8ce3d9c"
+    to @jpegxl-rs.policy.sources-advice-completion/2
+    hash "sha256:9b676fb741104548636d13a7d0f748c521516370f179e7d0cbe592e39e9c34bc"
 }
 
 resolution @jpegxl-rs.work.arch-phase3-forward-cache/2 {
@@ -1977,14 +1995,14 @@ resolution @jpegxl-rs.work.arch-phase39-lane-recon/1 {
 
 resolution @jpegxl-rs.work.arch-phase4-modular-scoped/1 {
     slot implements
-    to @jpegxl-rs.decision.encoder-architecture-phases/1
-    hash "sha256:bebc6ba8560b5b033c8661d3025f45375dcd7f485639aba3dcc1338c845dcfa4"
+    to @jpegxl-rs.decision.encoder-architecture-phases/2
+    hash "sha256:dd22de6cd5dfd38f6d9d3f4d2dd492581cffaabee4b478c3850b11f9a0225dd8"
 }
 
 resolution @jpegxl-rs.work.arch-phase4-modular-scoped/1 {
     slot implements
-    to @jpegxl-rs.policy.sources-advice-completion/1
-    hash "sha256:97f87d49cd309168aee499b2c8ec7532071af7a263f4f360d6a47507c8ce3d9c"
+    to @jpegxl-rs.policy.sources-advice-completion/2
+    hash "sha256:9b676fb741104548636d13a7d0f748c521516370f179e7d0cbe592e39e9c34bc"
 }
 
 resolution @jpegxl-rs.work.arch-phase4-modular-scoped/1 {
@@ -2097,8 +2115,8 @@ resolution @jpegxl-rs.work.arch-phase4c-global-ma-tree/1 {
 
 resolution @jpegxl-rs.work.arch-phase4c-global-ma-tree/1 {
     slot implements
-    to @jpegxl-rs.decision.encoder-architecture-phases/1
-    hash "sha256:bebc6ba8560b5b033c8661d3025f45375dcd7f485639aba3dcc1338c845dcfa4"
+    to @jpegxl-rs.decision.encoder-architecture-phases/2
+    hash "sha256:dd22de6cd5dfd38f6d9d3f4d2dd492581cffaabee4b478c3850b11f9a0225dd8"
 }
 
 resolution @jpegxl-rs.work.arch-phase4c-global-ma-tree/1 {
@@ -2187,8 +2205,8 @@ resolution @jpegxl-rs.work.arch-phase5a-aq-policy-gate/1 {
 
 resolution @jpegxl-rs.work.arch-phase5a-aq-policy-gate/1 {
     slot implements
-    to @jpegxl-rs.decision.encoder-architecture-phases/1
-    hash "sha256:bebc6ba8560b5b033c8661d3025f45375dcd7f485639aba3dcc1338c845dcfa4"
+    to @jpegxl-rs.decision.encoder-architecture-phases/2
+    hash "sha256:dd22de6cd5dfd38f6d9d3f4d2dd492581cffaabee4b478c3850b11f9a0225dd8"
 }
 
 resolution @jpegxl-rs.work.arch-phase5a-aq-policy-gate/1 {
@@ -2229,8 +2247,8 @@ resolution @jpegxl-rs.work.arch-phase5b-restoration-screen/1 {
 
 resolution @jpegxl-rs.work.arch-phase5b-restoration-screen/1 {
     slot implements
-    to @jpegxl-rs.decision.encoder-architecture-phases/1
-    hash "sha256:bebc6ba8560b5b033c8661d3025f45375dcd7f485639aba3dcc1338c845dcfa4"
+    to @jpegxl-rs.decision.encoder-architecture-phases/2
+    hash "sha256:dd22de6cd5dfd38f6d9d3f4d2dd492581cffaabee4b478c3850b11f9a0225dd8"
 }
 
 resolution @jpegxl-rs.work.arch-phase5b-restoration-screen/1 {
@@ -2265,8 +2283,8 @@ resolution @jpegxl-rs.work.arch-phase5c-lf-hf-balance-screen/1 {
 
 resolution @jpegxl-rs.work.arch-phase5c-lf-hf-balance-screen/1 {
     slot implements
-    to @jpegxl-rs.decision.encoder-architecture-phases/1
-    hash "sha256:bebc6ba8560b5b033c8661d3025f45375dcd7f485639aba3dcc1338c845dcfa4"
+    to @jpegxl-rs.decision.encoder-architecture-phases/2
+    hash "sha256:dd22de6cd5dfd38f6d9d3f4d2dd492581cffaabee4b478c3850b11f9a0225dd8"
 }
 
 resolution @jpegxl-rs.work.arch-phase5c-lf-hf-balance-screen/1 {
@@ -2289,8 +2307,8 @@ resolution @jpegxl-rs.work.arch-phase5c-lf-hf-balance-screen/2 {
 
 resolution @jpegxl-rs.work.arch-phase5c-lf-hf-balance-screen/2 {
     slot implements
-    to @jpegxl-rs.decision.encoder-architecture-phases/1
-    hash "sha256:bebc6ba8560b5b033c8661d3025f45375dcd7f485639aba3dcc1338c845dcfa4"
+    to @jpegxl-rs.decision.encoder-architecture-phases/2
+    hash "sha256:dd22de6cd5dfd38f6d9d3f4d2dd492581cffaabee4b478c3850b11f9a0225dd8"
 }
 
 resolution @jpegxl-rs.work.arch-phase5c-lf-hf-balance-screen/2 {
@@ -2325,8 +2343,8 @@ resolution @jpegxl-rs.work.arch-phase5d-cover-quality-screen/1 {
 
 resolution @jpegxl-rs.work.arch-phase5d-cover-quality-screen/1 {
     slot implements
-    to @jpegxl-rs.decision.encoder-architecture-phases/1
-    hash "sha256:bebc6ba8560b5b033c8661d3025f45375dcd7f485639aba3dcc1338c845dcfa4"
+    to @jpegxl-rs.decision.encoder-architecture-phases/2
+    hash "sha256:dd22de6cd5dfd38f6d9d3f4d2dd492581cffaabee4b478c3850b11f9a0225dd8"
 }
 
 resolution @jpegxl-rs.work.arch-phase5d-cover-quality-screen/1 {
@@ -2361,8 +2379,8 @@ resolution @jpegxl-rs.work.arch-phase5e-epf-screen/1 {
 
 resolution @jpegxl-rs.work.arch-phase5e-epf-screen/1 {
     slot implements
-    to @jpegxl-rs.decision.encoder-architecture-phases/1
-    hash "sha256:bebc6ba8560b5b033c8661d3025f45375dcd7f485639aba3dcc1338c845dcfa4"
+    to @jpegxl-rs.decision.encoder-architecture-phases/2
+    hash "sha256:dd22de6cd5dfd38f6d9d3f4d2dd492581cffaabee4b478c3850b11f9a0225dd8"
 }
 
 resolution @jpegxl-rs.work.arch-phase5e-epf-screen/1 {
@@ -2403,8 +2421,8 @@ resolution @jpegxl-rs.work.arch-phase5f-aqoff-oracle-compat/1 {
 
 resolution @jpegxl-rs.work.arch-phase5f-aqoff-oracle-compat/1 {
     slot implements
-    to @jpegxl-rs.decision.encoder-architecture-phases/1
-    hash "sha256:bebc6ba8560b5b033c8661d3025f45375dcd7f485639aba3dcc1338c845dcfa4"
+    to @jpegxl-rs.decision.encoder-architecture-phases/2
+    hash "sha256:dd22de6cd5dfd38f6d9d3f4d2dd492581cffaabee4b478c3850b11f9a0225dd8"
 }
 
 resolution @jpegxl-rs.work.arch-phase5f-aqoff-oracle-compat/1 {
@@ -2439,8 +2457,8 @@ resolution @jpegxl-rs.work.arch-phase5f-aqoff-oracle-compat/2 {
 
 resolution @jpegxl-rs.work.arch-phase5f-aqoff-oracle-compat/2 {
     slot implements
-    to @jpegxl-rs.decision.encoder-architecture-phases/1
-    hash "sha256:bebc6ba8560b5b033c8661d3025f45375dcd7f485639aba3dcc1338c845dcfa4"
+    to @jpegxl-rs.decision.encoder-architecture-phases/2
+    hash "sha256:dd22de6cd5dfd38f6d9d3f4d2dd492581cffaabee4b478c3850b11f9a0225dd8"
 }
 
 resolution @jpegxl-rs.work.arch-phase5f-aqoff-oracle-compat/2 {
@@ -2487,8 +2505,8 @@ resolution @jpegxl-rs.work.arch-phase5p-special8-exact-distortion-screen/1 {
 
 resolution @jpegxl-rs.work.arch-phase5p-special8-exact-distortion-screen/1 {
     slot implements
-    to @jpegxl-rs.decision.encoder-architecture-phases/1
-    hash "sha256:bebc6ba8560b5b033c8661d3025f45375dcd7f485639aba3dcc1338c845dcfa4"
+    to @jpegxl-rs.decision.encoder-architecture-phases/2
+    hash "sha256:dd22de6cd5dfd38f6d9d3f4d2dd492581cffaabee4b478c3850b11f9a0225dd8"
 }
 
 resolution @jpegxl-rs.work.arch-phase5p-special8-exact-distortion-screen/1 {
@@ -2541,8 +2559,8 @@ resolution @jpegxl-rs.work.arch-phase6-0-distortion-currency/1 {
 
 resolution @jpegxl-rs.work.arch-phase6-0-distortion-currency/1 {
     slot implements
-    to @jpegxl-rs.decision.encoder-architecture-phases/1
-    hash "sha256:bebc6ba8560b5b033c8661d3025f45375dcd7f485639aba3dcc1338c845dcfa4"
+    to @jpegxl-rs.decision.encoder-architecture-phases/2
+    hash "sha256:dd22de6cd5dfd38f6d9d3f4d2dd492581cffaabee4b478c3850b11f9a0225dd8"
 }
 
 resolution @jpegxl-rs.work.arch-phase6-0-distortion-currency/1 {
@@ -2571,8 +2589,8 @@ resolution @jpegxl-rs.work.arch-phase6-1-quantizer-normalised-residual/1 {
 
 resolution @jpegxl-rs.work.arch-phase6-1-quantizer-normalised-residual/1 {
     slot implements
-    to @jpegxl-rs.decision.encoder-architecture-phases/1
-    hash "sha256:bebc6ba8560b5b033c8661d3025f45375dcd7f485639aba3dcc1338c845dcfa4"
+    to @jpegxl-rs.decision.encoder-architecture-phases/2
+    hash "sha256:dd22de6cd5dfd38f6d9d3f4d2dd492581cffaabee4b478c3850b11f9a0225dd8"
 }
 
 resolution @jpegxl-rs.work.arch-phase6-1-quantizer-normalised-residual/1 {
@@ -2601,8 +2619,8 @@ resolution @jpegxl-rs.work.arch-phase6-2-per-transform-step-shapes/1 {
 
 resolution @jpegxl-rs.work.arch-phase6-2-per-transform-step-shapes/1 {
     slot implements
-    to @jpegxl-rs.decision.encoder-architecture-phases/1
-    hash "sha256:bebc6ba8560b5b033c8661d3025f45375dcd7f485639aba3dcc1338c845dcfa4"
+    to @jpegxl-rs.decision.encoder-architecture-phases/2
+    hash "sha256:dd22de6cd5dfd38f6d9d3f4d2dd492581cffaabee4b478c3850b11f9a0225dd8"
 }
 
 resolution @jpegxl-rs.work.arch-phase6-2-per-transform-step-shapes/1 {
@@ -2631,8 +2649,8 @@ resolution @jpegxl-rs.work.arch-phase6-2-per-transform-step-shapes/2 {
 
 resolution @jpegxl-rs.work.arch-phase6-2-per-transform-step-shapes/2 {
     slot implements
-    to @jpegxl-rs.decision.encoder-architecture-phases/1
-    hash "sha256:bebc6ba8560b5b033c8661d3025f45375dcd7f485639aba3dcc1338c845dcfa4"
+    to @jpegxl-rs.decision.encoder-architecture-phases/2
+    hash "sha256:dd22de6cd5dfd38f6d9d3f4d2dd492581cffaabee4b478c3850b11f9a0225dd8"
 }
 
 resolution @jpegxl-rs.work.arch-phase6-2-per-transform-step-shapes/2 {
@@ -2667,8 +2685,8 @@ resolution @jpegxl-rs.work.arch-phase6-2b-large-transform-penalty-screen/1 {
 
 resolution @jpegxl-rs.work.arch-phase6-2b-large-transform-penalty-screen/1 {
     slot implements
-    to @jpegxl-rs.decision.encoder-architecture-phases/1
-    hash "sha256:bebc6ba8560b5b033c8661d3025f45375dcd7f485639aba3dcc1338c845dcfa4"
+    to @jpegxl-rs.decision.encoder-architecture-phases/2
+    hash "sha256:dd22de6cd5dfd38f6d9d3f4d2dd492581cffaabee4b478c3850b11f9a0225dd8"
 }
 
 resolution @jpegxl-rs.work.arch-phase6-2b-large-transform-penalty-screen/1 {
@@ -2703,8 +2721,8 @@ resolution @jpegxl-rs.work.arch-phase6-3-frequency-weight-cover-objective/1 {
 
 resolution @jpegxl-rs.work.arch-phase6-3-frequency-weight-cover-objective/1 {
     slot implements
-    to @jpegxl-rs.decision.encoder-architecture-phases/1
-    hash "sha256:bebc6ba8560b5b033c8661d3025f45375dcd7f485639aba3dcc1338c845dcfa4"
+    to @jpegxl-rs.decision.encoder-architecture-phases/2
+    hash "sha256:dd22de6cd5dfd38f6d9d3f4d2dd492581cffaabee4b478c3850b11f9a0225dd8"
 }
 
 resolution @jpegxl-rs.work.arch-phase6-3-frequency-weight-cover-objective/1 {
@@ -2733,8 +2751,8 @@ resolution @jpegxl-rs.work.arch-phase6-3-quantizer-normalised-y-distortion/1 {
 
 resolution @jpegxl-rs.work.arch-phase6-3-quantizer-normalised-y-distortion/1 {
     slot implements
-    to @jpegxl-rs.decision.encoder-architecture-phases/1
-    hash "sha256:bebc6ba8560b5b033c8661d3025f45375dcd7f485639aba3dcc1338c845dcfa4"
+    to @jpegxl-rs.decision.encoder-architecture-phases/2
+    hash "sha256:dd22de6cd5dfd38f6d9d3f4d2dd492581cffaabee4b478c3850b11f9a0225dd8"
 }
 
 resolution @jpegxl-rs.work.arch-phase6-3-quantizer-normalised-y-distortion/1 {
@@ -2763,8 +2781,8 @@ resolution @jpegxl-rs.work.arch-phase6-4-chroma-controlled-operating-point/1 {
 
 resolution @jpegxl-rs.work.arch-phase6-4-chroma-controlled-operating-point/1 {
     slot implements
-    to @jpegxl-rs.decision.encoder-architecture-phases/1
-    hash "sha256:bebc6ba8560b5b033c8661d3025f45375dcd7f485639aba3dcc1338c845dcfa4"
+    to @jpegxl-rs.decision.encoder-architecture-phases/2
+    hash "sha256:dd22de6cd5dfd38f6d9d3f4d2dd492581cffaabee4b478c3850b11f9a0225dd8"
 }
 
 resolution @jpegxl-rs.work.arch-phase6-4-chroma-controlled-operating-point/1 {
@@ -2793,8 +2811,8 @@ resolution @jpegxl-rs.work.arch-phase6-5-quant-donor-weight/1 {
 
 resolution @jpegxl-rs.work.arch-phase6-5-quant-donor-weight/1 {
     slot implements
-    to @jpegxl-rs.decision.encoder-architecture-phases/1
-    hash "sha256:bebc6ba8560b5b033c8661d3025f45375dcd7f485639aba3dcc1338c845dcfa4"
+    to @jpegxl-rs.decision.encoder-architecture-phases/2
+    hash "sha256:dd22de6cd5dfd38f6d9d3f4d2dd492581cffaabee4b478c3850b11f9a0225dd8"
 }
 
 resolution @jpegxl-rs.work.arch-phase6-5-quant-donor-weight/1 {
@@ -2829,8 +2847,8 @@ resolution @jpegxl-rs.work.arch-phase6-5b-promote-donor-weight/1 {
 
 resolution @jpegxl-rs.work.arch-phase6-5b-promote-donor-weight/1 {
     slot implements
-    to @jpegxl-rs.decision.encoder-architecture-phases/1
-    hash "sha256:bebc6ba8560b5b033c8661d3025f45375dcd7f485639aba3dcc1338c845dcfa4"
+    to @jpegxl-rs.decision.encoder-architecture-phases/2
+    hash "sha256:dd22de6cd5dfd38f6d9d3f4d2dd492581cffaabee4b478c3850b11f9a0225dd8"
 }
 
 resolution @jpegxl-rs.work.arch-phase6-5b-promote-donor-weight/1 {
@@ -2859,8 +2877,8 @@ resolution @jpegxl-rs.work.arch-phase7-0-rate-distortion-quantizer/1 {
 
 resolution @jpegxl-rs.work.arch-phase7-0-rate-distortion-quantizer/1 {
     slot implements
-    to @jpegxl-rs.decision.encoder-architecture-phases/1
-    hash "sha256:bebc6ba8560b5b033c8661d3025f45375dcd7f485639aba3dcc1338c845dcfa4"
+    to @jpegxl-rs.decision.encoder-architecture-phases/2
+    hash "sha256:dd22de6cd5dfd38f6d9d3f4d2dd492581cffaabee4b478c3850b11f9a0225dd8"
 }
 
 resolution @jpegxl-rs.work.arch-phase7-0-rate-distortion-quantizer/1 {
@@ -2889,8 +2907,8 @@ resolution @jpegxl-rs.work.arch-phase7-1-run-aware-rate-estimate/1 {
 
 resolution @jpegxl-rs.work.arch-phase7-1-run-aware-rate-estimate/1 {
     slot implements
-    to @jpegxl-rs.decision.encoder-architecture-phases/1
-    hash "sha256:bebc6ba8560b5b033c8661d3025f45375dcd7f485639aba3dcc1338c845dcfa4"
+    to @jpegxl-rs.decision.encoder-architecture-phases/2
+    hash "sha256:dd22de6cd5dfd38f6d9d3f4d2dd492581cffaabee4b478c3850b11f9a0225dd8"
 }
 
 resolution @jpegxl-rs.work.arch-phase7-1-run-aware-rate-estimate/1 {
@@ -2925,8 +2943,8 @@ resolution @jpegxl-rs.work.arch-phase7-1a-rate-proxy-gap/1 {
 
 resolution @jpegxl-rs.work.arch-phase7-1a-rate-proxy-gap/1 {
     slot implements
-    to @jpegxl-rs.decision.encoder-architecture-phases/1
-    hash "sha256:bebc6ba8560b5b033c8661d3025f45375dcd7f485639aba3dcc1338c845dcfa4"
+    to @jpegxl-rs.decision.encoder-architecture-phases/2
+    hash "sha256:dd22de6cd5dfd38f6d9d3f4d2dd492581cffaabee4b478c3850b11f9a0225dd8"
 }
 
 resolution @jpegxl-rs.work.arch-phase7-1a-rate-proxy-gap/1 {
@@ -2949,8 +2967,8 @@ resolution @jpegxl-rs.work.arch-phase7-2-lambda-calibration/1 {
 
 resolution @jpegxl-rs.work.arch-phase7-2-lambda-calibration/1 {
     slot implements
-    to @jpegxl-rs.decision.encoder-architecture-phases/1
-    hash "sha256:bebc6ba8560b5b033c8661d3025f45375dcd7f485639aba3dcc1338c845dcfa4"
+    to @jpegxl-rs.decision.encoder-architecture-phases/2
+    hash "sha256:dd22de6cd5dfd38f6d9d3f4d2dd492581cffaabee4b478c3850b11f9a0225dd8"
 }
 
 resolution @jpegxl-rs.work.arch-phase7-2-lambda-calibration/1 {
@@ -2991,8 +3009,8 @@ resolution @jpegxl-rs.work.arch-phase7-2-lambda-calibration/1 {
 
 resolution @jpegxl-rs.work.arch-phase8-0-search-amplification/1 {
     slot implements
-    to @jpegxl-rs.decision.encoder-architecture-phases/1
-    hash "sha256:bebc6ba8560b5b033c8661d3025f45375dcd7f485639aba3dcc1338c845dcfa4"
+    to @jpegxl-rs.decision.encoder-architecture-phases/2
+    hash "sha256:dd22de6cd5dfd38f6d9d3f4d2dd492581cffaabee4b478c3850b11f9a0225dd8"
 }
 
 resolution @jpegxl-rs.work.arch-phase8-0-search-amplification/1 {
@@ -3213,14 +3231,14 @@ resolution @jpegxl-rs.work.arch-phase9-quant-scheduling/1 {
 
 resolution @jpegxl-rs.work.arch-s8-cover-lane-simd/1 {
     slot implements
-    to @jpegxl-rs.decision.encoder-architecture-phases/1
-    hash "sha256:bebc6ba8560b5b033c8661d3025f45375dcd7f485639aba3dcc1338c845dcfa4"
+    to @jpegxl-rs.decision.encoder-architecture-phases/2
+    hash "sha256:dd22de6cd5dfd38f6d9d3f4d2dd492581cffaabee4b478c3850b11f9a0225dd8"
 }
 
 resolution @jpegxl-rs.work.arch-s8-cover-lane-simd/1 {
     slot implements
-    to @jpegxl-rs.policy.sources-advice-completion/1
-    hash "sha256:97f87d49cd309168aee499b2c8ec7532071af7a263f4f360d6a47507c8ce3d9c"
+    to @jpegxl-rs.policy.sources-advice-completion/2
+    hash "sha256:9b676fb741104548636d13a7d0f748c521516370f179e7d0cbe592e39e9c34bc"
 }
 
 resolution @jpegxl-rs.work.arch-s8-cover-lane-simd/1 {
@@ -3237,14 +3255,14 @@ resolution @jpegxl-rs.work.arch-s8-cover-lane-simd/1 {
 
 resolution @jpegxl-rs.work.arch-s8-full-redesign-scoped/1 {
     slot implements
-    to @jpegxl-rs.decision.encoder-architecture-phases/1
-    hash "sha256:bebc6ba8560b5b033c8661d3025f45375dcd7f485639aba3dcc1338c845dcfa4"
+    to @jpegxl-rs.decision.encoder-architecture-phases/2
+    hash "sha256:dd22de6cd5dfd38f6d9d3f4d2dd492581cffaabee4b478c3850b11f9a0225dd8"
 }
 
 resolution @jpegxl-rs.work.arch-s8-full-redesign-scoped/1 {
     slot implements
-    to @jpegxl-rs.policy.sources-advice-completion/1
-    hash "sha256:97f87d49cd309168aee499b2c8ec7532071af7a263f4f360d6a47507c8ce3d9c"
+    to @jpegxl-rs.policy.sources-advice-completion/2
+    hash "sha256:9b676fb741104548636d13a7d0f748c521516370f179e7d0cbe592e39e9c34bc"
 }
 
 resolution @jpegxl-rs.work.arch-s8-full-redesign-scoped/1 {
@@ -3261,14 +3279,14 @@ resolution @jpegxl-rs.work.arch-s8-full-redesign-scoped/1 {
 
 resolution @jpegxl-rs.work.arch-s8-full-redesign-scoped/2 {
     slot implements
-    to @jpegxl-rs.decision.encoder-architecture-phases/1
-    hash "sha256:bebc6ba8560b5b033c8661d3025f45375dcd7f485639aba3dcc1338c845dcfa4"
+    to @jpegxl-rs.decision.encoder-architecture-phases/2
+    hash "sha256:dd22de6cd5dfd38f6d9d3f4d2dd492581cffaabee4b478c3850b11f9a0225dd8"
 }
 
 resolution @jpegxl-rs.work.arch-s8-full-redesign-scoped/2 {
     slot implements
-    to @jpegxl-rs.policy.sources-advice-completion/1
-    hash "sha256:97f87d49cd309168aee499b2c8ec7532071af7a263f4f360d6a47507c8ce3d9c"
+    to @jpegxl-rs.policy.sources-advice-completion/2
+    hash "sha256:9b676fb741104548636d13a7d0f748c521516370f179e7d0cbe592e39e9c34bc"
 }
 
 resolution @jpegxl-rs.work.arch-s8-full-redesign-scoped/2 {
@@ -3285,14 +3303,14 @@ resolution @jpegxl-rs.work.arch-s8-full-redesign-scoped/2 {
 
 resolution @jpegxl-rs.work.arch-s8-full-redesign-scoped/3 {
     slot implements
-    to @jpegxl-rs.decision.encoder-architecture-phases/1
-    hash "sha256:bebc6ba8560b5b033c8661d3025f45375dcd7f485639aba3dcc1338c845dcfa4"
+    to @jpegxl-rs.decision.encoder-architecture-phases/2
+    hash "sha256:dd22de6cd5dfd38f6d9d3f4d2dd492581cffaabee4b478c3850b11f9a0225dd8"
 }
 
 resolution @jpegxl-rs.work.arch-s8-full-redesign-scoped/3 {
     slot implements
-    to @jpegxl-rs.policy.sources-advice-completion/1
-    hash "sha256:97f87d49cd309168aee499b2c8ec7532071af7a263f4f360d6a47507c8ce3d9c"
+    to @jpegxl-rs.policy.sources-advice-completion/2
+    hash "sha256:9b676fb741104548636d13a7d0f748c521516370f179e7d0cbe592e39e9c34bc"
 }
 
 resolution @jpegxl-rs.work.arch-s8-full-redesign-scoped/3 {
@@ -3309,14 +3327,14 @@ resolution @jpegxl-rs.work.arch-s8-full-redesign-scoped/3 {
 
 resolution @jpegxl-rs.work.arch-s8-phase-a-regret-harness/1 {
     slot implements
-    to @jpegxl-rs.decision.encoder-architecture-phases/1
-    hash "sha256:bebc6ba8560b5b033c8661d3025f45375dcd7f485639aba3dcc1338c845dcfa4"
+    to @jpegxl-rs.decision.encoder-architecture-phases/2
+    hash "sha256:dd22de6cd5dfd38f6d9d3f4d2dd492581cffaabee4b478c3850b11f9a0225dd8"
 }
 
 resolution @jpegxl-rs.work.arch-s8-phase-a-regret-harness/1 {
     slot implements
-    to @jpegxl-rs.policy.sources-advice-completion/1
-    hash "sha256:97f87d49cd309168aee499b2c8ec7532071af7a263f4f360d6a47507c8ce3d9c"
+    to @jpegxl-rs.policy.sources-advice-completion/2
+    hash "sha256:9b676fb741104548636d13a7d0f748c521516370f179e7d0cbe592e39e9c34bc"
 }
 
 resolution @jpegxl-rs.work.arch-s8-phase-a-regret-harness/1 {
@@ -3333,14 +3351,14 @@ resolution @jpegxl-rs.work.arch-s8-phase-a-regret-harness/1 {
 
 resolution @jpegxl-rs.work.arch-s8-phase-b-measurements/1 {
     slot implements
-    to @jpegxl-rs.decision.encoder-architecture-phases/1
-    hash "sha256:bebc6ba8560b5b033c8661d3025f45375dcd7f485639aba3dcc1338c845dcfa4"
+    to @jpegxl-rs.decision.encoder-architecture-phases/2
+    hash "sha256:dd22de6cd5dfd38f6d9d3f4d2dd492581cffaabee4b478c3850b11f9a0225dd8"
 }
 
 resolution @jpegxl-rs.work.arch-s8-phase-b-measurements/1 {
     slot implements
-    to @jpegxl-rs.policy.sources-advice-completion/1
-    hash "sha256:97f87d49cd309168aee499b2c8ec7532071af7a263f4f360d6a47507c8ce3d9c"
+    to @jpegxl-rs.policy.sources-advice-completion/2
+    hash "sha256:9b676fb741104548636d13a7d0f748c521516370f179e7d0cbe592e39e9c34bc"
 }
 
 resolution @jpegxl-rs.work.arch-s8-phase-b-measurements/1 {
@@ -3431,6 +3449,48 @@ resolution @jpegxl-rs.work.encoder-optimization-plan/1 {
     slot supported_by
     to @jpegxl-rs.assessment.encoder-static-optimization/1
     hash "sha256:8548505b7e04728e0c442fc78e178335cd58ed6cb481f7df9a9a751db20f0d04"
+}
+
+resolution @jpegxl-rs.work.gap-advice-source-migration/1 {
+    slot part_of
+    to @jpegxl-rs.track.akr-adoption/1
+    hash "sha256:186b1a437dc661df26b9d379196e4ffd31c3b2de8527fd445895565c7f680e7c"
+}
+
+resolution @jpegxl-rs.work.gap-g0-comparison-truth/1 {
+    slot depends_on
+    to @jpegxl-rs.work.gap-advice-source-migration/1
+    hash "sha256:a5e60f6e76f4e1e8995e83a1e3b48d9d4182de169d3ac383a7c83f485a7cd738"
+}
+
+resolution @jpegxl-rs.work.gap-g0-comparison-truth/1 {
+    slot part_of
+    to @jpegxl-rs.track.encoder-optimization/1
+    hash "sha256:49975e17bd10998d72b08fccfe98fdea9bdf68ef56e4404dd68e94e1e2d75f23"
+}
+
+resolution @jpegxl-rs.work.gap-g0-comparison-truth/1 {
+    slot supported_by
+    to @jpegxl-rs.assessment.gap-bridge-2026-08-21/1
+    hash "sha256:7adfac5e7124222f1a82fb5cb1dc2c2a65eecc89871159ab32cba4defcf27f1d"
+}
+
+resolution @jpegxl-rs.work.gap-g1-edge-risk-atlas/1 {
+    slot depends_on
+    to @jpegxl-rs.work.gap-g0-comparison-truth/1
+    hash "sha256:47794b44f0130efe64df46385328626f43a811c39392ddb1d7a3f14b5de67b13"
+}
+
+resolution @jpegxl-rs.work.gap-g1-edge-risk-atlas/1 {
+    slot part_of
+    to @jpegxl-rs.track.encoder-optimization/1
+    hash "sha256:49975e17bd10998d72b08fccfe98fdea9bdf68ef56e4404dd68e94e1e2d75f23"
+}
+
+resolution @jpegxl-rs.work.gap-g1-edge-risk-atlas/1 {
+    slot supported_by
+    to @jpegxl-rs.assessment.gap-bridge-2026-08-21/1
+    hash "sha256:7adfac5e7124222f1a82fb5cb1dc2c2a65eecc89871159ab32cba4defcf27f1d"
 }
 
 resolution @jpegxl-rs.work.general-use-api-cli/2 {
@@ -3551,6 +3611,11 @@ seal @jpegxl-rs.assessment.encoder-static-optimization/1 {
     hash "sha256:8548505b7e04728e0c442fc78e178335cd58ed6cb481f7df9a9a751db20f0d04"
 }
 
+seal @jpegxl-rs.assessment.gap-bridge-2026-08-21/1 {
+    state verified
+    hash "sha256:7adfac5e7124222f1a82fb5cb1dc2c2a65eecc89871159ab32cba4defcf27f1d"
+}
+
 seal @jpegxl-rs.assessment.modular-effort-lean-default/1 {
     state verified
     hash "sha256:e948ab24dc9e276105bed890096ab2601faeac60faba5c22bf9b5d743e602080"
@@ -3582,8 +3647,13 @@ seal @jpegxl-rs.assessment.semantic-guidance-is-a-quality-prior-not-parity-archi
 }
 
 seal @jpegxl-rs.decision.encoder-architecture-phases/1 {
+    state superseded
+    hash "sha256:867216c96a47fc72137d51a91c3e91856b4fb67392a695e1e11e8faef9900126"
+}
+
+seal @jpegxl-rs.decision.encoder-architecture-phases/2 {
     state active
-    hash "sha256:bebc6ba8560b5b033c8661d3025f45375dcd7f485639aba3dcc1338c845dcfa4"
+    hash "sha256:dd22de6cd5dfd38f6d9d3f4d2dd492581cffaabee4b478c3850b11f9a0225dd8"
 }
 
 seal @jpegxl-rs.decision.image-io-at-cli-boundary/1 {
@@ -3624,6 +3694,21 @@ seal @jpegxl-rs.evidence.cli-netpbm-workspace-gates-2026-08-21/1 {
 seal @jpegxl-rs.evidence.experiments-captured/1 {
     state verified
     hash "sha256:e8cd8642db7bbf317ba082be89b3fb53243094c29dc225a530527a0000425c97"
+}
+
+seal @jpegxl-rs.evidence.gap-advice-ledger-valid-2026-08-21/1 {
+    state verified
+    hash "sha256:1d57f98623ca28d75deb2149f1f0afaa59aa0993a4d007f18e94157104655813"
+}
+
+seal @jpegxl-rs.evidence.gap-advice-sources-verified-2026-08-21/1 {
+    state verified
+    hash "sha256:6b588f6234bdcf9ecded646f050f968d443b45def234a5ae82f2bf0df9e3560b"
+}
+
+seal @jpegxl-rs.evidence.gap-advice-top-level-clean-2026-08-21/1 {
+    state verified
+    hash "sha256:cf649d49778d6b6355e02b14a14ae5380abc7c173f7eea736378279487138a72"
 }
 
 seal @jpegxl-rs.evidence.general-use-api-tests-2026-08-20/1 {
@@ -6317,8 +6402,13 @@ seal @jpegxl-rs.papercut.while-repairing-phase-4l-evidence-chronology/1 {
 }
 
 seal @jpegxl-rs.policy.sources-advice-completion/1 {
+    state superseded
+    hash "sha256:683453f60119c31558a7a57d80d34712e8652cf96d94092abf4113ca2c21105b"
+}
+
+seal @jpegxl-rs.policy.sources-advice-completion/2 {
     state active
-    hash "sha256:97f87d49cd309168aee499b2c8ec7532071af7a263f4f360d6a47507c8ce3d9c"
+    hash "sha256:9b676fb741104548636d13a7d0f748c521516370f179e7d0cbe592e39e9c34bc"
 }
 
 seal @jpegxl-rs.question.which-perceptual-weight-crosses-the-cleanroom-line/1 {
@@ -6954,6 +7044,11 @@ seal @jpegxl-rs.work.dispose-performance-md/1 {
 seal @jpegxl-rs.work.dispose-performance-md/2 {
     state completed
     hash "sha256:304de6bdd82fce91cd1748f08b762169efea055535577673dc696cbfead85bfe"
+}
+
+seal @jpegxl-rs.work.gap-advice-source-migration/1 {
+    state completed
+    hash "sha256:a5e60f6e76f4e1e8995e83a1e3b48d9d4182de169d3ac383a7c83f485a7cd738"
 }
 
 seal @jpegxl-rs.work.general-use-api-cli/1 {

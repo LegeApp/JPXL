@@ -416,7 +416,7 @@ impl HfQuantizer {
     /// The rate term mirrors `crate::residual_bits` exactly — zero costs
     /// nothing, and a nonzero costs its magnitude's bit length plus a sign bit.
     /// It is deliberately the *same* crude proxy the cover objective sums, so
-    /// the two agree; `sources/outside-advice.md` is right that it knows
+    /// the two agree; AKR source `outside-advice-2026-08-06` is right that it knows
     /// nothing about zero runs or entropy context, which bounds what this mode
     /// can capture to the first-order "is this coefficient worth any bits at
     /// all" decision.
@@ -712,7 +712,7 @@ impl HfQuantizer {
     /// degenerate step or an out-of-range non-zero-threshold estimate is
     /// `Err`, matching `clamp_round`). This is deliberately *not* a
     /// distortion/rate estimate of any kind — see the module's `choose` doc
-    /// and `sources/outside-advice.md` §8's contrast between this
+    /// and AKR source `outside-advice-2026-08-06` §8's contrast between this
     /// (safe, output-preserving) and a closed-form summary score
     /// (unbounded-tail risk without a calibration harness, not attempted).
     ///
@@ -1490,7 +1490,7 @@ impl HfQuantizer {
         }
     }
 
-    /// S8 Phase C (`sources/outside-advice.md` §8's "lower bound to prune"
+    /// S8 Phase C (AKR source `outside-advice-2026-08-06` §8's "lower bound to prune"
     /// primitive; `jpegxl-rs.work.arch-s8-full-redesign-scoped`): a cheap,
     /// *provable* lower bound on one coefficient's contribution to the
     /// `residual_bits(choose(target))` (rate) and
@@ -1510,7 +1510,7 @@ impl HfQuantizer {
     ///   is a genuine lower bound, not an estimate of the real value.
     ///   Distortion floor is `0.0` — true but uninformative; nothing cheaper
     ///   than the exact 4-candidate search bounds a nonzero cell's error
-    ///   usefully (`sources/outside-advice.md` §8 finds the same limit: rate
+    ///   usefully (AKR source `outside-advice-2026-08-06` §8 finds the same limit: rate
     ///   is a discrete, non-smooth function of the quantized integer, so a
     ///   *tight* bound needs the per-cell magnitude data `choose` itself
     ///   uses — this returns a *safe*, not a *tight*, bound).

@@ -60,7 +60,7 @@ record jpegxl-rs.decision.cover-rate-model-calibrated-for-target-rate/1 : decisi
 
 record jpegxl-rs.decision.encoder-architecture-phases/1 : decision {
     title "Reorient encoder work to architecture phases 0-6 (outside-advice)"
-    state active
+    state superseded
     scope [
         path "JPXL/crates/jpxl-cli/**",
         path "JPXL/crates/jpxl-encode-policy/**",
@@ -96,6 +96,46 @@ record jpegxl-rs.decision.encoder-architecture-phases/1 : decision {
     ]
     supported_by [ @jpegxl-rs.assessment.encoder-architecture-outside-advice ]
     author "grok-build"
+}
+
+record jpegxl-rs.decision.encoder-architecture-phases/2 : decision {
+    title "Execute the evidence-gated G0-G6 libjxl-gap bridge"
+    state active
+    scope [
+        path "JPXL/crates/jpxl-cli/**",
+        path "JPXL/crates/jpxl-encode-policy/**",
+        path "JPXL/crates/jpxl-encode/**",
+        path "JPXL/crates/jpxl-entropy/**",
+        path "JPXL/tools/**"
+    ]
+    decision """
+        The earlier architecture phases through dense coefficient banks, anchored search, finalist token traversal, leaf finishing and Butteraugli localization are complete and are not restarted. Continue with the registered 2026-08-21 gap bridge in evidence order: G0 comparison truth; G1 diagnostic edge-flat risk localization; G2 selective finalist-only run-aware quantization; G3 a bounded truthful production controller; G4 selective low-margin cover/CfL refresh; G5 packed entropy representation and bounded alternatives; G6 only after a fresh profile. No production decision change precedes the G0 baseline, and G2 does not start unless G1 concentrates held-out failures into a small area.
+        """
+    context """
+        Real-world benches showed ~15x VarDCT and ~30-100x Modular gaps with
+        parallel+simd features already default-on. Flamegraphs and outside advice
+        attribute the gap to call multiplicity and multi-pass planning, not missing
+        AVX kernels on leaves that are already small fractions of wall time.
+        """
+    consequences """
+        jpegxl-rs.work.encoder-optimization-plan and Opt-* leaf milestones remain
+        historical; new work items attach to architecture-phase work under this
+        decision. sources/outside-advice.md is retained per policy.
+        """
+    implements [
+        @jpegxl-rs.constraint.correctness-before-speed,
+        @jpegxl-rs.policy.sources-advice-completion
+    ]
+    supersedes [ @jpegxl-rs.decision.encoder-architecture-phases/1 ]
+    supported_by [ @jpegxl-rs.assessment.gap-bridge-2026-08-21 ]
+    source {
+        kind external
+        role origin
+        path "sources/external/jpxl-bridging-libjxl-gap-2026-08-21--ae1ed657.md"
+        use """
+            Adopts the roadmap ordering while keeping each recommendation subject to JPXL evidence.
+            """
+    }
 }
 
 record jpegxl-rs.decision.image-io-at-cli-boundary/1 : decision {

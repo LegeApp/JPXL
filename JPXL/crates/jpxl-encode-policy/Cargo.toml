@@ -27,7 +27,8 @@ simd = ["dep:wide", "jpxl-encode/simd", "jpxl-core/simd"]
 # verification. The exhaustive Quality preset remains the behavioral default.
 # Keep the historical feature name so existing research scripts still work.
 anchor-sketch = []
-# S8 Phase D (`sources/outside-advice.md` §8; `jpegxl-rs.work.arch-s8-full-redesign-scoped`):
+# S8 Phase D (AKR source `outside-advice-2026-08-06` §8;
+# `jpegxl-rs.work.arch-s8-full-redesign-scoped`):
 # the Phase C-validated (zero safety violations, exhaustively checked)
 # staged cheap lower-bound prune in `block_cost_bounded`. NOT in `default` —
 # with this feature off, `block_cost_bounded` compiles byte-identical to

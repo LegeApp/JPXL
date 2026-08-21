@@ -63,6 +63,32 @@ record jpegxl-rs.assessment.encoder-static-optimization/1 : assessment {
     }
 }
 
+record jpegxl-rs.assessment.gap-bridge-2026-08-21/1 : assessment {
+    title "Assess the 2026-08-21 libjxl-gap bridge against current JPXL"
+    state verified
+    scope [
+        path "JPXL/crates/jpxl-cli/**",
+        path "JPXL/crates/jpxl-encode-policy/**",
+        path "JPXL/tools/**"
+    ]
+    statement """
+        The registered 2026-08-21 gap bridge is non-authoritative outside advice whose opening sequence matches current repository evidence: the comparison harness still misattributes per-codec metadata and does not perform equivalent-output matching; the current quality deficit is localized around edge-flat cases; and production Balanced can still enter an exhaustive fallback. Earlier broad speed architecture through dense banks, anchored search, token-tape traversal, leaf finishing and Butteraugli localization is already completed and must not be restarted. Adopt G0 comparison truth followed by diagnostic-only G1 risk localization; require new evidence before G2 or production policy changes.
+        """
+    supported_by [
+        @jpegxl-rs.observation.libjxl-comparison-2026-08-18/2,
+        @jpegxl-rs.observation.q4-rate-proxy-audit-and-metric-divergence-2026-08-18/3,
+        @jpegxl-rs.observation.q5-exhaustive-fallback-is-a-hidden-quality-tier-2026-08-18/3
+    ]
+    source {
+        kind external
+        role origin
+        path "sources/external/jpxl-bridging-libjxl-gap-2026-08-21--ae1ed657.md"
+        use """
+            Roadmap proposal assessed against current code and AKR evidence.
+            """
+    }
+}
+
 record jpegxl-rs.assessment.modular-effort-lean-default/1 : assessment {
     title "Modular full search is chaff on real content; the lean config should be the default"
     state verified

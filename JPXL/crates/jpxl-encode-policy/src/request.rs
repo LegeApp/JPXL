@@ -550,7 +550,7 @@ pub enum CoverFrequencyWeight {
 /// [`Self::Nearest`] is the shipped rule: among `[0, est-1, est, est+1]`, take
 /// the smallest `|recon - target|`. It has no rate term at all, so it can spend
 /// bits on coefficients whose distortion saving does not pay for them --
-/// exactly what `sources/outside-advice.md` names.
+/// exactly what AKR source `outside-advice-2026-08-06` names.
 ///
 /// [`Self::RateDistortion`] minimises `residual_bits(q) + rd * (recon-target)^2`
 /// instead, with `rd` the same Lagrange weight `block_cost_bounded` applies to
