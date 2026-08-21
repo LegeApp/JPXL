@@ -104,7 +104,9 @@ use quantize::{
     cfl_multiplier,
 };
 
-pub use analysis::{AnalysisAtlas, AtomGrid};
+pub use analysis::{
+    AnalysisAtlas, AnalysisAtlasV2, AtomFeatures, AtomGrid, DiagnosticAtomFeatures,
+};
 pub use diagnostics::{
     ChooseStage, EncodeDiag, last_encode_diag, reset_encode_diag, take_encode_diag,
 };

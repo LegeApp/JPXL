@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import csv
 import hashlib
+import itertools
 import json
 import math
 import os
@@ -34,6 +35,8 @@ CORPUS_SCHEMA = "jpxl.codec-corpus/1"
 RECORD_SCHEMA = "jpxl.codec-comparison/2"
 TIMING_SCHEMA = "jpxl.codec-timing-plan/1"
 SUMMARY_SCHEMA = "jpxl.codec-comparison-summary/1"
+RISK_INPUT_SCHEMA = "jpxl.edge-risk-input/1"
+RISK_REPORT_SCHEMA = "jpxl.edge-risk-report/1"
 DEFAULT_SEED = 0x4A50584C
 
 
@@ -81,6 +84,323 @@ def ppm_dimensions(path: Path) -> tuple[int, int]:
     if len(tokens) != 4 or tokens[0] != b"P6" or tokens[3] not in {b"255", b"65535"}:
         raise HarnessError(f"expected binary RGB PPM (P6): {path}")
     return int(tokens[1]), int(tokens[2])
+
+
+def load_ppm(path: Path) -> dict[str, Any]:
+    """Load P6 without expanding samples into memory-heavy Python tuples."""
+    data = path.read_bytes()
+    offset = 0
+
+    def token() -> bytes:
+        nonlocal offset
+        while offset < len(data):
+            if data[offset : offset + 1] == b"#":
+                newline = data.find(b"\n", offset)
+                offset = len(data) if newline < 0 else newline + 1
+            elif data[offset : offset + 1].isspace():
+                offset += 1
+            else:
+                break
+        start = offset
+        while offset < len(data) and not data[offset : offset + 1].isspace():
+            offset += 1
+        return data[start:offset]
+
+    magic, width_raw, height_raw, max_raw = token(), token(), token(), token()
+    if magic != b"P6":
+        raise HarnessError(f"expected binary RGB PPM (P6): {path}")
+    try:
+        width, height, maximum = int(width_raw), int(height_raw), int(max_raw)
+    except ValueError as error:
+        raise HarnessError(f"invalid PPM header: {path}") from error
+    if width < 1 or height < 1 or maximum not in {255, 65535}:
+        raise HarnessError(f"unsupported PPM shape or sample depth: {path}")
+    if offset >= len(data) or not data[offset : offset + 1].isspace():
+        raise HarnessError(f"PPM header has no raster delimiter: {path}")
+    if data[offset : offset + 2] == b"\r\n":
+        offset += 2
+    else:
+        offset += 1
+    bytes_per_sample = 1 if maximum == 255 else 2
+    expected = width * height * 3 * bytes_per_sample
+    raster = memoryview(data)[offset:]
+    if len(raster) != expected:
+        raise HarnessError(
+            f"PPM raster size mismatch for {path}: expected {expected}, found {len(raster)}"
+        )
+    return {
+        "path": str(path),
+        "width": width,
+        "height": height,
+        "maximum": maximum,
+        "bytes_per_sample": bytes_per_sample,
+        "raster": raster,
+    }
+
+
+def ppm_luma(image: dict[str, Any], x: int, y: int) -> float:
+    width = int(image["width"])
+    step = int(image["bytes_per_sample"])
+    offset = (y * width + x) * 3 * step
+    raster = image["raster"]
+    if step == 1:
+        red, green, blue = raster[offset], raster[offset + 1], raster[offset + 2]
+    else:
+        red = (raster[offset] << 8) | raster[offset + 1]
+        green = (raster[offset + 2] << 8) | raster[offset + 3]
+        blue = (raster[offset + 4] << 8) | raster[offset + 5]
+    scale = float(image["maximum"])
+    return (0.2126 * red + 0.7152 * green + 0.0722 * blue) / scale
+
+
+def load_atlas(path: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    rows = []
+    with path.open("r", encoding="utf-8") as handle:
+        for line_number, line in enumerate(handle, 1):
+            if not line.strip():
+                continue
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError as error:
+                raise HarnessError(f"invalid atlas JSON at {path}:{line_number}") from error
+    if not rows or rows[0].get("schema") != "jpxl.analysis-atlas/1":
+        raise HarnessError(f"invalid analysis atlas: {path}")
+    header = rows[0]
+    atoms = rows[1:]
+    expected = int(header.get("grid_width", 0)) * int(header.get("grid_height", 0))
+    if header.get("kind") != "header" or len(atoms) != expected:
+        raise HarnessError(f"analysis atlas atom count mismatch: {path}")
+    for index, atom in enumerate(atoms):
+        width = int(header["grid_width"])
+        if (
+            atom.get("kind") != "atom"
+            or int(atom.get("x", -1)) != index % width
+            or int(atom.get("y", -1)) != index // width
+        ):
+            raise HarnessError(f"analysis atlas is not in raster order: {path}")
+    return header, atoms
+
+
+def variance(values: Sequence[float]) -> float:
+    if not values:
+        return 0.0
+    mean = sum(values) / len(values)
+    return max(0.0, sum((value - mean) ** 2 for value in values) / len(values))
+
+
+def atom_error_row(
+    atom: dict[str, Any],
+    source: dict[str, Any],
+    decoded: dict[str, Any],
+) -> dict[str, Any]:
+    atom_x, atom_y = int(atom["x"]), int(atom["y"])
+    x0, y0 = atom_x * 8, atom_y * 8
+    x1 = min(x0 + 8, int(source["width"]))
+    y1 = min(y0 + 8, int(source["height"]))
+    gradient = atom["gradient_energy_xyb"][1]
+    split_x = float(gradient[0]) >= float(gradient[1])
+    midpoint = (x0 + x1) // 2 if split_x else (y0 + y1) // 2
+    halves: list[list[tuple[int, int, float]]] = [[], []]
+    for y in range(y0, y1):
+        for x in range(x0, x1):
+            half = int(x >= midpoint) if split_x else int(y >= midpoint)
+            halves[half].append((x, y, ppm_luma(source, x, y)))
+    smooth = min(range(2), key=lambda half: (variance([p[2] for p in halves[half]]), half))
+    errors = [
+        ppm_luma(decoded, x, y) - source_luma for x, y, source_luma in halves[smooth]
+    ]
+    absolute = sorted(abs(error) for error in errors)
+    p95 = nearest_rank(absolute, 0.95) if absolute else 0.0
+    mean_error = sum(errors) / len(errors) if errors else 0.0
+    rms = math.sqrt(sum(error * error for error in errors) / len(errors)) if errors else 0.0
+    noise = abs(float(atom["noise_mad_xyb"][1]))
+    residual = max(0.0, float(atom["plane_residual_xyb"][1]))
+    gx, gy = (max(0.0, float(value)) for value in gradient)
+    return {
+        "x": atom_x,
+        "y": atom_y,
+        "label": p95 + abs(mean_error) + 0.5 * rms,
+        "raw_features": [
+            math.sqrt(gx + gy),
+            max(0.0, float(atom["orientation_coherence_y"])),
+            max(0.0, float(atom["flat_side_asymmetry_y"])),
+            -(noise + math.sqrt(residual)),
+        ],
+        "smooth_half": smooth,
+        "split": "x" if split_x else "y",
+        "error": {"p95_abs": p95, "mean": mean_error, "rms": rms},
+    }
+
+
+def percentile_ranks(values: Sequence[float]) -> list[float]:
+    if len(values) <= 1:
+        return [0.0] * len(values)
+    result = [0.0] * len(values)
+    ordered = sorted(range(len(values)), key=lambda index: (values[index], index))
+    position = 0
+    while position < len(ordered):
+        end = position + 1
+        value = values[ordered[position]]
+        while end < len(ordered) and values[ordered[end]] == value:
+            end += 1
+        rank = ((position + end - 1) * 0.5) / (len(values) - 1)
+        for ordered_index in ordered[position:end]:
+            result[ordered_index] = rank
+        position = end
+    return result
+
+
+def rank_feature_rows(rows: list[dict[str, Any]]) -> None:
+    for feature in range(4):
+        ranks = percentile_ranks([float(row["raw_features"][feature]) for row in rows])
+        for row, rank in zip(rows, ranks):
+            row.setdefault("features", [0.0] * 4)[feature] = rank
+
+
+def risk_recall(rows: Sequence[dict[str, Any]], weights: Sequence[int], percent: int) -> float:
+    if not rows:
+        return 0.0
+    count = max(1, math.ceil(len(rows) * percent / 100.0))
+    positives = max(1, math.ceil(len(rows) * 0.05))
+    truth = {
+        index
+        for index in sorted(range(len(rows)), key=lambda i: (-float(rows[i]["label"]), i))[
+            :positives
+        ]
+    }
+    predicted = set(
+        sorted(
+            range(len(rows)),
+            key=lambda i: (
+                -sum(
+                    weight * float(feature)
+                    for weight, feature in zip(weights, rows[i]["features"])
+                ),
+                i,
+            ),
+        )[:count]
+    )
+    return len(truth & predicted) / len(truth)
+
+
+def recall_summary(rows: Sequence[dict[str, Any]], weights: Sequence[int]) -> dict[str, float]:
+    return {f"recall_at_{percent}": risk_recall(rows, weights, percent) for percent in (1, 5, 10)}
+
+
+def choose_risk_weights(training: Sequence[list[dict[str, Any]]]) -> tuple[int, int, int, int]:
+    if not training:
+        raise HarnessError("risk report needs at least one training image")
+    best_weights = (0, 0, 0, 0)
+    best_objective: tuple[float, float, float, int, tuple[int, ...]] | None = None
+    for weights in itertools.product(range(4), repeat=4):
+        if not any(weights):
+            continue
+        recalls = [recall_summary(rows, weights) for rows in training]
+        objective = (
+            statistics.mean(item["recall_at_10"] for item in recalls),
+            statistics.mean(item["recall_at_5"] for item in recalls),
+            statistics.mean(item["recall_at_1"] for item in recalls),
+            -sum(weights),
+            tuple(-weight for weight in weights),
+        )
+        if best_objective is None or objective > best_objective:
+            best_objective = objective
+            best_weights = weights
+    return best_weights
+
+
+def risk_report(config_path: Path) -> dict[str, Any]:
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    if config.get("schema") != RISK_INPUT_SCHEMA or not isinstance(config.get("images"), list):
+        raise HarnessError(f"risk input schema must be {RISK_INPUT_SCHEMA}")
+    datasets: list[dict[str, Any]] = []
+    for item in config["images"]:
+        role = item.get("role")
+        if role not in {"train", "validation"}:
+            raise HarnessError("every risk image role must be train or validation")
+        paths = {}
+        for name in ("source_ppm", "decoded_ppm", "atlas_jsonl"):
+            path = Path(item.get(name, ""))
+            if not path.is_absolute():
+                path = (config_path.parent / path).resolve()
+            if not path.is_file():
+                raise HarnessError(f"missing risk input {name}: {path}")
+            paths[name] = path
+        source = load_ppm(paths["source_ppm"])
+        decoded = load_ppm(paths["decoded_ppm"])
+        header, atoms = load_atlas(paths["atlas_jsonl"])
+        shape = (source["width"], source["height"])
+        if shape != (decoded["width"], decoded["height"]) or shape != (
+            header.get("width"),
+            header.get("height"),
+        ):
+            raise HarnessError(f"risk input dimensions disagree for {item.get('id')}")
+        rows = [atom_error_row(atom, source, decoded) for atom in atoms]
+        rank_feature_rows(rows)
+        datasets.append(
+            {
+                "id": item.get("id"),
+                "role": role,
+                "rows": rows,
+                "inputs": {
+                    name: {"path": str(path), "sha256": sha256(path)}
+                    for name, path in paths.items()
+                },
+            }
+        )
+    training = [dataset["rows"] for dataset in datasets if dataset["role"] == "train"]
+    validation = [dataset["rows"] for dataset in datasets if dataset["role"] == "validation"]
+    if not validation:
+        raise HarnessError("risk report needs at least one held-out validation image")
+    weights = choose_risk_weights(training)
+    names = ("edge_strength", "orientation_coherence", "flat_side_asymmetry", "inverse_noise")
+    image_reports = []
+    for dataset in datasets:
+        rows = dataset["rows"]
+        metrics = recall_summary(rows, weights)
+        top = sorted(
+            rows,
+            key=lambda row: (
+                -sum(w * float(v) for w, v in zip(weights, row["features"])),
+                row["y"],
+                row["x"],
+            ),
+        )[:20]
+        image_reports.append(
+            {
+                "id": dataset["id"],
+                "role": dataset["role"],
+                "atom_count": len(rows),
+                "recall": metrics,
+                "inputs": dataset["inputs"],
+                "top_risk_atoms": [
+                    {
+                        "x": row["x"],
+                        "y": row["y"],
+                        "label": row["label"],
+                        "score": sum(w * float(v) for w, v in zip(weights, row["features"])),
+                    }
+                    for row in top
+                ],
+            }
+        )
+    validation_recall = statistics.mean(
+        report["recall"]["recall_at_10"]
+        for report in image_reports
+        if report["role"] == "validation"
+    )
+    return {
+        "schema": RISK_REPORT_SCHEMA,
+        "label": "smooth-half p95 absolute luma error + absolute bias + 0.5*rms",
+        "feature_ranking": "within-image percentile ranks",
+        "weights": dict(zip(names, weights)),
+        "images": image_reports,
+        "held_out": {
+            "mean_recall_at_10": validation_recall,
+            "acceptance_threshold": 0.5,
+            "eligible_for_g2": validation_recall >= 0.5,
+        },
+    }
 
 
 def load_manifest(path: Path) -> dict[str, Any]:
@@ -895,6 +1215,10 @@ def build_parser() -> argparse.ArgumentParser:
     report.add_argument("--input", type=Path, required=True)
     report.add_argument("--output", type=Path, required=True)
     report.add_argument("--tsv", type=Path, required=True)
+
+    risk = sub.add_parser("risk-report", help="fit and validate diagnostic edge-risk ranking")
+    risk.add_argument("--input", type=Path, required=True)
+    risk.add_argument("--output", type=Path, required=True)
     return parser
 
 
@@ -927,6 +1251,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             args.output.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
             export_tsv(records, args.tsv)
             print(f"wrote timing summary to {args.output} and {args.tsv}")
+        elif args.command == "risk-report":
+            report = risk_report(args.input)
+            args.output.write_text(
+                json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+            )
+            verdict = "eligible" if report["held_out"]["eligible_for_g2"] else "not eligible"
+            print(f"wrote held-out risk report to {args.output}: G2 {verdict}")
         return 0
     except (HarnessError, OSError, ValueError, json.JSONDecodeError) as error:
         print(f"error: {error}", file=sys.stderr)

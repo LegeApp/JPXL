@@ -6009,7 +6009,7 @@ record jpegxl-rs.work.gap-g0-comparison-truth/1 : work {
 
 record jpegxl-rs.work.gap-g1-edge-risk-atlas/1 : work {
     title "G1: diagnostic edge-flat risk atlas"
-    state proposed
+    state completed
     scope [
         path ".agent/scratch/**",
         path "JPXL/crates/jpxl-cli/src/main.rs",
@@ -6026,6 +6026,7 @@ record jpegxl-rs.work.gap-g1-edge-risk-atlas/1 : work {
                 """
             method command
             command "cargo test -p jpxl-cli analyze_atlas"
+            verified_by [ @jpegxl-rs.evidence.gap-g1-atlas-export-2026-08-21/1 ]
         }
         check feature-tests {
             statement """
@@ -6033,18 +6034,21 @@ record jpegxl-rs.work.gap-g1-edge-risk-atlas/1 : work {
                 """
             method command
             command "cargo test -p jpxl-encode-policy analysis"
+            verified_by [ @jpegxl-rs.evidence.gap-g1-analysis-feature-tests-2026-08-21/1 ]
         }
         check production-identity {
             statement """
                 Existing production streams remain byte-identical because AnalysisAtlasV2 is invoked only by the explicit diagnostic command.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.gap-g1-production-identity-2026-08-21/1 ]
         }
         check risk-recall {
             statement """
                 Held-out recall at top 1/5/10 percent is recorded; G2 is allowed only if top 10 percent captures at least half of the top 5 percent leakage atoms.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.gap-g1-heldout-risk-2026-08-21/1 ]
         }
     }
     depends_on [ @jpegxl-rs.work.gap-g0-comparison-truth ]

@@ -163,6 +163,26 @@ class CodecCompareTests(unittest.TestCase):
         self.assertGreater(suggestions[0]["setting"], 1.0)
         self.assertLess(suggestions[0]["setting"], 2.0)
 
+    def test_ppm_loader_preserves_whitespace_valued_first_sample(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "leading-newline.ppm"
+            path.write_bytes(b"P6\n1 1\n255\n" + bytes((10, 20, 30)))
+            image = codec_compare.load_ppm(path)
+            expected = (0.2126 * 10 + 0.7152 * 20 + 0.0722 * 30) / 255
+            self.assertAlmostEqual(codec_compare.ppm_luma(image, 0, 0), expected)
+
+    def test_risk_weight_fit_uses_ranked_training_labels(self):
+        training = []
+        validation = []
+        for index in range(100):
+            features = [index / 99, 0.5, 0.5, 0.5]
+            training.append({"features": features, "label": float(index)})
+            validation.append({"features": features, "label": float(99 - index)})
+        weights = codec_compare.choose_risk_weights([training])
+        self.assertEqual(weights, (1, 0, 0, 0))
+        self.assertEqual(codec_compare.risk_recall(training, weights, 10), 1.0)
+        self.assertEqual(codec_compare.risk_recall(validation, weights, 10), 0.0)
+
     @staticmethod
     def _write_tool(path: Path, kind: str) -> Path:
         script = f"""#!{sys.executable}

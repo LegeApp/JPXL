@@ -43,6 +43,9 @@ Usage:
                                   Print RMSE and PSNR between two decoded PPMs
                                   (plus SSIMULACRA2 and butteraugli, if built
                                   with --features perceptual)
+    jpxl analyze-atlas <in> <out.jsonl>
+                                  Export the diagnostic AnalysisAtlasV2; this
+                                  research command does not affect encoding
     jpxl bench <mode> [opts]      Time one encode path (see `jpxl bench --help`)
     jpxl --help                   Show this message
     jpxl --version                Show the version
@@ -238,6 +241,7 @@ fn run(args: &[String]) -> u8 {
         "decode" => cmd_decode(rest),
         "encode" => cmd_encode(rest),
         "compare" => cmd_compare(rest),
+        "analyze-atlas" => cmd_analyze_atlas(rest),
         "bench" => cmd_bench(rest),
         other => {
             fail(&format!("unknown command `{other}`"));
@@ -1841,6 +1845,136 @@ fn dump_cover_map(plan: &jpxl_encode::vardct::ValidatedEmissionPlan, path: &str)
     }
 }
 
+/// `jpxl analyze-atlas <input> <output.jsonl>`: export diagnostic features.
+fn cmd_analyze_atlas(args: &[String]) -> u8 {
+    let [input, output] = args else {
+        fail("`analyze-atlas` takes an input raster and an output JSONL path");
+        return EXIT_ERROR;
+    };
+    let bytes = match read_path(input) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            fail(&format!("{input}: {error}"));
+            return EXIT_ERROR;
+        }
+    };
+    let image = match image_io::decode_input(&bytes, None) {
+        Ok(image) => image,
+        Err(error) => {
+            fail(&format!("{input}: {error}"));
+            return EXIT_ERROR;
+        }
+    };
+    let frame = match analysis_frame(&image) {
+        Ok(frame) => frame,
+        Err(error) => {
+            fail(&error);
+            return EXIT_ERROR;
+        }
+    };
+    let atlas = jpxl_encode_policy::AnalysisAtlasV2::analyze(&frame);
+    let file = match std::fs::File::create(output) {
+        Ok(file) => file,
+        Err(error) => {
+            fail(&format!("{output}: {error}"));
+            return EXIT_ERROR;
+        }
+    };
+    let mut writer = std::io::BufWriter::new(file);
+    let grid = atlas.grid();
+    if writeln!(
+        writer,
+        "{{\"schema\":\"jpxl.analysis-atlas/1\",\"kind\":\"header\",\"width\":{},\"height\":{},\"grid_width\":{},\"grid_height\":{},\"atom_bytes\":{},\"total_bytes\":{}}}",
+        image.width(),
+        image.height(),
+        grid.width,
+        grid.height,
+        core::mem::size_of::<jpxl_encode_policy::DiagnosticAtomFeatures>()
+            + core::mem::size_of::<jpxl_encode_policy::AtomFeatures>(),
+        atlas.byte_size(),
+    )
+    .is_err()
+    {
+        fail(&format!("{output}: cannot write atlas header"));
+        return EXIT_ERROR;
+    }
+    for (index, (base, diagnostic)) in atlas.base().atoms().iter().zip(atlas.atoms()).enumerate() {
+        let Ok(index) = u32::try_from(index) else {
+            fail("analysis atlas has too many atoms to address");
+            return EXIT_ERROR;
+        };
+        let atom_x = index % grid.width;
+        let atom_y = index / grid.width;
+        if writeln!(
+            writer,
+            "{{\"schema\":\"jpxl.analysis-atlas/1\",\"kind\":\"atom\",\"x\":{atom_x},\"y\":{atom_y},\"mean_xyb\":{:?},\"variance_xyb\":{:?},\"gradient_energy_xyb\":{:?},\"gradient_cross_xyb\":{:?},\"laplacian_energy_xyb\":{:?},\"plane_residual_xyb\":{:?},\"noise_mad_xyb\":{:?},\"dynamic_range_xyb\":{:?},\"covariance_xyb\":{:?},\"orientation_coherence_y\":{},\"flat_side_asymmetry_y\":{}}}",
+            base.mean_xyb,
+            base.variance_xyb,
+            diagnostic.gradient_energy_xyb,
+            diagnostic.gradient_cross_xyb,
+            diagnostic.laplacian_energy_xyb,
+            diagnostic.plane_residual_xyb,
+            diagnostic.noise_mad_xyb,
+            diagnostic.dynamic_range_xyb,
+            diagnostic.covariance_xyb,
+            diagnostic.orientation_coherence_y,
+            diagnostic.flat_side_asymmetry_y,
+        )
+        .is_err()
+        {
+            fail(&format!("{output}: cannot write atlas atom"));
+            return EXIT_ERROR;
+        }
+    }
+    if writer.flush().is_err() {
+        fail(&format!("{output}: cannot finish atlas export"));
+        return EXIT_ERROR;
+    }
+    status_line(
+        output,
+        &format!(
+            "{output}: {}x{} atoms, {} feature bytes",
+            grid.width,
+            grid.height,
+            atlas.byte_size()
+        ),
+    );
+    EXIT_OK
+}
+
+fn analysis_frame(image: &jpxl_encode::Image) -> Result<jpxl_encode_policy::PreparedFrame, String> {
+    let planes = image.planes();
+    let mut rgb = Vec::with_capacity(planes.first().map(Vec::len).unwrap_or(0).saturating_mul(3));
+    match planes {
+        [gray] => {
+            for &sample in gray {
+                let value = u16::try_from(sample)
+                    .map_err(|_| "analysis input contains a negative sample".to_owned())?;
+                rgb.extend_from_slice(&[value; 3]);
+            }
+        }
+        [red, green, blue] => {
+            for index in 0..red.len() {
+                for plane in [red, green, blue] {
+                    let sample = plane.get(index).copied().unwrap_or(0);
+                    rgb.push(
+                        u16::try_from(sample)
+                            .map_err(|_| "analysis input contains a negative sample".to_owned())?,
+                    );
+                }
+            }
+        }
+        _ => return Err("analysis input must have one or three colour channels".to_owned()),
+    }
+    jpxl_encode_policy::PreparedFrame::from_srgb16(
+        image.width(),
+        image.height(),
+        &rgb,
+        image.bits_per_sample(),
+    )
+    .map_err(|error| error.to_string())
+}
+
 /// Research controls that override the production target-rate policy.
 struct LossyOverrides {
     aq_mode: Option<jpxl_encode_policy::AqMode>,
@@ -2288,6 +2422,42 @@ mod cli_tests {
 
         let roundtrip = image::open(&output).expect("open output PNG").into_rgb8();
         assert_eq!(roundtrip.into_raw(), original);
+
+        if temp.starts_with(std::env::temp_dir()) {
+            std::fs::remove_dir_all(&temp).expect("remove isolated test directory");
+        }
+    }
+
+    #[test]
+    fn analyze_atlas_exports_header_and_raster_order_atoms() {
+        let temp = temp_dir();
+        std::fs::create_dir_all(&temp).expect("temp directory");
+        let input = temp.join("input.png");
+        let output = temp.join("atlas.jsonl");
+        let original = vec![128u8; 9 * 10 * 3];
+        let dynamic = DynamicImage::ImageRgb8(
+            ImageBuffer::<Rgb<u8>, _>::from_raw(9, 10, original).expect("shape"),
+        );
+        dynamic
+            .save_with_format(&input, ImageFormat::Png)
+            .expect("write input PNG");
+
+        let args = vec![
+            "analyze-atlas".to_owned(),
+            input.to_string_lossy().into_owned(),
+            output.to_string_lossy().into_owned(),
+        ];
+        assert_eq!(run(&args), EXIT_OK);
+        let text = std::fs::read_to_string(&output).expect("read atlas");
+        let rows: Vec<&str> = text.lines().collect();
+        assert_eq!(rows.len(), 5);
+        let header = rows.first().expect("header");
+        assert!(header.contains("\"schema\":\"jpxl.analysis-atlas/1\""));
+        assert!(header.contains("\"grid_width\":2"));
+        assert!(header.contains("\"grid_height\":2"));
+        assert!(header.contains("\"atom_bytes\":128"));
+        assert!(rows.get(1).expect("first atom").contains("\"x\":0,\"y\":0"));
+        assert!(rows.get(4).expect("last atom").contains("\"x\":1,\"y\":1"));
 
         if temp.starts_with(std::env::temp_dir()) {
             std::fs::remove_dir_all(&temp).expect("remove isolated test directory");
