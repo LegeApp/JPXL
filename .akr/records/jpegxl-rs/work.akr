@@ -6368,7 +6368,7 @@ record jpegxl-rs.work.gap-g4-selective-cover-refresh/2 : work {
 
 record jpegxl-rs.work.gap-g4-selective-cover-refresh/3 : work {
     title "G4: measure and gate selective cover refresh"
-    state proposed
+    state completed
     scope [
         path ".agent/scratch/**",
         path "JPXL/crates/jpxl-cli/src/main.rs",
@@ -6391,7 +6391,10 @@ record jpegxl-rs.work.gap-g4-selective-cover-refresh/3 : work {
                 """
             method command
             command "cargo test --workspace --release"
-            verified_by [ @jpegxl-rs.evidence.gap-g4-production-identity-2026-08-21/1 ]
+            verified_by [
+                @jpegxl-rs.evidence.gap-g4-production-identity-2026-08-21/1,
+                @jpegxl-rs.evidence.gap-g4-production-no-diff-refresh-2026-08-21/1
+            ]
         }
         check margin-evidence {
             statement """
@@ -6399,14 +6402,20 @@ record jpegxl-rs.work.gap-g4-selective-cover-refresh/3 : work {
                 """
             method command
             command "JPXL_PHASE32_PPM=<frozen corpus> cargo test -p jpxl-encode-policy --release regret::tests::phase32_dirty_frontier_photo_screen -- --ignored --nocapture"
-            verified_by [ @jpegxl-rs.evidence.gap-g4-dirty-frontier-screen-2026-08-21/1 ]
+            verified_by [
+                @jpegxl-rs.evidence.gap-g4-dirty-frontier-screen-2026-08-21/1,
+                @jpegxl-rs.evidence.gap-g4-margin-rejection-refresh-2026-08-21/1
+            ]
         }
         check promotion-gate {
             statement """
                 Selective refresh is promoted only if repriced area is small, exact bytes/quality improve, and common-path wall cost remains low single digit; otherwise the attempted mechanism is rejected and production stays byte-identical.
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.gap-g4-promotion-rejected-2026-08-21/1 ]
+            verified_by [
+                @jpegxl-rs.evidence.gap-g4-margin-rejection-refresh-2026-08-21/1,
+                @jpegxl-rs.evidence.gap-g4-promotion-rejected-2026-08-21/1
+            ]
         }
         check release-gates {
             statement """
@@ -6414,7 +6423,10 @@ record jpegxl-rs.work.gap-g4-selective-cover-refresh/3 : work {
                 """
             method command
             command "cargo build --workspace --release && cargo test --workspace --release && cargo clippy --workspace --all-targets --release -- -D warnings && cargo fmt --all --check"
-            verified_by [ @jpegxl-rs.evidence.gap-g4-release-gates-2026-08-21/1 ]
+            verified_by [
+                @jpegxl-rs.evidence.gap-g4-release-gates-2026-08-21/1,
+                @jpegxl-rs.evidence.gap-g5-release-workspace-gates-2026-08-21/1
+            ]
         }
     }
     depends_on [ @jpegxl-rs.work.gap-g3-bounded-truthful-rate-controller ]
@@ -6437,7 +6449,7 @@ record jpegxl-rs.work.gap-g4-selective-cover-refresh/3 : work {
 
 record jpegxl-rs.work.gap-g5-packed-entropy-and-bounded-alternatives/1 : work {
     title "G5: pack entropy tapes and screen bounded finalist alternatives"
-    state proposed
+    state completed
     scope [
         path ".agent/scratch/**",
         path "JPXL/crates/**/tests/**",
@@ -6459,24 +6471,28 @@ record jpegxl-rs.work.gap-g5-packed-entropy-and-bounded-alternatives/1 : work {
                 At most two ranked hybrid-uint configurations are screened for a Balanced finalist and promoted only if exact matched-rate density/quality improves without exceeding the standing wall and decoder gates; otherwise production Balanced remains unchanged.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.gap-g5-bounded-entropy-screen-2026-08-21/1 ]
         }
         check byte-identity {
             statement """
                 Packed-tape output is byte-identical to the two-walk oracle and across 1/4 threads on representative multi-group images.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.gap-g5-packed-layout-identity-2026-08-21/1 ]
         }
         check decoder-parity {
             statement """
                 Representative packed-tape streams decode successfully with JPXL, djxl, and jxl-oxide.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.gap-g5-three-decoder-parity-2026-08-21/1 ]
         }
         check memory-evidence {
             statement """
                 Release diagnostics on the frozen real-image corpus report symbol count, extra-symbol fraction, legacy payload bytes, packed payload bytes, and peak RSS; the packed representation materially reduces tape payload.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.gap-g5-packed-memory-2026-08-21/1 ]
         }
         check packed-layout {
             statement """
@@ -6484,6 +6500,7 @@ record jpegxl-rs.work.gap-g5-packed-entropy-and-bounded-alternatives/1 : work {
                 """
             method command
             command "cargo test -p jpxl-entropy --release"
+            verified_by [ @jpegxl-rs.evidence.gap-g5-packed-layout-identity-2026-08-21/1 ]
         }
         check release-gates {
             statement """
@@ -6491,6 +6508,7 @@ record jpegxl-rs.work.gap-g5-packed-entropy-and-bounded-alternatives/1 : work {
                 """
             method command
             command "cargo build --workspace --release && cargo test --workspace --release && cargo clippy --workspace --all-targets --release -- -D warnings && cargo fmt --all --check"
+            verified_by [ @jpegxl-rs.evidence.gap-g5-release-workspace-gates-2026-08-21/1 ]
         }
     }
     depends_on [ @jpegxl-rs.work.gap-g4-selective-cover-refresh ]

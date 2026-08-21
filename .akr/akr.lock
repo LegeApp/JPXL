@@ -5,7 +5,7 @@ build {
     tool "akr 0.3.3"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:16306ee05f43a002ee51bed073826a631c005db5c0170f3baf1124242f4f5c89"
+    source_graph "sha256:9fafbcf93d6049867237b5213a9a53e95735c61d4d2be1e0e6aca7d3d4ca0171"
 }
 
 source ".akr/project.akr" {
@@ -29,8 +29,8 @@ source ".akr/records/jpegxl-rs/decisions.akr" {
 }
 
 source ".akr/records/jpegxl-rs/evidence.akr" {
-    hash "sha256:102a0700d7889c6cb9c9cd99a32266befda98434abf381437551e79171753d71"
-    records 425
+    hash "sha256:8c59340c56e799888373a147728e0a373f6afeacc1763a38756a0b5ba731c701"
+    records 432
 }
 
 source ".akr/records/jpegxl-rs/milestones.akr" {
@@ -69,7 +69,7 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:ffb698c1e7a9639e8ee92f4df1ca87ae7aaaa19c6c4e005061d86562a6a97a19"
+    hash "sha256:98a8fa1fa9f5cec8bb553aa2ce587d0675a62a6ca74c52c79f2edbe56a03139e"
     records 159
 }
 
@@ -3556,7 +3556,7 @@ resolution @jpegxl-rs.work.gap-g4-selective-cover-refresh/3 {
 resolution @jpegxl-rs.work.gap-g5-packed-entropy-and-bounded-alternatives/1 {
     slot depends_on
     to @jpegxl-rs.work.gap-g4-selective-cover-refresh/3
-    hash "sha256:ecaf5f1df66863a0d4ad6f332b257778e7e202a4f1a565adaf6b6ec479a5e504"
+    hash "sha256:50d660c83a7543976dcd0f6cede8fd0b36aaa74c80113acf91ec0860d88dd8d1"
 }
 
 resolution @jpegxl-rs.work.gap-g5-packed-entropy-and-bounded-alternatives/1 {
@@ -3883,9 +3883,19 @@ seal @jpegxl-rs.evidence.gap-g4-dirty-frontier-screen-2026-08-21/1 {
     hash "sha256:464748128d73400f67dcc310fadd3c6c55a17faf10ff3362d741ff9b544cee93"
 }
 
+seal @jpegxl-rs.evidence.gap-g4-margin-rejection-refresh-2026-08-21/1 {
+    state verified
+    hash "sha256:fd339be66e8846d5208d0e64efeed1dc4cb5c870c14108f0b5bff023ae906f67"
+}
+
 seal @jpegxl-rs.evidence.gap-g4-production-identity-2026-08-21/1 {
     state verified
     hash "sha256:b69e2b3429af07d1acd2a4899f93ac8b5c5ce2df88c12aad1b0a7f9e06b68692"
+}
+
+seal @jpegxl-rs.evidence.gap-g4-production-no-diff-refresh-2026-08-21/1 {
+    state verified
+    hash "sha256:d2fddfe054c4741487bda56a3d4d828587f067c7490aa42327e7682d61fbc0ba"
 }
 
 seal @jpegxl-rs.evidence.gap-g4-promotion-rejected-2026-08-21/1 {
@@ -3896,6 +3906,31 @@ seal @jpegxl-rs.evidence.gap-g4-promotion-rejected-2026-08-21/1 {
 seal @jpegxl-rs.evidence.gap-g4-release-gates-2026-08-21/1 {
     state verified
     hash "sha256:cbbe30dc896ebbc78ec42ee1864ac2903f82afa1a8547d0769a1202dd2319f7e"
+}
+
+seal @jpegxl-rs.evidence.gap-g5-bounded-entropy-screen-2026-08-21/1 {
+    state verified
+    hash "sha256:e8567c0a46d4ba74446b96ea456b08d2d5f79fe3db18094a8d9f0669719e4e93"
+}
+
+seal @jpegxl-rs.evidence.gap-g5-packed-layout-identity-2026-08-21/1 {
+    state verified
+    hash "sha256:70ac3b346dfaddc737c8c7c5a718f53ff6f399a7ebbc4eb5424a5dabf0e0d696"
+}
+
+seal @jpegxl-rs.evidence.gap-g5-packed-memory-2026-08-21/1 {
+    state verified
+    hash "sha256:05c676b552ff052a90bb83e9584d237fcd55b7cd0457cc923966b0e27c19eb0c"
+}
+
+seal @jpegxl-rs.evidence.gap-g5-release-workspace-gates-2026-08-21/1 {
+    state verified
+    hash "sha256:0c06687243f8fbd1e82282e2730ec25aec82172a48954a8f8331b28329639a8b"
+}
+
+seal @jpegxl-rs.evidence.gap-g5-three-decoder-parity-2026-08-21/1 {
+    state verified
+    hash "sha256:c1bfc511b09360362b7215bd822d399287b7dc645a6dc2f875fd9306185f54a0"
 }
 
 seal @jpegxl-rs.evidence.general-use-api-tests-2026-08-20/1 {
@@ -7281,6 +7316,16 @@ seal @jpegxl-rs.work.gap-g4-selective-cover-refresh/1 {
 seal @jpegxl-rs.work.gap-g4-selective-cover-refresh/2 {
     state superseded
     hash "sha256:95b4d8f465dfe7572e0a318b25b0e665bd219016a9b538bdafcf8871e408a177"
+}
+
+seal @jpegxl-rs.work.gap-g4-selective-cover-refresh/3 {
+    state completed
+    hash "sha256:50d660c83a7543976dcd0f6cede8fd0b36aaa74c80113acf91ec0860d88dd8d1"
+}
+
+seal @jpegxl-rs.work.gap-g5-packed-entropy-and-bounded-alternatives/1 {
+    state completed
+    hash "sha256:702a013887d24a05b4416f55c11e0dfc1c0a5e2f800aaae5564b6d0c583420ab"
 }
 
 seal @jpegxl-rs.work.general-use-api-cli/1 {

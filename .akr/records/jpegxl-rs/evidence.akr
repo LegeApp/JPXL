@@ -309,6 +309,18 @@ record jpegxl-rs.evidence.gap-g4-dirty-frontier-screen-2026-08-21/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.gap-g4-margin-rejection-refresh-2026-08-21/1 : evidence {
+    title "G4 margin and rejection evidence revalidated"
+    state verified
+    result pass
+    method observation
+    observed_at git:87240fdde463152c52cfaae2bb35e0662990e39b
+    artifact ".agent/scratch/gap-g4-2026-08-21/phase32-dirty-frontier.log"
+    summary """
+        Revalidated the frozen release dirty-frontier log at the committed G4 revision: zero-guard false-stable rates remained about 1%, while the reliable 0.05 guard repriced 17.08-23.99% of nodes, so the selective-refresh rejection remains supported.
+        """
+}
+
 record jpegxl-rs.evidence.gap-g4-production-identity-2026-08-21/1 : evidence {
     title "G4 production behavior remains G3-identical"
     state verified
@@ -317,6 +329,19 @@ record jpegxl-rs.evidence.gap-g4-production-identity-2026-08-21/1 : evidence {
     observed_at git:84bcac1af6cd0249614ba1de08a68b68e6154479
     summary """
         G4 changed only AKR ledger/generated documentation and promoted no encoder candidate; the release suite at this commit passed, so production source and G3 codestream behavior are unchanged.
+        """
+}
+
+record jpegxl-rs.evidence.gap-g4-production-no-diff-refresh-2026-08-21/1 : evidence {
+    title "G4 production no-diff revalidated"
+    state verified
+    result pass
+    method command
+    observed_at git:87240fdde463152c52cfaae2bb35e0662990e39b
+    command "git diff --quiet 537ff2822a2fde163a594097d7e7915307ae8185..84bcac1af6cd0249614ba1de08a68b68e6154479 -- JPXL"
+    artifact ".agent/scratch/gap-g5-2026-08-21/release-workspace-gates.log"
+    summary """
+        The committed G4 measurement/rejection change contains no JPXL production-source delta from its G3 predecessor.
         """
 }
 
@@ -342,6 +367,69 @@ record jpegxl-rs.evidence.gap-g4-release-gates-2026-08-21/1 : evidence {
     artifact ".agent/scratch/gap-g4-2026-08-21/release-gates.log"
     summary """
         At the committed G4 ledger state, the release workspace build, full release test suite, release clippy with warnings denied, and formatting check all passed.
+        """
+}
+
+record jpegxl-rs.evidence.gap-g5-bounded-entropy-screen-2026-08-21/1 : evidence {
+    title "G5 bounded entropy promotion screen"
+    state verified
+    result pass
+    method observation
+    observed_at git:87240fdde463152c52cfaae2bb35e0662990e39b
+    artifact ".agent/scratch/gap-g5-2026-08-21/bounded-screen-candidate6-metrics.log"
+    summary """
+        The promoted legacy-plus-one bounded model improved mean SSIMULACRA2 by 1.721 over nine fixed-rate cells after the <4 KiB legacy gate; worst SSIMULACRA2 delta was -0.0543 and median wall overhead was 12.63% (4.3 MP) / 9.50% (12 MP), within the 15% gate. Diagnostics showed three distinct quantizer plans emitted once each, so no control-image cache was added.
+        """
+}
+
+record jpegxl-rs.evidence.gap-g5-packed-layout-identity-2026-08-21/1 : evidence {
+    title "G5 packed tape layout and byte identity"
+    state verified
+    result pass
+    method command
+    observed_at git:87240fdde463152c52cfaae2bb35e0662990e39b
+    command "cargo test -p jpxl-entropy --release; encode frozen mid image through packed and two-walk controls at 1 bpp and with --threads 1/4; sha256sum outputs"
+    artifact ".agent/scratch/gap-g5-2026-08-21/final-verification.log"
+    summary """
+        Release entropy tests passed; the packed tape and two-walk oracle produced SHA-256 05bae79d...8701b, and packed output was identical at 1 and 4 threads.
+        """
+}
+
+record jpegxl-rs.evidence.gap-g5-packed-memory-2026-08-21/1 : evidence {
+    title "G5 packed tape memory screen"
+    state verified
+    result pass
+    method observation
+    observed_at git:87240fdde463152c52cfaae2bb35e0662990e39b
+    artifact ".agent/scratch/gap-g5-2026-08-21/packed-interleaved-rss-timing.log"
+    summary """
+        Real-stream diagnostics found 4.2-5.0% of HF symbols carry extras and packed payload was about 48% below the former layout; five-run peak-RSS medians fell 2.72% on 4.3 MP and 1.57% on 12 MP, with wall time effectively neutral to improved.
+        """
+}
+
+record jpegxl-rs.evidence.gap-g5-release-workspace-gates-2026-08-21/1 : evidence {
+    title "G5 full release workspace gates"
+    state verified
+    result pass
+    method command
+    observed_at git:87240fdde463152c52cfaae2bb35e0662990e39b
+    command "cargo build --workspace --release && cargo test --workspace --release && cargo clippy --workspace --all-targets --release -- -D warnings && cargo fmt --all --check"
+    artifact ".agent/scratch/gap-g5-2026-08-21/release-workspace-gates.log"
+    summary """
+        At the committed packed-tape and bounded-entropy implementation, the full release workspace build and tests, release clippy with warnings denied, and formatting check all passed.
+        """
+}
+
+record jpegxl-rs.evidence.gap-g5-three-decoder-parity-2026-08-21/1 : evidence {
+    title "G5 JPXL, djxl, and jxl-oxide decoder parity"
+    state verified
+    result pass
+    method command
+    observed_at git:87240fdde463152c52cfaae2bb35e0662990e39b
+    command "JPXL/target/release/jpxl decode <mid-final.jxl> <jpxl.ppm>; ./libjxl/build/tools/djxl <mid-final.jxl> <djxl.ppm>; jxl-oxide <mid-final.jxl> -o <jxlo.png>"
+    artifact ".agent/scratch/gap-g5-2026-08-21/final-decoder-parity.log"
+    summary """
+        The final 2400x1800, 1 bpp, four-thread packed/bounded stream decoded successfully with JPXL, libjxl djxl 0.13.0, and jxl-oxide.
         """
 }
 
