@@ -309,6 +309,17 @@ record jpegxl-rs.evidence.gap-g4-dirty-frontier-screen-2026-08-21/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.gap-g4-production-identity-2026-08-21/1 : evidence {
+    title "G4 production behavior remains G3-identical"
+    state verified
+    result pass
+    method observation
+    observed_at git:84bcac1af6cd0249614ba1de08a68b68e6154479
+    summary """
+        G4 changed only AKR ledger/generated documentation and promoted no encoder candidate; the release suite at this commit passed, so production source and G3 codestream behavior are unchanged.
+        """
+}
+
 record jpegxl-rs.evidence.gap-g4-promotion-rejected-2026-08-21/1 : evidence {
     title "G4 selective refresh promotion gate rejected"
     state verified
@@ -318,6 +329,19 @@ record jpegxl-rs.evidence.gap-g4-promotion-rejected-2026-08-21/1 : evidence {
     artifact ".agent/scratch/gap-g4-2026-08-21/phase32-dirty-frontier.log"
     summary """
         No measured guard offered both a reliably small frontier and negligible false-stable decisions; combined with the prior Q5 full-fresh finalist result (+0.10/-0.03 SSIMULACRA2 for +6-22% time), selective refresh was not promoted and production code remained unchanged.
+        """
+}
+
+record jpegxl-rs.evidence.gap-g4-release-gates-2026-08-21/1 : evidence {
+    title "G4 release workspace gates"
+    state verified
+    result pass
+    method command
+    observed_at git:84bcac1af6cd0249614ba1de08a68b68e6154479
+    command "cargo build --workspace --release && cargo test --workspace --release && cargo clippy --workspace --all-targets --release -- -D warnings && cargo fmt --all --check"
+    artifact ".agent/scratch/gap-g4-2026-08-21/release-gates.log"
+    summary """
+        At the committed G4 ledger state, the release workspace build, full release test suite, release clippy with warnings denied, and formatting check all passed.
         """
 }
 
