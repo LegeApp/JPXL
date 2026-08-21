@@ -433,6 +433,44 @@ record jpegxl-rs.evidence.gap-g5-three-decoder-parity-2026-08-21/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.gap-g6-modular-profile-and-ab-2026-08-21/1 : evidence {
+    title "G6 modular profile and interleaved A/B"
+    state verified
+    result pass
+    method observation
+    observed_at git:3bc2453cde8140a6d670ec9fa7a7f07645980793
+    artifact ".agent/scratch/gap-g6-2026-08-21/modular-interleaved-ab.log"
+    summary """
+        Diagnostics identified the roughly 1.2 s global residual-model build as the dominant serial barrier. Ordered parallel event collection preserved fingerprints and, over seven interleaved release runs, improved 4-worker median wall time by 2.83%, was neutral at 8 workers, and reduced median peak RSS by 14.25% and 20.48%; the remaining model merge was deliberately left serial.
+        """
+}
+
+record jpegxl-rs.evidence.gap-g6-release-workspace-gates-2026-08-21/1 : evidence {
+    title "G6 release workspace gates"
+    state verified
+    result pass
+    method command
+    observed_at git:3bc2453cde8140a6d670ec9fa7a7f07645980793
+    command "cd JPXL && cargo build --workspace --release && cargo test --workspace --release && cargo clippy --workspace --all-targets --release -- -D warnings && cargo fmt --all --check"
+    artifact ".agent/scratch/gap-g6-2026-08-21/release-workspace-gates.log"
+    summary """
+        The complete workspace built and tested in release mode, release clippy passed with warnings denied, and formatting was clean.
+        """
+}
+
+record jpegxl-rs.evidence.gap-g6-scaling-matrix-2026-08-21/1 : evidence {
+    title "G6 thread-scaling matrix and determinism"
+    state verified
+    result pass
+    method command
+    observed_at git:3bc2453cde8140a6d670ec9fa7a7f07645980793
+    command ".agent/scratch/gap-g6-2026-08-21/run-matrix.sh"
+    artifact ".agent/scratch/gap-g6-2026-08-21/scaling-matrix.log"
+    summary """
+        Seven release-mode 1/2/4/8-worker cells recorded wall, CPU, RSS and context-switch counters; every cell was byte-identical across worker counts, and 1-to-4 scaling ranged from 1.71x to 2.46x for substantive workloads (the small effort-7 control was 1.05x). Hardware counters were unavailable because perf_event_paranoid=4.
+        """
+}
+
 record jpegxl-rs.evidence.general-use-api-tests-2026-08-20/1 : evidence {
     title "Facade tests, CLI raster-adapter tests, PNG-to-JXL-to-PNG integration, target-rate byte ceiling, and facade doctests all passed."
     state verified

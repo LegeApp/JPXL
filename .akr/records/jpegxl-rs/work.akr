@@ -6530,7 +6530,7 @@ record jpegxl-rs.work.gap-g5-packed-entropy-and-bounded-alternatives/1 : work {
 
 record jpegxl-rs.work.gap-g6-current-scaling-matrix/1 : work {
     title "G6: measure current executor scaling before leaf optimization"
-    state proposed
+    state completed
     scope [
         path ".agent/scratch/**",
         path "JPXL/crates/jpxl-cli/**",
@@ -6546,12 +6546,14 @@ record jpegxl-rs.work.gap-g6-current-scaling-matrix/1 : work {
                 Each mode's output fingerprint is identical across 1/2/4/8 workers.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.gap-g6-scaling-matrix-2026-08-21/1 ]
         }
         check profile-gate {
             statement """
                 Production code changes only if the matrix/profile confirms a credible deterministic improvement above the stop threshold; otherwise the negative result and remaining bottleneck class are recorded.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.gap-g6-modular-profile-and-ab-2026-08-21/1 ]
         }
         check release-gates {
             statement """
@@ -6559,18 +6561,21 @@ record jpegxl-rs.work.gap-g6-current-scaling-matrix/1 : work {
                 """
             method command
             command "cargo build --workspace --release && cargo test --workspace --release && cargo clippy --workspace --all-targets --release -- -D warnings && cargo fmt --all --check"
+            verified_by [ @jpegxl-rs.evidence.gap-g6-release-workspace-gates-2026-08-21/1 ]
         }
         check scaling-matrix {
             statement """
                 A fresh release 1/2/4/8-worker matrix covers fixed VarDCT, one predetermined probe, production Balanced, Quality, and low/high-effort Modular, plus a reproducible Balanced rescue cell or explicit evidence that the bounded controller no longer enters rescue on the frozen matrix.
                 """
             method command
+            verified_by [ @jpegxl-rs.evidence.gap-g6-scaling-matrix-2026-08-21/1 ]
         }
         check system-counters {
             statement """
                 The matrix records wall and CPU time, voluntary/involuntary context switches, and peak RSS; instructions and cache misses are recorded when host perf permissions allow them, or the permission failure is explicit.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.gap-g6-scaling-matrix-2026-08-21/1 ]
         }
     }
     depends_on [ @jpegxl-rs.work.gap-g5-packed-entropy-and-bounded-alternatives ]

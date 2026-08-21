@@ -13,7 +13,7 @@
   },
   {
     "added_at": "2026-08-13",
-    "availability": "full",
+    "availability": "metadata-only",
     "byte_len": 24121,
     "content_hash": "sha256:62242d232a35bb4b7e09f8075d825ae4e8dc67e6733b2de1232429c4b2fd9868",
     "id": "optimize-roadmap-2026-08-13",
@@ -25,7 +25,7 @@
   },
   {
     "added_at": "2026-08-21",
-    "availability": "full",
+    "availability": "metadata-only",
     "byte_len": 43068,
     "content_hash": "sha256:945338a6158013cdc5aa06c3a7666a0bc62e0ff3da979de6d4d845a019e5fb8e",
     "id": "outside-advice-2026-08-06",

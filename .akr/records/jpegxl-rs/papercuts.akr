@@ -163,6 +163,29 @@ record jpegxl-rs.papercut.fff-multi-grep-again-failed-with-transport/1 : papercu
     created_at 2026-08-15
 }
 
+record jpegxl-rs.papercut.finalizing-a-cited-source-with-context-block/1 : papercut {
+    title "Finalizing a cited source with --context block produced AKR-S022 on…"
+    state superseded
+    statement """
+        Finalizing a cited source with --context block produced AKR-S022 on every retained citation because captured byte ranges were reported as covering one or two lines beyond their stored end_line; cited-only sources cannot be re-finalized with exact context. The safe fallback was to restore the uncommitted finalization and retain metadata only.
+        """
+    observed_at git:3bc2453cde8140a6d670ec9fa7a7f07645980793
+    about "akr"
+    author "gpt-5"
+    created_at 2026-08-21
+}
+
+record jpegxl-rs.papercut.finalizing-a-cited-source-with-context-block/2 : papercut {
+    title "Finalizing a cited source with --context block produced AKR-S022 on…"
+    state verified
+    statement """
+        Finalizing a cited source with --context block produced AKR-S022 on every retained citation because captured byte ranges were reported as covering one or two lines beyond their stored end_line; cited-only sources cannot be re-finalized with exact context. The safe fallback was to restore the uncommitted finalization, leave the exact-cited source full, and metadata-finalize only uncited sources.
+        """
+    observed_at git:3bc2453cde8140a6d670ec9fa7a7f07645980793
+    about "akr"
+    supersedes [ @jpegxl-rs.papercut.finalizing-a-cited-source-with-context-block/1 ]
+}
+
 record jpegxl-rs.papercut.hybrid-intel-plain-cycles-u-records-cpu-atom/1 : papercut {
     title "Hybrid Intel: plain cycles:u records cpu_atom+cpu_core; atom samples…"
     state verified
