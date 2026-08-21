@@ -807,6 +807,16 @@ pub struct PlanMultiplicity {
     pub residual_scans: u32,
     /// Approximate bytes deep-cloned when building modular sources (planes × 4).
     pub plane_clone_bytes: u64,
+    /// Wall time spent building the complete local-tree section candidate.
+    pub local_section_ns: u64,
+    /// Wall time spent collecting residuals and building shared global tables.
+    pub global_model_ns: u64,
+    /// Wall time spent building global-tree sections after the model exists.
+    pub global_section_ns: u64,
+    /// Serialized section payload bytes in the local-tree candidate.
+    pub local_payload_bytes: u64,
+    /// Serialized section payload bytes in the global-tree candidate.
+    pub global_payload_bytes: u64,
 }
 
 impl PlanMultiplicity {
@@ -814,13 +824,28 @@ impl PlanMultiplicity {
     #[must_use]
     pub fn summary_line(self) -> String {
         format!(
-            "cheap_scores={} exact_prices={} residual_scans={} plane_clone_bytes={}",
+            "cheap_scores={} exact_prices={} residual_scans={} plane_clone_bytes={} \
+             local_section_ms={:.1} global_model_ms={:.1} global_section_ms={:.1} \
+             local_payload_bytes={} global_payload_bytes={}",
             self.cheap_scores,
             self.exact_residual_prices,
             self.residual_scans,
-            self.plane_clone_bytes
+            self.plane_clone_bytes,
+            ns_ms(self.local_section_ns),
+            ns_ms(self.global_model_ns),
+            ns_ms(self.global_section_ns),
+            self.local_payload_bytes,
+            self.global_payload_bytes,
         )
     }
+}
+
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "diagnostic nanosecond timings are approximate wall measurements"
+)]
+fn ns_ms(ns: u64) -> f64 {
+    ns as f64 / 1_000_000.0
 }
 
 std::thread_local! {
@@ -831,6 +856,11 @@ std::thread_local! {
             cheap_scores: 0,
             residual_scans: 0,
             plane_clone_bytes: 0,
+            local_section_ns: 0,
+            global_model_ns: 0,
+            global_section_ns: 0,
+            local_payload_bytes: 0,
+            global_payload_bytes: 0,
         }) };
 }
 
@@ -844,7 +874,7 @@ pub fn set_plan_diagnostics_enabled(enabled: bool) {
 }
 
 #[inline]
-fn plan_diagnostics_enabled() -> bool {
+pub(crate) fn plan_diagnostics_enabled() -> bool {
     PLAN_DIAGNOSTICS_ENABLED.with(std::cell::Cell::get)
 }
 
@@ -880,6 +910,41 @@ pub(crate) fn note_plane_clone_bytes(bytes: u64) {
     LAST_PLAN_MULTIPLICITY.with(|c| {
         let mut m = c.get();
         m.plane_clone_bytes = m.plane_clone_bytes.saturating_add(bytes);
+        c.set(m);
+    });
+}
+
+/// Records the two complete multi-section candidates that exact adoption
+/// compares. Timings are wall nanoseconds; the global section time excludes
+/// the separately recorded shared-model build.
+pub(crate) fn note_section_candidates(
+    local_ns: u64,
+    global_ns: u64,
+    local_bytes: usize,
+    global_bytes: usize,
+) {
+    if !plan_diagnostics_enabled() {
+        return;
+    }
+    LAST_PLAN_MULTIPLICITY.with(|c| {
+        let mut m = c.get();
+        m.local_section_ns = local_ns;
+        m.global_section_ns = global_ns.saturating_sub(m.global_model_ns);
+        m.local_payload_bytes = u64::try_from(local_bytes).unwrap_or(u64::MAX);
+        m.global_payload_bytes = u64::try_from(global_bytes).unwrap_or(u64::MAX);
+        c.set(m);
+    });
+}
+
+/// Records the serial residual collection and shared-table build within the
+/// global-tree candidate.
+pub(crate) fn note_global_model_time(ns: u64) {
+    if !plan_diagnostics_enabled() {
+        return;
+    }
+    LAST_PLAN_MULTIPLICITY.with(|c| {
+        let mut m = c.get();
+        m.global_model_ns = ns;
         c.set(m);
     });
 }

@@ -486,8 +486,18 @@ fn build_sections(
         return Ok(store);
     }
 
+    let diagnostics = lossless::plan_diagnostics_enabled();
+    let local_started = diagnostics.then(std::time::Instant::now);
     let local = build_sections_local(source, geometry, resources)?;
+    let local_ns = local_started
+        .map(|started| u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX))
+        .unwrap_or(0);
+    let global_started = diagnostics.then(std::time::Instant::now);
     let global = build_sections_global(source, geometry, resources)?;
+    let global_ns = global_started
+        .map(|started| u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX))
+        .unwrap_or(0);
+    lossless::note_section_candidates(local_ns, global_ns, local.total_len(), global.total_len());
     if global.total_len() <= local.total_len() {
         Ok(global)
     } else {
@@ -553,7 +563,13 @@ fn build_sections_global(
     geometry: &Geometry,
     resources: EncodeResources,
 ) -> Result<SectionStore> {
-    let model = modular::build_global_residual_model(source, geometry)?;
+    let model_started = lossless::plan_diagnostics_enabled().then(std::time::Instant::now);
+    let model = modular::build_global_residual_model_with_resources(source, geometry, resources)?;
+    if let Some(started) = model_started {
+        lossless::note_global_model_time(
+            u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX),
+        );
+    }
     let mut store = SectionStore::new();
     store.push(modular::encode_lf_global_with_global_tree(
         source, geometry, &model,

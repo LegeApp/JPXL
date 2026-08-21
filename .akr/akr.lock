@@ -5,7 +5,7 @@ build {
     tool "akr 0.3.3"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:9fafbcf93d6049867237b5213a9a53e95735c61d4d2be1e0e6aca7d3d4ca0171"
+    source_graph "sha256:e4e07a78e973ed7a38f9bb85c3eb894b174df1c81e85b966d6c1cbc35c31462e"
 }
 
 source ".akr/project.akr" {
@@ -69,8 +69,8 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:98a8fa1fa9f5cec8bb553aa2ce587d0675a62a6ca74c52c79f2edbe56a03139e"
-    records 159
+    hash "sha256:83680d7205992298c6d814f9e78e75d3cbf14e0cb0de166148716dff09739302"
+    records 160
 }
 
 resolution @jpegxl-rs.decision.encoder-architecture-phases/1 {
@@ -3560,6 +3560,18 @@ resolution @jpegxl-rs.work.gap-g5-packed-entropy-and-bounded-alternatives/1 {
 }
 
 resolution @jpegxl-rs.work.gap-g5-packed-entropy-and-bounded-alternatives/1 {
+    slot part_of
+    to @jpegxl-rs.track.encoder-optimization/1
+    hash "sha256:49975e17bd10998d72b08fccfe98fdea9bdf68ef56e4404dd68e94e1e2d75f23"
+}
+
+resolution @jpegxl-rs.work.gap-g6-current-scaling-matrix/1 {
+    slot depends_on
+    to @jpegxl-rs.work.gap-g5-packed-entropy-and-bounded-alternatives/1
+    hash "sha256:702a013887d24a05b4416f55c11e0dfc1c0a5e2f800aaae5564b6d0c583420ab"
+}
+
+resolution @jpegxl-rs.work.gap-g6-current-scaling-matrix/1 {
     slot part_of
     to @jpegxl-rs.track.encoder-optimization/1
     hash "sha256:49975e17bd10998d72b08fccfe98fdea9bdf68ef56e4404dd68e94e1e2d75f23"
