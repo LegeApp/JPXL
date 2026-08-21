@@ -73,6 +73,43 @@ record jpegxl-rs.evidence.gap-advice-top-level-clean-2026-08-21/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.gap-g0-harness-tests-2026-08-21/1 : evidence {
+    title "G0 comparison harness tests pass"
+    state verified
+    result pass
+    method command
+    observed_at git:51602ab4e09b1b3a7d93c85744659e735fbcb462
+    command "python3 -m unittest discover -s JPXL/tools/tests -p 'test_codec_compare.py'"
+    summary """
+        Nine dependency-free unit and subprocess tests cover manifest hashes, counterbalancing, codec-specific metadata, adaptive refinement, monotonicity refusal, metric parsing and rate-work counters.
+        """
+}
+
+record jpegxl-rs.evidence.gap-g0-photo-baseline-2026-08-21/1 : evidence {
+    title "G0 current photo-anchor parity baseline"
+    state verified
+    result pass
+    method observation
+    observed_at git:51602ab4e09b1b3a7d93c85744659e735fbcb462
+    artifact ".agent/scratch/gap-g0-smoke-20260821/photo-summary.json"
+    summary """
+        Current Balanced curves at 0.5/1/2 bpp on 4 MP and 12 MP anchors produced six JPXL cells, four equal-byte and equal-Butteraugli-3-norm brackets, three equal-SSIMULACRA2 timing plans, explicit non-bracketed cells, rate amplification/work counters, and frozen-setting 1/2/4/8-thread timing. The photo-only scope is not a release-wide parity claim.
+        """
+}
+
+record jpegxl-rs.evidence.gap-g0-real-oracle-smoke-2026-08-21/1 : evidence {
+    title "G0 real black-box oracle smoke passes"
+    state verified
+    result pass
+    method command
+    observed_at git:51602ab4e09b1b3a7d93c85744659e735fbcb462
+    command "python3 JPXL/tools/codec_compare.py curve --manifest .agent/scratch/gap-g0-smoke-20260821/corpus.json --output .agent/scratch/gap-g0-smoke-20260821/curve.jsonl --work-dir .agent/scratch/gap-g0-smoke-20260821/artifacts --jpxl JPXL/target/release/jpxl --cjxl libjxl/build/tools/cjxl --djxl libjxl/build/tools/djxl --bpp 1.0 --distance 1.0,2.0,4.0,8.0 --max-additions 3 --threads 2 --cjxl-threads 2 --preset balanced --effort 7"
+    artifact ".agent/scratch/gap-g0-smoke-20260821/summary.json"
+    summary """
+        The harness encoded, decoded, adaptively matched and timed a scratch-only P6 photo through native JPXL and libjxl binaries with hashes and provenance recorded.
+        """
+}
+
 record jpegxl-rs.evidence.general-use-api-tests-2026-08-20/1 : evidence {
     title "Facade tests, CLI raster-adapter tests, PNG-to-JXL-to-PNG integration, target-rate byte ceiling, and facade doctests all passed."
     state verified

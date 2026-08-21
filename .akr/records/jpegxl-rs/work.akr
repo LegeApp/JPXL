@@ -5965,7 +5965,7 @@ record jpegxl-rs.work.gap-advice-source-migration/1 : work {
 
 record jpegxl-rs.work.gap-g0-comparison-truth/1 : work {
     title "G0: comparison harness v2 and current parity baseline"
-    state proposed
+    state completed
     scope [ path ".agent/scratch/**", path "JPXL/tools/**" ]
     intent """
         Replace the misleading PowerShell-only comparison loop with a dependency-free Python core and compatibility wrapper that builds equivalent-output curves, times frozen settings in counterbalanced order, records complete provenance and work metadata, and emits authoritative JSONL plus derived flat summaries. Establish a scoped current photo baseline before changing encoder policy.
@@ -5976,6 +5976,7 @@ record jpegxl-rs.work.gap-g0-comparison-truth/1 : work {
                 A scoped current baseline reports equal-byte, equal-SSIMULACRA2, equal-Butteraugli-3-norm, production latency, rate work, and 1/2/4/8-thread scaling with corpus limitations explicit.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.gap-g0-photo-baseline-2026-08-21/1 ]
         }
         check harness-tests {
             statement """
@@ -5983,12 +5984,14 @@ record jpegxl-rs.work.gap-g0-comparison-truth/1 : work {
                 """
             method command
             command "python3 -m unittest discover -s JPXL/tools/tests -p 'test_codec_compare.py'"
+            verified_by [ @jpegxl-rs.evidence.gap-g0-harness-tests-2026-08-21/1 ]
         }
         check oracle-smoke {
             statement """
                 The Python harness completes a real JPXL/cjxl/djxl curve and frozen-setting timing smoke with pinned binary hashes.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.gap-g0-real-oracle-smoke-2026-08-21/1 ]
         }
     }
     depends_on [ @jpegxl-rs.work.gap-advice-source-migration ]

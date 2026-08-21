@@ -3,7 +3,7 @@ project jpegxl-rs
 
 record jpegxl-rs.assessment.encoder-architecture-outside-advice/1 : assessment {
     title "Architecture diagnosis: choose multiplicity and modular rescans (outside-advice)"
-    state verified
+    state superseded
     scope [
         path "JPXL/crates/jpxl-encode-policy/**",
         path "JPXL/crates/jpxl-encode/**",
@@ -29,6 +29,41 @@ record jpegxl-rs.assessment.encoder-architecture-outside-advice/1 : assessment {
     source {
         kind external
         path "sources/outside-advice.md"
+    }
+}
+
+record jpegxl-rs.assessment.encoder-architecture-outside-advice/2 : assessment {
+    title "Architecture diagnosis: choose multiplicity and modular rescans (outside-advice)"
+    state verified
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/**",
+        path "JPXL/crates/jpxl-encode/**",
+        path "sources/external/outside-advice-2026-08-06--945338a6.md"
+    ]
+    statement """
+        External review in sources/outside-advice.md (2026-08-06) diagnoses the
+        ~15x VarDCT and ~30-100x Modular gaps versus libjxl as structural, not
+        leaf-SIMD deficits. VarDCT: EncodeRequest::defaults for bench_vardct_fixed
+        still runs hierarchical cover, AQ, CfL, and full entropy search; scalar
+        HfQuantizer::choose is invoked on the order of 10^8 calls at 12 MP
+        (cover scoring + CfL samples + factor trials + final quant); planning is
+        serial while rayon only parallelizes emission. Modular: plan_for rescans
+        residuals ~67-72 times and deep-clones planes each trial (~10 GB traffic
+        at 12 MP RGB) while producing e1-class density. Recommended order is
+        Phase 0 instrumentation, Phase 1 output-preserving fixes, then replace
+        quant/CfL/cover units of work, modular planner, perceptual calibration,
+        and only then entropy/SIMD/LTO. Rankings are source findings pending
+        Phase-0 measured counters.
+        """
+    confidence high
+    supersedes [ @jpegxl-rs.assessment.encoder-architecture-outside-advice/1 ]
+    source {
+        kind external
+        role origin
+        path "sources/external/outside-advice-2026-08-06--945338a6.md"
+        use """
+            Preserves the historical architecture diagnosis under its immutable source-library path.
+            """
     }
 }
 
