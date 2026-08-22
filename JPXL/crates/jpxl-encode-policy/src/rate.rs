@@ -1456,6 +1456,32 @@ fn two_anchor_correction_rung(
     target_rung_from_slope(finalist, target, slope)
 }
 
+/// Aim the fresh rescue's one correction from its exact measured size.
+///
+/// A fresh structural plan may cross the hard ceiling by a small amount even
+/// when the reused-structure finalist was well predicted. Jumping directly
+/// back to the old feasible anchor in that case can discard most of the byte
+/// budget. Re-aim through the already measured anchor slope first; the old
+/// feasible rung remains the conservative fallback when the slope is unusable.
+#[cfg(feature = "anchor-sketch")]
+fn fresh_rescue_correction_rung(
+    first: (Rung, u64),
+    second: (Rung, u64),
+    rescue: (Rung, u64),
+    target: u64,
+    prior_feasible: Option<Rung>,
+) -> Rung {
+    two_anchor_correction_rung(first, second, rescue, target)
+        .filter(|&rung| rung != rescue.0)
+        .unwrap_or_else(|| {
+            if rescue.1 > target {
+                prior_feasible.unwrap_or(Rung::FLOOR)
+            } else {
+                Rung::new(rescue.0.get().saturating_add(1))
+            }
+        })
+}
+
 /// Phase Q5 screened three changes to the anchored controller together and
 /// kept the mechanism but not the settings:
 ///
@@ -1694,22 +1720,13 @@ fn search_frame_fresh_rescue(
             .rev()
             .find(|step| step.feasible && step.quantizer.rung != rescue_quantizer.rung)
             .map(|step| step.quantizer.rung);
-        let correction_rung = if rescue_bytes > target {
-            // An already-priced feasible Fast rung is the best bounded
-            // correction aim available after a fresh plan crossed the target.
-            // With no feasible evidence, price FLOOR: that both
-            // returns a bounded answer when one exists and reports the real
-            // representable floor when the target is impossible.
-            prior_feasible_rung.unwrap_or(Rung::FLOOR)
-        } else {
-            two_anchor_correction_rung(
-                first,
-                second,
-                (rescue_quantizer.rung, rescue_bytes),
-                correction_target,
-            )
-            .unwrap_or_else(|| Rung::new(rescue_quantizer.rung.get().saturating_add(1)))
-        };
+        let correction_rung = fresh_rescue_correction_rung(
+            first,
+            second,
+            (rescue_quantizer.rung, rescue_bytes),
+            correction_target,
+            prior_feasible_rung,
+        );
         let fresh_anchor = fresh_anchor.as_ref().ok_or(PolicyError::Unsupported {
             what: "a fresh rescue that failed to capture its structure",
         })?;
@@ -2577,6 +2594,28 @@ mod tests {
         assert_eq!(
             bounded_status(&[feasible], 100, 5, 80, true),
             RateStatus::SaturatedTop
+        );
+    }
+
+    #[cfg(feature = "anchor-sketch")]
+    #[test]
+    fn a_slightly_over_target_fresh_rescue_does_not_collapse_to_the_old_anchor() {
+        // Reproduces the geometry of a 6000x4000 Balanced 3 bpp miss: the
+        // fresh rescue crossed the 9 MB ceiling by only 0.51%, but the old
+        // fallback repriced the 2.85 MB starting anchor and returned 2.76 MB.
+        let first = (Rung::new(32_767), 2_851_569);
+        let second = (Rung::new(159_899), 13_494_991);
+        let rescue = (Rung::new(112_887), 9_045_597);
+        let correction =
+            fresh_rescue_correction_rung(first, second, rescue, 8_910_000, Some(first.0));
+
+        assert!(
+            correction > first.0,
+            "must not discard most of the rate budget"
+        );
+        assert!(
+            correction < rescue.0,
+            "an over-target rescue must move coarser"
         );
     }
 
