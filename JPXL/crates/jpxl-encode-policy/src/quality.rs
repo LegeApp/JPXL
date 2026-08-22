@@ -151,17 +151,31 @@ pub const MIN_TRIAL_SAVING_FRACTION: f64 = 0.005;
 
 /// Default Balanced policy-bank breadth.
 ///
-/// **Zero — the bank is off by default on Balanced.** The PR 5 measurement
-/// (2026-08-22, five dev-split images at quality 70 and 85) found the bank met
-/// the byte gate only marginally: it reduced bytes solely on the photo scene
-/// (−1.0% at 70, −1.7% at 85) and was byte-neutral on mid, text, gradient and
-/// large, for a corpus-mean reduction under 0.35%. It failed the wall gate
-/// decisively — Balanced ran +20% to +87% slower (mean ≈ +51%, far past the
-/// +25% budget), because each alternative solves in its own candidate context
-/// and so rebuilds the forward DCT and cover it cannot share across contexts
-/// (see [`search_frame_perceptual`]). The bank therefore stays behind the
-/// [`QualityBudget`] breadth knob until a shared-context path makes
-/// quantizer-side trials cheap; set `policy_trials` explicitly (e.g. 2) through
+/// **Zero — the bank is off by default on Balanced.** Two measurements agree
+/// that the byte win does not pay for the wall on this corpus (five dev-split
+/// images — mid, the 12 MP large, the photo scene, text-screenshot, gradient —
+/// at quality 70 and 85):
+///
+/// * **PR 5** (2026-08-22) ran each alternative in its own candidate context,
+///   so every trial rebuilt the forward DCT and cover it could not share. Bytes
+///   fell only on the photo scene for a corpus-mean under 0.35%, and Balanced
+///   ran +20%..+87% slower (mean ≈ +51%).
+/// * **PR 5b** (2026-08-22) wired cross-policy structure reuse: quantizer-side
+///   trials now reuse the baseline's cover and CfL on the shared context's warm
+///   forward cache (zero structural builds; verified by
+///   [`Self::reuses_structure_of`](crate::policy_bank::PerceptualPolicy::reuses_structure_of)
+///   and the trial-build unit test) and structural trials rebuild cover without
+///   re-transforming. That let the bank *lower* bytes at every cell where it
+///   moved them (mid@70 −0.69%, scene@70 −0.59%, scene@85 −1.34%, else neutral)
+///   while never regressing a byte. But the wall stayed decisively over budget —
+///   +57%..+122%, mean ≈ +78% at four threads — because reuse only removes the
+///   forward DCT and cover, and each trial's cost is dominated by its full-frame
+///   render-and-score and its entropy-train-and-emit, which reuse cannot touch.
+///
+/// So the bank stays behind the [`QualityBudget`] breadth knob: the reuse
+/// plumbing is retained (it is what the feature-gated Quality effort rides on
+/// and what a future cheaper-metric or shared-entropy path would need), but
+/// Balanced keeps `policy_trials = 0`. Set it explicitly (e.g. 2) through
 /// [`search_frame_perceptual_with_budget`] to opt in.
 pub const BALANCED_DEFAULT_POLICY_TRIALS: u32 = 0;
 
@@ -643,8 +657,13 @@ struct ProbeRecord {
 /// combined [`QualityStats`] by the orchestrator. `budget` here is the
 /// *per-solve* cap (the baseline budget for policy 0, the small trial cap for
 /// alternatives).
-struct Navigator<'c, 'a, 't, 'e> {
+struct Navigator<'c, 'a, 'r, 't, 'e> {
     ctx: &'c mut CandidateSearchContext<'a>,
+    /// The effective request this policy plans and prices under: the baseline's
+    /// for policy 0, the alternative's for a bank trial. The context is shared
+    /// across policies, so the request the planner reads is carried here rather
+    /// than on the context.
+    request: &'r EncodeRequest,
     evaluator: &'e mut dyn PerceptualEvaluator,
     target: f64,
     guard: f64,
@@ -660,7 +679,7 @@ struct Navigator<'c, 'a, 't, 'e> {
     local: QualityStats,
 }
 
-impl Navigator<'_, '_, '_, '_> {
+impl Navigator<'_, '_, '_, '_, '_> {
     fn threshold(&self) -> f64 {
         self.target + self.guard
     }
@@ -677,11 +696,12 @@ impl Navigator<'_, '_, '_, '_> {
     /// this rung (and makes it the structure anchor when none exists yet);
     /// otherwise the anchor's structure is reused.
     fn probe(&mut self, rung: Rung, fresh: bool) -> Result<usize> {
-        let quantizer = QuantizerChoice::at(rung, self.ctx.request().quant_lf)?;
+        let quantizer = QuantizerChoice::at(rung, self.request.quant_lf)?;
         let plan_start = Instant::now();
         let (pixels, geometry, structure) = if fresh || self.anchor.is_none() {
             let mut captured = None;
-            let planned = self.ctx.pixel_plan(
+            let planned = self.ctx.pixel_plan_for(
+                self.request,
                 quantizer,
                 self.enable_cfl,
                 self.structure_tier,
@@ -698,7 +718,8 @@ impl Navigator<'_, '_, '_, '_> {
             let anchor = self.anchor.as_ref().ok_or(PolicyError::Unsupported {
                 what: "a reused structure before any probe captured one",
             })?;
-            let planned = self.ctx.pixel_plan(
+            let planned = self.ctx.pixel_plan_for(
+                self.request,
                 quantizer,
                 false,
                 self.structure_tier,
@@ -927,7 +948,7 @@ struct PricedFinalist {
 
 /// Trains entropy for a probe's pixels and emits the stream exactly.
 fn price_pixels(
-    nav: &mut Navigator<'_, '_, '_, '_>,
+    nav: &mut Navigator<'_, '_, '_, '_, '_>,
     quantizer: QuantizerChoice,
     score: f64,
     structure: StructureSource,
@@ -937,7 +958,7 @@ fn price_pixels(
     let start = Instant::now();
     let plan = nav
         .ctx
-        .attach_entropy(pixels, geometry, nav.finalist_entropy)?;
+        .attach_entropy_for(nav.request, pixels, geometry, nav.finalist_entropy)?;
     let entropy_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
     nav.local.entropy_ms = nav.local.entropy_ms.saturating_add(entropy_ms);
     let emit_start = Instant::now();
@@ -1002,14 +1023,16 @@ struct PolicySolve {
 /// This is the fixed-policy navigator PR 4 shipped, extracted so the policy
 /// bank can call it once for the baseline and reuse the same machinery for
 /// each alternative through [`solve_trial`].
+///
+/// `ctx` is the search context the whole bank shares: the baseline fills its
+/// forward-DCT cache here, and the returned [`StructuralAnchor`] (the captured
+/// cover and CfL) lets quantizer-side trials reuse both against that same
+/// warm cache. The anchor is `None` only if the search never planned a probe.
 #[allow(clippy::too_many_arguments)]
 fn solve_baseline(
-    frame: &PreparedFrame,
-    transform_frame: &PreparedFrame,
-    atlas: &AnalysisAtlas,
+    ctx: &mut CandidateSearchContext<'_>,
     request: &EncodeRequest,
     evaluator: &mut dyn PerceptualEvaluator,
-    executor: &jpxl_encode::EncodeExecutor,
     target: f64,
     guard: f64,
     budget: QualityBudget,
@@ -1018,10 +1041,10 @@ fn solve_baseline(
     finalist_entropy: EntropySearch,
     predicted: Rung,
     trace: &mut Vec<QualityProbe>,
-) -> Result<(PolicySolve, QualityStats)> {
-    let mut ctx = CandidateSearchContext::new(frame, transform_frame, atlas, request, executor);
+) -> Result<(PolicySolve, QualityStats, Option<StructuralAnchor>)> {
     let mut nav = Navigator {
-        ctx: &mut ctx,
+        ctx,
+        request,
         evaluator,
         target,
         guard,
@@ -1131,8 +1154,14 @@ fn solve_baseline(
                     (Some(anchor), StructureSource::Reused) => AnchorReuse::CoverAndCfl(anchor),
                     _ => AnchorReuse::None,
                 };
-                nav.ctx
-                    .pixel_plan(quantizer, nav.enable_cfl, nav.structure_tier, reuse, None)?
+                nav.ctx.pixel_plan_for(
+                    nav.request,
+                    quantizer,
+                    nav.enable_cfl,
+                    nav.structure_tier,
+                    reuse,
+                    None,
+                )?
             }
         };
         let priced = price_pixels(&mut nav, quantizer, score, structure, &pixels, &geometry)?;
@@ -1165,6 +1194,9 @@ fn solve_baseline(
             .iter()
             .any(|p| !p.feasible && p.rung.get().saturating_add(1) == r.get())
     });
+    // Hand the captured cover/CfL back so quantizer-side trials reuse it on the
+    // shared context's warm forward cache.
+    let anchor = nav.anchor.take();
     let local = nav.local;
     let seed_rung = chosen.quantizer.rung;
     Ok((
@@ -1177,6 +1209,7 @@ fn solve_baseline(
             adjacent_infeasible,
         },
         local,
+        anchor,
     ))
 }
 
@@ -1194,14 +1227,17 @@ struct TrialSolve {
 /// the baseline's cover and CfL; a CfL or restoration alternative passes `None`
 /// and builds a fresh plan. Returns `None` when the alternative found no
 /// feasible stream inside its budget.
+///
+/// `ctx` is the baseline's warm context: a quantizer-side trial reads its
+/// forward coefficients from that cache and spends zero fresh structural
+/// builds, while a structural trial rebuilds its cover on the same cache
+/// (one structural build, no re-transform). The anchor is cloned once here so
+/// several quantizer-side trials can each own a retargetable copy.
 #[allow(clippy::too_many_arguments)]
 fn solve_trial(
-    frame: &PreparedFrame,
-    transform_frame: &PreparedFrame,
-    atlas: &AnalysisAtlas,
+    ctx: &mut CandidateSearchContext<'_>,
     request: &EncodeRequest,
     evaluator: &mut dyn PerceptualEvaluator,
-    executor: &jpxl_encode::EncodeExecutor,
     target: f64,
     guard: f64,
     reserve: f64,
@@ -1209,15 +1245,15 @@ fn solve_trial(
     structure_tier: EntropySearch,
     finalist_entropy: EntropySearch,
     seed: Rung,
-    shared_anchor: Option<StructuralAnchor>,
+    shared_anchor: Option<&StructuralAnchor>,
     policy_id: u32,
     trace: &mut Vec<QualityProbe>,
 ) -> Result<Option<TrialSolve>> {
     let seed_fresh = shared_anchor.is_none();
     let anchor_rung = shared_anchor.as_ref().map(|_| seed);
-    let mut ctx = CandidateSearchContext::new(frame, transform_frame, atlas, request, executor);
     let mut nav = Navigator {
-        ctx: &mut ctx,
+        ctx,
+        request,
         evaluator,
         target,
         guard,
@@ -1233,7 +1269,7 @@ fn solve_trial(
         structure_tier,
         finalist_entropy,
         policy_id,
-        anchor: shared_anchor,
+        anchor: shared_anchor.cloned(),
         anchor_rung,
         probes: Vec::new(),
         trace,
@@ -1276,8 +1312,14 @@ fn solve_trial(
                 (Some(anchor), StructureSource::Reused) => AnchorReuse::CoverAndCfl(anchor),
                 _ => AnchorReuse::None,
             };
-            nav.ctx
-                .pixel_plan(quantizer, nav.enable_cfl, nav.structure_tier, reuse, None)?
+            nav.ctx.pixel_plan_for(
+                nav.request,
+                quantizer,
+                nav.enable_cfl,
+                nav.structure_tier,
+                reuse,
+                None,
+            )?
         }
     };
     let finalist = price_pixels(&mut nav, quantizer, score, structure, &pixels, &geometry)?;
@@ -1436,15 +1478,17 @@ pub fn search_frame_perceptual_with_budget(
     let mut trace: Vec<QualityProbe> = Vec::new();
 
     // --- Baseline solve (policy 0) ---
+    // One context is shared across the baseline and every trial: its forward-DCT
+    // cache is filled by the baseline cover build and then read (never rebuilt)
+    // by each alternative, which is what makes quantizer-side trials cheap.
     let baseline_policy = crate::policy_bank::PerceptualPolicy::baseline(preset);
     let base_request = baseline_policy.apply(request);
-    let (baseline, mut stats) = solve_baseline(
-        frame,
-        transform_frame,
-        atlas,
+    let mut ctx =
+        CandidateSearchContext::new(frame, transform_frame, atlas, &base_request, executor);
+    let (baseline, mut stats, baseline_anchor) = solve_baseline(
+        &mut ctx,
         &base_request,
         evaluator,
-        executor,
         target_score,
         DEFAULT_SCORE_GUARD,
         budget,
@@ -1493,21 +1537,23 @@ pub fn search_frame_perceptual_with_budget(
                 }
                 let policy_id = next_policy_id;
                 next_policy_id = next_policy_id.saturating_add(1);
-                // Each alternative solves in its own candidate context, whose
-                // forward-DCT cache is populated by its own cover build. The
-                // captured cover/CfL cannot be shared across contexts (the
-                // cache lives inside `CandidateSearchContext`, whose API is not
-                // part of this brief), so every trial builds fresh structure.
-                // `PerceptualPolicy::reuses_structure_of` records which trials a
-                // shared-context implementation *could* have spared this build.
+                // Every alternative solves on the shared baseline context. A
+                // quantizer-side alternative (`reuses_structure_of` true) reuses
+                // the baseline's captured cover and CfL via
+                // `AnchorReuse::CoverAndCfl` and spends zero structural builds;
+                // a CfL/restoration alternative passes no anchor and rebuilds
+                // its cover (one structural build), but still reads the warm
+                // forward DCTs rather than re-transforming the frame.
+                let shared_anchor = if policy.reuses_structure_of(&baseline_policy) {
+                    baseline_anchor.as_ref()
+                } else {
+                    None
+                };
                 let trial_request = policy.apply(request);
                 let trial = solve_trial(
-                    frame,
-                    transform_frame,
-                    atlas,
+                    &mut ctx,
                     &trial_request,
                     evaluator,
-                    executor,
                     target_score,
                     DEFAULT_SCORE_GUARD,
                     budget.reserve,
@@ -1515,7 +1561,7 @@ pub fn search_frame_perceptual_with_budget(
                     structure_tier,
                     finalist_entropy,
                     pass_seed,
-                    None,
+                    shared_anchor,
                     policy_id,
                     &mut trace,
                 )?;
@@ -1920,6 +1966,7 @@ mod tests {
             max_evaluations: 3,
             max_rounds: 2,
             initial_batch: 64,
+            batch_fraction: 0.0,
             min_batch: 8,
             max_batch: 256,
             key_floor: 0.0,
@@ -1975,5 +2022,110 @@ mod tests {
         assert!(outcome.policy_trials.iter().filter(|t| t.kept).count() <= 1);
         // A non-baseline probe is tagged with its policy id.
         assert!(outcome.trace.iter().any(|p| p.policy_id > 0));
+    }
+
+    #[test]
+    fn a_quantizer_side_trial_reuses_structure_and_a_structural_trial_builds_one() {
+        use crate::policy_bank::PerceptualPolicy;
+        use jpxl_encode::vardct::ids::QmScale;
+
+        let preset = RateSearchPreset::Balanced;
+        let frame = frame();
+        let atlas = AnalysisAtlas::analyze(&frame);
+        let mut request = EncodeRequest::for_quality(preset);
+        // Gaborish off: the transform frame is the source frame, so the shared
+        // context is built against `&frame` exactly as the orchestrator would.
+        request.restoration.gaborish = false;
+        let executor = request.resources.executor();
+        let (enable_cfl, structure_tier, finalist_entropy) = planning_tiers(preset);
+        let target = 70.0;
+        let features = source_features(&atlas, frame.width(), frame.height(), frame.is_grayscale());
+        let predicted = rung_for_scale(predicted_effective_scale(&features, target));
+
+        let baseline_policy = PerceptualPolicy::baseline(preset);
+        let base_request = baseline_policy.apply(&request);
+        let mut ctx = CandidateSearchContext::new(&frame, &frame, &atlas, &base_request, &executor);
+        let mut trace = Vec::new();
+        let mut evaluator = CurveEvaluator { calls: 0 };
+        let (baseline, _stats, anchor) = solve_baseline(
+            &mut ctx,
+            &base_request,
+            &mut evaluator,
+            target,
+            DEFAULT_SCORE_GUARD,
+            QualityBudget::for_preset(preset),
+            enable_cfl,
+            structure_tier,
+            finalist_entropy,
+            predicted,
+            &mut trace,
+        )
+        .expect("baseline solve");
+        let anchor = anchor.expect("the baseline captured a structural anchor");
+        let seed = baseline.seed_rung;
+
+        // Quantizer-side alternative (chroma QM only): reuses the baseline's
+        // cover and CfL through the shared context, so it spends no structural
+        // build.
+        let mut qs_policy = baseline_policy;
+        qs_policy.x_qm_scale = QmScale::new(3).expect("qm 3");
+        qs_policy.b_qm_scale = QmScale::new(3).expect("qm 3");
+        assert!(
+            qs_policy.reuses_structure_of(&baseline_policy),
+            "a chroma-only alternative must reuse structure"
+        );
+        let qs_request = qs_policy.apply(&request);
+        let qs = solve_trial(
+            &mut ctx,
+            &qs_request,
+            &mut evaluator,
+            target,
+            DEFAULT_SCORE_GUARD,
+            0.03,
+            qs_policy.cfl,
+            structure_tier,
+            finalist_entropy,
+            seed,
+            Some(&anchor),
+            1,
+            &mut trace,
+        )
+        .expect("quantizer-side trial")
+        .expect("a feasible quantizer-side finalist");
+        assert_eq!(
+            qs.local.structural_builds, 0,
+            "a quantizer-side trial rebuilt structure"
+        );
+
+        // Structural alternative (CfL flipped): builds exactly one fresh cover
+        // (on the same warm forward cache).
+        let mut st_policy = baseline_policy;
+        st_policy.cfl = !baseline_policy.cfl;
+        assert!(
+            !st_policy.reuses_structure_of(&baseline_policy),
+            "a CfL flip must not reuse structure"
+        );
+        let st_request = st_policy.apply(&request);
+        let st = solve_trial(
+            &mut ctx,
+            &st_request,
+            &mut evaluator,
+            target,
+            DEFAULT_SCORE_GUARD,
+            0.03,
+            st_policy.cfl,
+            structure_tier,
+            finalist_entropy,
+            seed,
+            None,
+            2,
+            &mut trace,
+        )
+        .expect("structural trial")
+        .expect("a feasible structural finalist");
+        assert_eq!(
+            st.local.structural_builds, 1,
+            "a structural trial did not build exactly one cover"
+        );
     }
 }

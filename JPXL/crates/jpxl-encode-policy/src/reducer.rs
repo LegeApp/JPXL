@@ -54,8 +54,13 @@ pub struct ReducerLimits {
     pub max_evaluations: u32,
     /// Maximum accepted batches.
     pub max_rounds: u32,
-    /// Edits in the first batch.
+    /// Edits in the first batch, or — when `batch_fraction` is positive —
+    /// the floor of a first batch sized as that fraction of the candidates.
     pub initial_batch: usize,
+    /// Fraction (0..=1) of the ranked candidates the first batch takes when
+    /// positive; `0.0` uses `initial_batch` alone. A single-evaluation budget
+    /// wants one batch sized to the frame, not a fixed count.
+    pub batch_fraction: f64,
     /// A rejected batch is halved down to this size, then the pass stops.
     pub min_batch: usize,
     /// An accepted batch doubles the next one, up to this size.
@@ -68,11 +73,12 @@ pub struct ReducerLimits {
 impl ReducerLimits {
     /// The bounded single-pass variant a production effort may use.
     pub const BALANCED: Self = Self {
-        max_evaluations: 2,
+        max_evaluations: 1,
         max_rounds: 1,
         initial_batch: 256,
+        batch_fraction: 0.5,
         min_batch: 64,
-        max_batch: 1024,
+        max_batch: 16_384,
         key_floor: 0.05,
     };
 
@@ -81,6 +87,7 @@ impl ReducerLimits {
         max_evaluations: 6,
         max_rounds: 4,
         initial_batch: 512,
+        batch_fraction: 0.0,
         min_batch: 32,
         max_batch: 8192,
         key_floor: 0.02,
@@ -207,6 +214,19 @@ pub fn reduce_terminal(
         edits.retain(|e| e.bits_saved_q8 > 0 && e.key() >= floor);
         if edits.is_empty() {
             break;
+        }
+        if stats.rounds == 0 && limits.batch_fraction > 0.0 {
+            #[allow(
+                clippy::cast_precision_loss,
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "a candidate count scaled by a fraction in 0..=1"
+            )]
+            let sized = (edits.len() as f64 * limits.batch_fraction.clamp(0.0, 1.0)) as usize;
+            batch = sized
+                .max(limits.initial_batch)
+                .min(limits.max_batch.max(1))
+                .max(1);
         }
 
         // Inner loop: try the batch, halve on rejection.
