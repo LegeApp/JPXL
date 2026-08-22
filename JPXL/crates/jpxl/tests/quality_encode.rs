@@ -230,3 +230,65 @@ fn tiny_frames_and_a_perfect_score_route_to_lossless() {
         Encoder::new().lossless().encode_rgb8(64, 64, &rgb).unwrap()
     );
 }
+
+/// PR 5: the Balanced perceptual policy bank meets the target and is never
+/// larger than the baseline-only (fixed-policy) result at the same score.
+///
+/// The public facade always runs the preset budget, so this drives the policy
+/// layer directly to toggle the bank via `QualityBudget { policy_trials: 0 }`
+/// — the `#[doc(hidden)]` breadth knob — while leaving the facade unchanged.
+#[test]
+fn the_balanced_bank_is_never_larger_than_the_baseline_only_result() {
+    use jpxl_encode_policy::request::{PerceptualMetric, PerceptualTarget};
+    use jpxl_encode_policy::{
+        AnalysisAtlas, EncodeRequest, PreparedFrame, QualityBudget, RateSearchPreset,
+        search_frame_perceptual_with_budget,
+    };
+    use jpxl_perceptual::PlanRenderEvaluator;
+
+    let (w, h) = (320u32, 240u32);
+    let rgb = synthetic(w, h, 7);
+    let request = EncodeRequest::for_quality(RateSearchPreset::Balanced);
+    let executor = request.resources.executor();
+    let target = PerceptualTarget::new(PerceptualMetric::Ssimulacra2, 80.0).unwrap();
+    // The bank is off by default on Balanced (its measured wall exceeds the
+    // +25% budget), so opt it in explicitly to compare it against baseline-only.
+    let full = QualityBudget {
+        policy_trials: 2,
+        ..QualityBudget::for_preset(RateSearchPreset::Balanced)
+    };
+    let baseline_only = QualityBudget {
+        policy_trials: 0,
+        ..full
+    };
+
+    let solve = |budget| {
+        let frame = PreparedFrame::from_srgb8_with(w, h, &rgb, Some(&executor)).unwrap();
+        let atlas = AnalysisAtlas::analyze(&frame);
+        let mut ev = PlanRenderEvaluator::from_srgb8(w, h, &rgb, &executor).unwrap();
+        search_frame_perceptual_with_budget(
+            &frame, &atlas, &request, target, &mut ev, &executor, budget,
+        )
+        .unwrap()
+    };
+
+    let bank = solve(full);
+    let base = solve(baseline_only);
+
+    assert!(
+        bank.achieved_score >= 80.0,
+        "the bank missed the target: {}",
+        bank.achieved_score
+    );
+    assert!(
+        bank.sizing.total <= base.sizing.total,
+        "bank {} bytes > baseline-only {} bytes",
+        bank.sizing.total,
+        base.sizing.total
+    );
+    // When the bank helps, the reported winner margin is the saving.
+    assert_eq!(
+        bank.stats.policy_winner_margin_bytes,
+        base.sizing.total - bank.sizing.total
+    );
+}

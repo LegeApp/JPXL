@@ -71,6 +71,7 @@ mod entropy;
 mod entropy_cost;
 pub mod error;
 pub mod field;
+pub mod policy_bank;
 pub mod quality;
 pub mod quality_features;
 pub mod quality_predictor;
@@ -121,10 +122,11 @@ pub use error::{PolicyError, Result};
 pub use field::{AqMode, AqTuning};
 
 use field::{DesiredQuantField, mul_lattice_for};
+pub use policy_bank::{PerceptualPolicy, rank_alternatives};
 pub use quality::{
-    PerceptualEvaluator, PerceptualObservation, ProbeKind, QualityBudget, QualityOutcome,
-    QualityProbe, QualityStats, QualityStatus, StructureSource, search_frame_perceptual,
-    status_name,
+    PerceptualEvaluator, PerceptualObservation, PolicyTrial, ProbeKind, QualityBudget,
+    QualityOutcome, QualityProbe, QualityStats, QualityStatus, StructureSource,
+    search_frame_perceptual, search_frame_perceptual_with_budget, status_name,
 };
 pub use quality_features::{SourceFeatures, source_features};
 pub use rate::{
@@ -5225,8 +5227,8 @@ pub fn encode_srgb8_to_target(
     target: RateTarget,
 ) -> Result<RateOutcome> {
     let mut resolved = *request;
-    resolved.b_qm_scale = request.effective_b_qm_scale(width, height, target);
-    resolved.x_qm_scale = request.effective_x_qm_scale(width, height, target);
+    resolved.b_qm_scale = request.effective_b_qm_scale();
+    resolved.x_qm_scale = request.effective_x_qm_scale();
     // Phase 38: one worker pool for the whole encode; the source conversion
     // uses it too instead of running on the calling thread alone.
     let executor = resolved.resources.executor();
@@ -5260,8 +5262,8 @@ pub fn encode_srgb16_to_target(
 ) -> Result<RateOutcome> {
     let mut resolved = *request;
     resolved.bits_per_sample = bits_per_sample;
-    resolved.b_qm_scale = request.effective_b_qm_scale(width, height, target);
-    resolved.x_qm_scale = request.effective_x_qm_scale(width, height, target);
+    resolved.b_qm_scale = request.effective_b_qm_scale();
+    resolved.x_qm_scale = request.effective_x_qm_scale();
     let executor = resolved.resources.executor();
     let frame =
         PreparedFrame::from_srgb16_with(width, height, rgb, bits_per_sample, Some(&executor))?;

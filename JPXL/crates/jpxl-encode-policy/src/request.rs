@@ -298,18 +298,16 @@ pub enum ChromaHfPolicy {
     /// Automatic target-rate chroma refinement.
     ///
     /// The historical name is retained as the actual enum variant for source
-    /// compatibility. Phase Q2 originally used it only for B=5 at or below
-    /// 1 bpp on Quality; Phase Q8 graduated the Quality behavior, and Phase Q9
-    /// added the production Balanced policy:
+    /// compatibility. PR 5 removed the last requested-bitrate branch, so every
+    /// preset is now a rate-independent per-preset constant:
     ///
-    /// * Balanced — X=3 and B=3 at every target (Phase Q9).
-    /// * Quality B — scale 5 at or below 1 bpp (Phase Q2); scale 4 above it
-    ///   (Phase Q8).
-    /// * Quality X — scale 3 at or below 1 bpp (Phase Q8); neutral above it.
+    /// * Balanced — X=3 and B=3 (Phase Q9).
+    /// * Quality — X=3 and B=5 (the former ≤1 bpp values; PR 5 dropped the
+    ///   `at_most_one_bpp` gate that graduated them with rate).
     /// * Fast — neutral X/B scales.
     ///
-    /// The Balanced setting improves the production path without adding a
-    /// search, pass, allocation, or content-dependent branch.
+    /// The setting improves the production path without adding a search, pass,
+    /// allocation, or content-dependent branch.
     QualityLowRateB5,
 }
 
@@ -975,13 +973,18 @@ impl EncodeRequest {
         request
     }
 
-    /// Resolves the B-channel QM scale for one concrete target and frame.
+    /// Resolves the B-channel QM scale for the automatic (rate-path) policy.
     ///
-    /// Byte targets use the same `target_bytes * 8 <= pixels` boundary as the
-    /// bits-per-pixel spelling, so the policy does not depend on which public
-    /// target form the caller chose. Manual requests are returned verbatim.
+    /// The scale is a **per-preset constant** with no requested-bitrate branch:
+    /// Fast neutral, Balanced 3, Quality 5 (the former ≤1 bpp value, now the
+    /// only Quality value). Manual requests are returned verbatim.
+    ///
+    /// PR 5 removed the `target_bytes * 8 <= pixels` gate that once graduated
+    /// the exhaustive Quality preset's chroma with rate. Fast and Balanced are
+    /// unchanged and byte-identical; only the feature-gated Quality *rate*
+    /// preset's streams may move.
     #[must_use]
-    pub fn effective_b_qm_scale(self, width: u32, height: u32, target: RateTarget) -> QmScale {
+    pub fn effective_b_qm_scale(self) -> QmScale {
         if self.chroma_hf_policy == ChromaHfPolicy::Manual {
             return self.b_qm_scale;
         }
@@ -991,45 +994,30 @@ impl EncodeRequest {
             // screened photo cell's SSIMULACRA2 and passed the pooled photo and
             // scene Contract B gates without adding encoder work.
             RateSearchPreset::Balanced => QmScale::new(3).unwrap_or(QmScale::NEUTRAL),
-            RateSearchPreset::Quality if at_most_one_bpp(width, height, target) => {
-                // Phase Q2's low-rate B refinement.
-                QmScale::new(5).unwrap_or(QmScale::NEUTRAL)
-            }
-            RateSearchPreset::Quality => {
-                // Phase Q8: a gentler B at high rate, where B=5 overshot the
-                // Butteraugli 3-norm bound but the ladder was undershooting bytes.
-                QmScale::new(4).unwrap_or(QmScale::NEUTRAL)
-            }
+            // PR 5: the per-preset constant is Phase Q2's low-rate B=5, applied
+            // at every rate now that the bpp branch is gone.
+            RateSearchPreset::Quality => QmScale::new(5).unwrap_or(QmScale::NEUTRAL),
         }
     }
 
-    /// Resolves the X-channel QM scale for one concrete target and frame.
+    /// Resolves the X-channel QM scale for the automatic (rate-path) policy.
     ///
-    /// Mirrors [`Self::effective_b_qm_scale`]: under
-    /// [`ChromaHfPolicy::PresetChroma`] Balanced uses scale 3 at every rate,
-    /// while Quality uses scale 3 at or below 1 bpp and stays neutral above it.
-    /// Fast stays neutral, and a [`ChromaHfPolicy::Manual`] request takes the
+    /// Mirrors [`Self::effective_b_qm_scale`]: a per-preset constant with no
+    /// requested-bitrate branch — Fast neutral, Balanced and Quality scale 3
+    /// (the former ≤1 bpp value). A [`ChromaHfPolicy::Manual`] request takes the
     /// supplied scale verbatim.
     #[must_use]
-    pub fn effective_x_qm_scale(self, width: u32, height: u32, target: RateTarget) -> QmScale {
+    pub fn effective_x_qm_scale(self) -> QmScale {
         if self.chroma_hf_policy == ChromaHfPolicy::Manual {
             return self.x_qm_scale;
         }
         match self.rate_preset {
-            RateSearchPreset::Balanced => QmScale::new(3).unwrap_or(QmScale::NEUTRAL),
-            RateSearchPreset::Quality if at_most_one_bpp(width, height, target) => {
+            RateSearchPreset::Fast => QmScale::NEUTRAL,
+            RateSearchPreset::Balanced | RateSearchPreset::Quality => {
                 QmScale::new(3).unwrap_or(QmScale::NEUTRAL)
             }
-            RateSearchPreset::Quality | RateSearchPreset::Fast => QmScale::NEUTRAL,
         }
     }
-}
-
-/// The `target_bytes * 8 <= pixels` boundary the Quality chroma policy keys on,
-/// so the byte and bits-per-pixel spellings of one bit per pixel agree.
-fn at_most_one_bpp(width: u32, height: u32, target: RateTarget) -> bool {
-    let pixels = u64::from(width) * u64::from(height);
-    target.bytes_for(width, height).saturating_mul(8) <= pixels
 }
 
 #[cfg(test)]
@@ -1142,56 +1130,31 @@ mod tests {
     }
 
     #[test]
-    fn automatic_chroma_policy_is_preset_specific_and_quality_graduates_with_rate() {
-        let low = RateTarget::BitsPerPixel(1.0);
-        let high = RateTarget::BitsPerPixel(2.0);
-        let automatic = EncodeRequest::for_target(low);
+    fn automatic_chroma_policy_is_a_per_preset_constant() {
+        // PR 5 removed the `at_most_one_bpp` gate: every preset is now a
+        // rate-independent per-preset constant, so the effective scales no
+        // longer take a target or frame size.
+        let automatic = EncodeRequest::for_target(RateTarget::BitsPerPixel(1.0));
         let b5 = QmScale::new(5).expect("Q2 scale is inside the wire range");
-        let b4 = QmScale::new(4).expect("Q8 scale is inside the wire range");
         let scale3 = QmScale::new(3).expect("Q8/Q9 scale is inside the wire range");
 
+        // Quality: the former ≤1 bpp values (X=3/B=5), now the only values.
         let mut quality = automatic;
         quality.rate_preset = RateSearchPreset::Quality;
+        assert_eq!(quality.effective_b_qm_scale(), b5);
+        assert_eq!(quality.effective_x_qm_scale(), scale3);
 
-        // At or below 1 bpp: Phase Q2's B=5 and Phase Q8's X=3.
-        assert_eq!(quality.effective_b_qm_scale(64, 64, low), b5);
-        assert_eq!(quality.effective_x_qm_scale(64, 64, low), scale3);
-        assert_eq!(
-            quality.effective_b_qm_scale(64, 64, RateTarget::Bytes(512)),
-            b5,
-            "the byte spelling of exactly one bpp uses the same policy"
-        );
-        assert_eq!(
-            quality.effective_x_qm_scale(64, 64, RateTarget::Bytes(512)),
-            scale3
-        );
+        // Balanced: conservative X=3/B=3, byte-identical to before PR 5.
+        let mut balanced = automatic;
+        balanced.rate_preset = RateSearchPreset::Balanced;
+        assert_eq!(balanced.effective_b_qm_scale(), scale3);
+        assert_eq!(balanced.effective_x_qm_scale(), scale3);
 
-        // Above 1 bpp: Phase Q8's gentler B=4, and X returns to neutral.
-        assert_eq!(
-            quality.effective_b_qm_scale(64, 64, RateTarget::Bytes(513)),
-            b4,
-            "the first byte above one bpp graduates B to the Phase Q8 scale"
-        );
-        assert_eq!(quality.effective_b_qm_scale(64, 64, high), b4);
-        assert_eq!(
-            quality.effective_x_qm_scale(64, 64, high),
-            QmScale::NEUTRAL,
-            "X refinement is confined to the low-rate band"
-        );
-
-        // Phase Q9's production Balanced policy is a rate-independent,
-        // conservative X=3/B=3. Fast remains byte-identical to Q8.
-        for target in [low, high] {
-            let mut balanced = automatic;
-            balanced.rate_preset = RateSearchPreset::Balanced;
-            assert_eq!(balanced.effective_b_qm_scale(64, 64, target), scale3);
-            assert_eq!(balanced.effective_x_qm_scale(64, 64, target), scale3);
-
-            let mut fast = automatic;
-            fast.rate_preset = RateSearchPreset::Fast;
-            assert_eq!(fast.effective_b_qm_scale(64, 64, target), QmScale::NEUTRAL);
-            assert_eq!(fast.effective_x_qm_scale(64, 64, target), QmScale::NEUTRAL);
-        }
+        // Fast: neutral, byte-identical to before PR 5.
+        let mut fast = automatic;
+        fast.rate_preset = RateSearchPreset::Fast;
+        assert_eq!(fast.effective_b_qm_scale(), QmScale::NEUTRAL);
+        assert_eq!(fast.effective_x_qm_scale(), QmScale::NEUTRAL);
 
         // An explicit research scale bypasses the automatic policy for both
         // channels.
@@ -1199,8 +1162,26 @@ mod tests {
         manual.chroma_hf_policy = ChromaHfPolicy::Manual;
         manual.b_qm_scale = QmScale::new(3).expect("research scale is legal");
         manual.x_qm_scale = QmScale::new(6).expect("research scale is legal");
-        assert_eq!(manual.effective_b_qm_scale(64, 64, high), manual.b_qm_scale);
-        assert_eq!(manual.effective_x_qm_scale(64, 64, low), manual.x_qm_scale);
+        assert_eq!(manual.effective_b_qm_scale(), manual.b_qm_scale);
+        assert_eq!(manual.effective_x_qm_scale(), manual.x_qm_scale);
+    }
+
+    #[test]
+    fn quality_path_has_no_bpp_branch() {
+        // `for_quality` pins Manual chroma and the per-preset matrices, so the
+        // effective scales are the request's own fields regardless of frame
+        // size. With `at_most_one_bpp` deleted this is mostly a compile-level
+        // fact: there is no target or size parameter left to branch on.
+        for preset in [
+            RateSearchPreset::Fast,
+            RateSearchPreset::Balanced,
+            RateSearchPreset::Quality,
+        ] {
+            let req = EncodeRequest::for_quality(preset);
+            assert_eq!(req.chroma_hf_policy, ChromaHfPolicy::Manual);
+            assert_eq!(req.effective_b_qm_scale(), req.b_qm_scale);
+            assert_eq!(req.effective_x_qm_scale(), req.x_qm_scale);
+        }
     }
 
     #[test]

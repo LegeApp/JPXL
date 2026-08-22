@@ -101,13 +101,12 @@ Lossy options (8- or 16-bit RGB; any one selects the VarDCT path):
                                   secondary LF fill (target-rate default 4
                                   after Phase Q1; 8 was Phase 5G's); research
                                   control
-    --x-qm-scale <0..7>           X-channel QM exponent (Balanced defaults to 3;
-                                  Quality defaults to 3 at <=1 bpp and 2 above
-                                  it); setting it pins the manual chroma policy
-    --b-qm-scale <0..7>           B-channel QM exponent (Balanced defaults to 3;
-                                  Quality defaults to 5 at <=1 bpp and 4 above
-                                  it; Fast defaults to 2); research
-                                  chroma-allocation control
+    --x-qm-scale <0..7>           X-channel QM exponent (Fast neutral 2, Balanced
+                                  3, Quality 3; per preset, never per bitrate);
+                                  setting it pins the manual chroma policy
+    --b-qm-scale <0..7>           B-channel QM exponent (Fast neutral 2, Balanced
+                                  3, Quality 5; per preset, never per bitrate);
+                                  research chroma-allocation control
     --epf-iters <0..3>            Decoder EPF iteration count (target-rate
                                   default 1); research control
     --epf-sharpness <mode>        EPF sharpness plane: zero (fixed default),

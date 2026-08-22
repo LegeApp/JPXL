@@ -105,14 +105,24 @@ pub const MET_OVERSHOOT_BAND: f64 = 1.0;
 pub const MIN_AIM_MARGIN: f64 = 0.25;
 
 /// Hard work caps of one effort.
+///
+/// `pixel_probes`, `exact_prices` and `structural_builds` bound the *baseline*
+/// policy solve. `policy_trials` bounds the perceptual policy bank: how many
+/// single-axis alternatives the coordinate descent may solve after the
+/// baseline, each under its own small [`TRIAL_PIXEL_PROBES`]/
+/// [`TRIAL_EXACT_PRICES`] cap.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct QualityBudget {
-    /// Full-frame render-and-score evaluations.
+    /// Full-frame render-and-score evaluations in the baseline solve.
     pub pixel_probes: u32,
-    /// Entropy trainings followed by an exact emission.
+    /// Entropy trainings followed by an exact emission in the baseline solve.
     pub exact_prices: u32,
-    /// Fresh cover/CfL builds (the first probe is one).
+    /// Fresh cover/CfL builds in the baseline solve (the first probe is one).
     pub structural_builds: u32,
+    /// How many policy-bank alternatives the coordinate descent may solve
+    /// (0 disables the bank — the fixed-policy controller). Set to 0 to
+    /// reproduce the baseline-only result for an equal-score comparison.
+    pub policy_trials: u32,
     /// Fraction of the target loss the crossing aims above the target, so a
     /// slightly optimistic interpolation still lands feasible. Small on
     /// purpose: the rate controller's equivalent is an eighth of its 2-3%
@@ -121,8 +131,41 @@ pub struct QualityBudget {
     pub reserve: f64,
 }
 
+/// Hard pixel-probe cap of one policy-bank trial: probe the baseline crossing
+/// and at most one neighbour.
+pub const TRIAL_PIXEL_PROBES: u32 = 2;
+
+/// Hard exact-price cap of one policy-bank trial: price the one feasible
+/// finalist.
+pub const TRIAL_EXACT_PRICES: u32 = 1;
+
+/// Smallest byte saving (fraction of the incumbent's bytes) a Quality
+/// second-pass trial must beat to be worth another metric-and-entropy round.
+pub const MIN_TRIAL_SAVING_FRACTION: f64 = 0.005;
+
+/// Default Balanced policy-bank breadth.
+///
+/// **Zero — the bank is off by default on Balanced.** The PR 5 measurement
+/// (2026-08-22, five dev-split images at quality 70 and 85) found the bank met
+/// the byte gate only marginally: it reduced bytes solely on the photo scene
+/// (−1.0% at 70, −1.7% at 85) and was byte-neutral on mid, text, gradient and
+/// large, for a corpus-mean reduction under 0.35%. It failed the wall gate
+/// decisively — Balanced ran +20% to +87% slower (mean ≈ +51%, far past the
+/// +25% budget), because each alternative solves in its own candidate context
+/// and so rebuilds the forward DCT and cover it cannot share across contexts
+/// (see [`search_frame_perceptual`]). The bank therefore stays behind the
+/// [`QualityBudget`] breadth knob until a shared-context path makes
+/// quantizer-side trials cheap; set `policy_trials` explicitly (e.g. 2) through
+/// [`search_frame_perceptual_with_budget`] to opt in.
+pub const BALANCED_DEFAULT_POLICY_TRIALS: u32 = 0;
+
 impl QualityBudget {
-    /// The budget of a preset, as the controller plan states them.
+    /// The budget of a preset.
+    ///
+    /// Fast and Balanced run the baseline only by default
+    /// (`policy_trials = 0`; see [`BALANCED_DEFAULT_POLICY_TRIALS`] for why the
+    /// Balanced bank is opt-in). The feature-gated Quality effort runs the whole
+    /// bank as coordinate descent, where the extra wall is acceptable.
     #[must_use]
     pub const fn for_preset(preset: RateSearchPreset) -> Self {
         match preset {
@@ -130,18 +173,21 @@ impl QualityBudget {
                 pixel_probes: 3,
                 exact_prices: 2,
                 structural_builds: 2,
+                policy_trials: 0,
                 reserve: 0.06,
             },
             RateSearchPreset::Balanced => Self {
                 pixel_probes: 5,
                 exact_prices: 3,
                 structural_builds: 2,
+                policy_trials: BALANCED_DEFAULT_POLICY_TRIALS,
                 reserve: 0.03,
             },
             RateSearchPreset::Quality => Self {
                 pixel_probes: 10,
                 exact_prices: 4,
                 structural_builds: 3,
+                policy_trials: 11,
                 reserve: 0.02,
             },
         }
@@ -193,6 +239,9 @@ pub enum StructureSource {
 /// One unit of controller work, in order.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct QualityProbe {
+    /// Which policy did this work: 0 is the baseline, 1.. are the ranked
+    /// policy-bank alternatives in trial order.
+    pub policy_id: u32,
     /// What was done.
     pub kind: ProbeKind,
     /// The quantizer it was done at.
@@ -211,15 +260,41 @@ pub struct QualityProbe {
     pub millis: u64,
 }
 
+/// One policy-bank trial's summary, for the trace and telemetry.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PolicyTrial {
+    /// The policy id (1.. in trial order).
+    pub id: u32,
+    /// The rung its priced finalist landed on (0 if it found no feasible one).
+    pub rung: u32,
+    /// The finalist's score (NaN if it found no feasible one).
+    pub score: f64,
+    /// The finalist's exact bytes (0 if it found no feasible one).
+    pub bytes: u64,
+    /// Whether this trial's stream was the overall winner.
+    pub kept: bool,
+}
+
 /// Work counters and timings of one search.
+///
+/// `pixel_probes`, `exact_prices` and `structural_builds` count the **baseline**
+/// policy solve, so the facade reports the effort's stated per-solve budget;
+/// the policy bank's own probes are visible in the trace (tagged with their
+/// `policy_id`) and counted by `policy_trials`. The `*_ms` timings are totals
+/// across the whole search, baseline and trials.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct QualityStats {
-    /// Pixel probes spent (including finalist re-scores).
+    /// Pixel probes spent in the baseline solve (including finalist re-scores).
     pub pixel_probes: u32,
-    /// Exact prices spent.
+    /// Exact prices spent in the baseline solve.
     pub exact_prices: u32,
-    /// Fresh cover/CfL builds.
+    /// Fresh cover/CfL builds in the baseline solve.
     pub structural_builds: u32,
+    /// How many policy-bank alternatives were actually solved.
+    pub policy_trials: u32,
+    /// Baseline bytes minus the winning stream's bytes: what the bank saved
+    /// (0 when the baseline itself won).
+    pub policy_winner_margin_bytes: u64,
     /// Where the predictor started the search.
     pub predicted: Option<Rung>,
     /// The final bracket `(infeasible, feasible)` if one was found.
@@ -259,6 +334,8 @@ pub struct QualityOutcome {
     pub trace: Vec<QualityProbe>,
     /// Counters and timings.
     pub stats: QualityStats,
+    /// Per-alternative summaries of the policy bank's trials, in trial order.
+    pub policy_trials: Vec<PolicyTrial>,
     /// The source features the prediction was made from.
     pub features: SourceFeatures,
     /// The metric the scores come from.
@@ -281,12 +358,14 @@ impl QualityOutcome {
             .iter()
             .map(|p| {
                 format!(
-                    "{{\"kind\":\"{}\",\"rung\":{},\"global_scale\":{},\"hf_mul\":{},\"effective_scale\":{},\
-                     \"score\":{},\"bytes\":{},\"structure\":\"{}\",\"feasible\":{},\"millis\":{}}}",
+                    "{{\"kind\":\"{}\",\"policy_id\":{},\"rung\":{},\"global_scale\":{},\"hf_mul\":{},\
+                     \"effective_scale\":{},\"score\":{},\"bytes\":{},\"structure\":\"{}\",\
+                     \"feasible\":{},\"millis\":{}}}",
                     match p.kind {
                         ProbeKind::Pixel => "pixel",
                         ProbeKind::Exact => "exact",
                     },
+                    p.policy_id,
                     p.quantizer.rung.get(),
                     p.quantizer.global_scale.get(),
                     p.quantizer.hf_mul.get(),
@@ -302,6 +381,24 @@ impl QualityOutcome {
                 )
             })
             .collect();
+        let trials: Vec<String> = self
+            .policy_trials
+            .iter()
+            .map(|t| {
+                format!(
+                    "{{\"id\":{},\"rung\":{},\"score\":{},\"bytes\":{},\"kept\":{}}}",
+                    t.id,
+                    t.rung,
+                    if t.score.is_finite() {
+                        format!("{}", t.score)
+                    } else {
+                        "null".to_owned()
+                    },
+                    t.bytes,
+                    t.kept,
+                )
+            })
+            .collect();
         let bracket = self.stats.bracket.map_or_else(
             || "null".to_owned(),
             |(lo, hi)| format!("[{},{}]", lo.get(), hi.get()),
@@ -309,10 +406,11 @@ impl QualityOutcome {
         format!(
             "{{\"schema\":\"jpxl.quality-trace/1\",\"metric_version\":\"{}\",\"score_guard\":{},\
              \"effort\":\"{}\",\"source_features\":{},\"predicted_rung\":{},\"bracket\":{},\
-             \"pixel_probes\":{},\"exact_prices\":{},\"structural_builds\":{},\
-             \"requested_score\":{},\"achieved_score\":{},\"guard_margin\":{},\"final_exact_bytes\":{},\
-             \"status\":\"{}\",\"saturated\":{},\"wall_by_phase\":{{\"plan\":{},\"render_metric\":{},\
-             \"entropy\":{},\"emit\":{}}},\"probes\":[{}]}}",
+             \"pixel_probes\":{},\"exact_prices\":{},\"structural_builds\":{},\"policy_trials\":{},\
+             \"policy_winner_margin_bytes\":{},\"requested_score\":{},\"achieved_score\":{},\
+             \"guard_margin\":{},\"final_exact_bytes\":{},\"status\":\"{}\",\"saturated\":{},\
+             \"wall_by_phase\":{{\"plan\":{},\"render_metric\":{},\"entropy\":{},\"emit\":{}}},\
+             \"policy_trials_detail\":[{}],\"probes\":[{}]}}",
             self.metric_version,
             self.guard,
             effort,
@@ -324,6 +422,8 @@ impl QualityOutcome {
             self.stats.pixel_probes,
             self.stats.exact_prices,
             self.stats.structural_builds,
+            self.stats.policy_trials,
+            self.stats.policy_winner_margin_bytes,
             self.requested_score,
             self.achieved_score,
             self.achieved_score - self.requested_score - self.guard,
@@ -334,6 +434,7 @@ impl QualityOutcome {
             self.stats.render_metric_ms,
             self.stats.entropy_ms,
             self.stats.emit_ms,
+            trials.join(","),
             probes.join(","),
         )
     }
@@ -509,8 +610,15 @@ struct ProbeRecord {
     pixels: Option<(ValidatedPixelPlan, VardctGeometry)>,
 }
 
-/// The search's running state.
-struct Navigator<'c, 'a, 'e> {
+/// The running state of one policy's solve.
+///
+/// The trace is borrowed and shared across every policy in a search, each
+/// probe tagged with this navigator's [`policy_id`](Navigator::policy_id); the
+/// counters and timings in `local` are this policy's own, folded into the
+/// combined [`QualityStats`] by the orchestrator. `budget` here is the
+/// *per-solve* cap (the baseline budget for policy 0, the small trial cap for
+/// alternatives).
+struct Navigator<'c, 'a, 't, 'e> {
     ctx: &'c mut CandidateSearchContext<'a>,
     evaluator: &'e mut dyn PerceptualEvaluator,
     target: f64,
@@ -519,20 +627,21 @@ struct Navigator<'c, 'a, 'e> {
     enable_cfl: bool,
     structure_tier: EntropySearch,
     finalist_entropy: EntropySearch,
+    policy_id: u32,
     anchor: Option<StructuralAnchor>,
     anchor_rung: Option<Rung>,
     probes: Vec<ProbeRecord>,
-    trace: Vec<QualityProbe>,
-    stats: QualityStats,
+    trace: &'t mut Vec<QualityProbe>,
+    local: QualityStats,
 }
 
-impl Navigator<'_, '_, '_> {
+impl Navigator<'_, '_, '_, '_> {
     fn threshold(&self) -> f64 {
         self.target + self.guard
     }
 
     fn pixel_budget_left(&self) -> bool {
-        self.stats.pixel_probes < self.budget.pixel_probes
+        self.local.pixel_probes < self.budget.pixel_probes
     }
 
     fn already_probed(&self, rung: Rung) -> bool {
@@ -554,7 +663,7 @@ impl Navigator<'_, '_, '_> {
                 AnchorReuse::None,
                 Some(&mut captured),
             )?;
-            self.stats.structural_builds = self.stats.structural_builds.saturating_add(1);
+            self.local.structural_builds = self.local.structural_builds.saturating_add(1);
             if self.anchor.is_none() {
                 self.anchor = captured;
                 self.anchor_rung = Some(rung);
@@ -573,18 +682,19 @@ impl Navigator<'_, '_, '_> {
             )?;
             (planned.0, planned.1, StructureSource::Reused)
         };
-        self.stats.plan_ms = self
-            .stats
+        self.local.plan_ms = self
+            .local
             .plan_ms
             .saturating_add(u64::try_from(plan_start.elapsed().as_millis()).unwrap_or(u64::MAX));
 
         let score_start = Instant::now();
         let score = self.evaluator.evaluate(&pixels)?.score;
         let millis = u64::try_from(score_start.elapsed().as_millis()).unwrap_or(u64::MAX);
-        self.stats.render_metric_ms = self.stats.render_metric_ms.saturating_add(millis);
-        self.stats.pixel_probes = self.stats.pixel_probes.saturating_add(1);
+        self.local.render_metric_ms = self.local.render_metric_ms.saturating_add(millis);
+        self.local.pixel_probes = self.local.pixel_probes.saturating_add(1);
         let feasible = score >= self.threshold();
         self.trace.push(QualityProbe {
+            policy_id: self.policy_id,
             kind: ProbeKind::Pixel,
             quantizer,
             effective_scale: effective_scale(rung),
@@ -792,7 +902,7 @@ struct PricedFinalist {
 
 /// Trains entropy for a probe's pixels and emits the stream exactly.
 fn price_pixels(
-    nav: &mut Navigator<'_, '_, '_>,
+    nav: &mut Navigator<'_, '_, '_, '_>,
     quantizer: QuantizerChoice,
     score: f64,
     structure: StructureSource,
@@ -804,14 +914,15 @@ fn price_pixels(
         .ctx
         .attach_entropy(pixels, geometry, nav.finalist_entropy)?;
     let entropy_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
-    nav.stats.entropy_ms = nav.stats.entropy_ms.saturating_add(entropy_ms);
+    nav.local.entropy_ms = nav.local.entropy_ms.saturating_add(entropy_ms);
     let emit_start = Instant::now();
     let emission = emit_codestream_with_executor(&plan, nav.ctx.executor())?;
     let emit_ms = u64::try_from(emit_start.elapsed().as_millis()).unwrap_or(u64::MAX);
-    nav.stats.emit_ms = nav.stats.emit_ms.saturating_add(emit_ms);
-    nav.stats.exact_prices = nav.stats.exact_prices.saturating_add(1);
+    nav.local.emit_ms = nav.local.emit_ms.saturating_add(emit_ms);
+    nav.local.exact_prices = nav.local.exact_prices.saturating_add(1);
     let feasible = score >= nav.threshold();
     nav.trace.push(QualityProbe {
+        policy_id: nav.policy_id,
         kind: ProbeKind::Exact,
         quantizer,
         effective_scale: effective_scale(quantizer.rung),
@@ -832,27 +943,10 @@ fn price_pixels(
     })
 }
 
-/// Runs the score-targeted search over a prepared frame.
-///
-/// `request` carries the effort (`rate_preset`) and the starting policy; its
-/// rate target, if any, is ignored. `evaluator` scores every probe;
-/// `executor` runs planning, entropy and emission.
-///
-/// # Errors
-///
-/// [`PolicyError::Unsupported`] for an effort this build cannot run, plus
-/// anything the planner, evaluator or writer refuses.
-pub fn search_frame_perceptual(
-    frame: &PreparedFrame,
-    atlas: &AnalysisAtlas,
-    request: &EncodeRequest,
-    target: PerceptualTarget,
-    evaluator: &mut dyn PerceptualEvaluator,
-    executor: &jpxl_encode::EncodeExecutor,
-) -> Result<QualityOutcome> {
-    let preset = request.rate_preset;
-    let budget = QualityBudget::for_preset(preset);
-    let (enable_cfl, structure_tier, finalist_entropy) = match preset {
+/// The per-preset planning tiers: CfL on/off, the structural entropy tier the
+/// planner reads, and the finalist entropy tier the emission trains.
+fn planning_tiers(preset: RateSearchPreset) -> (bool, EntropySearch, EntropySearch) {
+    match preset {
         RateSearchPreset::Fast => (false, EntropySearch::Fast, EntropySearch::FinalFast),
         RateSearchPreset::Balanced => {
             #[cfg(feature = "g5-bounded-entropy")]
@@ -862,32 +956,60 @@ pub fn search_frame_perceptual(
             (true, EntropySearch::Fast, finalist)
         }
         RateSearchPreset::Quality => (true, EntropySearch::Full, EntropySearch::Full),
-    };
+    }
+}
 
-    let transform_owned = if request.restoration.gaborish {
-        Some(crate::prepare_gaborish_frame(frame)?)
-    } else {
-        None
-    };
-    let transform_frame = transform_owned.as_ref().unwrap_or(frame);
-    let features = source_features(atlas, frame.width(), frame.height(), frame.is_grayscale());
-    let predicted = rung_for_scale(predicted_effective_scale(&features, target.minimum_score));
+/// What one policy's solve chose, plus the navigation facts the orchestrator
+/// needs to seed the bank, reuse structure and name the terminal status.
+struct PolicySolve {
+    finalist: PricedFinalist,
+    /// The winner's rung: where a bank alternative starts its own bracket.
+    seed_rung: Rung,
+    saturated: bool,
+    under_target: bool,
+    rescued: bool,
+    adjacent_infeasible: bool,
+}
 
+/// Solves one policy fully (the baseline): predict, bracket, tighten, rescue,
+/// then exact-price the coarsest feasible probes and keep the smallest stream.
+///
+/// This is the fixed-policy navigator PR 4 shipped, extracted so the policy
+/// bank can call it once for the baseline and reuse the same machinery for
+/// each alternative through [`solve_trial`].
+#[allow(clippy::too_many_arguments)]
+fn solve_baseline(
+    frame: &PreparedFrame,
+    transform_frame: &PreparedFrame,
+    atlas: &AnalysisAtlas,
+    request: &EncodeRequest,
+    evaluator: &mut dyn PerceptualEvaluator,
+    executor: &jpxl_encode::EncodeExecutor,
+    target: f64,
+    guard: f64,
+    budget: QualityBudget,
+    enable_cfl: bool,
+    structure_tier: EntropySearch,
+    finalist_entropy: EntropySearch,
+    predicted: Rung,
+    trace: &mut Vec<QualityProbe>,
+) -> Result<(PolicySolve, QualityStats)> {
     let mut ctx = CandidateSearchContext::new(frame, transform_frame, atlas, request, executor);
     let mut nav = Navigator {
         ctx: &mut ctx,
         evaluator,
-        target: target.minimum_score,
-        guard: DEFAULT_SCORE_GUARD,
+        target,
+        guard,
         budget,
         enable_cfl,
         structure_tier,
         finalist_entropy,
+        policy_id: 0,
         anchor: None,
         anchor_rung: None,
         probes: Vec::new(),
-        trace: Vec::new(),
-        stats: QualityStats {
+        trace,
+        local: QualityStats {
             predicted: Some(predicted),
             ..QualityStats::default()
         },
@@ -898,7 +1020,7 @@ pub fn search_frame_perceptual(
     nav.expand_until_bracketed()?;
     nav.tighten()?;
     nav.rescue_probe()?;
-    nav.stats.bracket = nav.bracket().map(|((lo, _), (hi, _))| (lo, hi));
+    nav.local.bracket = nav.bracket().map(|((lo, _), (hi, _))| (lo, hi));
 
     // Finalists: the coarsest feasible probes, exactly priced.
     let mut finalists: Vec<PricedFinalist> = Vec::new();
@@ -934,7 +1056,7 @@ pub fn search_frame_perceptual(
     }
 
     for index in ordered {
-        if nav.stats.exact_prices >= budget.exact_prices {
+        if nav.local.exact_prices >= budget.exact_prices {
             break;
         }
         let (rung, quantizer, score, structure) = {
@@ -947,7 +1069,7 @@ pub fn search_frame_perceptual(
         // rebuild, re-score, and keep the rebuild only if it still qualifies.
         let rebuild = structure == StructureSource::Reused
             && structure_is_far(anchor_rung, rung)
-            && nav.stats.structural_builds < budget.structural_builds
+            && nav.local.structural_builds < budget.structural_builds
             && nav.pixel_budget_left()
             && !under_target;
         if rebuild {
@@ -1018,36 +1140,370 @@ pub fn search_frame_perceptual(
             .iter()
             .any(|p| !p.feasible && p.rung.get().saturating_add(1) == r.get())
     });
+    let local = nav.local;
+    let seed_rung = chosen.quantizer.rung;
+    Ok((
+        PolicySolve {
+            finalist: chosen,
+            seed_rung,
+            saturated,
+            under_target,
+            rescued,
+            adjacent_infeasible,
+        },
+        local,
+    ))
+}
+
+/// One bank alternative's bounded solve: a priced finalist and its work.
+struct TrialSolve {
+    finalist: PricedFinalist,
+    local: QualityStats,
+}
+
+/// Solves one policy-bank alternative to the same target under a small budget
+/// ([`TRIAL_PIXEL_PROBES`] pixel probes, [`TRIAL_EXACT_PRICES`] exact price),
+/// starting from the baseline's crossing rung `seed`.
+///
+/// `shared_anchor` is `Some` only for a quantizer-side alternative that reuses
+/// the baseline's cover and CfL; a CfL or restoration alternative passes `None`
+/// and builds a fresh plan. Returns `None` when the alternative found no
+/// feasible stream inside its budget.
+#[allow(clippy::too_many_arguments)]
+fn solve_trial(
+    frame: &PreparedFrame,
+    transform_frame: &PreparedFrame,
+    atlas: &AnalysisAtlas,
+    request: &EncodeRequest,
+    evaluator: &mut dyn PerceptualEvaluator,
+    executor: &jpxl_encode::EncodeExecutor,
+    target: f64,
+    guard: f64,
+    reserve: f64,
+    enable_cfl: bool,
+    structure_tier: EntropySearch,
+    finalist_entropy: EntropySearch,
+    seed: Rung,
+    shared_anchor: Option<StructuralAnchor>,
+    policy_id: u32,
+    trace: &mut Vec<QualityProbe>,
+) -> Result<Option<TrialSolve>> {
+    let seed_fresh = shared_anchor.is_none();
+    let anchor_rung = shared_anchor.as_ref().map(|_| seed);
+    let mut ctx = CandidateSearchContext::new(frame, transform_frame, atlas, request, executor);
+    let mut nav = Navigator {
+        ctx: &mut ctx,
+        evaluator,
+        target,
+        guard,
+        budget: QualityBudget {
+            pixel_probes: TRIAL_PIXEL_PROBES,
+            exact_prices: TRIAL_EXACT_PRICES,
+            structural_builds: 2,
+            policy_trials: 0,
+            reserve,
+        },
+        enable_cfl,
+        structure_tier,
+        finalist_entropy,
+        policy_id,
+        anchor: shared_anchor,
+        anchor_rung,
+        probes: Vec::new(),
+        trace,
+        local: QualityStats::default(),
+    };
+
+    // Probe the seed, then one neighbour: coarser to shed bytes if the seed
+    // already meets the target, finer to reach it if it does not.
+    nav.probe(seed, seed_fresh)?;
+    let seed_feasible = nav.probes.last().is_some_and(|p| p.feasible);
+    if nav.pixel_budget_left() {
+        let next = geometric_step(seed, !seed_feasible);
+        if next != seed && !nav.already_probed(next) {
+            nav.probe(next, false)?;
+        }
+    }
+
+    // The coarsest feasible probe is the cheapest stream that still qualifies.
+    let chosen_index = nav
+        .probes
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| p.feasible)
+        .min_by_key(|(_, p)| p.rung)
+        .map(|(i, _)| i);
+    let Some(index) = chosen_index else {
+        return Ok(None);
+    };
+    let (quantizer, score, structure) = {
+        let Some(p) = nav.probes.get(index) else {
+            return Ok(None);
+        };
+        (p.quantizer, p.score, p.structure)
+    };
+    let retained = nav.probes.get_mut(index).and_then(|p| p.pixels.take());
+    let (pixels, geometry) = match retained {
+        Some(planned) => planned,
+        None => {
+            let reuse = match (&nav.anchor, structure) {
+                (Some(anchor), StructureSource::Reused) => AnchorReuse::CoverAndCfl(anchor),
+                _ => AnchorReuse::None,
+            };
+            nav.ctx
+                .pixel_plan(quantizer, nav.enable_cfl, nav.structure_tier, reuse, None)?
+        }
+    };
+    let finalist = price_pixels(&mut nav, quantizer, score, structure, &pixels, &geometry)?;
+    let local = nav.local;
+    Ok(Some(TrialSolve { finalist, local }))
+}
+
+/// Folds a trial's timings (not its probe/price counts, which stay baseline-
+/// scoped) into the combined stats.
+fn fold_timings(combined: &mut QualityStats, trial: &QualityStats) {
+    combined.plan_ms = combined.plan_ms.saturating_add(trial.plan_ms);
+    combined.render_metric_ms = combined
+        .render_metric_ms
+        .saturating_add(trial.render_metric_ms);
+    combined.entropy_ms = combined.entropy_ms.saturating_add(trial.entropy_ms);
+    combined.emit_ms = combined.emit_ms.saturating_add(trial.emit_ms);
+}
+
+/// Runs the score-targeted search over a prepared frame at the preset's budget.
+///
+/// `request` carries the effort (`rate_preset`) and the starting policy; its
+/// rate target, if any, is ignored. `evaluator` scores every probe;
+/// `executor` runs planning, entropy and emission.
+///
+/// # Errors
+///
+/// [`PolicyError::Unsupported`] for an effort this build cannot run, plus
+/// anything the planner, evaluator or writer refuses.
+pub fn search_frame_perceptual(
+    frame: &PreparedFrame,
+    atlas: &AnalysisAtlas,
+    request: &EncodeRequest,
+    target: PerceptualTarget,
+    evaluator: &mut dyn PerceptualEvaluator,
+    executor: &jpxl_encode::EncodeExecutor,
+) -> Result<QualityOutcome> {
+    let budget = QualityBudget::for_preset(request.rate_preset);
+    search_frame_perceptual_with_budget(frame, atlas, request, target, evaluator, executor, budget)
+}
+
+/// [`search_frame_perceptual`] with an explicit budget, so a caller can
+/// override the policy-bank breadth — notably `policy_trials: 0` to reproduce
+/// the fixed-policy (baseline-only) result for an equal-score comparison.
+///
+/// `#[doc(hidden)]`: the breadth is a research/testing knob, not part of the
+/// stable facade, which always uses the preset budget.
+///
+/// # Errors
+///
+/// As [`search_frame_perceptual`].
+#[doc(hidden)]
+#[allow(clippy::too_many_arguments)]
+pub fn search_frame_perceptual_with_budget(
+    frame: &PreparedFrame,
+    atlas: &AnalysisAtlas,
+    request: &EncodeRequest,
+    target: PerceptualTarget,
+    evaluator: &mut dyn PerceptualEvaluator,
+    executor: &jpxl_encode::EncodeExecutor,
+    budget: QualityBudget,
+) -> Result<QualityOutcome> {
+    let preset = request.rate_preset;
+    let target_score = target.minimum_score;
+    let (enable_cfl, structure_tier, finalist_entropy) = planning_tiers(preset);
+
+    // Gaborish preconditioning depends only on the transform frame, which no
+    // bank axis changes, so build it once and share it across every policy.
+    let transform_owned = if request.restoration.gaborish {
+        Some(crate::prepare_gaborish_frame(frame)?)
+    } else {
+        None
+    };
+    let transform_frame = transform_owned.as_ref().unwrap_or(frame);
+    let features = source_features(atlas, frame.width(), frame.height(), frame.is_grayscale());
+    let predicted = rung_for_scale(predicted_effective_scale(&features, target_score));
+
+    let mut trace: Vec<QualityProbe> = Vec::new();
+
+    // --- Baseline solve (policy 0) ---
+    let baseline_policy = crate::policy_bank::PerceptualPolicy::baseline(preset);
+    let base_request = baseline_policy.apply(request);
+    let (baseline, mut stats) = solve_baseline(
+        frame,
+        transform_frame,
+        atlas,
+        &base_request,
+        evaluator,
+        executor,
+        target_score,
+        DEFAULT_SCORE_GUARD,
+        budget,
+        enable_cfl,
+        structure_tier,
+        finalist_entropy,
+        predicted,
+        &mut trace,
+    )?;
+
+    let saturated = baseline.saturated;
+    let under_target = baseline.under_target;
+    let baseline_rescued = baseline.rescued;
+    let adjacent_infeasible = baseline.adjacent_infeasible;
+    let baseline_bytes = baseline.finalist.sizing.total;
+    let seed = baseline.seed_rung;
+
+    let mut winner = baseline.finalist;
+    let mut winner_policy = baseline_policy;
+    let mut winner_is_trial = false;
+    let mut winner_trial_id: Option<u32> = None;
+    let mut incumbent_bytes = baseline_bytes;
+    let mut policy_trials: Vec<PolicyTrial> = Vec::new();
+    let mut next_policy_id = 1u32;
+
+    // --- Policy bank (coordinate descent over ranked single-axis alternatives).
+    // Skipped when the bank is disabled, when nothing met the target, or when
+    // the ladder saturated — there is no reserve to trade in those cases.
+    if budget.policy_trials > 0 && !under_target && !saturated {
+        let per_pass = usize::try_from(budget.policy_trials).unwrap_or(0);
+        // Fast/Balanced run one pass; the feature-gated Quality effort permits
+        // a bounded second pass around the updated winner, stopping when a pass
+        // yields no worthwhile saving (plan §6.3).
+        let max_passes = if preset == RateSearchPreset::Quality {
+            2
+        } else {
+            1
+        };
+        let mut pass_seed = seed;
+        for _pass in 0..max_passes {
+            let ranked = crate::policy_bank::rank_alternatives(&features, preset);
+            let mut improved = false;
+            for policy in ranked.into_iter().take(per_pass) {
+                if policy == winner_policy {
+                    continue;
+                }
+                let policy_id = next_policy_id;
+                next_policy_id = next_policy_id.saturating_add(1);
+                // Each alternative solves in its own candidate context, whose
+                // forward-DCT cache is populated by its own cover build. The
+                // captured cover/CfL cannot be shared across contexts (the
+                // cache lives inside `CandidateSearchContext`, whose API is not
+                // part of this brief), so every trial builds fresh structure.
+                // `PerceptualPolicy::reuses_structure_of` records which trials a
+                // shared-context implementation *could* have spared this build.
+                let trial_request = policy.apply(request);
+                let trial = solve_trial(
+                    frame,
+                    transform_frame,
+                    atlas,
+                    &trial_request,
+                    evaluator,
+                    executor,
+                    target_score,
+                    DEFAULT_SCORE_GUARD,
+                    budget.reserve,
+                    policy.cfl,
+                    structure_tier,
+                    finalist_entropy,
+                    pass_seed,
+                    None,
+                    policy_id,
+                    &mut trace,
+                )?;
+                stats.policy_trials = stats.policy_trials.saturating_add(1);
+                match trial {
+                    Some(t) => {
+                        fold_timings(&mut stats, &t.local);
+                        let bytes = t.finalist.sizing.total;
+                        let saving = incumbent_bytes.saturating_sub(bytes);
+                        // Quality demands a minimum saving; a single Balanced
+                        // pass keeps any strict improvement.
+                        let enough = if preset == RateSearchPreset::Quality {
+                            #[allow(clippy::cast_precision_loss)]
+                            let floor = MIN_TRIAL_SAVING_FRACTION * incumbent_bytes as f64;
+                            #[allow(clippy::cast_precision_loss)]
+                            let saved = saving as f64;
+                            saved >= floor
+                        } else {
+                            saving > 0
+                        };
+                        let keep = t.finalist.feasible && bytes < incumbent_bytes && enough;
+                        policy_trials.push(PolicyTrial {
+                            id: policy_id,
+                            rung: t.finalist.quantizer.rung.get(),
+                            score: t.finalist.score,
+                            bytes,
+                            kept: false,
+                        });
+                        if keep {
+                            winner = t.finalist;
+                            winner_policy = policy;
+                            winner_is_trial = true;
+                            winner_trial_id = Some(policy_id);
+                            incumbent_bytes = bytes;
+                            improved = true;
+                        }
+                    }
+                    None => {
+                        policy_trials.push(PolicyTrial {
+                            id: policy_id,
+                            rung: 0,
+                            score: f64::NAN,
+                            bytes: 0,
+                            kept: false,
+                        });
+                    }
+                }
+            }
+            if !improved {
+                break;
+            }
+            pass_seed = winner.quantizer.rung;
+        }
+    }
+
+    // Mark the winning trial (if any) as kept.
+    if let Some(id) = winner_trial_id
+        && let Some(entry) = policy_trials.iter_mut().find(|t| t.id == id)
+    {
+        entry.kept = true;
+    }
+    stats.policy_winner_margin_bytes = baseline_bytes.saturating_sub(winner.sizing.total);
+
+    let threshold = target_score + DEFAULT_SCORE_GUARD;
     let status = if saturated {
         QualityStatus::SaturatedTop
     } else if under_target {
         QualityStatus::UnderTargetWorkCap
-    } else if chosen.structure == StructureSource::Fresh && rescued {
+    } else if !winner_is_trial && baseline_rescued && winner.structure == StructureSource::Fresh {
         QualityStatus::RescuedFreshStructure
-    } else if chosen.quantizer.rung == Rung::FLOOR {
+    } else if winner.quantizer.rung == Rung::FLOOR {
         QualityStatus::SaturatedFloor
-    } else if chosen.score - nav.threshold() <= MET_OVERSHOOT_BAND {
+    } else if winner.score - threshold <= MET_OVERSHOOT_BAND {
         QualityStatus::Met
     } else if adjacent_infeasible {
         QualityStatus::MetAdjacentRungs
     } else {
         QualityStatus::MetWorkCap
     };
-    let metric_version = nav.evaluator.metric_version();
-    let stats = nav.stats;
-    let trace = core::mem::take(&mut nav.trace);
+    let metric_version = evaluator.metric_version();
     Ok(QualityOutcome {
-        codestream: chosen.bytes,
-        plan: chosen.plan,
-        sizing: chosen.sizing,
-        chosen: chosen.quantizer,
-        requested_score: target.minimum_score,
-        achieved_score: chosen.score,
+        codestream: winner.bytes,
+        plan: winner.plan,
+        sizing: winner.sizing,
+        chosen: winner.quantizer,
+        requested_score: target_score,
+        achieved_score: winner.score,
         guard: DEFAULT_SCORE_GUARD,
         saturated,
         status,
         trace,
         stats,
+        policy_trials,
         features,
         metric_version,
     })
@@ -1110,18 +1566,45 @@ mod tests {
     }
 
     fn run(preset: RateSearchPreset, target: f64) -> (QualityOutcome, u32) {
+        run_with_budget(preset, target, QualityBudget::for_preset(preset))
+    }
+
+    fn run_with_budget(
+        preset: RateSearchPreset,
+        target: f64,
+        budget: QualityBudget,
+    ) -> (QualityOutcome, u32) {
         let frame = frame();
         let atlas = AnalysisAtlas::analyze(&frame);
         let mut request = EncodeRequest::for_quality(preset);
         request.restoration.gaborish = false;
-        request.restoration.epf_iters = 0;
         let executor = request.resources.executor();
         let mut evaluator = CurveEvaluator { calls: 0 };
         let target = PerceptualTarget::new(PerceptualMetric::Ssimulacra2, target).expect("target");
-        let outcome =
-            search_frame_perceptual(&frame, &atlas, &request, target, &mut evaluator, &executor)
-                .expect("search");
+        let outcome = search_frame_perceptual_with_budget(
+            &frame,
+            &atlas,
+            &request,
+            target,
+            &mut evaluator,
+            &executor,
+            budget,
+        )
+        .expect("search");
         (outcome, evaluator.calls)
+    }
+
+    /// Total pixel probes across every policy (the trace counts them all;
+    /// `stats.pixel_probes` is only the baseline solve's share).
+    fn total_pixel_probes(outcome: &QualityOutcome) -> u32 {
+        u32::try_from(
+            outcome
+                .trace
+                .iter()
+                .filter(|p| p.kind == ProbeKind::Pixel)
+                .count(),
+        )
+        .unwrap_or(u32::MAX)
     }
 
     #[test]
@@ -1177,6 +1660,7 @@ mod tests {
                     "{preset:?} {target}: achieved {}",
                     outcome.achieved_score
                 );
+                // The baseline solve stays inside the preset's per-solve caps.
                 assert!(
                     outcome.stats.pixel_probes <= budget.pixel_probes,
                     "{:?}",
@@ -1187,7 +1671,21 @@ mod tests {
                     "{:?}",
                     outcome.stats
                 );
-                assert_eq!(calls, outcome.stats.pixel_probes);
+                // The bank's trials are hard-capped too, and total probes never
+                // exceed the baseline cap plus one trial cap per trial.
+                assert!(
+                    outcome.stats.policy_trials <= budget.policy_trials,
+                    "{:?}",
+                    outcome.stats
+                );
+                let ceiling = budget.pixel_probes + budget.policy_trials * TRIAL_PIXEL_PROBES;
+                assert!(
+                    total_pixel_probes(&outcome) <= ceiling,
+                    "{preset:?} {target}: {} probes over ceiling {ceiling}",
+                    total_pixel_probes(&outcome)
+                );
+                // Every evaluator call is one pixel probe in the trace.
+                assert_eq!(calls, total_pixel_probes(&outcome));
                 assert!(!outcome.saturated);
                 assert!(!outcome.codestream.is_empty());
                 assert!(matches!(
@@ -1198,6 +1696,59 @@ mod tests {
                         | QualityStatus::RescuedFreshStructure
                 ));
             }
+        }
+    }
+
+    #[test]
+    fn fast_runs_no_policy_trials() {
+        let (outcome, _) = run(RateSearchPreset::Fast, 70.0);
+        assert_eq!(outcome.stats.policy_trials, 0);
+        assert!(outcome.policy_trials.is_empty());
+        // No probe is tagged with a non-baseline policy.
+        assert!(outcome.trace.iter().all(|p| p.policy_id == 0));
+    }
+
+    #[test]
+    fn the_balanced_bank_never_regresses_the_baseline_at_equal_score() {
+        // Under the curve evaluator a policy's score at a rung is fixed (it
+        // reads only the quantizer), so every alternative is feasible wherever
+        // the baseline is: the bank can only trade bytes, never score.
+        for target in [50.0, 70.0, 85.0] {
+            let preset = RateSearchPreset::Balanced;
+            // The bank is off by default on Balanced (measured wall too high),
+            // so opt it in explicitly here.
+            let full = QualityBudget {
+                policy_trials: 2,
+                ..QualityBudget::for_preset(preset)
+            };
+            let baseline_only = QualityBudget {
+                policy_trials: 0,
+                ..full
+            };
+            let (with_bank, _) = run_with_budget(preset, target, full);
+            let (without, _) = run_with_budget(preset, target, baseline_only);
+            assert!(
+                with_bank.achieved_score >= target,
+                "bank missed the target: {}",
+                with_bank.achieved_score
+            );
+            assert!(
+                with_bank.sizing.total <= without.sizing.total,
+                "target {target}: bank {} > baseline {}",
+                with_bank.sizing.total,
+                without.sizing.total
+            );
+            // The reported margin is exactly the saving.
+            assert_eq!(
+                with_bank.stats.policy_winner_margin_bytes,
+                without.sizing.total - with_bank.sizing.total
+            );
+            // The bank actually tried alternatives and listed them.
+            assert!(!with_bank.policy_trials.is_empty());
+            assert_eq!(
+                with_bank.stats.policy_trials as usize,
+                with_bank.policy_trials.len()
+            );
         }
     }
 
@@ -1228,6 +1779,30 @@ mod tests {
         let json = outcome.trace_json("fast");
         assert!(json.starts_with("{\"schema\":\"jpxl.quality-trace/1\""));
         assert!(json.contains("\"probes\":[{\"kind\":\"pixel\""));
+        assert!(json.contains("\"policy_id\":0"));
+        assert!(json.contains("\"policy_trials\":0"));
+        assert!(json.contains("\"policy_winner_margin_bytes\":"));
+        assert!(json.contains("\"policy_trials_detail\":["));
         assert!(json.contains("\"status\":\""));
+    }
+
+    #[test]
+    fn the_balanced_trace_lists_its_policy_trials() {
+        // Opt the bank in (off by default on Balanced).
+        let budget = QualityBudget {
+            policy_trials: 2,
+            ..QualityBudget::for_preset(RateSearchPreset::Balanced)
+        };
+        let (outcome, _) = run_with_budget(RateSearchPreset::Balanced, 70.0, budget);
+        assert!(!outcome.policy_trials.is_empty());
+        let json = outcome.trace_json("balanced");
+        // Every trial appears with its id and a `kept` flag.
+        for trial in &outcome.policy_trials {
+            assert!(json.contains(&format!("\"id\":{}", trial.id)));
+        }
+        // At most one trial is the winner.
+        assert!(outcome.policy_trials.iter().filter(|t| t.kept).count() <= 1);
+        // A non-baseline probe is tagged with its policy id.
+        assert!(outcome.trace.iter().any(|p| p.policy_id > 0));
     }
 }
