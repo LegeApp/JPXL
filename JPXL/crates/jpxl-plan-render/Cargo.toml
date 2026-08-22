@@ -1,0 +1,23 @@
+[package]
+name = "jpxl-plan-render"
+description = "Encoder-side reconstruction of a validated VarDCT pixel plan to canonical RGB, without serializing or decoding a codestream"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# Peer-tree rule (AGENTS.md section 6): this crate never depends on
+# `jpxl-decode`. It orchestrates the shared neutral kernels of `jpxl-core`
+# over `jpxl-encode`'s plan types, and its parity against `jpxl-decode`,
+# `djxl` and `jxl-oxide` is proved by tests, not by sharing code.
+[dependencies]
+jpxl-core = { path = "../jpxl-core", version = "0.3.0", default-features = false }
+jpxl-encode = { path = "../jpxl-encode", version = "0.3.0", default-features = false }
+
+[dev-dependencies]
+jpxl-decode.workspace = true
+jpxl-encode-policy.workspace = true
+jpxl-perceptual.workspace = true
+
+[lints]
+workspace = true

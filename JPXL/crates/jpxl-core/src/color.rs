@@ -669,6 +669,7 @@ impl OpsinInverse {
 
     /// Converts one XYB triple to linear sRGB.
     #[must_use]
+    #[inline(always)]
     pub fn convert(&self, xyb: [f32; 3]) -> [f32; 3] {
         let [x, y, b] = xyb;
         let gamma = [y + x, y - x, b];
@@ -705,6 +706,33 @@ impl OpsinInverse {
     /// samples in a longer plane are left untouched; the caller is expected to
     /// pass three equal-length planes.
     pub fn convert_planes(&self, x: &mut [f32], y: &mut [f32], b: &mut [f32]) {
+        #[cfg(target_arch = "x86_64")]
+        if crate::cpu::has_fma() {
+            // SAFETY: `convert_planes_fma` only requires that the host
+            // support AVX2 and FMA, which `has_fma` has just confirmed.
+            #[allow(unsafe_code)]
+            unsafe {
+                self.convert_planes_fma(x, y, b);
+            }
+            return;
+        }
+        self.convert_planes_impl(x, y, b);
+    }
+
+    /// [`Self::convert_planes`] compiled with hardware fused multiply-add;
+    /// the per-sample arithmetic is `mul_add` either way, so the result is
+    /// bit-identical.
+    ///
+    /// Calling it is `unsafe` unless the host supports AVX2 and FMA (see
+    /// [`crate::cpu::has_fma`]); that is the whole contract.
+    #[cfg(target_arch = "x86_64")]
+    #[target_feature(enable = "avx2,fma")]
+    fn convert_planes_fma(&self, x: &mut [f32], y: &mut [f32], b: &mut [f32]) {
+        self.convert_planes_impl(x, y, b);
+    }
+
+    #[inline(always)]
+    fn convert_planes_impl(&self, x: &mut [f32], y: &mut [f32], b: &mut [f32]) {
         for ((xp, yp), bp) in x.iter_mut().zip(y.iter_mut()).zip(b.iter_mut()) {
             let [r, g, bb] = self.convert([*xp, *yp, *bp]);
             *xp = r;

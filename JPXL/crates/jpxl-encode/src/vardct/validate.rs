@@ -38,8 +38,8 @@ use crate::vardct::geometry::VardctGeometry;
 use crate::vardct::ids::{LfGroupId, MAX_EXTRA_PRECISION, MAX_SHARPNESS};
 use crate::vardct::plan::{
     EmissionPlan, EntropyModelPlan, EntropyPlan, HfBlockContextPlan, LfGroupPlan,
-    MAX_BLOCK_CTX_MAP_LEN, MAX_CLUSTERS, MAX_NB_BLOCK_CTX, NUM_CHANNELS, QuantizedLfGroup,
-    SpatialPlan,
+    MAX_BLOCK_CTX_MAP_LEN, MAX_CLUSTERS, MAX_NB_BLOCK_CTX, NUM_CHANNELS, PixelPlan,
+    QuantizedFrameIr, QuantizedLfGroup, SectionLayout, SpatialPlan,
 };
 
 /// A plan that has passed every structural invariant.
@@ -73,6 +73,12 @@ impl ValidatedEmissionPlan {
     pub fn into_inner(self) -> EmissionPlan {
         self.0
     }
+
+    /// The pre-entropy part, already validated, sharing the payloads.
+    #[must_use]
+    pub fn pixels(&self) -> ValidatedPixelPlan {
+        ValidatedPixelPlan(self.0.pixels())
+    }
 }
 
 /// Checks every structural invariant and admits the plan to the writer.
@@ -84,8 +90,71 @@ impl ValidatedEmissionPlan {
 pub fn validate(plan: EmissionPlan) -> PlanResult<ValidatedEmissionPlan> {
     let geometry = plan.spatial.frame.geometry()?;
     validate_spatial(&plan.spatial, &geometry)?;
-    validate_quantized(&plan, &geometry)?;
+    validate_quantized(&plan.spatial, &plan.quantized, &geometry)?;
     validate_entropy(&plan.entropy, &geometry)?;
+    validate_sections(&plan, &geometry)?;
+    Ok(ValidatedEmissionPlan(plan))
+}
+
+/// A pre-entropy plan that has passed every non-entropy invariant: frame,
+/// LF groups, quantizer, cover, grids and the coefficient IR.
+///
+/// Built only by [`validate_pixels`] (or taken from an already validated
+/// emission plan by [`ValidatedEmissionPlan::pixels`]). It is what an
+/// encoder-side renderer accepts, so a probe that needs pixels cannot skip
+/// the checks a decoder's parse would enforce.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ValidatedPixelPlan(PixelPlan);
+
+impl ValidatedPixelPlan {
+    /// The plan.
+    #[must_use]
+    pub const fn plan(&self) -> &PixelPlan {
+        &self.0
+    }
+
+    /// The grids the plan was validated against.
+    ///
+    /// # Errors
+    ///
+    /// Cannot fail in practice — see [`ValidatedEmissionPlan::geometry`].
+    pub fn geometry(&self) -> PlanResult<VardctGeometry> {
+        self.0.spatial.frame.geometry()
+    }
+
+    /// Unwraps the plan.
+    #[must_use]
+    pub fn into_inner(self) -> PixelPlan {
+        self.0
+    }
+}
+
+/// Checks every invariant that does not involve entropy or sections.
+///
+/// # Errors
+///
+/// The first [`PlanError`] found, as [`validate`].
+pub fn validate_pixels(plan: PixelPlan) -> PlanResult<ValidatedPixelPlan> {
+    let geometry = plan.spatial.frame.geometry()?;
+    validate_spatial(&plan.spatial, &geometry)?;
+    validate_quantized(&plan.spatial, &plan.quantized, &geometry)?;
+    Ok(ValidatedPixelPlan(plan))
+}
+
+/// Attaches entropy models and a section layout to validated pixels and
+/// checks the two remaining invariant groups.
+///
+/// # Errors
+///
+/// The first entropy or section [`PlanError`] found.
+pub fn attach_and_validate_entropy(
+    pixels: ValidatedPixelPlan,
+    entropy: EntropyPlan,
+    sections: SectionLayout,
+) -> PlanResult<ValidatedEmissionPlan> {
+    let geometry = pixels.geometry()?;
+    validate_entropy(&entropy, &geometry)?;
+    let plan = EmissionPlan::from_pixels(&pixels.0, entropy, sections);
     validate_sections(&plan, &geometry)?;
     Ok(ValidatedEmissionPlan(plan))
 }
@@ -318,9 +387,13 @@ fn validate_lf_group(group: &LfGroupPlan, geometry: &VardctGeometry) -> PlanResu
 // Quantized IR
 // ---------------------------------------------------------------------------
 
-fn validate_quantized(plan: &EmissionPlan, geometry: &VardctGeometry) -> PlanResult<()> {
-    let planned = plan.spatial.lf_groups.len() as u64;
-    let ir = plan.quantized.lf_groups.len() as u64;
+fn validate_quantized(
+    spatial: &SpatialPlan,
+    quantized: &QuantizedFrameIr,
+    geometry: &VardctGeometry,
+) -> PlanResult<()> {
+    let planned = spatial.lf_groups.len() as u64;
+    let ir = quantized.lf_groups.len() as u64;
     if planned != ir {
         return Err(PlanError::shape(
             "quantized LF group count",
@@ -329,7 +402,7 @@ fn validate_quantized(plan: &EmissionPlan, geometry: &VardctGeometry) -> PlanRes
             ir,
         ));
     }
-    for (spatial, quantized) in plan.spatial.lf_groups.iter().zip(&plan.quantized.lf_groups) {
+    for (spatial, quantized) in spatial.lf_groups.iter().zip(&quantized.lf_groups) {
         validate_quantized_group(spatial, quantized, geometry)?;
     }
     Ok(())

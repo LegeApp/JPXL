@@ -19,6 +19,9 @@ use std::sync::OnceLock;
 /// Cached verdict of the one-time detection.
 static AVX2: OnceLock<bool> = OnceLock::new();
 
+/// Cached verdict of the one-time FMA detection.
+static FMA: OnceLock<bool> = OnceLock::new();
+
 /// Does the running host support AVX2, and has it not been disabled through
 /// `JPXL_DISABLE_AVX2`?
 ///
@@ -27,6 +30,32 @@ static AVX2: OnceLock<bool> = OnceLock::new();
 #[must_use]
 pub fn has_avx2() -> bool {
     *AVX2.get_or_init(detect_avx2)
+}
+
+/// Does the running host support AVX2 *and* FMA, and has dispatch not been
+/// disabled through `JPXL_DISABLE_AVX2`?
+///
+/// Kernels that spell out `mul_add` are bit-identical with or without a
+/// fused instruction — `f32::mul_add` is a single rounding either way — so
+/// this, too, is a pure speed choice: without it every `mul_add` is a
+/// library call on baseline x86-64.
+#[must_use]
+pub fn has_fma() -> bool {
+    *FMA.get_or_init(detect_fma)
+}
+
+fn detect_fma() -> bool {
+    if std::env::var_os("JPXL_DISABLE_AVX2").is_some() {
+        return false;
+    }
+    #[cfg(target_arch = "x86_64")]
+    {
+        std::arch::is_x86_feature_detected!("avx2") && std::arch::is_x86_feature_detected!("fma")
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        false
+    }
 }
 
 fn detect_avx2() -> bool {
@@ -50,5 +79,6 @@ mod tests {
     #[test]
     fn detection_is_stable() {
         assert_eq!(has_avx2(), has_avx2());
+        assert_eq!(has_fma(), has_fma());
     }
 }

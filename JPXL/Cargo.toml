@@ -10,6 +10,8 @@ members = [
     "crates/jpxl-encode-policy",
     "crates/jpxl-cli",
     "crates/jpxl-conformance",
+    "crates/jpxl-perceptual",
+    "crates/jpxl-plan-render",
 ]
 
 [workspace.package]
@@ -28,6 +30,8 @@ jpxl-encode = { path = "crates/jpxl-encode", version = "0.3.0" }
 jpxl-encode-policy = { path = "crates/jpxl-encode-policy", version = "0.3.0" }
 jpxl-conformance = { path = "crates/jpxl-conformance", version = "0.3.0" }
 jpxl = { path = "crates/jpxl", version = "0.3.0" }
+jpxl-perceptual = { path = "crates/jpxl-perceptual", version = "0.3.0" }
+jpxl-plan-render = { path = "crates/jpxl-plan-render", version = "0.3.0" }
 # Coarse group/section parallelism (EncodeResources ordered_map).
 rayon = "1.10"
 # Portable SIMD for leaf kernels (DCT butterflies, Gaborish, quantize).
