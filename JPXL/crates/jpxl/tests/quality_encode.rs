@@ -292,3 +292,56 @@ fn the_balanced_bank_is_never_larger_than_the_baseline_only_result() {
         base.sizing.total - bank.sizing.total
     );
 }
+
+/// PR 7: the terminal reducer, verified by the real renderer and metric,
+/// never emits a stream below the target and never a larger one than the
+/// same search without it.
+#[test]
+fn the_terminal_reducer_keeps_the_target_and_never_grows_the_stream() {
+    use jpxl_encode_policy::reducer::ReducerLimits;
+    use jpxl_encode_policy::request::{PerceptualMetric, PerceptualTarget};
+    use jpxl_encode_policy::{
+        AnalysisAtlas, EncodeRequest, PreparedFrame, QualityBudget, RateSearchPreset,
+        search_frame_perceptual_with_budget,
+    };
+    use jpxl_perceptual::PlanRenderEvaluator;
+
+    let (w, h) = (320u32, 240u32);
+    let rgb = synthetic(w, h, 9);
+    let request = EncodeRequest::for_quality(RateSearchPreset::Balanced);
+    let executor = request.resources.executor();
+    let target = PerceptualTarget::new(PerceptualMetric::Ssimulacra2, 75.0).unwrap();
+    let base = QualityBudget::for_preset(RateSearchPreset::Balanced);
+    let solve = |budget| {
+        let frame = PreparedFrame::from_srgb8_with(w, h, &rgb, Some(&executor)).unwrap();
+        let atlas = AnalysisAtlas::analyze(&frame);
+        let mut ev = PlanRenderEvaluator::from_srgb8(w, h, &rgb, &executor).unwrap();
+        search_frame_perceptual_with_budget(
+            &frame, &atlas, &request, target, &mut ev, &executor, budget,
+        )
+        .unwrap()
+    };
+    let plain = solve(QualityBudget {
+        reducer: None,
+        ..base
+    });
+    let reduced = solve(QualityBudget {
+        reducer: Some(ReducerLimits::QUALITY),
+        ..base
+    });
+    eprintln!(
+        "plain {} bytes at {:.3}; reduced {} bytes at {:.3} ({} evaluations, {} edits)",
+        plain.sizing.total,
+        plain.achieved_score,
+        reduced.sizing.total,
+        reduced.achieved_score,
+        reduced.stats.reducer_evaluations,
+        reduced.stats.reducer_edits
+    );
+    assert!(reduced.achieved_score >= 75.0, "{}", reduced.achieved_score);
+    assert!(reduced.sizing.total <= plain.sizing.total);
+    assert!(reduced.stats.reducer_evaluations <= ReducerLimits::QUALITY.max_evaluations);
+    // The reported score is what the emitted stream scores.
+    let independent = rescore(w, h, &rgb, &reduced.codestream);
+    assert!((independent - reduced.achieved_score).abs() < 1e-6);
+}

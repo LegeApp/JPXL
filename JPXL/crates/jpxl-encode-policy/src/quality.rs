@@ -32,6 +32,7 @@ use crate::quality_predictor::{
     FALLBACK_LOG_FIT, FLAT_BUCKET_EDGES, INITIAL_RUNG_TABLE, LUMA_BUCKET_EDGES,
 };
 use crate::rate::{QuantizerChoice, Rung, effective_scale, rung_for_effective_scale};
+use crate::reducer::ReducerLimits;
 use crate::request::{EncodeRequest, PerceptualTarget, RateSearchPreset};
 use crate::{AnalysisAtlas, AnchorReuse, EntropySearch, PreparedFrame, StructuralAnchor};
 use jpxl_encode::vardct::{
@@ -129,6 +130,11 @@ pub struct QualityBudget {
     /// tolerance band, and aiming a whole point high costs bytes on every
     /// encode.
     pub reserve: f64,
+    /// The terminal coefficient reducer's work bounds, or `None` to skip it.
+    /// Runs once on the winning finalist and keeps the reduced stream only if
+    /// its exact size is smaller and its canonical score still meets the
+    /// target.
+    pub reducer: Option<ReducerLimits>,
 }
 
 /// Hard pixel-probe cap of one policy-bank trial: probe the baseline crossing
@@ -159,6 +165,12 @@ pub const MIN_TRIAL_SAVING_FRACTION: f64 = 0.005;
 /// [`search_frame_perceptual_with_budget`] to opt in.
 pub const BALANCED_DEFAULT_POLICY_TRIALS: u32 = 0;
 
+/// Whether Balanced runs the terminal reducer by default. Off until PR 7's
+/// gate (matched-score bytes down on the locked holdout with zero floor
+/// violations and bounded wall) is measured and recorded; the feature-gated
+/// Quality effort always runs it.
+pub const BALANCED_DEFAULT_REDUCER: Option<ReducerLimits> = None;
+
 impl QualityBudget {
     /// The budget of a preset.
     ///
@@ -175,6 +187,7 @@ impl QualityBudget {
                 structural_builds: 2,
                 policy_trials: 0,
                 reserve: 0.06,
+                reducer: None,
             },
             RateSearchPreset::Balanced => Self {
                 pixel_probes: 5,
@@ -182,6 +195,7 @@ impl QualityBudget {
                 structural_builds: 2,
                 policy_trials: BALANCED_DEFAULT_POLICY_TRIALS,
                 reserve: 0.03,
+                reducer: BALANCED_DEFAULT_REDUCER,
             },
             RateSearchPreset::Quality => Self {
                 pixel_probes: 10,
@@ -189,6 +203,7 @@ impl QualityBudget {
                 structural_builds: 3,
                 policy_trials: 11,
                 reserve: 0.02,
+                reducer: Some(ReducerLimits::QUALITY),
             },
         }
     }
@@ -307,6 +322,12 @@ pub struct QualityStats {
     pub entropy_ms: u64,
     /// Milliseconds in exact emission.
     pub emit_ms: u64,
+    /// Canonical evaluations the terminal reducer spent.
+    pub reducer_evaluations: u32,
+    /// Coefficients the terminal reducer removed in the kept stream.
+    pub reducer_edits: u32,
+    /// Exact bytes the terminal reducer saved (0 when its stream was not kept).
+    pub reducer_bytes_saved: u64,
 }
 
 /// What a completed score-targeted search chose.
@@ -407,7 +428,8 @@ impl QualityOutcome {
             "{{\"schema\":\"jpxl.quality-trace/1\",\"metric_version\":\"{}\",\"score_guard\":{},\
              \"effort\":\"{}\",\"source_features\":{},\"predicted_rung\":{},\"bracket\":{},\
              \"pixel_probes\":{},\"exact_prices\":{},\"structural_builds\":{},\"policy_trials\":{},\
-             \"policy_winner_margin_bytes\":{},\"requested_score\":{},\"achieved_score\":{},\
+             \"policy_winner_margin_bytes\":{},\"reducer\":{{\"evaluations\":{},\"edits\":{},\"bytes_saved\":{}}},\
+             \"requested_score\":{},\"achieved_score\":{},\
              \"guard_margin\":{},\"final_exact_bytes\":{},\"status\":\"{}\",\"saturated\":{},\
              \"wall_by_phase\":{{\"plan\":{},\"render_metric\":{},\"entropy\":{},\"emit\":{}}},\
              \"policy_trials_detail\":[{}],\"probes\":[{}]}}",
@@ -424,6 +446,9 @@ impl QualityOutcome {
             self.stats.structural_builds,
             self.stats.policy_trials,
             self.stats.policy_winner_margin_bytes,
+            self.stats.reducer_evaluations,
+            self.stats.reducer_edits,
+            self.stats.reducer_bytes_saved,
             self.requested_score,
             self.achieved_score,
             self.achieved_score - self.requested_score - self.guard,
@@ -1202,6 +1227,7 @@ fn solve_trial(
             structural_builds: 2,
             policy_trials: 0,
             reserve,
+            reducer: None,
         },
         enable_cfl,
         structure_tier,
@@ -1269,6 +1295,85 @@ fn fold_timings(combined: &mut QualityStats, trial: &QualityStats) {
     combined.entropy_ms = combined.entropy_ms.saturating_add(trial.entropy_ms);
     combined.emit_ms = combined.emit_ms.saturating_add(trial.emit_ms);
 }
+
+/// Runs the terminal reducer on the winning finalist and replaces it when the
+/// reduced stream is exactly smaller. The reducer verifies every accepted
+/// batch with the canonical score, so the replacement always meets
+/// `threshold`; its exact price counts as one more exact price in the trace.
+#[allow(clippy::too_many_arguments)]
+fn reduce_winner(
+    winner: &mut PricedFinalist,
+    request: &EncodeRequest,
+    frame: &PreparedFrame,
+    transform_frame: &PreparedFrame,
+    atlas: &AnalysisAtlas,
+    evaluator: &mut dyn PerceptualEvaluator,
+    executor: &jpxl_encode::EncodeExecutor,
+    threshold: f64,
+    finalist_entropy: EntropySearch,
+    limits: ReducerLimits,
+    stats: &mut QualityStats,
+    trace: &mut Vec<QualityProbe>,
+) -> Result<()> {
+    let geometry = winner
+        .plan
+        .geometry()
+        .map_err(|_| PolicyError::Unsupported {
+            what: "a finalist whose geometry cannot be derived",
+        })?;
+    let pixels = winner.plan.pixels();
+    let start = Instant::now();
+    let reduced = crate::reducer::reduce_terminal(
+        &pixels,
+        &geometry,
+        &winner.plan.plan().entropy,
+        evaluator,
+        threshold,
+        limits,
+    )?;
+    stats.render_metric_ms = stats
+        .render_metric_ms
+        .saturating_add(u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX));
+    let Some(reduced) = reduced else {
+        return Ok(());
+    };
+    stats.reducer_evaluations = reduced.stats.evaluations;
+
+    let ctx = CandidateSearchContext::new(frame, transform_frame, atlas, request, executor);
+    let entropy_start = Instant::now();
+    let plan = ctx.attach_entropy(&reduced.pixels, &geometry, finalist_entropy)?;
+    let entropy_ms = u64::try_from(entropy_start.elapsed().as_millis()).unwrap_or(u64::MAX);
+    stats.entropy_ms = stats.entropy_ms.saturating_add(entropy_ms);
+    let emit_start = Instant::now();
+    let emission = emit_codestream_with_executor(&plan, executor)?;
+    let emit_ms = u64::try_from(emit_start.elapsed().as_millis()).unwrap_or(u64::MAX);
+    stats.emit_ms = stats.emit_ms.saturating_add(emit_ms);
+    stats.exact_prices = stats.exact_prices.saturating_add(1);
+    let kept = emission.sizing.total < winner.sizing.total;
+    trace.push(QualityProbe {
+        policy_id: REDUCER_POLICY_ID,
+        kind: ProbeKind::Exact,
+        quantizer: winner.quantizer,
+        effective_scale: effective_scale(winner.quantizer.rung),
+        score: Some(reduced.score),
+        bytes: Some(emission.sizing.total),
+        structure: winner.structure,
+        feasible: Some(true),
+        millis: entropy_ms.saturating_add(emit_ms),
+    });
+    if kept {
+        stats.reducer_edits = reduced.stats.edits_applied;
+        stats.reducer_bytes_saved = winner.sizing.total.saturating_sub(emission.sizing.total);
+        winner.score = reduced.score;
+        winner.plan = plan;
+        winner.bytes = emission.bytes;
+        winner.sizing = emission.sizing;
+    }
+    Ok(())
+}
+
+/// The `policy_id` the trace gives the reducer's exact price.
+pub const REDUCER_POLICY_ID: u32 = u32::MAX;
 
 /// Runs the score-targeted search over a prepared frame at the preset's budget.
 ///
@@ -1473,6 +1578,29 @@ pub fn search_frame_perceptual_with_budget(
         entry.kept = true;
     }
     stats.policy_winner_margin_bytes = baseline_bytes.saturating_sub(winner.sizing.total);
+
+    // --- Terminal reducer (PR 7): spend the winner's reserve on bytes. ---
+    if let Some(limits) = budget.reducer
+        && !saturated
+        && !under_target
+        && winner.feasible
+    {
+        let winner_request = winner_policy.apply(request);
+        reduce_winner(
+            &mut winner,
+            &winner_request,
+            frame,
+            transform_frame,
+            atlas,
+            evaluator,
+            executor,
+            target_score + DEFAULT_SCORE_GUARD,
+            finalist_entropy,
+            limits,
+            &mut stats,
+            &mut trace,
+        )?;
+    }
 
     let threshold = target_score + DEFAULT_SCORE_GUARD;
     let status = if saturated {
@@ -1784,6 +1912,49 @@ mod tests {
         assert!(json.contains("\"policy_winner_margin_bytes\":"));
         assert!(json.contains("\"policy_trials_detail\":["));
         assert!(json.contains("\"status\":\""));
+    }
+
+    #[test]
+    fn the_reducer_never_exceeds_its_evaluation_cap_and_never_grows_the_stream() {
+        let limits = ReducerLimits {
+            max_evaluations: 3,
+            max_rounds: 2,
+            initial_batch: 64,
+            min_batch: 8,
+            max_batch: 256,
+            key_floor: 0.0,
+        };
+        let with = QualityBudget {
+            reducer: Some(limits),
+            ..QualityBudget::for_preset(RateSearchPreset::Balanced)
+        };
+        let without = QualityBudget {
+            reducer: None,
+            ..QualityBudget::for_preset(RateSearchPreset::Balanced)
+        };
+        let (reduced, _) = run_with_budget(RateSearchPreset::Balanced, 70.0, with);
+        let (plain, _) = run_with_budget(RateSearchPreset::Balanced, 70.0, without);
+        assert!(reduced.stats.reducer_evaluations <= limits.max_evaluations);
+        assert!(reduced.achieved_score >= 70.0 + DEFAULT_SCORE_GUARD);
+        assert!(reduced.sizing.total <= plain.sizing.total);
+        assert_eq!(
+            reduced.stats.reducer_bytes_saved,
+            plain.sizing.total - reduced.sizing.total
+        );
+        assert_eq!(
+            reduced.chosen, plain.chosen,
+            "the reducer keeps the quantizer"
+        );
+        let json = reduced.trace_json("balanced");
+        assert!(json.contains("\"reducer\":{\"evaluations\":"));
+        assert!(
+            reduced
+                .trace
+                .iter()
+                .any(|p| p.policy_id == REDUCER_POLICY_ID),
+            "the reducer's exact price is traced"
+        );
+        assert!(plain.trace.iter().all(|p| p.policy_id != REDUCER_POLICY_ID));
     }
 
     #[test]

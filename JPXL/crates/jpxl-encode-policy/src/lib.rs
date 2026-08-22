@@ -77,6 +77,7 @@ pub mod quality_features;
 pub mod quality_predictor;
 pub mod quantize;
 pub mod rate;
+pub mod reducer;
 pub mod regret;
 pub mod request;
 pub mod source;
