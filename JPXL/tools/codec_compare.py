@@ -32,12 +32,33 @@ except ImportError:  # Windows: timing remains available, CPU/RSS are null.
 
 
 CORPUS_SCHEMA = "jpxl.codec-corpus/1"
-RECORD_SCHEMA = "jpxl.codec-comparison/2"
+RECORD_SCHEMA = "jpxl.codec-comparison/3"
+# /3 adds the perceptual-quality axis (requested/achieved score, status, probe
+# and price counts, and an optional per-point wall_by_phase trace) to jpxl curve
+# rows.  Distance/bpp curve rows and timing rows keep the identical shape they
+# had under /2, so /2 files stay readable; only the schema string moved forward.
+KNOWN_RECORD_SCHEMAS = {"jpxl.codec-comparison/2", "jpxl.codec-comparison/3"}
 TIMING_SCHEMA = "jpxl.codec-timing-plan/1"
 SUMMARY_SCHEMA = "jpxl.codec-comparison-summary/1"
+QUALITY_SUMMARY_SCHEMA = "jpxl.codec-quality-summary/1"
+QUALITY_TRACE_SCHEMA = "jpxl.quality-trace/1"
+METRIC_VARIATION_SCHEMA = "jpxl.metric-variation/1"
+METRIC_VARIATION_INPUT_SCHEMA = "jpxl.metric-variation-input/1"
 RISK_INPUT_SCHEMA = "jpxl.edge-risk-input/1"
 RISK_REPORT_SCHEMA = "jpxl.edge-risk-report/1"
 DEFAULT_SEED = 0x4A50584C
+QUALITY_STATUSES = frozenset(
+    {
+        "met",
+        "met_adjacent_rungs",
+        "met_work_cap",
+        "saturated_floor",
+        "saturated_top",
+        "rescued_fresh_structure",
+        "routed_to_lossless",
+        "unsupported_too_small",
+    }
+)
 
 
 class HarnessError(RuntimeError):
@@ -60,6 +81,16 @@ def parse_csv_floats(value: str) -> list[float]:
     if not result or any(not math.isfinite(item) or item <= 0.0 for item in result):
         raise argparse.ArgumentTypeError("expected one or more positive finite numbers")
     return result
+
+
+def quality_score(value: str) -> float:
+    try:
+        score = float(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(str(error)) from error
+    if not math.isfinite(score) or score < 0.0 or score > 100.0:
+        raise argparse.ArgumentTypeError("quality scores must be finite and within [0, 100]")
+    return score
 
 
 def ppm_dimensions(path: Path) -> tuple[int, int]:
@@ -461,13 +492,14 @@ def binary_info(path: Path) -> dict[str, Any]:
     }
 
 
-def run_checked(command: Sequence[str]) -> str:
+def run_checked(command: Sequence[str], env: dict[str, str] | None = None) -> str:
     process = subprocess.run(
         list(command),
         check=False,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
+        env=env,
     )
     if process.returncode != 0:
         raise HarnessError(f"command failed ({process.returncode}): {' '.join(command)}\n{process.stdout}")
@@ -497,8 +529,10 @@ def write_jsonl(path: Path, records: Iterable[dict[str, Any]], append: bool = Fa
 
 def load_jsonl(path: Path) -> list[dict[str, Any]]:
     records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
-    if any(record.get("schema") != RECORD_SCHEMA for record in records):
-        raise HarnessError(f"every record must use schema {RECORD_SCHEMA}")
+    if any(record.get("schema") not in KNOWN_RECORD_SCHEMAS for record in records):
+        raise HarnessError(
+            f"every record must use one of {sorted(KNOWN_RECORD_SCHEMAS)}"
+        )
     return records
 
 
@@ -600,30 +634,134 @@ def codec_command(
     ]
 
 
+def quality_encode_command(
+    binary: Path,
+    source: Path,
+    output: Path,
+    score: float,
+    threads: int,
+    effort: str,
+) -> list[str]:
+    """The perceptual VarDCT encode: a minimum SSIMULACRA2 target of ``score``."""
+    return [
+        str(binary),
+        "encode",
+        "--quality",
+        f"{score:.4f}",
+        "--effort",
+        effort,
+        "--threads",
+        str(threads),
+        str(source),
+        str(output),
+    ]
+
+
+def parse_quality_line(output: str) -> dict[str, Any]:
+    """Parse the single ``quality_target=... status=...`` summary line.
+
+    The line may be surrounded by other diagnostic output; each field is matched
+    on its own so ordering and neighbours do not matter.
+    """
+
+    def find(name: str, cast: Any) -> Any:
+        match = re.search(rf"(?:^|\s){name}=(\S+)", output)
+        return cast(match.group(1)) if match else None
+
+    requested = find("quality_target", float)
+    achieved = find("achieved", float)
+    status = find("status", str)
+    if requested is None or achieved is None or status is None:
+        raise HarnessError("jpxl encode did not print a perceptual quality line")
+    return {
+        "requested_score": requested,
+        "achieved_score": achieved,
+        "bytes": find("bytes", int),
+        "metric": find("metric", str),
+        "effort": find("effort", str),
+        "probes": find("probes", int),
+        "prices": find("prices", int),
+        "status": status,
+    }
+
+
+def read_quality_trace(path: Path) -> dict[str, Any]:
+    """Return the ``jpxl.quality-trace/1`` object written to a trace file."""
+    records = [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    for record in records:
+        if record.get("schema") == QUALITY_TRACE_SCHEMA:
+            return record
+    raise HarnessError(f"no {QUALITY_TRACE_SCHEMA} record in trace file {path}")
+
+
 def curve_point(
     args: argparse.Namespace,
     image: dict[str, Any],
     codec: str,
     setting: float,
     binaries: dict[str, dict[str, Any]],
+    axis: str = "bpp",
 ) -> dict[str, Any]:
     source = Path(image["path"])
     pixels = image["width"] * image["height"]
     binary = args.jpxl if codec == "jpxl" else args.cjxl
     threads = args.threads if codec == "jpxl" else args.cjxl_threads
-    stem = f"{image['id']}-{codec}-{setting:.10g}"
+    quality_mode = codec == "jpxl" and axis == "quality"
+    label = f"q{setting:.10g}" if quality_mode else f"{setting:.10g}"
+    stem = f"{image['id']}-{codec}-{label}"
     encoded = args.work_dir / f"{stem}.jxl"
     decoded = args.work_dir / f"{stem}.ppm"
-    command = codec_command(
-        codec, binary, source, encoded, setting, threads, args.preset, args.effort
-    )
-    run_checked(command)
+    quality_line: dict[str, Any] | None = None
+    trace_extra: dict[str, Any] = {}
+    if quality_mode:
+        command = quality_encode_command(
+            binary, source, encoded, setting, threads, args.quality_effort
+        )
+        env: dict[str, str] | None = None
+        trace_path: Path | None = None
+        if getattr(args, "quality_trace", True):
+            trace_path = args.work_dir / f"{stem}.trace.jsonl"
+            env = dict(os.environ)
+            env["JPXL_QUALITY_TRACE"] = str(trace_path)
+        stdout = run_checked(command, env=env)
+        quality_line = parse_quality_line(stdout)
+        if trace_path is not None and trace_path.is_file():
+            trace = read_quality_trace(trace_path)
+            trace_extra = {
+                "trace_path": str(trace_path),
+                "wall_by_phase": trace.get("wall_by_phase"),
+            }
+    else:
+        command = codec_command(
+            codec, binary, source, encoded, setting, threads, args.preset, args.effort
+        )
+        run_checked(command)
     run_checked([str(args.djxl), str(encoded), str(decoded)])
     metrics = metrics_from_output(
         run_checked([str(args.jpxl), "compare", str(source), str(decoded)])
     )
     size = encoded.stat().st_size
-    return {
+    if quality_mode:
+        setting_block = {
+            "kind": "quality",
+            "value": setting,
+            "preset": None,
+            "effort": args.quality_effort,
+            "threads": threads,
+        }
+    else:
+        setting_block = {
+            "kind": "bpp" if codec == "jpxl" else "distance",
+            "value": setting,
+            "preset": args.preset if codec == "jpxl" else None,
+            "effort": args.effort if codec == "cjxl" else None,
+            "threads": threads,
+        }
+    record = {
         "schema": RECORD_SCHEMA,
         "kind": "curve",
         "input": {
@@ -638,13 +776,7 @@ def curve_point(
         "codec": codec,
         "binary": binaries[codec],
         "decoder": binaries["djxl"],
-        "setting": {
-            "kind": "bpp" if codec == "jpxl" else "distance",
-            "value": setting,
-            "preset": args.preset if codec == "jpxl" else None,
-            "effort": args.effort if codec == "cjxl" else None,
-            "threads": threads,
-        },
+        "setting": setting_block,
         "rate_outcome": {
             "bytes": size,
             "bpp": size * 8.0 / pixels,
@@ -653,6 +785,20 @@ def curve_point(
         "metrics": metrics,
         "command": command,
     }
+    if quality_mode and quality_line is not None:
+        record.update(
+            {
+                "requested_score": quality_line["requested_score"],
+                "achieved_score": quality_line["achieved_score"],
+                "quality_status": quality_line["status"],
+                "quality_metric": quality_line["metric"],
+                "reported_bytes": quality_line["bytes"],
+                "probes": quality_line["probes"],
+                "prices": quality_line["prices"],
+            }
+        )
+        record.update(trace_extra)
+    return record
 
 
 def _observed(record: dict[str, Any], field: str) -> float | None:
@@ -723,11 +869,19 @@ def curve_records(args: argparse.Namespace) -> list[dict[str, Any]]:
         "djxl": binary_info(args.djxl),
     }
     args.work_dir.mkdir(parents=True, exist_ok=True)
+    quality_scores = getattr(args, "quality", None)
     records: list[dict[str, Any]] = []
     for image in manifest["images"]:
-        image_records = [
-            curve_point(args, image, "jpxl", setting, binaries) for setting in args.bpp
-        ]
+        if quality_scores:
+            image_records = [
+                curve_point(args, image, "jpxl", score, binaries, axis="quality")
+                for score in quality_scores
+            ]
+        else:
+            image_records = [
+                curve_point(args, image, "jpxl", setting, binaries)
+                for setting in args.bpp
+            ]
         image_records.extend(
             curve_point(args, image, "cjxl", setting, binaries) for setting in args.distance
         )
@@ -798,7 +952,13 @@ def interpolate_metric_records(
     return min(candidates, key=lambda candidate: candidate["metric_span"], default=None)
 
 
-def summarize_records(records: list[dict[str, Any]]) -> tuple[dict[str, Any], dict[str, Any]]:
+def _is_quality_record(record: dict[str, Any]) -> bool:
+    return record.get("setting", {}).get("kind") == "quality"
+
+
+def summarize_records(
+    records: list[dict[str, Any]], score_guard: float = 0.0
+) -> tuple[dict[str, Any], dict[str, Any]]:
     by_image: dict[str, dict[str, list[dict[str, Any]]]] = {}
     for record in records:
         if record.get("kind") != "curve":
@@ -807,9 +967,15 @@ def summarize_records(records: list[dict[str, Any]]) -> tuple[dict[str, Any], di
         by_image.setdefault(image_id, {}).setdefault(record["codec"], []).append(record)
     rows: list[dict[str, Any]] = []
     timing_jobs: list[dict[str, Any]] = []
+    quality_images: list[dict[str, Any]] = []
     for image_id, codecs in sorted(by_image.items()):
-        jpxl = codecs.get("jpxl", [])
         cjxl = codecs.get("cjxl", [])
+        jpxl_quality = [r for r in codecs.get("jpxl", []) if _is_quality_record(r)]
+        if jpxl_quality and len(cjxl) >= 2:
+            quality_images.append(
+                quality_image_summary(image_id, jpxl_quality, cjxl, score_guard)
+            )
+        jpxl = [r for r in codecs.get("jpxl", []) if not _is_quality_record(r)]
         if len(jpxl) < 1 or len(cjxl) < 2:
             continue
         byte_points = [(float(r["rate_outcome"]["bytes"]), r) for r in cjxl]
@@ -878,10 +1044,15 @@ def summarize_records(records: list[dict[str, Any]]) -> tuple[dict[str, Any], di
                         },
                     }
                 )
-    return (
-        {"schema": SUMMARY_SCHEMA, "rows": rows},
-        {"schema": TIMING_SCHEMA, "jobs": timing_jobs},
-    )
+    summary: dict[str, Any] = {"schema": SUMMARY_SCHEMA, "rows": rows}
+    if quality_images:
+        summary["quality"] = {
+            "schema": QUALITY_SUMMARY_SCHEMA,
+            "score_guard": score_guard,
+            "images": quality_images,
+            "aggregate": quality_aggregate(quality_images),
+        }
+    return (summary, {"schema": TIMING_SCHEMA, "jobs": timing_jobs})
 
 
 def _mix_metric(a: dict[str, Any], b: dict[str, Any], name: str, fraction: float) -> float | None:
@@ -1139,6 +1310,380 @@ def nearest_rank(values: Sequence[float], quantile: float) -> float:
     return values[index]
 
 
+def geomean(values: Sequence[float]) -> float | None:
+    kept = [float(value) for value in values if value is not None and value > 0.0]
+    if not kept:
+        return None
+    return math.exp(sum(math.log(value) for value in kept) / len(kept))
+
+
+def count_distribution(values: Sequence[Any]) -> dict[str, int]:
+    distribution: dict[str, int] = {}
+    for value in values:
+        key = str(value)
+        distribution[key] = distribution.get(key, 0) + 1
+    return distribution
+
+
+def _solve_linear(matrix: list[list[float]], vector: list[float]) -> list[float]:
+    size = len(vector)
+    augmented = [row[:] + [vector[index]] for index, row in enumerate(matrix)]
+    for column in range(size):
+        pivot = max(range(column, size), key=lambda r: abs(augmented[r][column]))
+        if abs(augmented[pivot][column]) < 1e-15:
+            raise HarnessError("singular system in polynomial fit")
+        augmented[column], augmented[pivot] = augmented[pivot], augmented[column]
+        pivot_value = augmented[column][column]
+        for row in range(size):
+            if row == column:
+                continue
+            factor = augmented[row][column] / pivot_value
+            if factor == 0.0:
+                continue
+            for col in range(column, size + 1):
+                augmented[row][col] -= factor * augmented[column][col]
+    return [augmented[i][size] / augmented[i][i] for i in range(size)]
+
+
+def polyfit(xs: Sequence[float], ys: Sequence[float], degree: int) -> list[float]:
+    """Least-squares polynomial fit; returns coefficients low order first."""
+    width = degree + 1
+    power_sums = [0.0] * (2 * degree + 1)
+    for x in xs:
+        power = 1.0
+        for index in range(2 * degree + 1):
+            power_sums[index] += power
+            power *= x
+    matrix = [[power_sums[i + j] for j in range(width)] for i in range(width)]
+    vector = [0.0] * width
+    for x, y in zip(xs, ys):
+        power = 1.0
+        for index in range(width):
+            vector[index] += y * power
+            power *= x
+    return _solve_linear(matrix, vector)
+
+
+def _polyint(coefficients: Sequence[float], low: float, high: float) -> float:
+    total = 0.0
+    for index, coefficient in enumerate(coefficients):
+        power = index + 1
+        total += coefficient / power * (high**power - low**power)
+    return total
+
+
+def bd_rate(
+    reference_points: Sequence[tuple[float, float]],
+    test_points: Sequence[tuple[float, float]],
+) -> float | None:
+    """Bjontegaard delta-rate of ``test`` over ``reference`` on a score axis.
+
+    Each point is ``(quality_score, bytes)``.  Fits a cubic of log10(bytes)
+    versus score for each curve, integrates the gap over the overlapping score
+    range, and reports the mean rate difference as a percentage.  Positive means
+    the test curve spends more bytes at equal quality.
+    """
+
+    def prepare(points: Sequence[tuple[float, float]]) -> tuple[list[float], list[float]]:
+        by_score: dict[float, float] = {}
+        for score, byte_count in points:
+            if byte_count and byte_count > 0.0:
+                by_score[float(score)] = float(byte_count)
+        ordered = sorted(by_score.items())
+        return (
+            [score for score, _ in ordered],
+            [math.log10(byte_count) for _, byte_count in ordered],
+        )
+
+    ref_x, ref_y = prepare(reference_points)
+    test_x, test_y = prepare(test_points)
+    if len(ref_x) < 4 or len(test_x) < 4:
+        return None
+    low = max(min(ref_x), min(test_x))
+    high = min(max(ref_x), max(test_x))
+    if high <= low:
+        return None
+    ref_fit = polyfit(ref_x, ref_y, 3)
+    test_fit = polyfit(test_x, test_y, 3)
+    average = (_polyint(test_fit, low, high) - _polyint(ref_fit, low, high)) / (high - low)
+    return (10.0**average - 1.0) * 100.0
+
+
+def quality_image_summary(
+    image_id: str,
+    jpxl_quality: Sequence[dict[str, Any]],
+    cjxl: Sequence[dict[str, Any]],
+    score_guard: float,
+) -> dict[str, Any]:
+    ordered = sorted(jpxl_quality, key=lambda record: float(record["requested_score"]))
+    targets: list[dict[str, Any]] = []
+    ratios: list[float] = []
+    for own in ordered:
+        requested = float(own["requested_score"])
+        achieved = float(own["achieved_score"])
+        jpxl_bytes = float(own["rate_outcome"]["bytes"])
+        match = interpolate_metric_records(
+            cjxl, "ssimulacra2", achieved, increasing_with_setting=False
+        )
+        matched_bytes = float(match["value"]) if match is not None else None
+        ratio = jpxl_bytes / matched_bytes if matched_bytes else None
+        if ratio is not None:
+            ratios.append(ratio)
+        targets.append(
+            {
+                "requested_score": requested,
+                "achieved_score": achieved,
+                "overshoot": achieved - requested,
+                "floor_violation": achieved < requested - score_guard,
+                "bytes": own["rate_outcome"]["bytes"],
+                "bpp": own["rate_outcome"]["bpp"],
+                "status": own.get("quality_status"),
+                "probes": own.get("probes"),
+                "prices": own.get("prices"),
+                "matched_cjxl_bytes": matched_bytes,
+                "matched_cjxl_distance": match["setting"] if match is not None else None,
+                "byte_ratio_vs_cjxl": ratio,
+                "wall_by_phase": own.get("wall_by_phase"),
+            }
+        )
+    jpxl_points = [
+        (float(own["achieved_score"]), float(own["rate_outcome"]["bytes"]))
+        for own in ordered
+        if own.get("achieved_score") is not None
+    ]
+    cjxl_points = [
+        (float(record["metrics"]["ssimulacra2"]), float(record["rate_outcome"]["bytes"]))
+        for record in cjxl
+        if record["metrics"].get("ssimulacra2") is not None
+    ]
+    monotone_pairs = [
+        (float(own["requested_score"]), float(own["achieved_score"])) for own in ordered
+    ]
+    return {
+        "input_id": image_id,
+        "targets": targets,
+        "bd_rate_percent": bd_rate(cjxl_points, jpxl_points),
+        "geomean_byte_ratio_vs_cjxl": geomean(ratios),
+        "achieved_monotone_in_requested": monotone(monotone_pairs, increasing=True),
+        "floor_violations": sum(1 for target in targets if target["floor_violation"]),
+    }
+
+
+def quality_aggregate(image_summaries: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    all_targets = [target for image in image_summaries for target in image["targets"]]
+    abs_errors = sorted(abs(target["overshoot"]) for target in all_targets)
+    ratios = [
+        target["byte_ratio_vs_cjxl"]
+        for target in all_targets
+        if target["byte_ratio_vs_cjxl"] is not None
+    ]
+    probes = [target["probes"] for target in all_targets if target["probes"] is not None]
+    prices = [target["prices"] for target in all_targets if target["prices"] is not None]
+    bd_rates = [
+        image["bd_rate_percent"]
+        for image in image_summaries
+        if image["bd_rate_percent"] is not None
+    ]
+    return {
+        "target_count": len(all_targets),
+        "floor_violation_count": sum(1 for target in all_targets if target["floor_violation"]),
+        "median_abs_score_error": statistics.median(abs_errors) if abs_errors else None,
+        "geomean_byte_ratio_vs_cjxl": geomean(ratios),
+        "mean_bd_rate_percent": statistics.mean(bd_rates) if bd_rates else None,
+        "probe_distribution": count_distribution(probes),
+        "price_distribution": count_distribution(prices),
+        "all_images_monotone": all(
+            image["achieved_monotone_in_requested"] for image in image_summaries
+        ),
+    }
+
+
+def export_quality_tsv(quality_summary: dict[str, Any], path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = [
+        "input_id",
+        "requested_score",
+        "achieved_score",
+        "overshoot",
+        "floor_violation",
+        "bytes",
+        "bpp",
+        "status",
+        "probes",
+        "prices",
+        "matched_cjxl_bytes",
+        "byte_ratio_vs_cjxl",
+    ]
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames, delimiter="\t")
+        writer.writeheader()
+        for image in quality_summary["images"]:
+            for target in image["targets"]:
+                writer.writerow(
+                    {
+                        "input_id": image["input_id"],
+                        "requested_score": target["requested_score"],
+                        "achieved_score": target["achieved_score"],
+                        "overshoot": target["overshoot"],
+                        "floor_violation": target["floor_violation"],
+                        "bytes": target["bytes"],
+                        "bpp": target["bpp"],
+                        "status": target["status"],
+                        "probes": target["probes"],
+                        "prices": target["prices"],
+                        "matched_cjxl_bytes": target["matched_cjxl_bytes"],
+                        "byte_ratio_vs_cjxl": target["byte_ratio_vs_cjxl"],
+                    }
+                )
+
+
+def _fmt(value: Any, spec: str = "") -> str:
+    if value is None:
+        return "-"
+    if spec and isinstance(value, (int, float)):
+        return format(value, spec)
+    return str(value)
+
+
+def render_quality_markdown(summary: dict[str, Any]) -> str:
+    quality = summary.get("quality")
+    if not quality:
+        raise HarnessError("summary has no quality section to report")
+    lines: list[str] = ["# JPXL perceptual quality report", ""]
+    header = (
+        "| requested | achieved | bytes | bpp | status | probes | prices "
+        "| matched cjxl bytes | ratio |"
+    )
+    separator = "|---:|---:|---:|---:|:---|---:|---:|---:|---:|"
+    for image in quality["images"]:
+        lines.append(f"## {image['input_id']}")
+        lines.append("")
+        lines.append(header)
+        lines.append(separator)
+        for target in image["targets"]:
+            lines.append(
+                "| {req} | {ach} | {bytes} | {bpp} | {status} | {probes} | {prices} "
+                "| {mcb} | {ratio} |".format(
+                    req=_fmt(target["requested_score"], ".2f"),
+                    ach=_fmt(target["achieved_score"], ".2f"),
+                    bytes=_fmt(target["bytes"]),
+                    bpp=_fmt(target["bpp"], ".4f"),
+                    status=_fmt(target["status"]),
+                    probes=_fmt(target["probes"]),
+                    prices=_fmt(target["prices"]),
+                    mcb=_fmt(target["matched_cjxl_bytes"], ".0f"),
+                    ratio=_fmt(target["byte_ratio_vs_cjxl"], ".4f"),
+                )
+            )
+        lines.append("")
+        lines.append(
+            "BD-rate vs cjxl: {bd}%  |  geomean byte ratio: {gm}  |  "
+            "achieved monotone in requested: {mono}".format(
+                bd=_fmt(image["bd_rate_percent"], ".2f"),
+                gm=_fmt(image["geomean_byte_ratio_vs_cjxl"], ".4f"),
+                mono=_fmt(image["achieved_monotone_in_requested"]),
+            )
+        )
+        lines.append("")
+    aggregate = quality.get("aggregate")
+    if aggregate:
+        lines.append("## Aggregate")
+        lines.append("")
+        lines.append(f"- targets: {aggregate['target_count']}")
+        lines.append(f"- floor violations: {aggregate['floor_violation_count']}")
+        lines.append(
+            f"- median |achieved - requested|: {_fmt(aggregate['median_abs_score_error'], '.4f')}"
+        )
+        lines.append(
+            f"- geomean byte ratio vs cjxl: {_fmt(aggregate['geomean_byte_ratio_vs_cjxl'], '.4f')}"
+        )
+        lines.append(
+            f"- mean BD-rate percent: {_fmt(aggregate['mean_bd_rate_percent'], '.2f')}"
+        )
+        lines.append(f"- all images monotone: {aggregate['all_images_monotone']}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def ceil_to_hundredth(value: float) -> float:
+    return math.ceil(value * 100.0 - 1e-9) / 100.0
+
+
+def aggregate_metric_variation(pairs: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    pair_reports: list[dict[str, Any]] = []
+    overall = 0.0
+    for pair in pairs:
+        scores = [float(score) for score in pair.get("scores", []) if score is not None]
+        if len(scores) >= 2:
+            low, high = min(scores), max(scores)
+            delta = high - low
+        elif scores:
+            low = high = scores[0]
+            delta = 0.0
+        else:
+            low = high = None
+            delta = 0.0
+        overall = max(overall, delta)
+        report = {
+            "id": pair.get("id"),
+            "runs": len(scores),
+            "min_score": low,
+            "max_score": high,
+            "max_abs_delta": delta,
+        }
+        for key in ("reference", "candidate"):
+            if key in pair:
+                report[key] = pair[key]
+        pair_reports.append(report)
+    return {
+        "pairs": pair_reports,
+        "overall_max_abs_delta": overall,
+        "score_guard": ceil_to_hundredth(2.0 * overall),
+        "guard_formula": "guard = ceil_1e-2(2 * max|delta|)",
+    }
+
+
+def metric_variation_report(args: argparse.Namespace) -> dict[str, Any]:
+    config = json.loads(args.pairs.read_text(encoding="utf-8"))
+    if config.get("schema") != METRIC_VARIATION_INPUT_SCHEMA:
+        raise HarnessError(f"metric-variation input schema must be {METRIC_VARIATION_INPUT_SCHEMA}")
+    if not isinstance(config.get("pairs"), list) or not config["pairs"]:
+        raise HarnessError("metric-variation input needs a non-empty pairs array")
+    binaries = [binary_info(path) for path in args.binaries]
+    pairs: list[dict[str, Any]] = []
+    for item in config["pairs"]:
+        paths: dict[str, Path] = {}
+        for name in ("reference", "candidate"):
+            path = Path(item.get(name, ""))
+            if not path.is_absolute():
+                path = (args.pairs.parent / path).resolve()
+            if not path.is_file():
+                raise HarnessError(f"missing metric-variation {name}: {path}")
+            paths[name] = path
+        scores: list[float] = []
+        for binary in args.binaries:
+            for _ in range(args.repeats):
+                output = run_checked(
+                    [str(binary), "compare", str(paths["reference"]), str(paths["candidate"])]
+                )
+                score = metrics_from_output(output).get("ssimulacra2")
+                if isinstance(score, (int, float)):
+                    scores.append(float(score))
+        pairs.append(
+            {
+                "id": item.get("id"),
+                "reference": str(paths["reference"]),
+                "candidate": str(paths["candidate"]),
+                "scores": scores,
+            }
+        )
+    report = aggregate_metric_variation(pairs)
+    report["schema"] = METRIC_VARIATION_SCHEMA
+    report["binaries"] = binaries
+    report["repeats"] = args.repeats
+    return report
+
+
 def export_tsv(records: list[dict[str, Any]], path: Path) -> None:
     timing = timing_summary(records)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -1187,7 +1732,26 @@ def build_parser() -> argparse.ArgumentParser:
     curve.add_argument("--manifest", type=Path, required=True)
     curve.add_argument("--output", type=Path, required=True)
     curve.add_argument("--work-dir", type=Path, required=True)
-    curve.add_argument("--bpp", type=parse_csv_floats, default=[0.5, 1.0, 2.0])
+    axis = curve.add_mutually_exclusive_group()
+    axis.add_argument("--bpp", type=parse_csv_floats, default=[0.5, 1.0, 2.0])
+    axis.add_argument(
+        "--quality",
+        type=quality_score,
+        nargs="+",
+        help="minimum SSIMULACRA2 targets in [0, 100]; drives the jpxl perceptual "
+        "path and is mutually exclusive with --bpp",
+    )
+    curve.add_argument("--quality-effort", choices=("fast", "balanced"), default="balanced")
+    curve.add_argument(
+        "--quality-trace",
+        dest="quality_trace",
+        action="store_true",
+        default=True,
+        help="write and merge a per-point JPXL_QUALITY_TRACE file (default)",
+    )
+    curve.add_argument(
+        "--no-quality-trace", dest="quality_trace", action="store_false"
+    )
     curve.add_argument("--distance", type=parse_csv_floats, default=[0.5, 1.0, 2.0])
     curve.add_argument("--max-additions", type=int, default=8)
     add_common_binary_args(curve, decoder=True)
@@ -1196,6 +1760,8 @@ def build_parser() -> argparse.ArgumentParser:
     summarize.add_argument("--input", type=Path, required=True)
     summarize.add_argument("--output", type=Path, required=True)
     summarize.add_argument("--timing-plan", type=Path, required=True)
+    summarize.add_argument("--score-guard", type=float, default=0.0)
+    summarize.add_argument("--tsv", type=Path)
 
     work = sub.add_parser("enrich-work", help="attach jpxl rate-search work counters")
     work.add_argument("--input", type=Path, required=True)
@@ -1219,6 +1785,20 @@ def build_parser() -> argparse.ArgumentParser:
     risk = sub.add_parser("risk-report", help="fit and validate diagnostic edge-risk ranking")
     risk.add_argument("--input", type=Path, required=True)
     risk.add_argument("--output", type=Path, required=True)
+
+    variation = sub.add_parser(
+        "metric-variation", help="measure jpxl compare score spread and derive a score guard"
+    )
+    variation.add_argument("--pairs", type=Path, required=True)
+    variation.add_argument("--binaries", type=Path, nargs="+", required=True)
+    variation.add_argument("--repeats", type=int, default=3)
+    variation.add_argument("--output", type=Path, required=True)
+
+    quality = sub.add_parser(
+        "quality-report", help="render a Markdown table per image x target from a summary"
+    )
+    quality.add_argument("--input", type=Path, required=True)
+    quality.add_argument("--output", type=Path, required=True)
     return parser
 
 
@@ -1233,10 +1813,20 @@ def main(argv: Sequence[str] | None = None) -> int:
             write_jsonl(args.output, records)
             print(f"wrote {len(records)} curve rows to {args.output}")
         elif args.command == "summarize":
-            summary, plan = summarize_records(load_jsonl(args.input))
+            summary, plan = summarize_records(load_jsonl(args.input), score_guard=args.score_guard)
             args.output.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
             args.timing_plan.write_text(json.dumps(plan, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-            print(f"wrote {len(summary['rows'])} matched rows and {len(plan['jobs'])} timing jobs")
+            if args.tsv is not None and "quality" in summary:
+                export_quality_tsv(summary["quality"], args.tsv)
+            quality_note = (
+                f" and {len(summary['quality']['images'])} quality image(s)"
+                if "quality" in summary
+                else ""
+            )
+            print(
+                f"wrote {len(summary['rows'])} matched rows and {len(plan['jobs'])} timing jobs"
+                + quality_note
+            )
         elif args.command == "enrich-work":
             records = enrich_work_records(load_jsonl(args.input), args.jpxl)
             write_jsonl(args.output, records)
@@ -1258,6 +1848,20 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             verdict = "eligible" if report["held_out"]["eligible_for_g2"] else "not eligible"
             print(f"wrote held-out risk report to {args.output}: G2 {verdict}")
+        elif args.command == "metric-variation":
+            report = metric_variation_report(args)
+            args.output.write_text(
+                json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+            )
+            print(
+                f"wrote metric-variation report to {args.output}: "
+                f"max|delta|={report['overall_max_abs_delta']:.4f} guard={report['score_guard']}"
+            )
+        elif args.command == "quality-report":
+            summary = json.loads(args.input.read_text(encoding="utf-8"))
+            markdown = render_quality_markdown(summary)
+            args.output.write_text(markdown, encoding="utf-8")
+            print(f"wrote quality report to {args.output}")
         return 0
     except (HarnessError, OSError, ValueError, json.JSONDecodeError) as error:
         print(f"error: {error}", file=sys.stderr)

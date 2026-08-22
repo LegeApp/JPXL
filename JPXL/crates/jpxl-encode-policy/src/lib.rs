@@ -64,12 +64,16 @@
 
 pub mod analysis;
 pub mod block;
+pub mod candidate;
 pub mod csf;
 pub mod diagnostics;
 mod entropy;
 mod entropy_cost;
 pub mod error;
 pub mod field;
+pub mod quality;
+pub mod quality_features;
+pub mod quality_predictor;
 pub mod quantize;
 pub mod rate;
 pub mod regret;
@@ -90,6 +94,7 @@ use jpxl_encode::vardct::headers::VARDCT_GROUP_SIZE_SHIFT;
 use jpxl_encode::vardct::ids::{
     CflFactor, ClusterId, GlobalScale, HfMul, LfGroupId, PresetId, QuantLf,
 };
+use jpxl_encode::vardct::plan::PixelPlan;
 use jpxl_encode::vardct::plan::{
     CflGrid, EmissionPlan, EntropyModelPlan, EntropyPlan, FrameDecision, HfBlockContextPlan,
     HfPassEntropyPlan, HistogramPlan, HybridUintPlan, LfCorrelationDecision, LfDecision,
@@ -116,6 +121,12 @@ pub use error::{PolicyError, Result};
 pub use field::{AqMode, AqTuning};
 
 use field::{DesiredQuantField, mul_lattice_for};
+pub use quality::{
+    PerceptualEvaluator, PerceptualObservation, ProbeKind, QualityBudget, QualityOutcome,
+    QualityProbe, QualityStats, QualityStatus, StructureSource, search_frame_perceptual,
+    status_name,
+};
+pub use quality_features::{SourceFeatures, source_features};
 pub use rate::{
     LadderSearch, QuantizerChoice, RateOutcome, RatePhase, RateProbeStats, RateStatus, RateStep,
     Rung, search_frame,
@@ -387,6 +398,48 @@ fn plan_at_on_anchor_with_workspace(
     )
 }
 
+/// The pre-entropy form of [`plan_at_on_anchor_with_workspace`]: the
+/// candidate's pixels, validated, with its geometry — what a perceptual probe
+/// renders and scores. No histogram is trained.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "internal plumbing: the same anchor-reuse bundle as \\
+              plan_at_on_anchor_with_workspace; one call chain"
+)]
+pub(crate) fn plan_pixels_on_anchor_with_workspace(
+    frame: &PreparedFrame,
+    transform_frame: &PreparedFrame,
+    atlas: &AnalysisAtlas,
+    request: &EncodeRequest,
+    quantizer: QuantizerChoice,
+    enable_cfl: bool,
+    cache: &mut CandidateForwardCache,
+    structure_tier: EntropySearch,
+    executor: Option<&jpxl_encode::EncodeExecutor>,
+    reuse: AnchorReuse<'_>,
+    capture: Option<&mut Option<StructuralAnchor>>,
+    quant_workspace: &mut QuantizationWorkspace,
+) -> Result<(
+    jpxl_encode::vardct::ValidatedPixelPlan,
+    jpxl_encode::vardct::VardctGeometry,
+)> {
+    let (pixels, geometry) = build_pixel_plan(
+        frame,
+        atlas,
+        request,
+        quantizer,
+        enable_cfl,
+        Some(transform_frame),
+        cache,
+        structure_tier,
+        executor,
+        reuse,
+        capture,
+        quant_workspace,
+    )?;
+    Ok((jpxl_encode::vardct::validate_pixels(pixels)?, geometry))
+}
+
 /// [`plan_at`] with the Slice-15 search switch exposed for regression tests.
 ///
 /// Production always enables CfL. The disabled arm exists only to preserve a
@@ -455,6 +508,45 @@ fn plan_at_with_cfl_workspace(
     capture: Option<&mut Option<StructuralAnchor>>,
     quant_workspace: &mut QuantizationWorkspace,
 ) -> Result<ValidatedEmissionPlan> {
+    let (pixels, geometry) = build_pixel_plan(
+        frame,
+        atlas,
+        request,
+        quantizer,
+        enable_cfl,
+        transform_override,
+        cache,
+        entropy_search,
+        executor,
+        reuse,
+        capture,
+        quant_workspace,
+    )?;
+    attach_entropy(&pixels, &geometry, request, entropy_search, executor)
+}
+
+/// Everything a decoder's pixels depend on: source preparation, cover, CfL,
+/// quantization and the LF planes, assembled into a [`PixelPlan`] with the
+/// frame's geometry. No histogram is trained and no symbol is counted.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "internal plumbing: the same capability bundle plan_at_with_cfl_workspace \\
+              forwards; no cohesive sub-bundle to extract"
+)]
+fn build_pixel_plan(
+    frame: &PreparedFrame,
+    atlas: &AnalysisAtlas,
+    request: &EncodeRequest,
+    quantizer: QuantizerChoice,
+    enable_cfl: bool,
+    transform_override: Option<&PreparedFrame>,
+    cache: &mut CandidateForwardCache,
+    entropy_search: EntropySearch,
+    executor: Option<&jpxl_encode::EncodeExecutor>,
+    reuse: AnchorReuse<'_>,
+    capture: Option<&mut Option<StructuralAnchor>>,
+    quant_workspace: &mut QuantizationWorkspace,
+) -> Result<(PixelPlan, jpxl_encode::vardct::VardctGeometry)> {
     // Phase-0: one clean snapshot per plan_at (rate probes overwrite; last wins).
     diagnostics::reset_encode_diag();
     if request.restoration.epf_iters > 3 {
@@ -881,31 +973,43 @@ fn plan_at_with_cfl_workspace(
         lf_groups: lf_groups.into_boxed_slice(),
     };
 
-    // The entropy model is chosen in two steps because the census is a
-    // function of the plan: a provisional plan carries the clustering and the
-    // hybrid-uint configuration, `census_frame` walks it, and the real
-    // histograms replace the provisional ones. The walk lives in `jpxl-encode`
-    // so that the counts trained here and the symbols emitted there cannot
-    // come from two different traversals.
     let quantized_ir = QuantizedFrameIr {
         lf_groups: quantized.into_boxed_slice(),
     };
-    let provisional = EmissionPlan::new(
-        spatial,
-        quantized_ir,
+    Ok((PixelPlan::new(spatial, quantized_ir), geometry))
+}
+
+/// Trains the entropy models for a pixel plan and adopts the entropy
+/// alternatives the search tier allows, returning the writer-ready plan.
+///
+/// The entropy model is chosen in two steps because the census is a
+/// function of the plan: a provisional plan carries the clustering and the
+/// hybrid-uint configuration, `census_frame` walks it, and the real
+/// histograms replace the provisional ones. The walk lives in `jpxl-encode`
+/// so that the counts trained here and the symbols emitted there cannot
+/// come from two different traversals.
+pub(crate) fn attach_entropy(
+    pixels: &PixelPlan,
+    geometry: &jpxl_encode::vardct::VardctGeometry,
+    request: &EncodeRequest,
+    entropy_search: EntropySearch,
+    executor: Option<&jpxl_encode::EncodeExecutor>,
+) -> Result<ValidatedEmissionPlan> {
+    let provisional = EmissionPlan::from_pixels(
+        pixels,
         entropy_plan(
-            &geometry,
+            geometry,
             placeholder_histograms(),
             HfBlockContextPlan::Default,
         )?,
-        SectionLayout::for_geometry(&geometry),
+        SectionLayout::for_geometry(geometry),
     );
     // Slice 18 / 18b: train under the default I.2.2 map, then optionally
     // adopt custom coefficient orders on an exact price win (Full only).
     let with_default = diagnostics::time_stage(diagnostics::StageTimer::Entropy, || {
         train_entropy_with_orders(
             provisional.clone(),
-            &geometry,
+            geometry,
             entropy_search,
             executor,
             matches!(
@@ -933,9 +1037,9 @@ fn plan_at_with_cfl_workspace(
     if !matches!(candidate_bc, HfBlockContextPlan::Default) {
         diagnostics::note_block_context_candidate();
         let mut custom_walk = provisional.clone();
-        custom_walk.entropy = entropy_plan(&geometry, placeholder_histograms(), candidate_bc)?;
+        custom_walk.entropy = entropy_plan(geometry, placeholder_histograms(), candidate_bc)?;
         let mut with_custom = diagnostics::time_stage(diagnostics::StageTimer::Entropy, || {
-            train_entropy_with_orders(custom_walk, &geometry, EntropySearch::Full, executor, false)
+            train_entropy_with_orders(custom_walk, geometry, EntropySearch::Full, executor, false)
         })?;
         let best_size = best.exact_size(executor)?;
         let custom_size = with_custom.exact_size(executor)?;
@@ -947,7 +1051,7 @@ fn plan_at_with_cfl_workspace(
     // Slice 18d: multi-preset assignment. Needs ≥2 pass groups; changes the
     // walk's I.4 offset per group, so re-census + retrain + exact price.
     if let Some((num_presets, assignment)) = entropy::propose_presets(
-        &geometry,
+        geometry,
         best.plan().spatial.as_ref(),
         best.plan().quantized.as_ref(),
     ) {
@@ -971,7 +1075,7 @@ fn plan_at_with_cfl_workspace(
         }
         if let Ok(mut with_presets) =
             diagnostics::time_stage(diagnostics::StageTimer::Entropy, || {
-                train_entropy_with_orders(multi, &geometry, EntropySearch::Full, executor, false)
+                train_entropy_with_orders(multi, geometry, EntropySearch::Full, executor, false)
             })
         {
             let best_size = best.exact_size(executor)?;

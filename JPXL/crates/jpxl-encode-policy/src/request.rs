@@ -5,6 +5,8 @@
 //! the encoder. Both are declared here at the stage boundary; no field of
 //! [`SearchBudget`] is ever read inside a kernel.
 
+use core::fmt;
+
 use jpxl_encode::vardct::ids::{GlobalScale, HfMul, QmScale, QuantLf};
 use jpxl_encode::vardct::plan::RestorationDecision;
 
@@ -72,6 +74,135 @@ impl RateTarget {
             }
         }
     }
+}
+
+/// A perceptual metric the quality controller can target.
+///
+/// One metric today; the enum exists so a future metric is an added variant,
+/// not a breaking change to [`PerceptualTarget`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PerceptualMetric {
+    /// SSIMULACRA 2, in this project's own calibration.
+    Ssimulacra2,
+}
+
+impl PerceptualMetric {
+    /// The frozen version string identifying this metric's exact definition.
+    ///
+    /// Bumped whenever the score a given encode achieves would change, so a
+    /// stored score is never silently compared against a different metric.
+    #[must_use]
+    pub const fn version(self) -> MetricVersion {
+        match self {
+            Self::Ssimulacra2 => MetricVersion("ssimulacra2-jpxl-1"),
+        }
+    }
+}
+
+/// A frozen identifier for one metric definition.
+///
+/// Constructed only by [`PerceptualMetric::version`]; carried in a
+/// controller's outcome so a caller can record *which* metric a score was
+/// measured against.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MetricVersion(&'static str);
+
+impl MetricVersion {
+    /// The version string.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        self.0
+    }
+}
+
+impl fmt::Display for MetricVersion {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.0)
+    }
+}
+
+/// A minimum perceptual score the encoder must meet.
+///
+/// **This is the normal contract for lossy encoding.** The caller states the
+/// visual quality floor and the controller (PR 4) spends the fewest bytes that
+/// clear it. [`RateTarget`] and [`FixedQuantizerTarget`] are the expert modes
+/// that pin a size or a quantizer instead of a quality.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PerceptualTarget {
+    /// Which metric the score is measured on.
+    pub metric: PerceptualMetric,
+    /// The minimum acceptable score, in `0.0..=100.0` (100 is mathematically
+    /// lossless).
+    pub minimum_score: f64,
+}
+
+impl PerceptualTarget {
+    /// Builds a target, rejecting a score that is not finite and in
+    /// `0.0..=100.0`.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::PolicyError::Unsupported`] if `minimum_score` is NaN, infinite,
+    /// below zero, or above 100.
+    pub fn new(metric: PerceptualMetric, minimum_score: f64) -> crate::Result<Self> {
+        if !minimum_score.is_finite() || !(0.0..=100.0).contains(&minimum_score) {
+            return Err(crate::PolicyError::Unsupported {
+                what: "perceptual minimum score must be finite and in 0..=100",
+            });
+        }
+        Ok(Self {
+            metric,
+            minimum_score,
+        })
+    }
+}
+
+/// A pinned VarDCT quantizer: the expert mode for reproducing an exact stream.
+///
+/// The three scalars are I.2/G.2.4's quantizer inputs. Unlike [`RateTarget`]
+/// and [`PerceptualTarget`], nothing is searched — the encoder emits exactly
+/// this quantizer, so it is the reproducible-fixture path, not the normal
+/// contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FixedQuantizerTarget {
+    /// I.2's `global_scale` (larger is finer and produces a bigger file).
+    pub global_scale: GlobalScale,
+    /// I.2's `quant_lf`.
+    pub quant_lf: QuantLf,
+    /// The constant per-varblock HF multiplier.
+    pub hf_mul: HfMul,
+}
+
+impl FixedQuantizerTarget {
+    /// Builds a target from raw wire values, range-checking each through its
+    /// own newtype constructor.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::PolicyError::Plan`] if any value is zero or outside its syntax
+    /// element's range.
+    pub fn new(global_scale: u32, quant_lf: u32, hf_mul: u32) -> crate::Result<Self> {
+        Ok(Self {
+            global_scale: GlobalScale::new(global_scale)?,
+            quant_lf: QuantLf::new(quant_lf)?,
+            hf_mul: HfMul::new(hf_mul)?,
+        })
+    }
+}
+
+/// One of the three ways to ask for a lossy encode.
+///
+/// [`Self::Perceptual`] is the normal contract: name the quality floor and let
+/// the encoder find the bytes. [`Self::Rate`] and [`Self::FixedQuantizer`] are
+/// expert modes that pin the size or the quantizer directly.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum LossyTarget {
+    /// Meet a minimum perceptual score (the normal contract).
+    Perceptual(PerceptualTarget),
+    /// Hit a byte or bits-per-pixel size.
+    Rate(RateTarget),
+    /// Emit an exact pinned quantizer.
+    FixedQuantizer(FixedQuantizerTarget),
 }
 
 /// How far under the target the loop may stop.
@@ -797,6 +928,53 @@ impl EncodeRequest {
         request
     }
 
+    /// A fixed-quantizer request that emits `target`'s exact scalars.
+    ///
+    /// This is [`Self::defaults`] with the three quantizer scalars replaced and
+    /// no rate [`target`](Self::target) — i.e. the milestone-2 path that emits
+    /// the quantizer verbatim, with every stable fixed-quantizer default
+    /// (legacy rate proxy, nearest quantizer, filters off) retained.
+    #[must_use]
+    pub fn for_fixed_quantizer(target: FixedQuantizerTarget) -> Self {
+        let mut request = Self::defaults();
+        request.global_scale = target.global_scale;
+        request.quant_lf = target.quant_lf;
+        request.hf_mul = target.hf_mul;
+        request.target = None;
+        request
+    }
+
+    /// The starting policy of a perceptual-quality request.
+    ///
+    /// Inherits the promoted target-rate knobs (`quant_lf` 4, AQ off, one
+    /// EPF step at uniform sharpness 7, the quantizer-donor cover weight,
+    /// trailing truncation at lambda x4, the calibrated cover rate model) as
+    /// a labelled **starting** policy — they were screened at matched bytes,
+    /// not at matched score — carries no rate target, and pins the chroma
+    /// matrices per effort so no requested-bitrate branch is reachable:
+    /// Balanced X=3/B=3, Fast neutral, Quality X=3/B=4.
+    #[must_use]
+    pub fn for_quality(preset: RateSearchPreset) -> Self {
+        let mut request = Self::for_target(RateTarget::BitsPerPixel(1.0));
+        request.target = None;
+        request.rate_preset = preset;
+        request.chroma_hf_policy = ChromaHfPolicy::Manual;
+        let (x, b) = match preset {
+            RateSearchPreset::Fast => (QmScale::NEUTRAL, QmScale::NEUTRAL),
+            RateSearchPreset::Balanced => (
+                QmScale::new(3).unwrap_or(QmScale::NEUTRAL),
+                QmScale::new(3).unwrap_or(QmScale::NEUTRAL),
+            ),
+            RateSearchPreset::Quality => (
+                QmScale::new(3).unwrap_or(QmScale::NEUTRAL),
+                QmScale::new(4).unwrap_or(QmScale::NEUTRAL),
+            ),
+        };
+        request.x_qm_scale = x;
+        request.b_qm_scale = b;
+        request
+    }
+
     /// Resolves the B-channel QM scale for one concrete target and frame.
     ///
     /// Byte targets use the same `target_bytes * 8 <= pixels` boundary as the
@@ -1083,5 +1261,52 @@ mod tests {
                 .bytes_for(10_000),
             200
         );
+    }
+
+    #[test]
+    fn perceptual_target_validates_the_score_band() {
+        let metric = PerceptualMetric::Ssimulacra2;
+        assert!(PerceptualTarget::new(metric, 0.0).is_ok());
+        assert!(PerceptualTarget::new(metric, 85.5).is_ok());
+        assert!(PerceptualTarget::new(metric, 100.0).is_ok());
+        assert!(PerceptualTarget::new(metric, -0.1).is_err());
+        assert!(PerceptualTarget::new(metric, 100.1).is_err());
+        assert!(PerceptualTarget::new(metric, f64::NAN).is_err());
+        assert!(PerceptualTarget::new(metric, f64::INFINITY).is_err());
+    }
+
+    #[test]
+    fn the_metric_version_is_the_frozen_string() {
+        let version = PerceptualMetric::Ssimulacra2.version();
+        assert_eq!(version.as_str(), "ssimulacra2-jpxl-1");
+        assert_eq!(version.to_string(), "ssimulacra2-jpxl-1");
+    }
+
+    #[test]
+    fn fixed_quantizer_target_range_checks_each_scalar() {
+        let ok = FixedQuantizerTarget::new(32_768, 16, 1).expect("in range");
+        assert_eq!(ok.global_scale.get(), 32_768);
+        assert_eq!(ok.quant_lf.get(), 16);
+        assert_eq!(ok.hf_mul.get(), 1);
+        assert!(FixedQuantizerTarget::new(0, 16, 1).is_err());
+        assert!(FixedQuantizerTarget::new(32_768, 0, 1).is_err());
+        assert!(FixedQuantizerTarget::new(32_768, 16, 0).is_err());
+    }
+
+    #[test]
+    fn for_fixed_quantizer_sets_scalars_and_clears_the_target() {
+        let target = FixedQuantizerTarget::new(1000, 8, 3).expect("in range");
+        let request = EncodeRequest::for_fixed_quantizer(target);
+        assert_eq!(request.global_scale.get(), 1000);
+        assert_eq!(request.quant_lf.get(), 8);
+        assert_eq!(request.hf_mul.get(), 3);
+        assert_eq!(
+            request.target, None,
+            "the fixed-quantizer path has no rate loop"
+        );
+        // The stable fixed-quantizer defaults are otherwise retained.
+        assert_eq!(request.cover_rate_model, CoverRateModel::Legacy);
+        assert_eq!(request.quantizer_choice, QuantizerChoiceMode::Nearest);
+        assert!((request.lambda_scale - 1.0).abs() < f32::EPSILON);
     }
 }

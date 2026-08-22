@@ -183,6 +183,250 @@ class CodecCompareTests(unittest.TestCase):
         self.assertEqual(codec_compare.risk_recall(training, weights, 10), 1.0)
         self.assertEqual(codec_compare.risk_recall(validation, weights, 10), 0.0)
 
+    def test_quality_line_parser(self):
+        line = (
+            "quality_target=85.0000 achieved=85.1372 bytes=412883 "
+            "metric=ssimulacra2-jpxl-1 effort=balanced probes=3 prices=2 status=met"
+        )
+        parsed = codec_compare.parse_quality_line("startup noise\n" + line + "\ntrailing")
+        self.assertEqual(parsed["requested_score"], 85.0)
+        self.assertAlmostEqual(parsed["achieved_score"], 85.1372)
+        self.assertEqual(parsed["bytes"], 412883)
+        self.assertEqual(parsed["metric"], "ssimulacra2-jpxl-1")
+        self.assertEqual(parsed["effort"], "balanced")
+        self.assertEqual(parsed["probes"], 3)
+        self.assertEqual(parsed["prices"], 2)
+        self.assertEqual(parsed["status"], "met")
+        with self.assertRaises(codec_compare.HarnessError):
+            codec_compare.parse_quality_line("no perceptual line at all")
+
+    def test_curve_rejects_bpp_and_quality_together(self):
+        parser = codec_compare.build_parser()
+        common = [
+            "curve", "--manifest", "m", "--output", "o", "--work-dir", "w",
+            "--jpxl", "j", "--cjxl", "c", "--djxl", "d",
+        ]
+        with self.assertRaises(SystemExit):
+            parser.parse_args(common + ["--bpp", "1.0", "--quality", "85"])
+        # --quality alone parses even though --bpp carries a default value.
+        args = parser.parse_args(common + ["--quality", "85", "90"])
+        self.assertEqual(args.quality, [85.0, 90.0])
+        self.assertEqual(args.quality_effort, "balanced")
+        self.assertTrue(args.quality_trace)
+        args = parser.parse_args(common + ["--quality", "85", "--no-quality-trace"])
+        self.assertFalse(args.quality_trace)
+        with self.assertRaises(SystemExit):
+            parser.parse_args(common + ["--quality", "150"])
+
+    def test_quality_trace_reader(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "trace.jsonl"
+            path.write_text(
+                json.dumps({"schema": "other/1"}) + "\n"
+                + json.dumps(
+                    {
+                        "schema": codec_compare.QUALITY_TRACE_SCHEMA,
+                        "requested_score": 85.0,
+                        "achieved_score": 85.1,
+                        "wall_by_phase": {
+                            "analysis": 1.0, "plan": 2.0, "render": 3.0,
+                            "metric": 4.0, "entropy": 5.0, "emit": 6.0,
+                        },
+                        "probes": [],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            trace = codec_compare.read_quality_trace(path)
+            self.assertEqual(trace["wall_by_phase"]["render"], 3.0)
+
+    def test_quality_curve_merges_line_and_trace(self):
+        if os.name == "nt":
+            self.skipTest("the fake executable fixture uses POSIX shebang execution")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.ppm"
+            source.write_bytes(ppm())
+            manifest = root / "corpus.json"
+            manifest.write_text(
+                json.dumps(
+                    {
+                        "schema": codec_compare.CORPUS_SCHEMA,
+                        "images": [
+                            {
+                                "id": "tiny",
+                                "path": str(source),
+                                "sha256": digest(ppm()),
+                                "strata": ["synthetic"],
+                                "provenance": "unit test",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            jpxl = self._write_quality_tool(root / "jpxl")
+            cjxl = self._write_tool(root / "cjxl", "cjxl")
+            djxl = self._write_tool(root / "djxl", "djxl")
+            args = argparse.Namespace(
+                manifest=manifest, jpxl=jpxl, cjxl=cjxl, djxl=djxl,
+                work_dir=root / "work", bpp=None, quality=[85.0],
+                distance=[1.0, 2.0], threads=4, cjxl_threads=4,
+                preset="balanced", effort=7, max_additions=0,
+                quality_effort="balanced", quality_trace=True,
+            )
+            records = codec_compare.curve_records(args)
+            own = [r for r in records if r["codec"] == "jpxl"][0]
+            self.assertEqual(own["setting"]["kind"], "quality")
+            self.assertEqual(own["setting"]["effort"], "balanced")
+            self.assertEqual(own["requested_score"], 85.0)
+            self.assertAlmostEqual(own["achieved_score"], 85.2)
+            self.assertEqual(own["quality_status"], "met")
+            self.assertEqual(own["probes"], 3)
+            self.assertEqual(own["prices"], 2)
+            self.assertIn("--quality", own["command"])
+            self.assertEqual(own["wall_by_phase"]["emit"], 6.0)
+            self.assertTrue(own["trace_path"].endswith(".trace.jsonl"))
+
+    def test_bd_rate_constant_ratio_has_known_answer(self):
+        reference = [(score, 1000.0 * (10.0 ** (-0.01 * score))) for score in (50, 60, 70, 80, 90)]
+        test = [(score, 2.0 * byte_count) for score, byte_count in reference]
+        result = codec_compare.bd_rate(reference, test)
+        self.assertIsNotNone(result)
+        self.assertAlmostEqual(result, 100.0, places=4)
+        self.assertIsNone(codec_compare.bd_rate(reference[:3], test[:3]))
+
+    def test_quality_summary_detects_floor_and_monotonicity(self):
+        cjxl_records = [
+            self._cjxl_record(0.5, 300, 95.0),
+            self._cjxl_record(1.0, 200, 90.0),
+            self._cjxl_record(2.0, 100, 80.0),
+        ]
+        jpxl_quality = [
+            self._quality_record(85.0, 85.5, 180),
+            self._quality_record(90.0, 90.2, 220),
+            self._quality_record(95.0, 94.0, 260),
+        ]
+        summary = codec_compare.quality_image_summary("img", jpxl_quality, cjxl_records, 0.5)
+        self.assertEqual(summary["floor_violations"], 1)
+        self.assertTrue(summary["achieved_monotone_in_requested"])
+        self.assertAlmostEqual(summary["targets"][0]["overshoot"], 0.5)
+        self.assertFalse(summary["targets"][0]["floor_violation"])
+        self.assertTrue(summary["targets"][2]["floor_violation"])
+        self.assertIsNotNone(summary["targets"][0]["byte_ratio_vs_cjxl"])
+
+        non_monotone = [
+            self._quality_record(85.0, 90.0, 180),
+            self._quality_record(90.0, 88.0, 220),
+        ]
+        broken = codec_compare.quality_image_summary("img", non_monotone, cjxl_records, 0.0)
+        self.assertFalse(broken["achieved_monotone_in_requested"])
+
+    def test_quality_summary_and_markdown_via_summarize(self):
+        records = [
+            self._cjxl_record(0.5, 300, 95.0),
+            self._cjxl_record(1.0, 200, 90.0),
+            self._cjxl_record(2.0, 100, 80.0),
+            self._quality_record(85.0, 85.5, 180),
+            self._quality_record(90.0, 90.2, 220),
+            self._quality_record(95.0, 94.0, 260),
+        ]
+        summary, plan = codec_compare.summarize_records(records, score_guard=0.5)
+        self.assertIn("quality", summary)
+        self.assertEqual(summary["quality"]["aggregate"]["floor_violation_count"], 1)
+        self.assertEqual(summary["quality"]["aggregate"]["probe_distribution"], {"3": 3})
+        self.assertEqual(summary["rows"], [])
+        markdown = codec_compare.render_quality_markdown(summary)
+        self.assertIn("## img", markdown)
+        self.assertIn("BD-rate", markdown)
+        self.assertIn("| requested |", markdown)
+
+    def test_metric_variation_aggregation(self):
+        pairs = [
+            {"id": "a", "scores": [80.0, 80.3, 80.1]},
+            {"id": "b", "scores": [75.0, 75.02]},
+        ]
+        report = codec_compare.aggregate_metric_variation(pairs)
+        self.assertAlmostEqual(report["pairs"][0]["max_abs_delta"], 0.3, places=6)
+        self.assertAlmostEqual(report["overall_max_abs_delta"], 0.3, places=6)
+        self.assertAlmostEqual(report["score_guard"], 0.6, places=6)
+        self.assertIn("ceil_1e-2", report["guard_formula"])
+        self.assertAlmostEqual(codec_compare.ceil_to_hundredth(0.611), 0.62, places=6)
+
+    @staticmethod
+    def _cjxl_record(setting, size, ssim):
+        return {
+            "schema": codec_compare.RECORD_SCHEMA,
+            "kind": "curve",
+            "codec": "cjxl",
+            "input": {"id": "img"},
+            "setting": {"kind": "distance", "value": setting},
+            "rate_outcome": {"bytes": size, "bpp": size / 100.0},
+            "metrics": {"ssimulacra2": ssim, "butteraugli_pnorm3": setting},
+        }
+
+    @staticmethod
+    def _quality_record(requested, achieved, size):
+        return {
+            "schema": codec_compare.RECORD_SCHEMA,
+            "kind": "curve",
+            "codec": "jpxl",
+            "input": {"id": "img"},
+            "setting": {"kind": "quality", "value": requested},
+            "rate_outcome": {"bytes": size, "bpp": size / 100.0},
+            "metrics": {"ssimulacra2": achieved, "butteraugli_pnorm3": None},
+            "requested_score": requested,
+            "achieved_score": achieved,
+            "quality_status": "met",
+            "probes": 3,
+            "prices": 2,
+        }
+
+    @staticmethod
+    def _write_quality_tool(path: Path) -> Path:
+        script = f"""#!{sys.executable}
+import json, os, pathlib, shutil, sys
+argv = sys.argv
+if '--version' in argv:
+    print('jpxl fake 1')
+elif len(argv) > 1 and argv[1] == 'compare':
+    print('psnr_db=40 ssimulacra2=85.5 butteraugli=2 butteraugli_pnorm3=1')
+elif len(argv) > 1 and argv[1] == 'encode':
+    src, out = argv[-2], argv[-1]
+    shutil.copyfile(src, out)
+    requested = float(argv[argv.index('--quality') + 1])
+    achieved = requested + 0.2
+    size = pathlib.Path(out).stat().st_size
+    print(
+        'quality_target=%.4f achieved=%.4f bytes=%d metric=ssimulacra2-jpxl-1 '
+        'effort=balanced probes=3 prices=2 status=met' % (requested, achieved, size)
+    )
+    trace = os.environ.get('JPXL_QUALITY_TRACE')
+    if trace:
+        with open(trace, 'w') as handle:
+            handle.write(json.dumps({{
+                'schema': 'jpxl.quality-trace/1',
+                'requested_score': requested,
+                'achieved_score': achieved,
+                'final_exact_bytes': size,
+                'pixel_probes': 3,
+                'exact_prices': 2,
+                'structural_builds': 1,
+                'status': 'met',
+                'wall_by_phase': {{
+                    'analysis': 1.0, 'plan': 2.0, 'render': 3.0,
+                    'metric': 4.0, 'entropy': 5.0, 'emit': 6.0,
+                }},
+                'probes': [],
+            }}) + '\\n')
+else:
+    shutil.copyfile(argv[-2], argv[-1])
+"""
+        path.write_text(script, encoding="utf-8")
+        path.chmod(0o755)
+        return path
+
     @staticmethod
     def _write_tool(path: Path, kind: str) -> Path:
         script = f"""#!{sys.executable}
