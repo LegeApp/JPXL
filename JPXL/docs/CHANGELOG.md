@@ -29,6 +29,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/), semantic versioning.
   `JPXL_QUALITY_TRACE=<path>` JSONL trace report what was verified. Below-
   target output is never silent: `saturated_top` / `under_target_work_cap`
   name it.
+- 2026-08-22 — Behind the `quality-effort` build feature, the Quality effort's
+  perceptual search runs a bounded policy bank (chroma QM, `quant_lf`, EPF,
+  CfL, truncation lambda; coordinate descent sharing one candidate context and
+  the baseline cover/CfL) and a terminal coefficient reducer that spends the
+  score reserve on bytes (finalist-priced last-nonzero removals, each batch
+  re-verified by the canonical score). Both are measured and kept off for
+  Fast and Balanced: bytes fall 0.4–1.8 % but wall rises past the +25 %
+  budget (AKR evidence `pqc-pr5b-structure-reuse`, `pqc-pr7-dev-split`).
+  Quality-mode chroma QM is now a per-preset constant, never a per-bitrate
+  branch; Fast and Balanced rate-mode streams are byte-identical.
 - 2026-08-22 — The `jpxl` facade gained `with_ssimulacra2_score`,
   `with_global_scale`, `with_effort(Effort)`, `with_lossless_effort`, and
   `encode_rgb8_reported` / `encode_rgb16_reported` returning an `EncodeReport`;

@@ -104,7 +104,10 @@ distance: cjxl's `-d` targets Butteraugli, a different and inverted scale. The
 lossy effort defaults to `balanced`; `--effort fast` (or `--lossy-preset fast`)
 trades quality for lower latency and also lowers the `--quality` default score
 (fast 70, balanced 85). The exhaustive-reference `quality` effort is gated
-behind the `quality-effort` build feature.
+behind the `quality-effort` build feature; it also runs the perceptual policy
+bank and the terminal coefficient reducer, both measured and kept off for
+`fast`/`balanced` because their byte savings (0.4–1.8 %) cost more wall than
+those efforts' budgets allow.
 
 ## Perceptual quality controller
 
