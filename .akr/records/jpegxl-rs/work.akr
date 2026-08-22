@@ -7011,7 +7011,7 @@ record jpegxl-rs.work.optional-semantic-guidance-consumer/1 : work {
 
 record jpegxl-rs.work.pqc-pr0-provenance-corpus-calibration/1 : work {
     title "PQC PR 0: register sources, quality-guard corpus with splits, initial-rung calibration data"
-    state proposed
+    state completed
     scope [
         path ".agent/scratch/**",
         path "JPXL/tools/**",
@@ -7028,12 +7028,14 @@ record jpegxl-rs.work.pqc-pr0-provenance-corpus-calibration/1 : work {
                 """
             method command
             command "python3 JPXL/tools/codec_compare.py manifest-check --manifest test-set/quality-corpus.json"
+            verified_by [ @jpegxl-rs.evidence.pqc-pr0-corpus-manifest-2026-08-22/1 ]
         }
         check predictor-table {
             statement """
                 calibrate_initial_rung.py produces quality_predictor.rs from calibration-split sweeps with a report of per-bucket fit error.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.pqc-pr0-predictor-table-2026-08-22/1 ]
         }
         check sources-registered {
             statement """
@@ -7041,6 +7043,7 @@ record jpegxl-rs.work.pqc-pr0-provenance-corpus-calibration/1 : work {
                 """
             method command
             command "akr source list"
+            verified_by [ @jpegxl-rs.evidence.pqc-pr0-sources-registered-2026-08-22/1 ]
         }
     }
     implements [
@@ -7052,7 +7055,7 @@ record jpegxl-rs.work.pqc-pr0-provenance-corpus-calibration/1 : work {
 
 record jpegxl-rs.work.pqc-pr1-target-semantics/1 : work {
     title "PQC PR 1: LossyTarget/Effort semantics, with_ssimulacra2_score, --quality, --global-scale, mutual exclusion, reported outcomes"
-    state proposed
+    state completed
     scope [
         path "JPXL/crates/jpxl-cli/**",
         path "JPXL/crates/jpxl-encode-policy/src/request.rs",
@@ -7068,6 +7071,7 @@ record jpegxl-rs.work.pqc-pr1-target-semantics/1 : work {
                 """
             method command
             command "cd JPXL && cargo test -p jpxl --profile fast-debug"
+            verified_by [ @jpegxl-rs.evidence.pqc-pr1-api-semantics-2026-08-22/1 ]
         }
         check cli-contract {
             statement """
@@ -7075,6 +7079,7 @@ record jpegxl-rs.work.pqc-pr1-target-semantics/1 : work {
                 """
             method command
             command "cd JPXL && cargo test -p jpxl-cli --profile fast-debug"
+            verified_by [ @jpegxl-rs.evidence.pqc-pr1-cli-contract-2026-08-22/1 ]
         }
         check workspace-gates {
             statement """
@@ -7082,6 +7087,7 @@ record jpegxl-rs.work.pqc-pr1-target-semantics/1 : work {
                 """
             method command
             command "cd JPXL && cargo test --workspace --release && cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all --check"
+            verified_by [ @jpegxl-rs.evidence.pqc-workspace-gates-2026-08-22/1 ]
         }
     }
     depends_on [ @jpegxl-rs.work.pqc-pr0-provenance-corpus-calibration/1 ]
@@ -7091,7 +7097,7 @@ record jpegxl-rs.work.pqc-pr1-target-semantics/1 : work {
 
 record jpegxl-rs.work.pqc-pr2-perceptual-metric/1 : work {
     title "PQC PR 2: jpxl-perceptual in-tree clean-room SSIMULACRA2 framework and canonical source reference"
-    state proposed
+    state completed
     scope [
         path "JPXL/Cargo.toml",
         path "JPXL/crates/jpxl-encode-policy/src/source.rs",
@@ -7107,12 +7113,14 @@ record jpegxl-rs.work.pqc-pr2-perceptual-metric/1 : work {
                 """
             method command
             command "cd JPXL && cargo test -p jpxl-perceptual --release"
+            verified_by [ @jpegxl-rs.evidence.pqc-pr2-determinism-2026-08-22/1 ]
         }
         check harness-agreement {
             statement """
                 An emitted-and-decoded fixture scored in memory matches jpxl compare --ssimulacra2 within the pinned tolerance for 8-bit and 16-bit input.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.pqc-pr2-harness-agreement-2026-08-22/1 ]
         }
         check reference-parity {
             statement """
@@ -7120,6 +7128,7 @@ record jpegxl-rs.work.pqc-pr2-perceptual-metric/1 : work {
                 """
             method command
             command "cd JPXL && cargo test -p jpxl-perceptual --release --features parity-oracle"
+            verified_by [ @jpegxl-rs.evidence.pqc-pr2-reference-parity-2026-08-22/1 ]
         }
     }
     depends_on [ @jpegxl-rs.work.pqc-pr1-target-semantics/1 ]
@@ -7132,7 +7141,7 @@ record jpegxl-rs.work.pqc-pr2-perceptual-metric/1 : work {
 
 record jpegxl-rs.work.pqc-pr3-pixel-plan-render/1 : work {
     title "PQC PR 3: PixelPlan/ValidatedPixelPlan split, attach_entropy seam, jpxl-plan-render with decoder parity"
-    state proposed
+    state completed
     scope [
         path "JPXL/crates/jpxl-core/**",
         path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
@@ -7150,6 +7159,7 @@ record jpegxl-rs.work.pqc-pr3-pixel-plan-render/1 : work {
                 """
             method command
             command "cd JPXL && cargo test --workspace --release"
+            verified_by [ @jpegxl-rs.evidence.pqc-pr3-byte-identity-2026-08-22/1 ]
         }
         check render-parity {
             statement """
@@ -7157,12 +7167,14 @@ record jpegxl-rs.work.pqc-pr3-pixel-plan-render/1 : work {
                 """
             method command
             command "cd JPXL && cargo test -p jpxl-plan-render --release"
+            verified_by [ @jpegxl-rs.evidence.pqc-pr3-render-parity-2026-08-22/1 ]
         }
         check score-parity {
             statement """
                 The plan-rendered score equals the emitted-and-decoded score within the PR 2 tolerance.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.pqc-pr2-harness-agreement-2026-08-22/1 ]
         }
     }
     depends_on [ @jpegxl-rs.work.pqc-pr1-target-semantics/1 ]
@@ -7185,6 +7197,9 @@ record jpegxl-rs.work.pqc-pr4-quality-navigator/1 : work {
     ]
     intent """
         Make Fast and Balanced score-targeted: move PreparedSearch to CandidateSearchContext with pixel_plan/emission_plan doors; define PerceptualEvaluator in policy and implement it in jpxl-perceptual over jpxl-plan-render; generalise the two-anchor crossing helpers to a log-loss observable; bracket, interpolate with a reserve, one bounded correction, Pareto frontier, finalist-only entropy, canonical re-score, hard budgets (Fast 2-3 probes/1-2 prices, Balanced 3-5/2-3), explicit QualityStatus, measured score guard, jpxl.quality-trace/1 telemetry, and a codec_compare quality-curve mode with matched-score byte ratios and BD-rate.
+        """
+    note """
+        Code landed in commit 23635f68 (2026-08-22): candidate.rs, quality.rs, quality_features.rs, the calibrated quality_predictor.rs, the jpxl-perceptual evaluator, facade and CLI wiring, and the codec_compare quality mode. Evidence so far: bounded passes; target-met on the development split (0 violations/150, Balanced median miss 0.93, Fast 2.19), byte-neutral (measured against cjxl, not the rate controller) and determinism-decoders (AVX2-off and full external-decoder sweep not run) are inconclusive; wall-reported fails the provisional 2.0x bound at 3.46x median. Remaining before completion: run the locked holdout at 30..95, tabulate matched-score bytes against the rate controller, the AVX2-off identity run, and the PR 4b performance pass (render+metric is the whole probe cost: 0.6 s per 4 MP probe on four threads, 2.97 GB RSS at 12 MP).
         """
     acceptance {
         check bounded {
