@@ -12,6 +12,30 @@
     "title": "JPXL: Guide to Bridging the Remaining Gap to libjxl"
   },
   {
+    "added_at": "2026-08-22",
+    "availability": "full",
+    "byte_len": 24224,
+    "content_hash": "sha256:cff3dfa779065becdb487b1c56752c5669e5aaa6238445f51033f8e9c58a5325",
+    "id": "jpxl-encoder-metric-advice-2026-08-22",
+    "media_type": "text/markdown",
+    "origin": "external",
+    "path": "sources/external/jpxl-encoder-metric-advice-2026-08-22--cff3dfa7.md",
+    "scope": "JPXL/**",
+    "title": "Outside advice: a codec-optimization perceptual metric for JPXL (JPXL-PQ / JPXL-PCost)"
+  },
+  {
+    "added_at": "2026-08-22",
+    "availability": "full",
+    "byte_len": 37908,
+    "content_hash": "sha256:dfef416bbf50cacec84bbe6f0f546995ae732c8829001b75c493dc7c91567380",
+    "id": "jpxl-ssimulacra2-quality-controller-plan-2026-08-21",
+    "media_type": "text/markdown",
+    "origin": "external",
+    "path": "sources/external/jpxl-ssimulacra2-quality-controller-plan-2026-08-21--dfef416b.md",
+    "scope": "JPXL/**",
+    "title": "JPXL SSIMULACRA2-Driven Perceptual Quality Controller Plan"
+  },
+  {
     "added_at": "2026-08-13",
     "availability": "metadata-only",
     "byte_len": 24121,

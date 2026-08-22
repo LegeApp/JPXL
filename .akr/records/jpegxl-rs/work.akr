@@ -7009,6 +7009,291 @@ record jpegxl-rs.work.optional-semantic-guidance-consumer/1 : work {
     part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
 }
 
+record jpegxl-rs.work.pqc-pr0-provenance-corpus-calibration/1 : work {
+    title "PQC PR 0: register sources, quality-guard corpus with splits, initial-rung calibration data"
+    state proposed
+    scope [
+        path ".agent/scratch/**",
+        path "JPXL/tools/**",
+        path "sources/external/**",
+        path "test-set/**"
+    ]
+    intent """
+        Register the controller plan and metric advice as AKR sources; add the missing guard content classes (text/screenshot, line art, gradients/banding, low-light noise, grayscale, tiny, saturated colour) as provenance-tracked fixtures with a jpxl.codec-corpus/1 manifest that assigns every image to calibration, development or locked holdout by source family; and produce the first (target score, source features) -> initial effective_scale table from fixed-quantizer sweeps scored with the reference SSIMULACRA2 (tools/calibrate_initial_rung.py, emitted as quality_predictor.rs).
+        """
+    acceptance {
+        check corpus-manifest {
+            statement """
+                A jpxl.codec-corpus/1 manifest covering the existing photos/scenes plus the new guard classes passes codec_compare.py manifest-check, every fixture has a provenance sidecar, and no source family appears in more than one split.
+                """
+            method command
+            command "python3 JPXL/tools/codec_compare.py manifest-check --manifest test-set/quality-corpus.json"
+        }
+        check predictor-table {
+            statement """
+                calibrate_initial_rung.py produces quality_predictor.rs from calibration-split sweeps with a report of per-bucket fit error.
+                """
+            method observation
+        }
+        check sources-registered {
+            statement """
+                Both 2026-08-21/22 advice documents are registered in sources/external with content hashes and the intake copies are removed.
+                """
+            method command
+            command "akr source list"
+        }
+    }
+    implements [
+        @jpegxl-rs.decision.perceptual-quality-contract/1,
+        @jpegxl-rs.policy.sources-advice-completion/2
+    ]
+    part_of [ @jpegxl-rs.track.perceptual-quality-controller/1 ]
+}
+
+record jpegxl-rs.work.pqc-pr1-target-semantics/1 : work {
+    title "PQC PR 1: LossyTarget/Effort semantics, with_ssimulacra2_score, --quality, --global-scale, mutual exclusion, reported outcomes"
+    state proposed
+    scope [
+        path "JPXL/crates/jpxl-cli/**",
+        path "JPXL/crates/jpxl-encode-policy/src/request.rs",
+        path "JPXL/crates/jpxl/**"
+    ]
+    intent """
+        Introduce LossyTarget { Perceptual, Rate, FixedQuantizer }, PerceptualTarget, PerceptualMetric and MetricVersion in request.rs; replace the facade Preset with Effort { Fast, Balanced, Quality (feature quality-effort) }; add with_ssimulacra2_score, with_global_scale, with_effort(Effort), with_lossless_effort(u8), encode_*_reported returning an EncodeReport; CLI --quality [N] (defaults 70 fast / 85 balanced), --global-scale, mutual exclusion with --bpp/--target-bytes, score 100 routed to lossless, usage text rewritten. Perceptual scores below 100 return an explicit unsupported error until PR 4. Rate-mode streams stay byte-identical.
+        """
+    acceptance {
+        check api-semantics {
+            statement """
+                Facade tests prove score 100 is byte-identical to lossless, out-of-range scores and conflicting targets are rejected, and a perceptual score below 100 returns the pinned unimplemented error.
+                """
+            method command
+            command "cd JPXL && cargo test -p jpxl --profile fast-debug"
+        }
+        check cli-contract {
+            statement """
+                CLI accepts --quality with effort-dependent defaults and --global-scale, rejects conflicting targets, and its usage text no longer claims JPXL has no perceptual model.
+                """
+            method command
+            command "cd JPXL && cargo test -p jpxl-cli --profile fast-debug"
+        }
+        check workspace-gates {
+            statement """
+                cargo test --workspace --release, clippy -D warnings and fmt --check pass with and without --features quality-effort; rate-mode production streams are byte-identical to the pre-PR baseline.
+                """
+            method command
+            command "cd JPXL && cargo test --workspace --release && cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all --check"
+        }
+    }
+    depends_on [ @jpegxl-rs.work.pqc-pr0-provenance-corpus-calibration/1 ]
+    implements [ @jpegxl-rs.decision.perceptual-quality-contract/1 ]
+    part_of [ @jpegxl-rs.track.perceptual-quality-controller/1 ]
+}
+
+record jpegxl-rs.work.pqc-pr2-perceptual-metric/1 : work {
+    title "PQC PR 2: jpxl-perceptual in-tree clean-room SSIMULACRA2 framework and canonical source reference"
+    state proposed
+    scope [
+        path "JPXL/Cargo.toml",
+        path "JPXL/crates/jpxl-encode-policy/src/source.rs",
+        path "JPXL/crates/jpxl-perceptual/**"
+    ]
+    intent """
+        Create jpxl-perceptual: a metric pipeline (own opponent colour transform, recursive Gaussian blur, 6-scale pyramid, per-scale/component SSIM, added-edge and lost-edge fields, pooling backends) whose first backend reproduces SSIMULACRA2 with a precomputed reference and reusable scratch, deterministic fixed-order reductions, bounded memory; plus an optional PerceptualReferenceFrame retained from the normalised input before XYB conversion. The rust-av ssimulacra2 0.5.1 crate is a dev-dependency parity oracle only.
+        """
+    acceptance {
+        check determinism {
+            statement """
+                Scores are bit-identical across executor widths and between runs; the precomputed-reference path equals a cold pairwise score.
+                """
+            method command
+            command "cd JPXL && cargo test -p jpxl-perceptual --release"
+        }
+        check harness-agreement {
+            statement """
+                An emitted-and-decoded fixture scored in memory matches jpxl compare --ssimulacra2 within the pinned tolerance for 8-bit and 16-bit input.
+                """
+            method observation
+        }
+        check reference-parity {
+            statement """
+                On the scenes, photos and guard fixtures the in-tree score differs from the rust-av crate by median <= 0.05 and max <= 0.25, with the measured spread pinned in a test; identical images score 100; score falls monotonically with distortion; official/golden vectors pass.
+                """
+            method command
+            command "cd JPXL && cargo test -p jpxl-perceptual --release --features parity-oracle"
+        }
+    }
+    depends_on [ @jpegxl-rs.work.pqc-pr1-target-semantics/1 ]
+    implements [
+        @jpegxl-rs.decision.perceptual-quality-contract/1,
+        @jpegxl-rs.policy.perceptual-metric-clean-room/1
+    ]
+    part_of [ @jpegxl-rs.track.perceptual-quality-controller/1 ]
+}
+
+record jpegxl-rs.work.pqc-pr3-pixel-plan-render/1 : work {
+    title "PQC PR 3: PixelPlan/ValidatedPixelPlan split, attach_entropy seam, jpxl-plan-render with decoder parity"
+    state proposed
+    scope [
+        path "JPXL/crates/jpxl-core/**",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode/src/vardct/plan.rs",
+        path "JPXL/crates/jpxl-encode/src/vardct/validate.rs",
+        path "JPXL/crates/jpxl-plan-render/**"
+    ]
+    intent """
+        Split the pre-entropy plan (spatial + quantized) into a validated PixelPlan with entropy attached later; extract build_pixel_plan/attach_entropy in policy without changing output; lift Gaborish, EPF and LF-smoothing kernel math into jpxl-core; add jpxl-plan-render reconstructing canonical linear RGB from a ValidatedPixelPlan with its own orchestration, never calling jpxl-decode.
+        """
+    acceptance {
+        check byte-identity {
+            statement """
+                All existing rate-loop and multi-group byte-identity tests pass unchanged and production rate-mode stream hashes equal the baseline.
+                """
+            method command
+            command "cd JPXL && cargo test --workspace --release"
+        }
+        check render-parity {
+            statement """
+                Plan-rendered pixels match jpxl-decode of the emitted stream within a pinned tolerance across every transform size, CfL on/off, the production QM scales, Gaborish on/off, EPF 0/1, LF smoothing and coefficient extremes on >=256x256 fixtures; djxl and jxl-oxide parity holds within decoder tolerances.
+                """
+            method command
+            command "cd JPXL && cargo test -p jpxl-plan-render --release"
+        }
+        check score-parity {
+            statement """
+                The plan-rendered score equals the emitted-and-decoded score within the PR 2 tolerance.
+                """
+            method observation
+        }
+    }
+    depends_on [ @jpegxl-rs.work.pqc-pr1-target-semantics/1 ]
+    implements [
+        @jpegxl-rs.decision.optimization-determinism-contract/1,
+        @jpegxl-rs.decision.perceptual-quality-contract/1,
+        @jpegxl-rs.policy.perceptual-metric-clean-room/1
+    ]
+    part_of [ @jpegxl-rs.track.perceptual-quality-controller/1 ]
+}
+
+record jpegxl-rs.work.pqc-pr4-quality-navigator/1 : work {
+    title "PQC PR 4: fixed-policy quality navigator — CandidateSearchContext, quality.rs, budgets, guard, trace, quality-curve harness"
+    state proposed
+    scope [
+        path "JPXL/crates/jpxl-cli/**",
+        path "JPXL/crates/jpxl-encode-policy/**",
+        path "JPXL/crates/jpxl/**",
+        path "JPXL/tools/codec_compare.py"
+    ]
+    intent """
+        Make Fast and Balanced score-targeted: move PreparedSearch to CandidateSearchContext with pixel_plan/emission_plan doors; define PerceptualEvaluator in policy and implement it in jpxl-perceptual over jpxl-plan-render; generalise the two-anchor crossing helpers to a log-loss observable; bracket, interpolate with a reserve, one bounded correction, Pareto frontier, finalist-only entropy, canonical re-score, hard budgets (Fast 2-3 probes/1-2 prices, Balanced 3-5/2-3), explicit QualityStatus, measured score guard, jpxl.quality-trace/1 telemetry, and a codec_compare quality-curve mode with matched-score byte ratios and BD-rate.
+        """
+    acceptance {
+        check bounded {
+            statement """
+                Every cell's pixel probes and exact prices are inside the effort budget table with no exhaustive fallback reachable from Fast or Balanced.
+                """
+            method observation
+        }
+        check byte-neutral {
+            statement """
+                Geomean bytes at matched achieved SSIMULACRA2 are within +-1% of the rate controller interpolated to the same score; Butteraugli pnorm3 and PSNR guards reported.
+                """
+            method observation
+        }
+        check determinism-decoders {
+            statement """
+                Perceptual streams are byte-identical across 1/4 threads and with AVX2 disabled; jpxl-decode, djxl and jxl-oxide accept every stream; rate-mode streams unchanged.
+                """
+            method command
+            command "cd JPXL && cargo test --workspace --release"
+        }
+        check target-met {
+            statement """
+                On the holdout at targets 30/50/70/80/85/90/95 for both efforts there are zero canonical floor violations, median |achieved - requested| <= 2, and achieved score is monotone in the requested score per image.
+                """
+            method command
+            command "python3 JPXL/tools/codec_compare.py curve --quality 30 50 70 80 85 90 95"
+        }
+        check wall-reported {
+            statement """
+                Balanced(quality)/Balanced(rate) wall ratio at matched score is reported on the 4 MP and 12 MP anchors and is <= 2.0 (provisional bound; +25% is the PR 4b profiling target).
+                """
+            method observation
+        }
+    }
+    depends_on [
+        @jpegxl-rs.work.pqc-pr2-perceptual-metric/1,
+        @jpegxl-rs.work.pqc-pr3-pixel-plan-render/1
+    ]
+    implements [
+        @jpegxl-rs.decision.optimization-determinism-contract/1,
+        @jpegxl-rs.decision.perceptual-quality-contract/1
+    ]
+    part_of [ @jpegxl-rs.track.perceptual-quality-controller/1 ]
+}
+
+record jpegxl-rs.work.pqc-pr5-policy-bank/1 : work {
+    title "PQC PR 5: EncodeRequest::for_quality, removal of bpp-keyed policy branches, bounded perceptual policy bank with equal-score comparison"
+    state proposed
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/src/policy_bank.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/quality.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/request.rs"
+    ]
+    intent """
+        Add for_quality with the Balanced knobs as a labelled starting policy and no requested-bitrate branch (at_most_one_bpp deleted); define a bounded policy bank over chroma QM, quant_lf, restoration, CfL, cover revision and truncation lambda; Balanced solves baseline plus the two most relevant alternatives to the same score and keeps the smallest exact stream; Quality (feature) runs bounded coordinate descent with a 0.5% minimum-saving stop rule.
+        """
+    acceptance {
+        check material-reduction {
+            statement """
+                Matched-achieved-score geomean bytes on the development corpus are materially below PR 4 with no content class worse than -0.5 SSIMULACRA2-equivalent, Butteraugli max mean <= +2%, pnorm3 worst <= +5%, and Balanced wall <= +25% over PR 4 Balanced.
+                """
+            method observation
+        }
+        check no-bpp-branch {
+            statement """
+                Quality-mode requests cannot reach any requested-bitrate policy gate; rate-mode streams remain byte-identical.
+                """
+            method command
+            command "cd JPXL && cargo test -p jpxl-encode-policy --release"
+        }
+    }
+    depends_on [ @jpegxl-rs.work.pqc-pr4-quality-navigator/1 ]
+    implements [ @jpegxl-rs.decision.perceptual-quality-contract/1 ]
+    part_of [ @jpegxl-rs.track.perceptual-quality-controller/1 ]
+}
+
+record jpegxl-rs.work.pqc-pr7-terminal-reducer/1 : work {
+    title "PQC PR 7: finalist terminal-coefficient reducer exchanging measured score reserve for exact bytes, and the Quality-effort promotion gate"
+    state proposed
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/src/quality.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/reducer.rs"
+    ]
+    intent """
+        Enumerate legal terminal-nonzero removals per varblock/channel from the real coefficient walk, price them with the trained entropy tables, rank by bytes saved per estimated perceptual loss, apply bounded non-overlapping batches accepted only by a canonical full-frame score above the floor (rollback and halve otherwise), retrain at checkpoints, and exact-price/full-score the final candidate. Then run the Quality-effort promotion gate: geomean bytes at matched achieved SSIMULACRA2 <= 0.98x Balanced on the locked holdout with Contract B guards intact, or keep the feature hidden and record the negative.
+        """
+    acceptance {
+        check promotion-verdict {
+            statement """
+                The Quality-effort promotion criterion is evaluated and recorded as pass or fail evidence; the feature is exposed publicly only on pass.
+                """
+            method observation
+        }
+        check reducer-gate {
+            statement """
+                On the locked holdout the reducer lowers matched-score bytes with zero floor violations, bounded edit/rollback counts, and Butteraugli/PSNR guards within Contract B.
+                """
+            method observation
+        }
+    }
+    depends_on [ @jpegxl-rs.work.pqc-pr5-policy-bank/1 ]
+    implements [
+        @jpegxl-rs.decision.perceptual-quality-contract/1,
+        @jpegxl-rs.decision.ssimulacra2-is-the-primary-promotion-metric/1
+    ]
+    part_of [ @jpegxl-rs.track.perceptual-quality-controller/1 ]
+}
+
 record jpegxl-rs.work.publish-readme-benchmark-mit/1 : work {
     title "Publish-ready README, reproducible libjxl comparison, and MIT-only licensing"
     state proposed

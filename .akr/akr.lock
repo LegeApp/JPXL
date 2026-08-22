@@ -5,7 +5,7 @@ build {
     tool "akr 0.3.3"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:49490678a0dc1c797bc2e69073b43750a90922b48d76428c1b0b943f9e30bd10"
+    source_graph "sha256:e41a193694b19545fc511030be80899708467fc0aac2cdcaf83e5017971fa048"
 }
 
 source ".akr/project.akr" {
@@ -24,8 +24,8 @@ source ".akr/records/jpegxl-rs/constraints.akr" {
 }
 
 source ".akr/records/jpegxl-rs/decisions.akr" {
-    hash "sha256:8e6eda7bd6bed8d4bbd11baedcd6503a8f0a58843c5b7c7fcc3e22f4c38bc2af"
-    records 21
+    hash "sha256:a0a027029a3e5cca15f8b8da6c57bcd78beca92aa6be8e16329a84c652149570"
+    records 22
 }
 
 source ".akr/records/jpegxl-rs/evidence.akr" {
@@ -49,8 +49,8 @@ source ".akr/records/jpegxl-rs/papercuts.akr" {
 }
 
 source ".akr/records/jpegxl-rs/policies.akr" {
-    hash "sha256:3afd597b22a72e8b0323d12d561fea39218b50134344439bdb7e56ee7edc41c2"
-    records 17
+    hash "sha256:263b11f76795abf524ee5f588817a15a1c3fb51a14da3fdd5bfcf6c95132e9f6"
+    records 18
 }
 
 source ".akr/records/jpegxl-rs/questions.akr" {
@@ -64,13 +64,13 @@ source ".akr/records/jpegxl-rs/requirements.akr" {
 }
 
 source ".akr/records/jpegxl-rs/tracks.akr" {
-    hash "sha256:9703b1af407f97906c61e43ac7d60d83d478925771d7fb4c7ca7687957756dc2"
-    records 3
+    hash "sha256:0926fc0286536d71b84d83512ca164ae8d1a604efc93e7bed6ea69bd4b7ef1cd"
+    records 4
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:e9f7303922c87a7f7fe3b5113216428b73a2e3ae9b9ba04a95f6e3eebd5dc7e4"
-    records 160
+    hash "sha256:0228666a268b85357ac2c680c6edd1f3d03a5066f70d92a1747c0895989961bf"
+    records 167
 }
 
 resolution @jpegxl-rs.decision.encoder-architecture-phases/1 {
@@ -3761,8 +3761,8 @@ seal @jpegxl-rs.decision.image-io-at-cli-boundary/2 {
 }
 
 seal @jpegxl-rs.decision.lossy-production-presets/1 {
-    state active
-    hash "sha256:d19c971ca05fd4c761b4f9708332d47476112140ec6a218e83baa890743a0a24"
+    state superseded
+    hash "sha256:8f92fa1a080428da26a03e581e0ec869c7f7db18d0827e7104a0895b4d71ca42"
 }
 
 seal @jpegxl-rs.decision.modular-lean-default/1 {
