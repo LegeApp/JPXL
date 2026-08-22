@@ -58,6 +58,9 @@ pub struct PlanRenderEvaluator<'e> {
     renderer: PlanRenderer,
     metric: Ssimulacra2,
     reference: PrecomputedReference,
+    /// The candidate's linear-RGB planes, reused across probes so each probe
+    /// reuses one set of planes rather than allocating three.
+    linear: [Vec<f32>; 3],
     bits_per_sample: u32,
     executor: &'e EncodeExecutor,
     evaluations: u32,
@@ -122,6 +125,7 @@ impl<'e> PlanRenderEvaluator<'e> {
             renderer: PlanRenderer::new()?,
             metric: Ssimulacra2::new(),
             reference,
+            linear: [Vec::new(), Vec::new(), Vec::new()],
             bits_per_sample,
             executor,
             evaluations: 0,
@@ -148,17 +152,21 @@ impl PerceptualEvaluator for PlanRenderEvaluator<'_> {
     ) -> jpxl_encode_policy::Result<PerceptualObservation> {
         let frame = self
             .renderer
-            .render(candidate)
+            .render_with(candidate, self.executor)
             .map_err(|_| PolicyError::Unsupported {
                 what: "a candidate plan the renderer could not reconstruct",
             })?;
-        let planes = frame.linear_rgb_at_depth(self.bits_per_sample);
-        let [r, g, b] = &planes;
-        let view = LinearRgbView::new(frame.width(), frame.height(), r, g, b).map_err(|_| {
-            PolicyError::Unsupported {
+        let (width, height) = (frame.width(), frame.height());
+        frame.linear_rgb_at_depth_into(self.bits_per_sample, &mut self.linear);
+        // The rendered frame is no longer needed — only its linearised planes
+        // are scored — so release it before the metric allocates its scratch,
+        // keeping both from being resident at once.
+        drop(frame);
+        let [r, g, b] = &self.linear;
+        let view =
+            LinearRgbView::new(width, height, r, g, b).map_err(|_| PolicyError::Unsupported {
                 what: "a rendered frame whose planes do not match its dimensions",
-            }
-        })?;
+            })?;
         let result = self
             .metric
             .score(&self.reference, view, self.executor)

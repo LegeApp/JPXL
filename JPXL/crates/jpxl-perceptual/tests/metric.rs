@@ -199,6 +199,40 @@ fn grayscale_input_is_scored_like_any_other() {
     assert!(score < 100.0 && score > 30.0, "{score}");
 }
 
+/// Peak resident set of the metric alone at 12 MP, for each retention mode.
+/// Run one mode per process (peak RSS is a high-water mark):
+/// `JPXL_RETENTION=moments cargo test --release -p jpxl-perceptual --test metric -- --ignored --nocapture twelve_megapixel_memory`
+/// then again with `JPXL_RETENTION=planes`.
+#[test]
+#[ignore = "memory aid; prints, does not assert"]
+fn twelve_megapixel_memory() {
+    let retention = match std::env::var("JPXL_RETENTION").ok().as_deref() {
+        Some("planes") => ReferenceRetention::PlanesOnly,
+        _ => ReferenceRetention::Moments,
+    };
+    let img = synthetic(4000, 3000, 9);
+    let cand = add_noise(&img, 0.01, 3);
+    let exec = ScopedThreadExecutor { workers: 4 };
+    let reference = PrecomputedReference::new(img.view(), retention, &exec).unwrap();
+    let mut scorer = Ssimulacra2::new();
+    let _ = scorer.score(&reference, cand.view(), &exec).unwrap();
+    let r = scorer.score(&reference, cand.view(), &exec).unwrap();
+    let hwm = std::fs::read_to_string("/proc/self/status")
+        .ok()
+        .and_then(|s| {
+            s.lines()
+                .find(|l| l.starts_with("VmHWM"))
+                .map(std::string::ToString::to_string)
+        })
+        .unwrap_or_else(|| "VmHWM: n/a".to_string());
+    eprintln!(
+        "retention {retention:?}: reference retained {} MB, peak {} (score {:.3})",
+        reference.retained_bytes() / (1024 * 1024),
+        hwm.trim(),
+        r.score
+    );
+}
+
 /// Wall-time split of one 4 MP comparison, serial and on four threads.
 /// Run with `cargo test --release -p jpxl-perceptual --test metric -- --ignored --nocapture timing`.
 #[test]

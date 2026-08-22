@@ -200,8 +200,90 @@ fn vertical_pass(
     }
 }
 
+/// The two-pole recursion state of one strip, held per pole across the columns
+/// (structure-of-arrays). Each pole's per-column update is then an independent
+/// lane, so the compiler vectorises the column loop. `prev[k]`/`prev2[k]` are
+/// the two previous outputs of pole `k` for every column.
+struct StripState {
+    prev: [Vec<f64>; 3],
+    prev2: [Vec<f64>; 3],
+    /// `f64::from(top + bottom)` for the current row, one per column.
+    sum: Vec<f64>,
+    /// The summed three-pole output for the current row, one per column.
+    acc: Vec<f64>,
+}
+
+impl StripState {
+    fn new(cols: usize) -> Self {
+        Self {
+            prev: [vec![0.0; cols], vec![0.0; cols], vec![0.0; cols]],
+            prev2: [vec![0.0; cols], vec![0.0; cols], vec![0.0; cols]],
+            sum: vec![0.0; cols],
+            acc: vec![0.0; cols],
+        }
+    }
+}
+
+/// One pole's per-column recursion step. `first` seeds `acc`, the others add
+/// to it, so `acc` ends the row holding `o1 + o3 + o5` in that fixed order —
+/// exactly [`step`]'s summation. Reads `p`/`q` before overwriting them, so the
+/// state advances identically. Four independent lanes, so this vectorises.
+#[inline(always)]
+fn pole_step(
+    sum: &[f64],
+    p: &mut [f64],
+    q: &mut [f64],
+    acc: &mut [f64],
+    mul_in: f64,
+    mul_prev: f64,
+    first: bool,
+) {
+    for (((&s, p), q), acc) in sum
+        .iter()
+        .zip(p.iter_mut())
+        .zip(q.iter_mut())
+        .zip(acc.iter_mut())
+    {
+        let o = s * mul_in + mul_prev * *p - *q;
+        *q = *p;
+        *p = o;
+        if first {
+            *acc = o;
+        } else {
+            *acc += o;
+        }
+    }
+}
+
+/// Advances every column's state by one row, and — when `out` is `Some` —
+/// writes the summed output rounded to `f32` once.
+#[inline(always)]
+#[allow(clippy::cast_possible_truncation)]
+fn vertical_row(top: &[f32], bottom: &[f32], state: &mut StripState, out: Option<&mut [f32]>) {
+    let StripState {
+        prev,
+        prev2,
+        sum,
+        acc,
+    } = state;
+    for ((&t, &b), s) in top.iter().zip(bottom).zip(sum.iter_mut()) {
+        *s = f64::from(t + b);
+    }
+    let [p1, p3, p5] = prev;
+    let [q1, q3, q5] = prev2;
+    pole_step(sum, p1, q1, acc, MUL_IN[0], MUL_PREV[0], true);
+    pole_step(sum, p3, q3, acc, MUL_IN[1], MUL_PREV[1], false);
+    pole_step(sum, p5, q5, acc, MUL_IN[2], MUL_PREV[2], false);
+    if let Some(out) = out {
+        for (&a, o) in acc.iter().zip(out.iter_mut()) {
+            *o = a as f32;
+        }
+    }
+}
+
 /// Vertical pass over columns `x0 .. x0 + cols` of `input`, writing the
-/// strip row-major (`cols` per row) into `strip_out`.
+/// strip row-major (`cols` per row) into `strip_out`. Dispatched to an AVX2
+/// build where the host supports it.
 fn vertical_strip(
     input: &[f32],
     strip_out: &mut [f32],
@@ -210,9 +292,47 @@ fn vertical_strip(
     x0: usize,
     cols: usize,
 ) {
+    #[cfg(target_arch = "x86_64")]
+    if jpxl_core::cpu::has_avx2() {
+        // SAFETY: `vertical_strip_avx2` only requires that the host support
+        // AVX2, which `has_avx2` has just confirmed.
+        #[allow(unsafe_code)]
+        unsafe {
+            vertical_strip_avx2(input, strip_out, width, height, x0, cols);
+        }
+        return;
+    }
+    vertical_strip_impl(input, strip_out, width, height, x0, cols);
+}
+
+/// [`vertical_strip`] compiled for AVX2.
+///
+/// Calling it is `unsafe` unless the host supports AVX2 (see
+/// [`jpxl_core::cpu::has_avx2`]); that is the whole contract.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2,fma")]
+fn vertical_strip_avx2(
+    input: &[f32],
+    strip_out: &mut [f32],
+    width: usize,
+    height: usize,
+    x0: usize,
+    cols: usize,
+) {
+    vertical_strip_impl(input, strip_out, width, height, x0, cols);
+}
+
+#[inline(always)]
+fn vertical_strip_impl(
+    input: &[f32],
+    strip_out: &mut [f32],
+    width: usize,
+    height: usize,
+    x0: usize,
+    cols: usize,
+) {
     let zeros = vec![0.0f32; cols];
-    let mut prev = vec![[0.0f64; 3]; cols];
-    let mut prev2 = vec![[0.0f64; 3]; cols];
+    let mut state = StripState::new(cols);
     let h = isize::try_from(height).unwrap_or(isize::MAX);
     let row = |i: isize| -> &[f32] {
         if i < 0 || i >= h {
@@ -230,29 +350,7 @@ fn vertical_strip(
         let out_row = usize::try_from(n)
             .ok()
             .and_then(|n| strip_out.get_mut(n * cols..n * cols + cols));
-        match out_row {
-            Some(out_row) => {
-                for ((((&t, &b), p), q), o) in top
-                    .iter()
-                    .zip(bottom)
-                    .zip(prev.iter_mut())
-                    .zip(prev2.iter_mut())
-                    .zip(out_row.iter_mut())
-                {
-                    *o = step(t + b, p, q);
-                }
-            }
-            None => {
-                for (((&t, &b), p), q) in top
-                    .iter()
-                    .zip(bottom)
-                    .zip(prev.iter_mut())
-                    .zip(prev2.iter_mut())
-                {
-                    step(t + b, p, q);
-                }
-            }
-        }
+        vertical_row(top, bottom, &mut state, out_row);
         n += 1;
     }
 }

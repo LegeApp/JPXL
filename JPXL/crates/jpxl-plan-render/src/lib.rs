@@ -191,6 +191,21 @@ impl RenderedFrame {
     /// therefore what a perceptual metric should score.
     #[must_use]
     pub fn linear_rgb_at_depth(&self, bits: u32) -> [Vec<f32>; NUM_CHANNELS] {
+        let mut out: [Vec<f32>; NUM_CHANNELS] = [Vec::new(), Vec::new(), Vec::new()];
+        self.linear_rgb_at_depth_into(bits, &mut out);
+        out
+    }
+
+    /// [`Self::linear_rgb_at_depth`] writing into caller-owned buffers, so a
+    /// search that scores many candidates reuses one set of planes instead of
+    /// allocating three per probe. Each output is cleared and refilled to
+    /// exactly `width * height` samples.
+    ///
+    /// The quantized integer is formed and looked up per sample in one pass,
+    /// so no full-frame `i32` plane is materialised; the values are identical
+    /// to `linear_rgb_at_depth` (and to [`Self::quantized`] followed by the
+    /// same lookup) sample for sample.
+    pub fn linear_rgb_at_depth_into(&self, bits: u32, out: &mut [Vec<f32>; NUM_CHANNELS]) {
         let max = Self::full_scale(bits);
         // One transfer-curve evaluation per representable integer, not per
         // sample: the round trip is a table lookup for every real bit depth.
@@ -202,18 +217,30 @@ impl RenderedFrame {
         let lut: Vec<f32> = (0..entries)
             .map(|q| srgb_to_linear(q as f32 / max))
             .collect();
-        self.quantized(bits).map(|plane| {
-            plane
-                .into_iter()
-                .map(|q| {
-                    usize::try_from(q)
-                        .ok()
-                        .and_then(|q| lut.get(q))
-                        .copied()
-                        .unwrap_or_else(|| srgb_to_linear(q as f32 / max))
-                })
-                .collect()
-        })
+        for (dst, plane) in out.iter_mut().zip(self.planes.iter()) {
+            dst.clear();
+            dst.reserve(plane.len());
+            dst.extend(plane.iter().map(|&v| {
+                let scaled = (v * max).round();
+                let q = if scaled.is_finite() {
+                    // Clamped into [0, max] with max < 2^32 before the cast,
+                    // so the narrowing is exact.
+                    #[allow(
+                        clippy::cast_possible_truncation,
+                        reason = "the value is clamped to [0, max] first"
+                    )]
+                    let q = scaled.clamp(0.0, max) as i32;
+                    q
+                } else {
+                    0
+                };
+                usize::try_from(q)
+                    .ok()
+                    .and_then(|q| lut.get(q))
+                    .copied()
+                    .unwrap_or_else(|| srgb_to_linear(q as f32 / max))
+            }));
+        }
     }
 }
 

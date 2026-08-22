@@ -31,14 +31,19 @@ const OPSIN_BIAS_CBRT: f32 = 0.155_954_2;
 /// estimate followed by four Newton steps in `f64`, then one rounding to
 /// `f32`. Every step is an IEEE basic operation, so the result is the same on
 /// every IEEE-754 host. Zero, infinities and NaN return unchanged.
+///
+/// The special cases are folded into a final select rather than an early
+/// return, so the arithmetic is straight-line and the caller's per-pixel loop
+/// can vectorise. For a finite non-zero input the value is exactly the Newton
+/// result (the only path the branched form ever took for real image samples);
+/// for zero and non-finite inputs the input is returned, as before. The two
+/// forms are therefore bit-identical on every input.
 #[must_use]
+#[inline(always)]
 // The `f64` Newton result is rounded to `f32` exactly once; that is the
 // function's contract, not an accidental truncation.
 #[allow(clippy::cast_possible_truncation)]
 pub fn reproducible_cbrt(value: f32) -> f32 {
-    if value == 0.0 || !value.is_finite() {
-        return value;
-    }
     let x = f64::from(value);
     let a = x.abs();
     // Exponent-thirding estimate (the classic cube-root bit hack on a double).
@@ -47,11 +52,17 @@ pub fn reproducible_cbrt(value: f32) -> f32 {
         y -= (y * y * y - a) / (3.0 * y * y);
     }
     let root = y as f32;
-    if x < 0.0 { -root } else { root }
+    let signed = if x < 0.0 { -root } else { root };
+    if value == 0.0 || !value.is_finite() {
+        value
+    } else {
+        signed
+    }
 }
 
 /// Converts one linear-sRGB triple to the metric's positive XYB.
 #[must_use]
+#[inline(always)]
 pub fn linear_srgb_to_positive_xyb(rgb: [f32; 3]) -> [f32; 3] {
     let [r, g, b] = rgb;
     let [ml, mm, ms] = OPSIN_ABSORBANCE_MATRIX;
@@ -71,7 +82,51 @@ pub fn linear_srgb_to_positive_xyb(rgb: [f32; 3]) -> [f32; 3] {
 
 /// Converts three linear-sRGB planes into three positive-XYB planes of the
 /// same length. Purely per pixel, so any row partition gives identical output.
+///
+/// The per-sample arithmetic is straight-line (see [`reproducible_cbrt`]), so
+/// on a host with AVX2 the conversion runs the same operations widened to
+/// 256-bit registers; that selection never changes a result (no `mul_add`
+/// contraction, same rounding), so it is bit-identical to the baseline build.
 pub fn planes_to_positive_xyb(
+    r: &[f32],
+    g: &[f32],
+    b: &[f32],
+    x: &mut [f32],
+    y: &mut [f32],
+    bb: &mut [f32],
+) {
+    #[cfg(target_arch = "x86_64")]
+    if jpxl_core::cpu::has_avx2() {
+        // SAFETY: `planes_to_positive_xyb_avx2` only requires that the host
+        // support AVX2, which `has_avx2` has just confirmed.
+        #[allow(unsafe_code)]
+        unsafe {
+            planes_to_positive_xyb_avx2(r, g, b, x, y, bb);
+        }
+        return;
+    }
+    planes_to_positive_xyb_impl(r, g, b, x, y, bb);
+}
+
+/// [`planes_to_positive_xyb`] compiled for AVX2.
+///
+/// Calling it is `unsafe` unless the host supports AVX2 (see
+/// [`jpxl_core::cpu::has_avx2`]); that is the whole contract.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2,fma")]
+fn planes_to_positive_xyb_avx2(
+    r: &[f32],
+    g: &[f32],
+    b: &[f32],
+    x: &mut [f32],
+    y: &mut [f32],
+    bb: &mut [f32],
+) {
+    planes_to_positive_xyb_impl(r, g, b, x, y, bb);
+}
+
+#[inline(always)]
+fn planes_to_positive_xyb_impl(
     r: &[f32],
     g: &[f32],
     b: &[f32],
