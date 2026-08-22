@@ -1759,6 +1759,31 @@ record jpegxl-rs.observation.phase5-quality-policy-screen-2026-08-11/11 : observ
     ]
 }
 
+record jpegxl-rs.observation.pqc-memory-50mp-oom-2026-08-22/1 : observation {
+    title "Perceptual encodes of 50 MP sources reach ~12 GB RSS; two concurrent measurement runs OOM-killed a 31 GB host twice"
+    state verified
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/src/quality.rs",
+        path "JPXL/crates/jpxl-perceptual/**",
+        path "JPXL/tools/codec_compare.py"
+    ]
+    statement """
+        The kernel OOM-killed jpxl twice on 2026-08-22 (12:54 anon-rss 9.9 GB; 13:28 anon-rss 11.9 GB) while two agents measured the perceptual controller concurrently on a 31 GB host without swap, taking the Claude Code session down both times. Both kills were perceptual encodes of photo-large-20260606_150624.ppm, an 8160x6120 (50 MP) locked-holdout source; three of the thirteen holdout images are that size. Peak RSS on the quality path scales at about 240 bytes per pixel (2.9 GB at 12 MP per pqc-pr4b-memory-12mp), so a 50 MP encode needs about 12 GB and cannot share the host with a release build or a second such encode. Measurement runs must serialise large encodes and cap each process with ulimit -v so a runaway fails instead of killing the session; the reduction itself (tiled scorer, plan lifetimes) remains the PR 4b follow-up.
+        """
+    observed_at git:663efe8a1723bbd784c0921440a4b9810e68b660
+    method command
+    watches [
+        "JPXL/crates/jpxl-perceptual/src/ssimulacra2.rs",
+        "JPXL/crates/jpxl-perceptual/src/reference.rs",
+        "JPXL/crates/jpxl-perceptual/src/evaluator.rs"
+    ]
+    review_after 2026-09-30
+    derived_from [
+        @jpegxl-rs.evidence.pqc-pr4b-memory-12mp-2026-08-22/1,
+        @jpegxl-rs.work.pqc-pr4-quality-navigator/1
+    ]
+}
+
 record jpegxl-rs.observation.pqc-pr4-development-split-2026-08-22/1 : observation {
     title "PR 4 on the development split: the score floor holds in 150/150 encodes, photographs beat cjxl -e7 at matched score, synthetic text and line art trail badly, and the quality path costs ~3.5x the rate path's wall time"
     state verified

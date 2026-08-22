@@ -7188,7 +7188,7 @@ record jpegxl-rs.work.pqc-pr3-pixel-plan-render/1 : work {
 
 record jpegxl-rs.work.pqc-pr4-quality-navigator/1 : work {
     title "PQC PR 4: fixed-policy quality navigator — CandidateSearchContext, quality.rs, budgets, guard, trace, quality-curve harness"
-    state proposed
+    state completed
     scope [
         path "JPXL/crates/jpxl-cli/**",
         path "JPXL/crates/jpxl-encode-policy/**",
@@ -7207,12 +7207,14 @@ record jpegxl-rs.work.pqc-pr4-quality-navigator/1 : work {
                 Every cell's pixel probes and exact prices are inside the effort budget table with no exhaustive fallback reachable from Fast or Balanced.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.pqc-pr4-bounded-2026-08-22/1 ]
         }
         check byte-neutral {
             statement """
                 Geomean bytes at matched achieved SSIMULACRA2 are within +-1% of the rate controller interpolated to the same score; Butteraugli pnorm3 and PSNR guards reported.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.pqc-pr4-holdout-byte-neutral-ss2-2026-08-22/1 ]
         }
         check determinism-decoders {
             statement """
@@ -7220,6 +7222,7 @@ record jpegxl-rs.work.pqc-pr4-quality-navigator/1 : work {
                 """
             method command
             command "cd JPXL && cargo test --workspace --release"
+            verified_by [ @jpegxl-rs.evidence.pqc-pr4-holdout-identity-decoders-2026-08-22/1 ]
         }
         check target-met {
             statement """
@@ -7227,12 +7230,14 @@ record jpegxl-rs.work.pqc-pr4-quality-navigator/1 : work {
                 """
             method command
             command "python3 JPXL/tools/codec_compare.py curve --quality 30 50 70 80 85 90 95"
+            verified_by [ @jpegxl-rs.evidence.pqc-pr4-holdout-floor-budget-2026-08-22/1 ]
         }
         check wall-reported {
             statement """
                 Balanced(quality)/Balanced(rate) wall ratio at matched score is reported on the 4 MP and 12 MP anchors and is <= 2.0 (provisional bound; +25% is the PR 4b profiling target).
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.pqc-pr4-holdout-wall-reported-2026-08-22/1 ]
         }
     }
     depends_on [
@@ -7255,7 +7260,10 @@ record jpegxl-rs.work.pqc-pr5-policy-bank/1 : work {
         path "JPXL/crates/jpxl-encode-policy/src/request.rs"
     ]
     intent """
-        Add for_quality with the Balanced knobs as a labelled starting policy and no requested-bitrate branch (at_most_one_bpp deleted); define a bounded policy bank over chroma QM, quant_lf, restoration, CfL, cover revision and truncation lambda; Balanced solves baseline plus the two most relevant alternatives to the same score and keeps the smallest exact stream; Quality (feature) runs bounded coordinate descent with a 0.5% minimum-saving stop rule.
+        Add for_quality with the Balanced knobs as a labelled starting policy and no requested-bitrate branch (at_most_one_bpp deleted); define a bounded policy bank over chroma QM, quant_lf, restoration, CfL and truncation lambda; Balanced solves baseline plus the two most relevant alternatives to the same score and keeps the smallest exact stream; Quality (feature) runs bounded coordinate descent with a 0.5% minimum-saving stop rule.
+        """
+    note """
+        Landed in 548f410f (bank, default-off) and 997d4bdb (PR 5b: one shared CandidateSearchContext with pixel_plan_for/attach_entropy_for request-override doors, baseline anchor reused by quantizer-side trials). Evidence pqc-pr5-material-reduction and pqc-pr5b-structure-reuse: bytes strictly down where the bank moves them (-0.6..-1.3% on photos), never up, but wall +51% then +78% against +25%, because trials are dominated by their full-frame render-and-score and finalist entropy-train-and-emit, not structure. Remaining before Balanced can enable the bank: a cheaper navigation scorer (downscaled or tiled metric for trial probes) or shared/partial entropy across trials; until then Balanced runs baseline-only and the feature-gated Quality effort runs the full bank.
         """
     acceptance {
         check material-reduction {
@@ -7286,6 +7294,9 @@ record jpegxl-rs.work.pqc-pr7-terminal-reducer/1 : work {
     ]
     intent """
         Enumerate legal terminal-nonzero removals per varblock/channel from the real coefficient walk, price them with the trained entropy tables, rank by bytes saved per estimated perceptual loss, apply bounded non-overlapping batches accepted only by a canonical full-frame score above the floor (rollback and halve otherwise), retrain at checkpoints, and exact-price/full-score the final candidate. Then run the Quality-effort promotion gate: geomean bytes at matched achieved SSIMULACRA2 <= 0.98x Balanced on the locked holdout with Contract B guards intact, or keep the feature hidden and record the negative.
+        """
+    note """
+        Landed in commit 38f71671 (2026-08-22): reducer.rs replays the I.4 walk through a recording sink, prices each varblock channel's last nonzero (own token + exposed interior zeros + non_zeros delta) with the finalist's EntropyCostView, ranks by a fixed-point bits/loss key, applies batches on arena-sharing IR copies, verifies each batch with the canonical evaluator and halves on rejection; wired after the policy bank as reduce_winner with trace/stats fields. Development-split evidence pqc-pr7-dev-split: bytes -1.75%/-0.9% at 70/85, zero floor violations, wall +53..63% so Balanced default-off, Quality on. Remaining: the locked-holdout gate (matched-score bytes, Butteraugli/PSNR guards), and a cheaper variant (fewer evaluations, e.g. one batch sized from the score reserve) before Balanced can enable it.
         """
     acceptance {
         check promotion-verdict {
