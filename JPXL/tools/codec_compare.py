@@ -40,7 +40,9 @@ RECORD_SCHEMA = "jpxl.codec-comparison/3"
 KNOWN_RECORD_SCHEMAS = {"jpxl.codec-comparison/2", "jpxl.codec-comparison/3"}
 TIMING_SCHEMA = "jpxl.codec-timing-plan/1"
 SUMMARY_SCHEMA = "jpxl.codec-comparison-summary/1"
-QUALITY_SUMMARY_SCHEMA = "jpxl.codec-quality-summary/1"
+# /2 adds a same-effort JPXL rate baseline and keeps controller-achieved scores
+# separate from the common decoded in-tree score used for matched-rate work.
+QUALITY_SUMMARY_SCHEMA = "jpxl.codec-quality-summary/2"
 QUALITY_TRACE_SCHEMA = "jpxl.quality-trace/1"
 METRIC_VARIATION_SCHEMA = "jpxl.metric-variation/1"
 METRIC_VARIATION_INPUT_SCHEMA = "jpxl.metric-variation-input/1"
@@ -54,11 +56,19 @@ QUALITY_STATUSES = frozenset(
         "met_work_cap",
         "saturated_floor",
         "saturated_top",
+        "under_target_work_cap",
         "rescued_fresh_structure",
         "routed_to_lossless",
         "unsupported_too_small",
     }
 )
+DEFAULT_QUALITY_RATE_BPPS = (0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0)
+QUALITY_BUDGETS = {
+    "fast": {"probes": 3, "prices": 2, "structural_builds": 2},
+    "balanced": {"probes": 5, "prices": 3, "structural_builds": 2},
+}
+PRIMARY_QUALITY_METRIC = "ssimulacra2_jpxl"
+REFERENCE_QUALITY_METRIC = "ssimulacra2"
 
 
 class HarnessError(RuntimeError):
@@ -508,7 +518,13 @@ def run_checked(command: Sequence[str], env: dict[str, str] | None = None) -> st
 
 def metrics_from_output(output: str) -> dict[str, float | str | None]:
     result: dict[str, float | str | None] = {}
-    for name in ("psnr_db", "ssimulacra2", "butteraugli", "butteraugli_pnorm3"):
+    for name in (
+        "psnr_db",
+        PRIMARY_QUALITY_METRIC,
+        REFERENCE_QUALITY_METRIC,
+        "butteraugli",
+        "butteraugli_pnorm3",
+    ):
         match = re.search(rf"(?:^|\s){name}=([-+0-9.eE]+|inf)(?:\s|$)", output)
         if not match:
             result[name] = None
@@ -570,7 +586,11 @@ def enrich_work_records(records: list[dict[str, Any]], jpxl: Path) -> list[dict[
     enriched: list[dict[str, Any]] = []
     for record in records:
         copy = dict(record)
-        if record.get("kind") == "curve" and record.get("codec") == "jpxl":
+        if (
+            record.get("kind") == "curve"
+            and record.get("codec") == "jpxl"
+            and not _is_quality_record(record)
+        ):
             setting = record["setting"]
             command = [
                 str(jpxl),
@@ -705,13 +725,20 @@ def curve_point(
     setting: float,
     binaries: dict[str, dict[str, Any]],
     axis: str = "bpp",
+    jpxl_preset: str | None = None,
 ) -> dict[str, Any]:
     source = Path(image["path"])
     pixels = image["width"] * image["height"]
     binary = args.jpxl if codec == "jpxl" else args.cjxl
     threads = args.threads if codec == "jpxl" else args.cjxl_threads
     quality_mode = codec == "jpxl" and axis == "quality"
-    label = f"q{setting:.10g}" if quality_mode else f"{setting:.10g}"
+    rate_baseline = codec == "jpxl" and axis == "quality-rate"
+    if quality_mode:
+        label = f"q{setting:.10g}"
+    elif rate_baseline:
+        label = f"rate{setting:.10g}"
+    else:
+        label = f"{setting:.10g}"
     stem = f"{image['id']}-{codec}-{label}"
     encoded = args.work_dir / f"{stem}.jxl"
     decoded = args.work_dir / f"{stem}.ppm"
@@ -729,15 +756,21 @@ def curve_point(
             env["JPXL_QUALITY_TRACE"] = str(trace_path)
         stdout = run_checked(command, env=env)
         quality_line = parse_quality_line(stdout)
+        if quality_line["status"] not in QUALITY_STATUSES:
+            raise HarnessError(
+                f"jpxl encode reported unknown quality status: {quality_line['status']}"
+            )
         if trace_path is not None and trace_path.is_file():
             trace = read_quality_trace(trace_path)
             trace_extra = {
                 "trace_path": str(trace_path),
                 "wall_by_phase": trace.get("wall_by_phase"),
+                "structural_builds": trace.get("structural_builds"),
             }
     else:
+        preset = jpxl_preset or args.preset
         command = codec_command(
-            codec, binary, source, encoded, setting, threads, args.preset, args.effort
+            codec, binary, source, encoded, setting, threads, preset, args.effort
         )
         run_checked(command)
     run_checked([str(args.djxl), str(encoded), str(decoded)])
@@ -757,10 +790,12 @@ def curve_point(
         setting_block = {
             "kind": "bpp" if codec == "jpxl" else "distance",
             "value": setting,
-            "preset": args.preset if codec == "jpxl" else None,
+            "preset": (jpxl_preset or args.preset) if codec == "jpxl" else None,
             "effort": args.effort if codec == "cjxl" else None,
             "threads": threads,
         }
+        if rate_baseline:
+            setting_block["role"] = "quality_rate_baseline"
     record = {
         "schema": RECORD_SCHEMA,
         "kind": "curve",
@@ -811,7 +846,9 @@ def _observed(record: dict[str, Any], field: str) -> float | None:
 
 
 def refinement_suggestions(
-    jpxl: Sequence[dict[str, Any]], cjxl: Sequence[dict[str, Any]]
+    jpxl: Sequence[dict[str, Any]],
+    cjxl: Sequence[dict[str, Any]],
+    fields: Sequence[str] = ("bytes", "ssimulacra2", "butteraugli_pnorm3"),
 ) -> list[dict[str, float | str]]:
     """Return widest unresolved match brackets first.
 
@@ -821,15 +858,27 @@ def refinement_suggestions(
     ordered = sorted(cjxl, key=lambda record: float(record["setting"]["value"]))
     suggestions: list[dict[str, float | str]] = []
     for own in jpxl:
-        targets = [
-            ("bytes", _observed(own, "bytes"), max(1.0, 0.005 * float(own["rate_outcome"]["bytes"]))),
-            ("ssimulacra2", _observed(own, "ssimulacra2"), 0.10),
-            (
-                "butteraugli_pnorm3",
-                _observed(own, "butteraugli_pnorm3"),
-                max(0.01, 0.01 * abs(_observed(own, "butteraugli_pnorm3") or 0.0)),
-            ),
-        ]
+        targets: list[tuple[str, float | None, float]] = []
+        if "bytes" in fields:
+            targets.append(
+                (
+                    "bytes",
+                    _observed(own, "bytes"),
+                    max(1.0, 0.005 * float(own["rate_outcome"]["bytes"])),
+                )
+            )
+        for metric in (PRIMARY_QUALITY_METRIC, REFERENCE_QUALITY_METRIC):
+            if metric in fields:
+                targets.append((metric, _observed(own, metric), 0.10))
+        if "butteraugli_pnorm3" in fields:
+            pnorm3 = _observed(own, "butteraugli_pnorm3")
+            targets.append(
+                (
+                    "butteraugli_pnorm3",
+                    pnorm3,
+                    max(0.01, 0.01 * abs(pnorm3 or 0.0)),
+                )
+            )
         for field, target, tolerance in targets:
             if target is None:
                 continue
@@ -870,13 +919,59 @@ def curve_records(args: argparse.Namespace) -> list[dict[str, Any]]:
     }
     args.work_dir.mkdir(parents=True, exist_ok=True)
     quality_scores = getattr(args, "quality", None)
+    selected_ids = set(getattr(args, "image_id", None) or ())
+    if selected_ids:
+        known_ids = {image["id"] for image in manifest["images"]}
+        unknown_ids = sorted(selected_ids - known_ids)
+        if unknown_ids:
+            raise HarnessError(
+                "--image-id did not match the manifest: " + ", ".join(unknown_ids)
+            )
+    images = [
+        image
+        for image in manifest["images"]
+        if not selected_ids or image["id"] in selected_ids
+    ]
     records: list[dict[str, Any]] = []
-    for image in manifest["images"]:
+    for image in images:
         if quality_scores:
-            image_records = [
+            quality_records = [
                 curve_point(args, image, "jpxl", score, binaries, axis="quality")
                 for score in quality_scores
             ]
+            rate_preset = args.quality_effort
+            rate_bpp = getattr(args, "rate_bpp", None) or DEFAULT_QUALITY_RATE_BPPS
+            rate_records = [
+                curve_point(
+                    args,
+                    image,
+                    "jpxl",
+                    setting,
+                    binaries,
+                    axis="quality-rate",
+                    jpxl_preset=rate_preset,
+                )
+                for setting in rate_bpp
+            ]
+            for _ in range(args.max_additions):
+                suggestions = refinement_suggestions(
+                    quality_records, rate_records, fields=(PRIMARY_QUALITY_METRIC,)
+                )
+                if not suggestions:
+                    break
+                setting = float(suggestions[0]["setting"])
+                rate_records.append(
+                    curve_point(
+                        args,
+                        image,
+                        "jpxl",
+                        setting,
+                        binaries,
+                        axis="quality-rate",
+                        jpxl_preset=rate_preset,
+                    )
+                )
+            image_records = quality_records + rate_records
         else:
             image_records = [
                 curve_point(args, image, "jpxl", setting, binaries)
@@ -923,9 +1018,28 @@ def interpolate_metric_records(
     metric: str,
     target: float,
     increasing_with_setting: bool,
+    log_rate: bool = False,
 ) -> dict[str, Any] | None:
     """Interpolate inside the narrowest locally monotone setting bracket."""
     ordered = sorted(records, key=lambda record: float(record["setting"]["value"]))
+    exact = [
+        record
+        for record in ordered
+        if (value := _observed(record, metric)) is not None
+        and math.isclose(value, target, rel_tol=0.0, abs_tol=1e-12)
+    ]
+    if exact:
+        record = min(exact, key=lambda row: float(row["rate_outcome"]["bytes"]))
+        value = float(record["rate_outcome"]["bytes"])
+        setting = float(record["setting"]["value"])
+        return {
+            "value": value,
+            "setting": setting,
+            "fraction": 0.0,
+            "bracket": [[target, value, setting], [target, value, setting]],
+            "metric_span": 0.0,
+            "interpolation": "exact",
+        }
     candidates: list[dict[str, Any]] = []
     for left, right in zip(ordered, ordered[1:]):
         v0 = _observed(left, metric)
@@ -940,13 +1054,23 @@ def interpolate_metric_records(
         s1 = float(right["setting"]["value"])
         b0 = float(left["rate_outcome"]["bytes"])
         b1 = float(right["rate_outcome"]["bytes"])
+        if log_rate and (b0 <= 0.0 or b1 <= 0.0):
+            continue
+        value = (
+            math.exp(math.log(b0) + fraction * (math.log(b1) - math.log(b0)))
+            if log_rate
+            else b0 + fraction * (b1 - b0)
+        )
         candidates.append(
             {
-                "value": b0 + fraction * (b1 - b0),
+                "value": value,
                 "setting": s0 + fraction * (s1 - s0),
                 "fraction": fraction,
                 "bracket": [[v0, b0, s0], [v1, b1, s1]],
                 "metric_span": abs(v1 - v0),
+                "interpolation": (
+                    "log-bytes-linear-in-metric" if log_rate else "linear"
+                ),
             }
         )
     return min(candidates, key=lambda candidate: candidate["metric_span"], default=None)
@@ -971,11 +1095,17 @@ def summarize_records(
     for image_id, codecs in sorted(by_image.items()):
         cjxl = codecs.get("cjxl", [])
         jpxl_quality = [r for r in codecs.get("jpxl", []) if _is_quality_record(r)]
-        if jpxl_quality and len(cjxl) >= 2:
-            quality_images.append(
-                quality_image_summary(image_id, jpxl_quality, cjxl, score_guard)
-            )
         jpxl = [r for r in codecs.get("jpxl", []) if not _is_quality_record(r)]
+        if jpxl_quality:
+            quality_images.append(
+                quality_image_summary(
+                    image_id,
+                    jpxl_quality,
+                    cjxl,
+                    score_guard,
+                    jpxl_rate=jpxl,
+                )
+            )
         if len(jpxl) < 1 or len(cjxl) < 2:
             continue
         byte_points = [(float(r["rate_outcome"]["bytes"]), r) for r in cjxl]
@@ -1031,7 +1161,7 @@ def summarize_records(
                 "cjxl_pnorm3_monotone": p3_monotone,
             }
             rows.append(row)
-            if ssim_match is not None:
+            if ssim_match is not None and ssim_monotone:
                 timing_jobs.append(
                     {
                         "input": own["input"],
@@ -1409,91 +1539,344 @@ def bd_rate(
     return (10.0**average - 1.0) * 100.0
 
 
+def metric_score_range(
+    records: Sequence[dict[str, Any]], metric: str
+) -> list[float] | None:
+    values = [_observed(record, metric) for record in records]
+    kept = [value for value in values if value is not None]
+    return [min(kept), max(kept)] if kept else None
+
+
+def match_status(
+    match: dict[str, Any] | None,
+    score_range: Sequence[float] | None,
+    target: float | None,
+) -> str:
+    if match is not None:
+        return "matched"
+    if target is None:
+        return "quality_metric_unavailable"
+    if score_range is None:
+        return "metric_unavailable"
+    if target < score_range[0]:
+        return "below_range"
+    if target > score_range[1]:
+        return "above_range"
+    return "unbracketed_non_monotone"
+
+
+def quality_budget_overage(record: dict[str, Any]) -> bool | None:
+    effort = record.get("setting", {}).get("effort")
+    budget = QUALITY_BUDGETS.get(effort)
+    if budget is None:
+        return None
+    counters = {
+        "probes": record.get("probes"),
+        "prices": record.get("prices"),
+        "structural_builds": record.get("structural_builds"),
+    }
+    if any(value is None for value in counters.values()):
+        return None
+    return any(int(value) > budget[name] for name, value in counters.items())
+
+
+def match_coverage(targets: Sequence[dict[str, Any]], field: str) -> dict[str, Any]:
+    statuses = [target[field] for target in targets]
+    matched = statuses.count("matched")
+    return {
+        "matched": matched,
+        "total": len(statuses),
+        "fraction": matched / len(statuses) if statuses else None,
+        "status_distribution": count_distribution(statuses),
+    }
+
+
 def quality_image_summary(
     image_id: str,
     jpxl_quality: Sequence[dict[str, Any]],
     cjxl: Sequence[dict[str, Any]],
     score_guard: float,
+    jpxl_rate: Sequence[dict[str, Any]] = (),
 ) -> dict[str, Any]:
     ordered = sorted(jpxl_quality, key=lambda record: float(record["requested_score"]))
     targets: list[dict[str, Any]] = []
-    ratios: list[float] = []
+    rate_ratios: list[float] = []
+    cjxl_ratios: list[float] = []
+    rate_score_range = metric_score_range(jpxl_rate, PRIMARY_QUALITY_METRIC)
+    cjxl_score_range = metric_score_range(cjxl, PRIMARY_QUALITY_METRIC)
     for own in ordered:
         requested = float(own["requested_score"])
         achieved = float(own["achieved_score"])
-        jpxl_bytes = float(own["rate_outcome"]["bytes"])
-        match = interpolate_metric_records(
-            cjxl, "ssimulacra2", achieved, increasing_with_setting=False
+        comparison_score_raw = own.get("metrics", {}).get(PRIMARY_QUALITY_METRIC)
+        comparison_score = (
+            float(comparison_score_raw)
+            if isinstance(comparison_score_raw, (int, float))
+            else None
         )
-        matched_bytes = float(match["value"]) if match is not None else None
-        ratio = jpxl_bytes / matched_bytes if matched_bytes else None
-        if ratio is not None:
-            ratios.append(ratio)
+        comparison_score_source = (
+            own.get("comparison_score_source", "decoded_pair")
+            if comparison_score is not None
+            else None
+        )
+        decoded_score = (
+            comparison_score
+            if comparison_score_source == "decoded_pair"
+            else None
+        )
+        reference_score_raw = own.get("metrics", {}).get(REFERENCE_QUALITY_METRIC)
+        reference_score = (
+            float(reference_score_raw)
+            if isinstance(reference_score_raw, (int, float))
+            else None
+        )
+        jpxl_bytes = float(own["rate_outcome"]["bytes"])
+        rate_match = (
+            interpolate_metric_records(
+                jpxl_rate,
+                PRIMARY_QUALITY_METRIC,
+                comparison_score,
+                increasing_with_setting=True,
+                log_rate=True,
+            )
+            if comparison_score is not None
+            else None
+        )
+        cjxl_match = (
+            interpolate_metric_records(
+                cjxl,
+                PRIMARY_QUALITY_METRIC,
+                comparison_score,
+                increasing_with_setting=False,
+                log_rate=True,
+            )
+            if comparison_score is not None
+            else None
+        )
+        matched_rate_bytes = (
+            float(rate_match["value"]) if rate_match is not None else None
+        )
+        matched_cjxl_bytes = (
+            float(cjxl_match["value"]) if cjxl_match is not None else None
+        )
+        rate_ratio = jpxl_bytes / matched_rate_bytes if matched_rate_bytes else None
+        cjxl_ratio = jpxl_bytes / matched_cjxl_bytes if matched_cjxl_bytes else None
+        if rate_ratio is not None:
+            rate_ratios.append(rate_ratio)
+        if cjxl_ratio is not None:
+            cjxl_ratios.append(cjxl_ratio)
         targets.append(
             {
                 "requested_score": requested,
                 "achieved_score": achieved,
+                "comparison_score": comparison_score,
+                "comparison_score_source": comparison_score_source,
+                "reference_score": reference_score,
+                "decoded_floor_violation": (
+                    decoded_score < requested - score_guard
+                    if decoded_score is not None
+                    else None
+                ),
+                "controller_decode_delta": (
+                    decoded_score - achieved
+                    if decoded_score is not None
+                    else None
+                ),
+                "reference_decode_delta": (
+                    reference_score - decoded_score
+                    if reference_score is not None and decoded_score is not None
+                    else None
+                ),
                 "overshoot": achieved - requested,
                 "floor_violation": achieved < requested - score_guard,
                 "bytes": own["rate_outcome"]["bytes"],
                 "bpp": own["rate_outcome"]["bpp"],
+                "effort": own.get("setting", {}).get("effort"),
                 "status": own.get("quality_status"),
                 "probes": own.get("probes"),
                 "prices": own.get("prices"),
-                "matched_cjxl_bytes": matched_bytes,
-                "matched_cjxl_distance": match["setting"] if match is not None else None,
-                "byte_ratio_vs_cjxl": ratio,
+                "structural_builds": own.get("structural_builds"),
+                "budget_overage": quality_budget_overage(own),
+                "matched_jpxl_rate_bytes": matched_rate_bytes,
+                "matched_jpxl_rate_bpp": (
+                    rate_match["setting"] if rate_match is not None else None
+                ),
+                "jpxl_rate_match_status": match_status(
+                    rate_match, rate_score_range, comparison_score
+                ),
+                "byte_ratio_vs_jpxl_rate": rate_ratio,
+                "matched_cjxl_bytes": matched_cjxl_bytes,
+                "matched_cjxl_distance": (
+                    cjxl_match["setting"] if cjxl_match is not None else None
+                ),
+                "cjxl_match_status": match_status(
+                    cjxl_match, cjxl_score_range, comparison_score
+                ),
+                "byte_ratio_vs_cjxl": cjxl_ratio,
                 "wall_by_phase": own.get("wall_by_phase"),
             }
         )
-    jpxl_points = [
-        (float(own["achieved_score"]), float(own["rate_outcome"]["bytes"]))
+    quality_points = [
+        (float(score), float(own["rate_outcome"]["bytes"]))
         for own in ordered
-        if own.get("achieved_score") is not None
+        if (score := own.get("metrics", {}).get(PRIMARY_QUALITY_METRIC)) is not None
+    ]
+    rate_points = [
+        (float(score), float(record["rate_outcome"]["bytes"]))
+        for record in jpxl_rate
+        if (score := _observed(record, PRIMARY_QUALITY_METRIC)) is not None
     ]
     cjxl_points = [
-        (float(record["metrics"]["ssimulacra2"]), float(record["rate_outcome"]["bytes"]))
+        (float(score), float(record["rate_outcome"]["bytes"]))
         for record in cjxl
-        if record["metrics"].get("ssimulacra2") is not None
+        if (score := _observed(record, PRIMARY_QUALITY_METRIC)) is not None
     ]
-    monotone_pairs = [
+    achieved_pairs = [
         (float(own["requested_score"]), float(own["achieved_score"])) for own in ordered
     ]
+    comparison_pairs = [
+        (float(own["requested_score"]), float(score))
+        for own in ordered
+        if (score := own.get("metrics", {}).get(PRIMARY_QUALITY_METRIC)) is not None
+    ]
+    byte_pairs = [
+        (float(own["requested_score"]), float(own["rate_outcome"]["bytes"]))
+        for own in ordered
+    ]
+    bd_rate_vs_cjxl = bd_rate(cjxl_points, quality_points)
     return {
         "input_id": image_id,
         "targets": targets,
-        "bd_rate_percent": bd_rate(cjxl_points, jpxl_points),
-        "geomean_byte_ratio_vs_cjxl": geomean(ratios),
-        "achieved_monotone_in_requested": monotone(monotone_pairs, increasing=True),
+        "matched_score_metric": PRIMARY_QUALITY_METRIC,
+        "reference_guard_metric": REFERENCE_QUALITY_METRIC,
+        "score_ranges": {"jpxl_rate": rate_score_range, "cjxl": cjxl_score_range},
+        "coverage": {
+            "jpxl_rate": match_coverage(targets, "jpxl_rate_match_status"),
+            "cjxl": match_coverage(targets, "cjxl_match_status"),
+        },
+        "bd_rate_vs_jpxl_rate_percent": bd_rate(rate_points, quality_points),
+        "bd_rate_vs_cjxl_percent": bd_rate_vs_cjxl,
+        # Compatibility alias for version-1 summary consumers.
+        "bd_rate_percent": bd_rate_vs_cjxl,
+        "geomean_byte_ratio_vs_jpxl_rate": geomean(rate_ratios),
+        "geomean_byte_ratio_vs_cjxl": geomean(cjxl_ratios),
+        "achieved_monotone_in_requested": monotone(achieved_pairs, increasing=True),
+        "comparison_score_monotone_in_requested": (
+            monotone(comparison_pairs, increasing=True)
+            if len(comparison_pairs) == len(ordered)
+            else None
+        ),
+        "bytes_monotone_in_requested": monotone(byte_pairs, increasing=True),
         "floor_violations": sum(1 for target in targets if target["floor_violation"]),
+        "decoded_floor_violations": sum(
+            1 for target in targets if target["decoded_floor_violation"] is True
+        ),
     }
 
 
 def quality_aggregate(image_summaries: Sequence[dict[str, Any]]) -> dict[str, Any]:
     all_targets = [target for image in image_summaries for target in image["targets"]]
     abs_errors = sorted(abs(target["overshoot"]) for target in all_targets)
-    ratios = [
+    rate_ratios = [
+        target["byte_ratio_vs_jpxl_rate"]
+        for target in all_targets
+        if target["byte_ratio_vs_jpxl_rate"] is not None
+    ]
+    cjxl_ratios = [
         target["byte_ratio_vs_cjxl"]
         for target in all_targets
         if target["byte_ratio_vs_cjxl"] is not None
     ]
     probes = [target["probes"] for target in all_targets if target["probes"] is not None]
     prices = [target["prices"] for target in all_targets if target["prices"] is not None]
-    bd_rates = [
-        image["bd_rate_percent"]
-        for image in image_summaries
-        if image["bd_rate_percent"] is not None
+    structural_builds = [
+        target["structural_builds"]
+        for target in all_targets
+        if target["structural_builds"] is not None
     ]
+    controller_decode_deltas = [
+        abs(target["controller_decode_delta"])
+        for target in all_targets
+        if target["controller_decode_delta"] is not None
+    ]
+    reference_decode_deltas = [
+        abs(target["reference_decode_delta"])
+        for target in all_targets
+        if target["reference_decode_delta"] is not None
+    ]
+    rate_bd_rates = [
+        image["bd_rate_vs_jpxl_rate_percent"]
+        for image in image_summaries
+        if image["bd_rate_vs_jpxl_rate_percent"] is not None
+    ]
+    cjxl_bd_rates = [
+        image["bd_rate_vs_cjxl_percent"]
+        for image in image_summaries
+        if image["bd_rate_vs_cjxl_percent"] is not None
+    ]
+    rate_coverage = match_coverage(all_targets, "jpxl_rate_match_status")
+    cjxl_coverage = match_coverage(all_targets, "cjxl_match_status")
+    achieved_monotone = all(
+        image["achieved_monotone_in_requested"] for image in image_summaries
+    )
+    comparison_monotone = all(
+        image["comparison_score_monotone_in_requested"] is True
+        for image in image_summaries
+    )
+    bytes_monotone = all(
+        image["bytes_monotone_in_requested"] for image in image_summaries
+    )
     return {
         "target_count": len(all_targets),
         "floor_violation_count": sum(1 for target in all_targets if target["floor_violation"]),
+        "decoded_floor_violation_count": sum(
+            1 for target in all_targets if target["decoded_floor_violation"] is True
+        ),
+        "decoded_floor_unknown_count": sum(
+            1 for target in all_targets if target["decoded_floor_violation"] is None
+        ),
         "median_abs_score_error": statistics.median(abs_errors) if abs_errors else None,
-        "geomean_byte_ratio_vs_cjxl": geomean(ratios),
-        "mean_bd_rate_percent": statistics.mean(bd_rates) if bd_rates else None,
+        "max_abs_score_error": max(abs_errors) if abs_errors else None,
+        "coverage": {"jpxl_rate": rate_coverage, "cjxl": cjxl_coverage},
+        "geomean_byte_ratio_vs_jpxl_rate": geomean(rate_ratios),
+        "geomean_byte_ratio_vs_cjxl": geomean(cjxl_ratios),
+        "mean_bd_rate_vs_jpxl_rate_percent": (
+            statistics.mean(rate_bd_rates) if rate_bd_rates else None
+        ),
+        "mean_bd_rate_vs_cjxl_percent": (
+            statistics.mean(cjxl_bd_rates) if cjxl_bd_rates else None
+        ),
+        # Compatibility alias for version-1 summary consumers.
+        "mean_bd_rate_percent": statistics.mean(cjxl_bd_rates) if cjxl_bd_rates else None,
         "probe_distribution": count_distribution(probes),
         "price_distribution": count_distribution(prices),
-        "all_images_monotone": all(
-            image["achieved_monotone_in_requested"] for image in image_summaries
+        "structural_build_distribution": count_distribution(structural_builds),
+        "quality_status_distribution": count_distribution(
+            [target["status"] for target in all_targets if target["status"] is not None]
+        ),
+        "comparison_score_source_distribution": count_distribution(
+            [
+                target["comparison_score_source"]
+                for target in all_targets
+                if target["comparison_score_source"] is not None
+            ]
+        ),
+        "max_abs_controller_decode_delta": (
+            max(controller_decode_deltas) if controller_decode_deltas else None
+        ),
+        "max_abs_reference_decode_delta": (
+            max(reference_decode_deltas) if reference_decode_deltas else None
+        ),
+        "budget_overage_count": sum(
+            1 for target in all_targets if target["budget_overage"] is True
+        ),
+        "budget_unknown_count": sum(
+            1 for target in all_targets if target["budget_overage"] is None
+        ),
+        "all_images_achieved_monotone": achieved_monotone,
+        "all_images_comparison_score_monotone": comparison_monotone,
+        "all_images_bytes_monotone": bytes_monotone,
+        "all_images_monotone": (
+            achieved_monotone and comparison_monotone and bytes_monotone
         ),
     }
 
@@ -1504,14 +1887,29 @@ def export_quality_tsv(quality_summary: dict[str, Any], path: Path) -> None:
         "input_id",
         "requested_score",
         "achieved_score",
+        "comparison_score",
+        "comparison_score_source",
+        "reference_score",
+        "decoded_floor_violation",
+        "controller_decode_delta",
+        "reference_decode_delta",
         "overshoot",
         "floor_violation",
         "bytes",
         "bpp",
+        "effort",
         "status",
         "probes",
         "prices",
+        "structural_builds",
+        "budget_overage",
+        "matched_jpxl_rate_bytes",
+        "matched_jpxl_rate_bpp",
+        "jpxl_rate_match_status",
+        "byte_ratio_vs_jpxl_rate",
         "matched_cjxl_bytes",
+        "matched_cjxl_distance",
+        "cjxl_match_status",
         "byte_ratio_vs_cjxl",
     ]
     with path.open("w", encoding="utf-8", newline="") as handle:
@@ -1524,14 +1922,31 @@ def export_quality_tsv(quality_summary: dict[str, Any], path: Path) -> None:
                         "input_id": image["input_id"],
                         "requested_score": target["requested_score"],
                         "achieved_score": target["achieved_score"],
+                        "comparison_score": target["comparison_score"],
+                        "comparison_score_source": target[
+                            "comparison_score_source"
+                        ],
+                        "reference_score": target["reference_score"],
+                        "decoded_floor_violation": target["decoded_floor_violation"],
+                        "controller_decode_delta": target["controller_decode_delta"],
+                        "reference_decode_delta": target["reference_decode_delta"],
                         "overshoot": target["overshoot"],
                         "floor_violation": target["floor_violation"],
                         "bytes": target["bytes"],
                         "bpp": target["bpp"],
+                        "effort": target["effort"],
                         "status": target["status"],
                         "probes": target["probes"],
                         "prices": target["prices"],
+                        "structural_builds": target["structural_builds"],
+                        "budget_overage": target["budget_overage"],
+                        "matched_jpxl_rate_bytes": target["matched_jpxl_rate_bytes"],
+                        "matched_jpxl_rate_bpp": target["matched_jpxl_rate_bpp"],
+                        "jpxl_rate_match_status": target["jpxl_rate_match_status"],
+                        "byte_ratio_vs_jpxl_rate": target["byte_ratio_vs_jpxl_rate"],
                         "matched_cjxl_bytes": target["matched_cjxl_bytes"],
+                        "matched_cjxl_distance": target["matched_cjxl_distance"],
+                        "cjxl_match_status": target["cjxl_match_status"],
                         "byte_ratio_vs_cjxl": target["byte_ratio_vs_cjxl"],
                     }
                 )
@@ -1549,12 +1964,24 @@ def render_quality_markdown(summary: dict[str, Any]) -> str:
     quality = summary.get("quality")
     if not quality:
         raise HarnessError("summary has no quality section to report")
-    lines: list[str] = ["# JPXL perceptual quality report", ""]
+    lines: list[str] = [
+        "# JPXL perceptual quality report",
+        "",
+        "Matched-byte ratios and BD-rate use in-tree `ssimulacra2_jpxl` scores. "
+        "The score-source distribution says whether they came from decoded pairs "
+        "or an explicitly marked substitution. The controller-achieved score is "
+        "the production floor contract; "
+        "independent-reference `ssimulacra2` is a separately reported guard.",
+        "",
+    ]
     header = (
-        "| requested | achieved | bytes | bpp | status | probes | prices "
-        "| matched cjxl bytes | ratio |"
+        "| requested | controller achieved | comparison in-tree score | independent "
+        "reference score | bytes | bpp | status | probes | prices | structures | matched "
+        "JPXL rate bytes | ratio | match | matched cjxl bytes | ratio | match |"
     )
-    separator = "|---:|---:|---:|---:|:---|---:|---:|---:|---:|"
+    separator = (
+        "|---:|---:|---:|---:|---:|---:|:---|---:|---:|---:|---:|---:|:---|---:|---:|:---|"
+    )
     for image in quality["images"]:
         lines.append(f"## {image['input_id']}")
         lines.append("")
@@ -1562,26 +1989,53 @@ def render_quality_markdown(summary: dict[str, Any]) -> str:
         lines.append(separator)
         for target in image["targets"]:
             lines.append(
-                "| {req} | {ach} | {bytes} | {bpp} | {status} | {probes} | {prices} "
-                "| {mcb} | {ratio} |".format(
+                "| {req} | {ach} | {cmp} | {ref} | {bytes} | {bpp} | {status} "
+                "| {probes} | {prices} | {structures} | {mrb} | {rratio} | {rstatus} "
+                "| {mcb} | {cratio} | {cstatus} |".format(
                     req=_fmt(target["requested_score"], ".2f"),
                     ach=_fmt(target["achieved_score"], ".2f"),
+                    cmp=_fmt(target.get("comparison_score"), ".2f"),
+                    ref=_fmt(target.get("reference_score"), ".2f"),
                     bytes=_fmt(target["bytes"]),
                     bpp=_fmt(target["bpp"], ".4f"),
                     status=_fmt(target["status"]),
                     probes=_fmt(target["probes"]),
                     prices=_fmt(target["prices"]),
-                    mcb=_fmt(target["matched_cjxl_bytes"], ".0f"),
-                    ratio=_fmt(target["byte_ratio_vs_cjxl"], ".4f"),
+                    structures=_fmt(target.get("structural_builds")),
+                    mrb=_fmt(target.get("matched_jpxl_rate_bytes"), ".0f"),
+                    rratio=_fmt(target.get("byte_ratio_vs_jpxl_rate"), ".4f"),
+                    rstatus=_fmt(target.get("jpxl_rate_match_status")),
+                    mcb=_fmt(target.get("matched_cjxl_bytes"), ".0f"),
+                    cratio=_fmt(target.get("byte_ratio_vs_cjxl"), ".4f"),
+                    cstatus=_fmt(target.get("cjxl_match_status")),
                 )
             )
         lines.append("")
         lines.append(
-            "BD-rate vs cjxl: {bd}%  |  geomean byte ratio: {gm}  |  "
-            "achieved monotone in requested: {mono}".format(
-                bd=_fmt(image["bd_rate_percent"], ".2f"),
-                gm=_fmt(image["geomean_byte_ratio_vs_cjxl"], ".4f"),
-                mono=_fmt(image["achieved_monotone_in_requested"]),
+            "BD-rate: vs JPXL rate {rbd}% / vs cjxl {cbd}%  |  "
+            "geomean byte ratio: vs JPXL rate {rgm} / vs cjxl {cgm}".format(
+                rbd=_fmt(image.get("bd_rate_vs_jpxl_rate_percent"), ".2f"),
+                cbd=_fmt(
+                    image.get("bd_rate_vs_cjxl_percent", image.get("bd_rate_percent")),
+                    ".2f",
+                ),
+                rgm=_fmt(image.get("geomean_byte_ratio_vs_jpxl_rate"), ".4f"),
+                cgm=_fmt(image.get("geomean_byte_ratio_vs_cjxl"), ".4f"),
+            )
+        )
+        coverage = image.get("coverage", {})
+        rate_coverage = coverage.get("jpxl_rate", {})
+        cjxl_coverage = coverage.get("cjxl", {})
+        lines.append(
+            "Coverage: JPXL rate {rm}/{rt}, cjxl {cm}/{ct}  |  monotone in requested: "
+            "controller {ach}, comparison {cmp}, bytes {byte}".format(
+                rm=_fmt(rate_coverage.get("matched")),
+                rt=_fmt(rate_coverage.get("total")),
+                cm=_fmt(cjxl_coverage.get("matched")),
+                ct=_fmt(cjxl_coverage.get("total")),
+                ach=_fmt(image.get("achieved_monotone_in_requested")),
+                cmp=_fmt(image.get("comparison_score_monotone_in_requested")),
+                byte=_fmt(image.get("bytes_monotone_in_requested")),
             )
         )
         lines.append("")
@@ -1590,17 +2044,67 @@ def render_quality_markdown(summary: dict[str, Any]) -> str:
         lines.append("## Aggregate")
         lines.append("")
         lines.append(f"- targets: {aggregate['target_count']}")
-        lines.append(f"- floor violations: {aggregate['floor_violation_count']}")
+        lines.append(
+            f"- controller floor violations: {aggregate['floor_violation_count']}"
+        )
+        lines.append(
+            "- decoded in-tree floor violations: "
+            f"{_fmt(aggregate.get('decoded_floor_violation_count'))}; "
+            f"unknown: {_fmt(aggregate.get('decoded_floor_unknown_count'))}"
+        )
         lines.append(
             f"- median |achieved - requested|: {_fmt(aggregate['median_abs_score_error'], '.4f')}"
         )
         lines.append(
-            f"- geomean byte ratio vs cjxl: {_fmt(aggregate['geomean_byte_ratio_vs_cjxl'], '.4f')}"
+            "- geomean byte ratio vs JPXL rate: "
+            f"{_fmt(aggregate.get('geomean_byte_ratio_vs_jpxl_rate'), '.4f')}"
         )
         lines.append(
-            f"- mean BD-rate percent: {_fmt(aggregate['mean_bd_rate_percent'], '.2f')}"
+            f"- geomean byte ratio vs cjxl: "
+            f"{_fmt(aggregate.get('geomean_byte_ratio_vs_cjxl'), '.4f')}"
         )
-        lines.append(f"- all images monotone: {aggregate['all_images_monotone']}")
+        lines.append(
+            "- mean BD-rate percent vs JPXL rate: "
+            f"{_fmt(aggregate.get('mean_bd_rate_vs_jpxl_rate_percent'), '.2f')}"
+        )
+        lines.append(
+            "- mean BD-rate percent vs cjxl: "
+            f"{_fmt(aggregate.get('mean_bd_rate_vs_cjxl_percent', aggregate.get('mean_bd_rate_percent')), '.2f')}"
+        )
+        aggregate_coverage = aggregate.get("coverage", {})
+        for label, key in (("JPXL rate", "jpxl_rate"), ("cjxl", "cjxl")):
+            coverage = aggregate_coverage.get(key, {})
+            lines.append(
+                f"- {label} matched-score coverage: "
+                f"{_fmt(coverage.get('matched'))}/{_fmt(coverage.get('total'))} "
+                f"{json.dumps(coverage.get('status_distribution', {}), sort_keys=True)}"
+            )
+        lines.append(
+            f"- quality status distribution: "
+            f"{json.dumps(aggregate.get('quality_status_distribution', {}), sort_keys=True)}"
+        )
+        lines.append(
+            "- comparison score source distribution: "
+            f"{json.dumps(aggregate.get('comparison_score_source_distribution', {}), sort_keys=True)}"
+        )
+        lines.append(
+            "- max |controller - decoded in-tree|: "
+            f"{_fmt(aggregate.get('max_abs_controller_decode_delta'), '.6f')}"
+        )
+        lines.append(
+            "- max |independent reference - decoded in-tree|: "
+            f"{_fmt(aggregate.get('max_abs_reference_decode_delta'), '.6f')}"
+        )
+        lines.append(
+            f"- budget overages: {_fmt(aggregate.get('budget_overage_count'))}; "
+            f"unknown: {_fmt(aggregate.get('budget_unknown_count'))}"
+        )
+        lines.append(
+            f"- all images monotone: controller "
+            f"{_fmt(aggregate.get('all_images_achieved_monotone', aggregate.get('all_images_monotone')))}, "
+            f"comparison {_fmt(aggregate.get('all_images_comparison_score_monotone'))}, "
+            f"bytes {_fmt(aggregate.get('all_images_bytes_monotone'))}"
+        )
         lines.append("")
     return "\n".join(lines)
 
@@ -1730,6 +2234,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     curve = sub.add_parser("curve", help="build untimed JPXL and cjxl rate-distortion curves")
     curve.add_argument("--manifest", type=Path, required=True)
+    curve.add_argument(
+        "--image-id",
+        action="append",
+        help="run only this manifest image id (repeatable); useful for resumable curves",
+    )
     curve.add_argument("--output", type=Path, required=True)
     curve.add_argument("--work-dir", type=Path, required=True)
     axis = curve.add_mutually_exclusive_group()
@@ -1743,6 +2252,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     curve.add_argument("--quality-effort", choices=("fast", "balanced"), default="balanced")
     curve.add_argument(
+        "--rate-bpp",
+        type=parse_csv_floats,
+        default=list(DEFAULT_QUALITY_RATE_BPPS),
+        help="same-effort JPXL bitrate ladder collected with --quality "
+        "(default: 0.25,0.5,0.75,1,1.5,2,3)",
+    )
+    curve.add_argument(
         "--quality-trace",
         dest="quality_trace",
         action="store_true",
@@ -1753,7 +2269,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-quality-trace", dest="quality_trace", action="store_false"
     )
     curve.add_argument("--distance", type=parse_csv_floats, default=[0.5, 1.0, 2.0])
-    curve.add_argument("--max-additions", type=int, default=8)
+    curve.add_argument(
+        "--max-additions",
+        type=int,
+        default=8,
+        help="maximum adaptive refinement points per reference curve and image",
+    )
     add_common_binary_args(curve, decoder=True)
 
     summarize = sub.add_parser("summarize", help="derive matched comparisons and a timing plan")

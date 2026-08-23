@@ -380,6 +380,20 @@ fn the_rendered_score_equals_the_emitted_and_decoded_score() {
 }
 
 #[test]
+fn consuming_linear_conversion_matches_the_reusable_buffer_path() {
+    let (w, h) = (264u32, 256u32);
+    let rgb = synthetic_rgb8(w, h, 13);
+    let target = RateTarget::BitsPerPixel(1.0);
+    let request = EncodeRequest::for_target(target);
+    let outcome = encode_srgb8_to_target(w, h, &rgb, &request, target).unwrap();
+    let rendered = render(&outcome.plan);
+
+    let reusable = rendered.linear_rgb_at_depth(8);
+    let consumed = rendered.into_linear_rgb_at_depth(8);
+    assert_eq!(consumed, reusable);
+}
+
+#[test]
 fn the_pixel_plan_split_reassembles_the_same_emission_plan() {
     let (w, h) = (264u32, 256u32);
     let rgb = synthetic_rgb8(w, h, 7);

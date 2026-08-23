@@ -16,6 +16,7 @@ use jpxl_encode::vardct::ValidatedPixelPlan;
 use jpxl_encode_policy::{PerceptualEvaluator, PerceptualObservation, PolicyError};
 use jpxl_plan_render::PlanRenderer;
 
+use crate::reference::LOW_MEMORY_PIXELS;
 use crate::{
     LinearRgbView, METRIC_VERSION, MetricError, PrecomputedReference, ReferenceRetention,
     Ssimulacra2,
@@ -64,6 +65,7 @@ pub struct PlanRenderEvaluator<'e> {
     bits_per_sample: u32,
     executor: &'e EncodeExecutor,
     evaluations: u32,
+    low_memory: bool,
 }
 
 impl<'e> PlanRenderEvaluator<'e> {
@@ -114,10 +116,10 @@ impl<'e> PlanRenderEvaluator<'e> {
         bits_per_sample: u32,
         executor: &'e EncodeExecutor,
     ) -> Result<Self, EvaluatorError> {
-        let [r, g, b] = &planes;
-        let view = LinearRgbView::new(width, height, r, g, b)?;
-        let reference = PrecomputedReference::new(
-            view,
+        let reference = PrecomputedReference::new_owned(
+            width,
+            height,
+            planes,
             ReferenceRetention::default_for(width, height),
             executor,
         )?;
@@ -129,6 +131,7 @@ impl<'e> PlanRenderEvaluator<'e> {
             bits_per_sample,
             executor,
             evaluations: 0,
+            low_memory: u64::from(width).saturating_mul(u64::from(height)) >= LOW_MEMORY_PIXELS,
         })
     }
 
@@ -177,6 +180,43 @@ impl PerceptualEvaluator for PlanRenderEvaluator<'_> {
         Ok(PerceptualObservation {
             score: result.score,
         })
+    }
+
+    fn evaluate_owned(
+        &mut self,
+        candidate: ValidatedPixelPlan,
+    ) -> jpxl_encode_policy::Result<(PerceptualObservation, Option<ValidatedPixelPlan>)> {
+        if !self.low_memory {
+            let observation = self.evaluate(&candidate)?;
+            return Ok((observation, Some(candidate)));
+        }
+
+        let frame = self
+            .renderer
+            .render_with(&candidate, self.executor)
+            .map_err(|_| PolicyError::Unsupported {
+                what: "a candidate plan the renderer could not reconstruct",
+            })?;
+        let (width, height) = (frame.width(), frame.height());
+        // Once reconstruction is complete, the coefficient payload is not
+        // needed for this score. Exact finalists are rebuilt deterministically
+        // by the policy if this rung survives navigation.
+        drop(candidate);
+        let linear = frame.into_linear_rgb_at_depth(self.bits_per_sample);
+        let result = self
+            .metric
+            .score_owned(&self.reference, width, height, linear, self.executor)
+            .map_err(|_| PolicyError::Unsupported {
+                what: "a candidate whose dimensions differ from the source",
+            })?;
+        self.metric.release_scratch();
+        self.evaluations = self.evaluations.saturating_add(1);
+        Ok((
+            PerceptualObservation {
+                score: result.score,
+            },
+            None,
+        ))
     }
 
     fn metric_version(&self) -> &'static str {

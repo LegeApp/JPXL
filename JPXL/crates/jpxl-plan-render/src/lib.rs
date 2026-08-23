@@ -159,6 +159,40 @@ impl RenderedFrame {
         }
     }
 
+    fn linear_lut(bits: u32, max: f32) -> Vec<f32> {
+        // One transfer-curve evaluation per representable integer, not per
+        // sample: the round trip is a table lookup for every real bit depth.
+        let entries = if bits >= 32 {
+            65_536
+        } else {
+            1usize << bits.clamp(1, 16)
+        };
+        (0..entries)
+            .map(|q| srgb_to_linear(q as f32 / max))
+            .collect()
+    }
+
+    fn linear_sample(v: f32, max: f32, lut: &[f32]) -> f32 {
+        let scaled = (v * max).round();
+        let q = if scaled.is_finite() {
+            // Clamped into [0, max] with max < 2^32 before the cast, so the
+            // narrowing is exact.
+            #[allow(
+                clippy::cast_possible_truncation,
+                reason = "the value is clamped to [0, max] first"
+            )]
+            let q = scaled.clamp(0.0, max) as i32;
+            q
+        } else {
+            0
+        };
+        usize::try_from(q)
+            .ok()
+            .and_then(|q| lut.get(q))
+            .copied()
+            .unwrap_or_else(|| srgb_to_linear(q as f32 / max))
+    }
+
     /// The planes quantized to `bits` per sample exactly as the decoder's
     /// integer output is: scaled, rounded and clamped.
     #[must_use]
@@ -207,40 +241,31 @@ impl RenderedFrame {
     /// same lookup) sample for sample.
     pub fn linear_rgb_at_depth_into(&self, bits: u32, out: &mut [Vec<f32>; NUM_CHANNELS]) {
         let max = Self::full_scale(bits);
-        // One transfer-curve evaluation per representable integer, not per
-        // sample: the round trip is a table lookup for every real bit depth.
-        let entries = if bits >= 32 {
-            65_536
-        } else {
-            1usize << bits.clamp(1, 16)
-        };
-        let lut: Vec<f32> = (0..entries)
-            .map(|q| srgb_to_linear(q as f32 / max))
-            .collect();
+        let lut = Self::linear_lut(bits, max);
         for (dst, plane) in out.iter_mut().zip(self.planes.iter()) {
             dst.clear();
             dst.reserve(plane.len());
-            dst.extend(plane.iter().map(|&v| {
-                let scaled = (v * max).round();
-                let q = if scaled.is_finite() {
-                    // Clamped into [0, max] with max < 2^32 before the cast,
-                    // so the narrowing is exact.
-                    #[allow(
-                        clippy::cast_possible_truncation,
-                        reason = "the value is clamped to [0, max] first"
-                    )]
-                    let q = scaled.clamp(0.0, max) as i32;
-                    q
-                } else {
-                    0
-                };
-                usize::try_from(q)
-                    .ok()
-                    .and_then(|q| lut.get(q))
-                    .copied()
-                    .unwrap_or_else(|| srgb_to_linear(q as f32 / max))
-            }));
+            dst.extend(plane.iter().map(|&v| Self::linear_sample(v, max, &lut)));
         }
+    }
+
+    /// Consumes the rendered frame and converts its three allocated planes in
+    /// place to the same decoded linear-sRGB samples as
+    /// [`Self::linear_rgb_at_depth`].
+    ///
+    /// This is the low-peak-memory form for a caller that no longer needs the
+    /// encoded planes: it never has both the rendered and linear full-frame
+    /// planes resident at once.
+    #[must_use]
+    pub fn into_linear_rgb_at_depth(mut self, bits: u32) -> [Vec<f32>; NUM_CHANNELS] {
+        let max = Self::full_scale(bits);
+        let lut = Self::linear_lut(bits, max);
+        for plane in &mut self.planes {
+            for value in plane {
+                *value = Self::linear_sample(*value, max, &lut);
+            }
+        }
+        self.planes
     }
 }
 

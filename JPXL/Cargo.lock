@@ -294,6 +294,7 @@ dependencies = [
  "jpxl-decode",
  "jpxl-encode",
  "jpxl-encode-policy",
+ "jpxl-perceptual",
 ]
 
 [[package]]

@@ -292,6 +292,7 @@ pub struct Encoder {
     effort: Effort,
     resources: jpxl_encode::EncodeResources,
     container: bool,
+    jxlp_fragment_size: Option<usize>,
 }
 
 impl Default for Encoder {
@@ -302,6 +303,7 @@ impl Default for Encoder {
             effort: Effort::default(),
             resources: jpxl_encode::EncodeResources::default(),
             container: false,
+            jxlp_fragment_size: None,
         }
     }
 }
@@ -454,6 +456,16 @@ impl Encoder {
     #[must_use]
     pub const fn with_container(mut self, container: bool) -> Self {
         self.container = container;
+        self
+    }
+
+    /// Split the codestream across `jxlp` boxes of at most `size` bytes.
+    ///
+    /// Implies [`with_container`](Self::with_container): a fragmented
+    /// codestream has nowhere to live outside a container.
+    #[must_use]
+    pub const fn with_jxlp_fragment_size(mut self, size: Option<usize>) -> Self {
+        self.jxlp_fragment_size = size;
         self
     }
 
@@ -741,6 +753,7 @@ impl Encoder {
         )?;
         let options = jpxl_encode::EncodeOptions {
             container: self.container,
+            jxlp_fragment_size: self.jxlp_fragment_size,
             resources: self.resources,
             effort: self.lossless_effort,
             ..jpxl_encode::EncodeOptions::default()
@@ -759,7 +772,7 @@ impl Encoder {
     }
 
     fn wrap_lossy(&self, codestream: Vec<u8>, bits_per_sample: u32) -> Vec<u8> {
-        if !self.container {
+        if !self.container && self.jxlp_fragment_size.is_none() {
             return codestream;
         }
         let level = if bits_per_sample > 8 {
@@ -767,7 +780,10 @@ impl Encoder {
         } else {
             jpxl_encode::container::DEFAULT_LEVEL
         };
-        jpxl_encode::container::wrap(&codestream, level)
+        match self.jxlp_fragment_size {
+            Some(size) => jpxl_encode::container::wrap_fragmented(&codestream, level, size),
+            None => jpxl_encode::container::wrap(&codestream, level),
+        }
     }
 }
 
@@ -818,9 +834,8 @@ mod tests {
         assert!(Encoder::new().with_threads(0).is_err());
     }
 
-    #[test]
-    fn target_rate_rgb8_uses_the_production_pipeline() {
-        let (width, height) = (64u32, 64u32);
+    /// A gradient the VarDCT path can actually spend bits on.
+    fn gradient_rgb8(width: u32, height: u32) -> Vec<u8> {
         let mut rgb = Vec::with_capacity((width * height * 3) as usize);
         for y in 0..height {
             for x in 0..width {
@@ -831,6 +846,13 @@ mod tests {
                 ]);
             }
         }
+        rgb
+    }
+
+    #[test]
+    fn target_rate_rgb8_uses_the_production_pipeline() {
+        let (width, height) = (64u32, 64u32);
+        let rgb = gradient_rgb8(width, height);
         let target = 2_048u64;
         let encoded = Encoder::new()
             .with_target_bytes(target)
@@ -843,5 +865,40 @@ mod tests {
         assert!(u64::try_from(encoded.len()).unwrap_or(u64::MAX) <= target);
         let decoded = decode(&encoded).expect("decode");
         assert_eq!((decoded.width, decoded.height), (width, height));
+    }
+
+    /// A lossy encode wraps like a lossless one: `--container` and a `jxlp`
+    /// fragment size both reach the VarDCT paths, and a fragment size alone
+    /// implies the container.
+    #[test]
+    fn a_lossy_encode_wraps_in_a_container_when_asked() {
+        let (width, height) = (64u32, 64u32);
+        let rgb = gradient_rgb8(width, height);
+        let encoder = Encoder::new()
+            .with_target_bytes(2_048)
+            .expect("target")
+            .with_effort(Effort::Fast)
+            .with_threads(1)
+            .expect("threads");
+
+        let naked = encoder.encode_rgb8(width, height, &rgb).expect("encode");
+        assert!(!jpxl_decode::container::is_container(&naked));
+
+        for wrapped in [
+            encoder
+                .with_container(true)
+                .encode_rgb8(width, height, &rgb)
+                .expect("container encode"),
+            // Small enough to need several `jxlp` boxes, so a single-`jxlc`
+            // fallback would not round-trip the same bytes.
+            encoder
+                .with_jxlp_fragment_size(Some(128))
+                .encode_rgb8(width, height, &rgb)
+                .expect("fragmented encode"),
+        ] {
+            assert!(jpxl_decode::container::is_container(&wrapped));
+            let decoded = decode(&wrapped).expect("decode");
+            assert_eq!((decoded.width, decoded.height), (width, height));
+        }
     }
 }

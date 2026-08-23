@@ -12,8 +12,10 @@ use crate::bands::{BAND_ROWS, Handoff, Partials, band_count, band_of};
 use crate::blur::Blur;
 use crate::executor::BandExecutor;
 use crate::pool::{ChannelTerms, MapSums, MomentBands, accumulate_band};
+#[cfg(feature = "evaluator")]
+use crate::reference::convert_planes_in_place;
 use crate::reference::{
-    PrecomputedReference, ReferenceRetention, convert_planes, downscale_planes, multiply_planes,
+    PrecomputedReference, ReferenceRetention, ReferenceScale, convert_planes, downscale_planes,
 };
 use crate::{LinearRgbView, MetricError, pyramid};
 
@@ -49,11 +51,8 @@ pub struct Ssimulacra2 {
     mu2: Vec<f32>,
     s22: Vec<f32>,
     s12: Vec<f32>,
-    square: Vec<f32>,
-    product: Vec<f32>,
     ref_mu: Vec<f32>,
     ref_s11: Vec<f32>,
-    ref_square: Vec<f32>,
     blurs: Vec<Blur>,
 }
 
@@ -62,6 +61,18 @@ impl Ssimulacra2 {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Releases candidate-side full-frame scratch while retaining no semantic
+    /// metric state.
+    ///
+    /// Large-image controller probes call this between evaluations so the
+    /// scorer's planes do not overlap the next coefficient plan and rendered
+    /// frame. The next score recreates the same zeroed buffers and therefore
+    /// performs identical arithmetic.
+    #[cfg(feature = "evaluator")]
+    pub(crate) fn release_scratch(&mut self) {
+        *self = Self::new();
     }
 
     /// Scores `candidate` against `reference`.
@@ -114,94 +125,8 @@ impl Ssimulacra2 {
                 };
                 convert_planes(src, &mut self.xyb, w, executor);
             }
-            for buf in [
-                &mut self.mu2,
-                &mut self.s22,
-                &mut self.s12,
-                &mut self.square,
-                &mut self.product,
-            ] {
-                buf.clear();
-                buf.resize(pixels, 0.0);
-            }
-            let recompute_reference = reference.retention() == ReferenceRetention::PlanesOnly;
-            if recompute_reference {
-                for buf in [&mut self.ref_mu, &mut self.ref_s11, &mut self.ref_square] {
-                    buf.clear();
-                    buf.resize(pixels, 0.0);
-                }
-            }
-
-            let mut channels = [ChannelTerms::default(); 3];
-            for (c, terms) in channels.iter_mut().enumerate() {
-                let Some(img1) = rs.xyb.get(c) else { continue };
-                let Some(img2) = self.xyb.get(c) else {
-                    continue;
-                };
-                multiply_planes(img2, img2, &mut self.square, w, executor);
-                multiply_planes(img1, img2, &mut self.product, w, executor);
-                if recompute_reference {
-                    multiply_planes(img1, img1, &mut self.ref_square, w, executor);
-                }
-
-                // Up to five independent blurs: the candidate's mean, second
-                // moment and cross moment, plus the source moments when the
-                // reference did not retain them.
-                {
-                    let mut blurs = self.blurs.iter_mut();
-                    let mut items: Vec<(&mut Blur, &[f32], &mut [f32])> = Vec::with_capacity(5);
-                    if let Some(b) = blurs.next() {
-                        items.push((b, img2.as_slice(), self.mu2.as_mut_slice()));
-                    }
-                    if let Some(b) = blurs.next() {
-                        items.push((b, self.square.as_slice(), self.s22.as_mut_slice()));
-                    }
-                    if let Some(b) = blurs.next() {
-                        items.push((b, self.product.as_slice(), self.s12.as_mut_slice()));
-                    }
-                    if recompute_reference {
-                        if let Some(b) = blurs.next() {
-                            items.push((b, img1.as_slice(), self.ref_mu.as_mut_slice()));
-                        }
-                        if let Some(b) = blurs.next() {
-                            items.push((
-                                b,
-                                self.ref_square.as_slice(),
-                                self.ref_s11.as_mut_slice(),
-                            ));
-                        }
-                    }
-                    let items = Handoff::new(items);
-                    executor.run(items.len(), &|index| {
-                        if let Some((blur, input, output)) = items.take(index) {
-                            blur.blur_plane(input, output, w, h, executor);
-                        }
-                    });
-                }
-
-                let (mu1, s11): (&[f32], &[f32]) = match (&rs.mu, &rs.s11) {
-                    (Some(mu), Some(s11)) if !recompute_reference => (
-                        mu.get(c).map_or(&[][..], Vec::as_slice),
-                        s11.get(c).map_or(&[][..], Vec::as_slice),
-                    ),
-                    _ => (&self.ref_mu, &self.ref_s11),
-                };
-                let sums = pool_maps(
-                    &MomentBands {
-                        img1,
-                        mu1,
-                        s11,
-                        img2,
-                        mu2: &self.mu2,
-                        s22: &self.s22,
-                        s12: &self.s12,
-                    },
-                    w,
-                    h,
-                    executor,
-                );
-                *terms = ChannelTerms::from_sums(&sums, pixels);
-            }
+            let channels =
+                self.score_converted_scale(rs, reference.retention(), w, h, executor, false);
             scales.push(ScaleTerms {
                 width: u32::try_from(w).unwrap_or(u32::MAX),
                 height: u32::try_from(h).unwrap_or(u32::MAX),
@@ -214,6 +139,205 @@ impl Ssimulacra2 {
             raw_error,
             scales,
         })
+    }
+
+    /// Scores owned candidate planes, reusing their allocations as the
+    /// positive-XYB destination at each scale.
+    ///
+    /// This is the large-image controller path. It performs the same banded
+    /// conversion and map arithmetic as [`Self::score`], but does not keep both
+    /// linear RGB and XYB full-frame planes resident.
+    #[cfg(feature = "evaluator")]
+    pub(crate) fn score_owned(
+        &mut self,
+        reference: &PrecomputedReference,
+        width: u32,
+        height: u32,
+        candidate: [Vec<f32>; 3],
+        executor: &dyn BandExecutor,
+    ) -> Result<Ssimulacra2Result, MetricError> {
+        {
+            let [r, g, b] = &candidate;
+            let view = LinearRgbView::new(width, height, r, g, b)?;
+            if view.width() != reference.width() || view.height() != reference.height() {
+                return Err(MetricError::DimensionMismatch {
+                    reference: (reference.width(), reference.height()),
+                    candidate: (view.width(), view.height()),
+                });
+            }
+        }
+
+        self.blurs.resize_with(5, Blur::new);
+        let mut scales = Vec::with_capacity(reference.scale_count());
+        let mut current = Some(candidate);
+        let mut w = usize::try_from(width).unwrap_or(usize::MAX);
+        let mut h = usize::try_from(height).unwrap_or(usize::MAX);
+        for (scale, reference_scale) in reference.scales().iter().enumerate() {
+            debug_assert_eq!((w, h), (reference_scale.width, reference_scale.height));
+            let Some(mut rgb) = current.take() else {
+                debug_assert!(false, "the candidate pyramid ended before the reference");
+                break;
+            };
+            let next = if scale + 1 < reference.scale_count() {
+                let [r, g, b] = &rgb;
+                let mut next = [Vec::new(), Vec::new(), Vec::new()];
+                downscale_planes([r, g, b], w, h, &mut next, executor);
+                Some(next)
+            } else {
+                None
+            };
+            convert_planes_in_place(&mut rgb, w, executor);
+            self.xyb = rgb;
+            let channels = self.score_converted_scale(
+                reference_scale,
+                reference.retention(),
+                w,
+                h,
+                executor,
+                true,
+            );
+            scales.push(ScaleTerms {
+                width: u32::try_from(w).unwrap_or(u32::MAX),
+                height: u32::try_from(h).unwrap_or(u32::MAX),
+                channels,
+            });
+            current = next;
+            w = pyramid::half(w);
+            h = pyramid::half(h);
+        }
+        let raw_error = weighted_error(&scales);
+        Ok(Ssimulacra2Result {
+            score: remap(raw_error),
+            raw_error,
+            scales,
+        })
+    }
+
+    fn score_converted_scale(
+        &mut self,
+        reference: &ReferenceScale,
+        retention: ReferenceRetention,
+        width: usize,
+        height: usize,
+        executor: &dyn BandExecutor,
+        low_memory: bool,
+    ) -> [ChannelTerms; 3] {
+        let pixels = width * height;
+        for buf in [&mut self.mu2, &mut self.s22, &mut self.s12] {
+            buf.clear();
+            buf.resize(pixels, 0.0);
+        }
+        let recompute_reference = retention == ReferenceRetention::PlanesOnly;
+        if recompute_reference {
+            for buf in [&mut self.ref_mu, &mut self.ref_s11] {
+                buf.clear();
+                buf.resize(pixels, 0.0);
+            }
+        }
+
+        let mut channels = [ChannelTerms::default(); 3];
+        for (c, terms) in channels.iter_mut().enumerate() {
+            let Some(img1) = reference.xyb.get(c) else {
+                continue;
+            };
+            let Some(img2) = self.xyb.get(c) else {
+                continue;
+            };
+            // Up to five independent blurs: the candidate's mean, second
+            // moment and cross moment, plus the source moments when the
+            // reference did not retain them.
+            if low_memory {
+                if let Some(blur) = self.blurs.first_mut() {
+                    blur.blur_plane(img2, &mut self.mu2, width, height, executor);
+                    blur.blur_product_plane(img2, img2, &mut self.s22, width, height, executor);
+                    blur.blur_product_plane(img1, img2, &mut self.s12, width, height, executor);
+                    if recompute_reference {
+                        blur.blur_plane(img1, &mut self.ref_mu, width, height, executor);
+                        blur.blur_product_plane(
+                            img1,
+                            img1,
+                            &mut self.ref_s11,
+                            width,
+                            height,
+                            executor,
+                        );
+                    }
+                }
+            } else {
+                enum Job<'a> {
+                    Plane(&'a mut Blur, &'a [f32], &'a mut [f32]),
+                    Product(&'a mut Blur, &'a [f32], &'a [f32], &'a mut [f32]),
+                }
+                let mut blurs = self.blurs.iter_mut();
+                let mut items: Vec<Job<'_>> = Vec::with_capacity(5);
+                if let Some(b) = blurs.next() {
+                    items.push(Job::Plane(b, img2.as_slice(), self.mu2.as_mut_slice()));
+                }
+                if let Some(b) = blurs.next() {
+                    items.push(Job::Product(
+                        b,
+                        img2.as_slice(),
+                        img2.as_slice(),
+                        self.s22.as_mut_slice(),
+                    ));
+                }
+                if let Some(b) = blurs.next() {
+                    items.push(Job::Product(
+                        b,
+                        img1.as_slice(),
+                        img2.as_slice(),
+                        self.s12.as_mut_slice(),
+                    ));
+                }
+                if recompute_reference {
+                    if let Some(b) = blurs.next() {
+                        items.push(Job::Plane(b, img1.as_slice(), self.ref_mu.as_mut_slice()));
+                    }
+                    if let Some(b) = blurs.next() {
+                        items.push(Job::Product(
+                            b,
+                            img1.as_slice(),
+                            img1.as_slice(),
+                            self.ref_s11.as_mut_slice(),
+                        ));
+                    }
+                }
+                let items = Handoff::new(items);
+                executor.run(items.len(), &|index| match items.take(index) {
+                    Some(Job::Plane(blur, input, output)) => {
+                        blur.blur_plane(input, output, width, height, executor);
+                    }
+                    Some(Job::Product(blur, a, b, output)) => {
+                        blur.blur_product_plane(a, b, output, width, height, executor);
+                    }
+                    None => {}
+                });
+            }
+
+            let (mu1, s11): (&[f32], &[f32]) = match (&reference.mu, &reference.s11) {
+                (Some(mu), Some(s11)) if !recompute_reference => (
+                    mu.get(c).map_or(&[][..], Vec::as_slice),
+                    s11.get(c).map_or(&[][..], Vec::as_slice),
+                ),
+                _ => (&self.ref_mu, &self.ref_s11),
+            };
+            let sums = pool_maps(
+                &MomentBands {
+                    img1,
+                    mu1,
+                    s11,
+                    img2,
+                    mu2: &self.mu2,
+                    s22: &self.s22,
+                    s12: &self.s12,
+                },
+                width,
+                height,
+                executor,
+            );
+            *terms = ChannelTerms::from_sums(&sums, pixels);
+        }
+        channels
     }
 }
 
@@ -409,6 +533,9 @@ pub fn remap(error: f64) -> f64 {
 mod tests {
     use super::*;
 
+    #[cfg(feature = "evaluator")]
+    use crate::executor::SerialExecutor;
+
     #[test]
     fn zero_error_is_a_perfect_score_and_error_lowers_it() {
         assert_eq!(remap(0.0), 100.0);
@@ -419,5 +546,48 @@ mod tests {
     #[test]
     fn the_weight_table_has_one_entry_per_term() {
         assert_eq!(WEIGHTS.len(), 3 * crate::SCALES * 2 * 3);
+    }
+
+    #[cfg(feature = "evaluator")]
+    #[test]
+    fn owned_in_place_scoring_matches_the_borrowed_path_bit_for_bit() {
+        let (width, height) = (32u32, 24u32);
+        let pixels = usize::try_from(u64::from(width) * u64::from(height)).unwrap_or(0);
+        let reference_planes: [Vec<f32>; 3] = core::array::from_fn(|channel| {
+            (0..pixels)
+                .map(|i| {
+                    let sample = u16::try_from((i * 37 + channel * 11) % 251).unwrap_or(0);
+                    f32::from(sample) / 250.0
+                })
+                .collect()
+        });
+        let mut candidate = reference_planes.clone();
+        for (channel, plane) in candidate.iter_mut().enumerate() {
+            let offset = f32::from(u16::try_from(channel + 1).unwrap_or(0)) * 0.001;
+            for value in plane {
+                *value = (*value + offset).min(1.0);
+            }
+        }
+        let [rr, rg, rb] = &reference_planes;
+        let reference = PrecomputedReference::new(
+            LinearRgbView::new(width, height, rr, rg, rb)
+                .expect("the test reference planes have the declared shape"),
+            ReferenceRetention::Moments,
+            &SerialExecutor,
+        )
+        .expect("the test reference should precompute");
+        let [cr, cg, cb] = &candidate;
+        let borrowed = Ssimulacra2::new()
+            .score(
+                &reference,
+                LinearRgbView::new(width, height, cr, cg, cb)
+                    .expect("the test candidate planes have the declared shape"),
+                &SerialExecutor,
+            )
+            .expect("the borrowed test candidate should score");
+        let owned = Ssimulacra2::new()
+            .score_owned(&reference, width, height, candidate, &SerialExecutor)
+            .expect("the owned test candidate should score");
+        assert_eq!(owned, borrowed);
     }
 }

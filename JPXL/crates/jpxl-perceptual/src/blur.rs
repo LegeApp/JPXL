@@ -55,6 +55,12 @@ pub struct Blur {
     temp: Vec<f32>,
 }
 
+#[derive(Clone, Copy)]
+enum BlurInput<'a> {
+    Plane(&'a [f32]),
+    Product(&'a [f32], &'a [f32]),
+}
+
 impl Blur {
     /// A blur with no scratch allocated yet; the first call allocates.
     #[must_use]
@@ -80,7 +86,42 @@ impl Blur {
         height: usize,
         executor: &dyn BandExecutor,
     ) {
-        debug_assert_eq!(input.len(), width * height);
+        self.blur_input(BlurInput::Plane(input), output, width, height, executor);
+    }
+
+    /// Blurs the per-sample product `a * b` without materialising that
+    /// full-frame product plane.
+    ///
+    /// Each multiplication is first rounded into the horizontal pass's `f32`
+    /// padded row, exactly as it was when callers built a separate product
+    /// plane before blurring it.
+    pub(crate) fn blur_product_plane(
+        &mut self,
+        a: &[f32],
+        b: &[f32],
+        output: &mut [f32],
+        width: usize,
+        height: usize,
+        executor: &dyn BandExecutor,
+    ) {
+        self.blur_input(BlurInput::Product(a, b), output, width, height, executor);
+    }
+
+    fn blur_input(
+        &mut self,
+        input: BlurInput<'_>,
+        output: &mut [f32],
+        width: usize,
+        height: usize,
+        executor: &dyn BandExecutor,
+    ) {
+        match input {
+            BlurInput::Plane(input) => debug_assert_eq!(input.len(), width * height),
+            BlurInput::Product(a, b) => {
+                debug_assert_eq!(a.len(), width * height);
+                debug_assert_eq!(b.len(), width * height);
+            }
+        }
         debug_assert_eq!(output.len(), width * height);
         if width == 0 || height == 0 {
             return;
@@ -96,13 +137,28 @@ impl Blur {
             let Some(out_band) = outs.pop() else {
                 return;
             };
-            let in_band = band_of(input, index, band_len);
             let mut padded = Vec::new();
-            for (row_in, row_out) in in_band
-                .chunks_exact(width)
-                .zip(out_band.chunks_exact_mut(width))
-            {
-                horizontal_row(row_in, row_out, &mut padded);
+            match input {
+                BlurInput::Plane(input) => {
+                    let in_band = band_of(input, index, band_len);
+                    for (row_in, row_out) in in_band
+                        .chunks_exact(width)
+                        .zip(out_band.chunks_exact_mut(width))
+                    {
+                        horizontal_row(row_in, row_out, &mut padded);
+                    }
+                }
+                BlurInput::Product(a, b) => {
+                    let a_band = band_of(a, index, band_len);
+                    let b_band = band_of(b, index, band_len);
+                    for ((a_row, b_row), row_out) in a_band
+                        .chunks_exact(width)
+                        .zip(b_band.chunks_exact(width))
+                        .zip(out_band.chunks_exact_mut(width))
+                    {
+                        horizontal_product_row(a_row, b_row, row_out, &mut padded);
+                    }
+                }
             }
         });
         vertical_pass(&self.temp, output, width, height, executor);
@@ -141,6 +197,22 @@ fn horizontal_row(input: &[f32], output: &mut [f32], padded: &mut Vec<f32>) {
     if let Some(body) = padded.get_mut(LEFT_PAD..LEFT_PAD + width) {
         body.copy_from_slice(input);
     }
+    horizontal_padded(output, padded);
+}
+
+fn horizontal_product_row(a: &[f32], b: &[f32], output: &mut [f32], padded: &mut Vec<f32>) {
+    let width = a.len().min(b.len());
+    padded.clear();
+    padded.resize(width + 3 * RADIUS_USIZE, 0.0);
+    if let Some(body) = padded.get_mut(LEFT_PAD..LEFT_PAD + width) {
+        for ((slot, &a), &b) in body.iter_mut().zip(a).zip(b) {
+            *slot = a * b;
+        }
+    }
+    horizontal_padded(output, padded);
+}
+
+fn horizontal_padded(output: &mut [f32], padded: &[f32]) {
     // Output index n runs from 1 - N; the left window sample sits at padded
     // index n + N - 1 (i.e. `i`) and the right one at i + 2N.
     let lefts = padded.get(..).unwrap_or(&[]);
@@ -420,5 +492,22 @@ mod tests {
             &ScopedThreadExecutor { workers: 3 },
         );
         assert_eq!(serial, threaded);
+    }
+
+    #[test]
+    fn product_blur_matches_a_materialised_product_plane() {
+        let (w, h) = (73usize, 51usize);
+        let a: Vec<f32> = (0..w * h)
+            .map(|i| ((i * 31) % 101) as f32 / 101.0)
+            .collect();
+        let b: Vec<f32> = (0..w * h)
+            .map(|i| ((i * 47 + 3) % 109) as f32 / 109.0)
+            .collect();
+        let product: Vec<f32> = a.iter().zip(&b).map(|(&a, &b)| a * b).collect();
+        let mut materialised = vec![0.0f32; w * h];
+        Blur::new().blur_plane(&product, &mut materialised, w, h, &SerialExecutor);
+        let mut fused = vec![0.0f32; w * h];
+        Blur::new().blur_product_plane(&a, &b, &mut fused, w, h, &SerialExecutor);
+        assert_eq!(fused, materialised);
     }
 }

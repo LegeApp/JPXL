@@ -19,6 +19,7 @@ jpxl-decode.workspace = true
 jpxl-encode = { workspace = true }
 jpxl-encode-policy = { workspace = true }
 jpxl-conformance.workspace = true
+jpxl-perceptual.workspace = true
 
 [features]
 default = ["parallel", "simd"]

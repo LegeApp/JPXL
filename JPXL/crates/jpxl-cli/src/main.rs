@@ -40,9 +40,10 @@ Usage:
                                   TGA, QOI, PGM, or PPM; lossless modular by
                                   default, lossy VarDCT with --bpp
     jpxl compare <ref.ppm> <b.ppm>
-                                  Print RMSE and PSNR between two decoded PPMs
-                                  (plus SSIMULACRA2 and butteraugli, if built
-                                  with --features perceptual)
+                                  Print RMSE, PSNR, and the in-tree production
+                                  SSIMULACRA2 between two decoded PPMs (plus
+                                  independent-reference SSIMULACRA2 and
+                                  butteraugli with --features perceptual)
     jpxl analyze-atlas <in> <out.jsonl>
                                   Export the diagnostic AnalysisAtlasV2; this
                                   research command does not affect encoding
@@ -969,7 +970,8 @@ fn cmd_encode(args: &[String]) -> u8 {
             },
         ) {
             Ok(report) => {
-                let bytes = report.codestream.clone();
+                let bytes =
+                    wrap_for_output(report.codestream.clone(), image.bits_per_sample(), &options);
                 lossy = Some(report);
                 bytes
             }
@@ -1118,12 +1120,68 @@ fn cmd_encode(args: &[String]) -> u8 {
 /// a Python or numpy dependency: encode at a rate, decode, compare. Prints
 /// `rmse=<f> psnr_db=<f>`, or `psnr_db=inf` when the images are identical.
 ///
-/// Built with `--features perceptual`, also prints `ssimulacra2=<f>`
-/// (higher is better, 100 = identical) and `butteraugli=<f>` with its
-/// `butteraugli_pnorm3` (lower is better, 0 = identical; `butteraugli` is the
-/// distance `cjxl -d` targets). Those are the numbers to rank lossy encoders
-/// on — PSNR is printed because it is always available, not because it is
-/// right.
+/// Always prints `ssimulacra2_jpxl=<f>`, the production metric used by the
+/// score-targeted encoder. Built with `--features perceptual`, also prints the
+/// independent rust-av reference as `ssimulacra2=<f>` (higher is better, 100 =
+/// identical) and `butteraugli=<f>` with its `butteraugli_pnorm3` (lower is
+/// better, 0 = identical; `butteraugli` is the distance `cjxl -d` targets).
+/// PSNR is printed because it is always available, not because it is the
+/// quality axis.
+fn in_tree_ssimulacra2_score(
+    reference: &jpxl_conformance::metrics::Image,
+    candidate: &jpxl_conformance::metrics::Image,
+) -> Option<f64> {
+    if !reference.same_shape(candidate) {
+        return None;
+    }
+
+    fn linear_planes(image: &jpxl_conformance::metrics::Image) -> [Vec<f32>; 3] {
+        let pixel_count = image.samples.len() / 3;
+        let mut red = Vec::with_capacity(pixel_count);
+        let mut green = Vec::with_capacity(pixel_count);
+        let mut blue = Vec::with_capacity(pixel_count);
+        let scale = f32::from(image.max_value);
+        let linear = |sample: u16| {
+            let value = f32::from(sample) / scale;
+            if value <= 0.040_45 {
+                value / 12.92
+            } else {
+                ((value + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        for pixel in image.samples.chunks_exact(3) {
+            if let [r, g, b] = pixel {
+                red.push(linear(*r));
+                green.push(linear(*g));
+                blue.push(linear(*b));
+            }
+        }
+        [red, green, blue]
+    }
+
+    let [reference_r, reference_g, reference_b] = linear_planes(reference);
+    let [candidate_r, candidate_g, candidate_b] = linear_planes(candidate);
+    let reference_view = jpxl_perceptual::LinearRgbView::new(
+        reference.w,
+        reference.h,
+        &reference_r,
+        &reference_g,
+        &reference_b,
+    )
+    .ok()?;
+    let candidate_view = jpxl_perceptual::LinearRgbView::new(
+        candidate.w,
+        candidate.h,
+        &candidate_r,
+        &candidate_g,
+        &candidate_b,
+    )
+    .ok()?;
+    jpxl_perceptual::score_pair(reference_view, candidate_view)
+        .ok()
+        .map(|result| result.score)
+}
+
 fn cmd_compare(args: &[String]) -> u8 {
     let [a_path, b_path] = args else {
         fail("`compare` takes two PPM paths (reference, then decoded)");
@@ -1163,17 +1221,22 @@ fn cmd_compare(args: &[String]) -> u8 {
         return EXIT_ERROR;
     };
 
-    // Only the perceptual blocks below append to this, so with both features
-    // off it is never mutated.
-    #[cfg_attr(
-        not(any(feature = "ssimulacra2", feature = "butteraugli")),
-        allow(unused_mut, reason = "appended to only under the perceptual features")
-    )]
     let mut line = if db.is_infinite() {
         "rmse=0 psnr_db=inf".to_owned()
     } else {
         format!("rmse={err:.6} psnr_db={db:.4}")
     };
+
+    match in_tree_ssimulacra2_score(a, b) {
+        Some(score) => line.push_str(&format!(
+            " ssimulacra2_jpxl={score:.6} ssimulacra2_jpxl_version={}",
+            jpxl_perceptual::METRIC_VERSION
+        )),
+        None => line.push_str(&format!(
+            " ssimulacra2_jpxl=n/a ssimulacra2_jpxl_version={}",
+            jpxl_perceptual::METRIC_VERSION
+        )),
+    }
 
     // The perceptual metrics are the ones to rank lossy encoders on; PSNR is
     // here because it is always available. When they disagree with PSNR,
@@ -2399,6 +2462,7 @@ fn encode_quality(
     let encoder = jpxl::Encoder::new()
         .with_resources(options.resources)
         .with_container(options.container)
+        .with_jxlp_fragment_size(options.jxlp_fragment_size)
         .with_effort(effort)
         .with_ssimulacra2_score(score)
         .map_err(|error| error.to_string())?;
@@ -2431,6 +2495,30 @@ fn encode_quality(
     }
 }
 
+/// Wraps a lossy codestream the way [`jpxl_encode::encode`] wraps a lossless
+/// one, so `--container` and `--jxlp` reach the VarDCT paths too.
+///
+/// 18181-2 9.3 with Annex M of Part 1: a >8-bit image needs the extended
+/// level, which is why this takes the depth rather than assuming one.
+fn wrap_for_output(
+    codestream: Vec<u8>,
+    bits_per_sample: u32,
+    options: &jpxl_encode::EncodeOptions,
+) -> Vec<u8> {
+    if !options.container && options.jxlp_fragment_size.is_none() {
+        return codestream;
+    }
+    let level = if bits_per_sample > 8 {
+        jpxl_encode::container::EXTENDED_LEVEL
+    } else {
+        jpxl_encode::container::DEFAULT_LEVEL
+    };
+    match options.jxlp_fragment_size {
+        Some(size) => jpxl_encode::container::wrap_fragmented(&codestream, level, size),
+        None => jpxl_encode::container::wrap(&codestream, level),
+    }
+}
+
 /// The `--global-scale` path: a fixed-quantizer VarDCT encode.
 ///
 /// Honours `--quant-lf`; the HF multiplier stays at the request default.
@@ -2454,6 +2542,7 @@ fn encode_global_scale(
     let bytes =
         jpxl_encode_policy::encode_srgb16_vardct(width, height, &rgb, bits_per_sample, &request)
             .map_err(|error| error.to_string())?;
+    let bytes = wrap_for_output(bytes, bits_per_sample, options);
     let mode = format!("lossy VarDCT (fixed quantizer), global_scale {global_scale}");
     Ok((bytes, mode))
 }
@@ -2729,6 +2818,41 @@ mod cli_tests {
     fn temp_dir() -> std::path::PathBuf {
         let id = NEXT_TEMP.fetch_add(1, Ordering::Relaxed);
         std::env::temp_dir().join(format!("jpxl-cli-test-{}-{id}", std::process::id()))
+    }
+
+    #[test]
+    fn decoded_pair_metric_is_the_in_tree_production_score() {
+        let (width, height) = (32u32, 32u32);
+        let mut samples = Vec::with_capacity(32 * 32 * 3);
+        for y in 0..32u16 {
+            for x in 0..32u16 {
+                samples.extend_from_slice(&[
+                    x.saturating_mul(8),
+                    y.saturating_mul(8),
+                    x.saturating_add(y).saturating_mul(4),
+                ]);
+            }
+        }
+        let reference = jpxl_conformance::metrics::Image {
+            w: width,
+            h: height,
+            channels: 3,
+            max_value: 255,
+            samples,
+        };
+        assert_eq!(
+            in_tree_ssimulacra2_score(&reference, &reference),
+            Some(100.0)
+        );
+
+        let mut distorted = reference.clone();
+        for pixel in distorted.samples.chunks_exact_mut(3) {
+            if let [_, _, blue] = pixel {
+                *blue = blue.saturating_add(8).min(255);
+            }
+        }
+        let distorted_score = in_tree_ssimulacra2_score(&reference, &distorted).expect("score");
+        assert!(distorted_score < 100.0);
     }
 
     #[test]

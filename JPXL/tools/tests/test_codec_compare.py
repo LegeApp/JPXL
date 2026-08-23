@@ -73,8 +73,10 @@ class CodecCompareTests(unittest.TestCase):
 
     def test_metric_parser_handles_optional_perceptual_fields(self):
         metrics = codec_compare.metrics_from_output(
-            "rmse=1 psnr_db=42.5 ssimulacra2=88.25 butteraugli=1.5 butteraugli_pnorm3=0.75"
+            "rmse=1 psnr_db=42.5 ssimulacra2_jpxl=88.5 ssimulacra2=88.25 "
+            "butteraugli=1.5 butteraugli_pnorm3=0.75"
         )
+        self.assertEqual(metrics["ssimulacra2_jpxl"], 88.5)
         self.assertEqual(metrics["ssimulacra2"], 88.25)
         self.assertEqual(metrics["butteraugli_pnorm3"], 0.75)
         self.assertIsNone(codec_compare.metrics_from_output("psnr_db=40")["ssimulacra2"])
@@ -211,9 +213,21 @@ class CodecCompareTests(unittest.TestCase):
         # --quality alone parses even though --bpp carries a default value.
         args = parser.parse_args(common + ["--quality", "85", "90"])
         self.assertEqual(args.quality, [85.0, 90.0])
+        self.assertIsNone(args.image_id)
         self.assertEqual(args.quality_effort, "balanced")
+        self.assertEqual(args.rate_bpp, list(codec_compare.DEFAULT_QUALITY_RATE_BPPS))
         self.assertTrue(args.quality_trace)
-        args = parser.parse_args(common + ["--quality", "85", "--no-quality-trace"])
+        args = parser.parse_args(
+            common
+            + [
+                "--quality",
+                "85",
+                "--rate-bpp",
+                "0.25,0.75",
+                "--no-quality-trace",
+            ]
+        )
+        self.assertEqual(args.rate_bpp, [0.25, 0.75])
         self.assertFalse(args.quality_trace)
         with self.assertRaises(SystemExit):
             parser.parse_args(common + ["--quality", "150"])
@@ -275,9 +289,20 @@ class CodecCompareTests(unittest.TestCase):
                 distance=[1.0, 2.0], threads=4, cjxl_threads=4,
                 preset="balanced", effort=7, max_additions=0,
                 quality_effort="balanced", quality_trace=True,
+                rate_bpp=[0.5, 1.0],
+                image_id=["tiny"],
             )
             records = codec_compare.curve_records(args)
-            own = [r for r in records if r["codec"] == "jpxl"][0]
+            own = [
+                r
+                for r in records
+                if r["codec"] == "jpxl" and r["setting"]["kind"] == "quality"
+            ][0]
+            rate = [
+                r
+                for r in records
+                if r["codec"] == "jpxl" and r["setting"]["kind"] == "bpp"
+            ]
             self.assertEqual(own["setting"]["kind"], "quality")
             self.assertEqual(own["setting"]["effort"], "balanced")
             self.assertEqual(own["requested_score"], 85.0)
@@ -286,8 +311,25 @@ class CodecCompareTests(unittest.TestCase):
             self.assertEqual(own["probes"], 3)
             self.assertEqual(own["prices"], 2)
             self.assertIn("--quality", own["command"])
+            self.assertEqual(own["metrics"]["ssimulacra2_jpxl"], 85.5)
             self.assertEqual(own["wall_by_phase"]["emit"], 6.0)
+            self.assertEqual(own["structural_builds"], 1)
             self.assertTrue(own["trace_path"].endswith(".trace.jsonl"))
+            self.assertEqual(len(rate), 2)
+            self.assertEqual([row["setting"]["value"] for row in rate], [0.5, 1.0])
+            self.assertTrue(
+                all(row["setting"]["preset"] == "balanced" for row in rate)
+            )
+            self.assertTrue(
+                all(
+                    row["setting"]["role"] == "quality_rate_baseline"
+                    for row in rate
+                )
+            )
+
+            args.image_id = ["missing"]
+            with self.assertRaisesRegex(codec_compare.HarnessError, "missing"):
+                codec_compare.curve_records(args)
 
     def test_bd_rate_constant_ratio_has_known_answer(self):
         reference = [(score, 1000.0 * (10.0 ** (-0.01 * score))) for score in (50, 60, 70, 80, 90)]
@@ -296,6 +338,22 @@ class CodecCompareTests(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertAlmostEqual(result, 100.0, places=4)
         self.assertIsNone(codec_compare.bd_rate(reference[:3], test[:3]))
+
+    def test_matched_score_interpolation_is_linear_in_log_rate(self):
+        rate = [
+            self._rate_record(0.5, 100, 80.0),
+            self._rate_record(1.0, 400, 90.0),
+        ]
+        match = codec_compare.interpolate_metric_records(
+            rate,
+            codec_compare.PRIMARY_QUALITY_METRIC,
+            85.0,
+            increasing_with_setting=True,
+            log_rate=True,
+        )
+        self.assertIsNotNone(match)
+        self.assertAlmostEqual(match["value"], 200.0)
+        self.assertEqual(match["interpolation"], "log-bytes-linear-in-metric")
 
     def test_quality_summary_detects_floor_and_monotonicity(self):
         cjxl_records = [
@@ -308,19 +366,58 @@ class CodecCompareTests(unittest.TestCase):
             self._quality_record(90.0, 90.2, 220),
             self._quality_record(95.0, 94.0, 260),
         ]
-        summary = codec_compare.quality_image_summary("img", jpxl_quality, cjxl_records, 0.5)
+        # The controller and common-reference implementations are parity-bounded,
+        # not bit-identical. Curve matching must stay on the common decoded axis.
+        jpxl_quality[0]["metrics"][codec_compare.PRIMARY_QUALITY_METRIC] = 84.0
+        jpxl_rate = [
+            self._rate_record(0.5, 100, 80.0),
+            self._rate_record(1.0, 200, 90.0),
+            self._rate_record(2.0, 400, 95.0),
+            self._rate_record(3.0, 800, 98.0),
+        ]
+        summary = codec_compare.quality_image_summary(
+            "img", jpxl_quality, cjxl_records, 0.5, jpxl_rate=jpxl_rate
+        )
         self.assertEqual(summary["floor_violations"], 1)
         self.assertTrue(summary["achieved_monotone_in_requested"])
+        self.assertTrue(summary["bytes_monotone_in_requested"])
         self.assertAlmostEqual(summary["targets"][0]["overshoot"], 0.5)
         self.assertFalse(summary["targets"][0]["floor_violation"])
         self.assertTrue(summary["targets"][2]["floor_violation"])
+        self.assertAlmostEqual(summary["targets"][0]["comparison_score"], 84.0)
+        self.assertAlmostEqual(summary["targets"][0]["reference_score"], 85.0)
+        self.assertAlmostEqual(summary["targets"][0]["matched_jpxl_rate_bpp"], 0.7)
+        self.assertIsNotNone(summary["targets"][0]["byte_ratio_vs_jpxl_rate"])
         self.assertIsNotNone(summary["targets"][0]["byte_ratio_vs_cjxl"])
+        self.assertEqual(summary["coverage"]["jpxl_rate"]["matched"], 3)
+
+        missing_reference = [self._quality_record(85.0, 85.5, 180)]
+        missing_reference[0]["metrics"][codec_compare.PRIMARY_QUALITY_METRIC] = None
+        inconclusive = codec_compare.quality_image_summary(
+            "img", missing_reference, cjxl_records, 0.0, jpxl_rate=jpxl_rate
+        )
+        self.assertEqual(
+            inconclusive["targets"][0]["jpxl_rate_match_status"],
+            "quality_metric_unavailable",
+        )
+        self.assertIsNone(inconclusive["targets"][0]["byte_ratio_vs_jpxl_rate"])
+
+        substituted = [self._quality_record(95.0, 94.0, 260)]
+        substituted[0]["comparison_score_source"] = "controller_substitution"
+        sensitivity = codec_compare.quality_image_summary(
+            "img", substituted, cjxl_records, 0.5, jpxl_rate=jpxl_rate
+        )
+        self.assertTrue(sensitivity["targets"][0]["floor_violation"])
+        self.assertIsNone(sensitivity["targets"][0]["decoded_floor_violation"])
+        self.assertEqual(sensitivity["decoded_floor_violations"], 0)
 
         non_monotone = [
             self._quality_record(85.0, 90.0, 180),
             self._quality_record(90.0, 88.0, 220),
         ]
-        broken = codec_compare.quality_image_summary("img", non_monotone, cjxl_records, 0.0)
+        broken = codec_compare.quality_image_summary(
+            "img", non_monotone, cjxl_records, 0.0, jpxl_rate=jpxl_rate
+        )
         self.assertFalse(broken["achieved_monotone_in_requested"])
 
     def test_quality_summary_and_markdown_via_summarize(self):
@@ -328,6 +425,10 @@ class CodecCompareTests(unittest.TestCase):
             self._cjxl_record(0.5, 300, 95.0),
             self._cjxl_record(1.0, 200, 90.0),
             self._cjxl_record(2.0, 100, 80.0),
+            self._rate_record(0.5, 100, 80.0),
+            self._rate_record(1.0, 200, 90.0),
+            self._rate_record(2.0, 400, 95.0),
+            self._rate_record(3.0, 800, 98.0),
             self._quality_record(85.0, 85.5, 180),
             self._quality_record(90.0, 90.2, 220),
             self._quality_record(95.0, 94.0, 260),
@@ -335,11 +436,25 @@ class CodecCompareTests(unittest.TestCase):
         summary, plan = codec_compare.summarize_records(records, score_guard=0.5)
         self.assertIn("quality", summary)
         self.assertEqual(summary["quality"]["aggregate"]["floor_violation_count"], 1)
+        self.assertEqual(
+            summary["quality"]["aggregate"]["decoded_floor_violation_count"], 1
+        )
+        self.assertEqual(summary["quality"]["images"][0]["decoded_floor_violations"], 1)
         self.assertEqual(summary["quality"]["aggregate"]["probe_distribution"], {"3": 3})
-        self.assertEqual(summary["rows"], [])
+        self.assertEqual(summary["quality"]["schema"], codec_compare.QUALITY_SUMMARY_SCHEMA)
+        self.assertGreater(summary["quality"]["aggregate"]["coverage"]["jpxl_rate"]["matched"], 0)
+        self.assertEqual(summary["quality"]["aggregate"]["budget_overage_count"], 0)
+        self.assertEqual(
+            summary["quality"]["aggregate"]["comparison_score_source_distribution"],
+            {"decoded_pair": 3},
+        )
+        self.assertGreater(len(summary["rows"]), 0)
+        self.assertGreater(len(plan["jobs"]), 0)
         markdown = codec_compare.render_quality_markdown(summary)
         self.assertIn("## img", markdown)
-        self.assertIn("BD-rate", markdown)
+        self.assertIn("BD-rate: vs JPXL rate", markdown)
+        self.assertIn("JPXL rate matched-score coverage", markdown)
+        self.assertIn("decoded in-tree floor violations", markdown)
         self.assertIn("| requested |", markdown)
 
     def test_metric_variation_aggregation(self):
@@ -363,7 +478,11 @@ class CodecCompareTests(unittest.TestCase):
             "input": {"id": "img"},
             "setting": {"kind": "distance", "value": setting},
             "rate_outcome": {"bytes": size, "bpp": size / 100.0},
-            "metrics": {"ssimulacra2": ssim, "butteraugli_pnorm3": setting},
+            "metrics": {
+                "ssimulacra2_jpxl": ssim,
+                "ssimulacra2": ssim,
+                "butteraugli_pnorm3": setting,
+            },
         }
 
     @staticmethod
@@ -373,14 +492,45 @@ class CodecCompareTests(unittest.TestCase):
             "kind": "curve",
             "codec": "jpxl",
             "input": {"id": "img"},
-            "setting": {"kind": "quality", "value": requested},
+            "setting": {
+                "kind": "quality",
+                "value": requested,
+                "effort": "balanced",
+            },
             "rate_outcome": {"bytes": size, "bpp": size / 100.0},
-            "metrics": {"ssimulacra2": achieved, "butteraugli_pnorm3": None},
+            "metrics": {
+                "ssimulacra2_jpxl": achieved,
+                "ssimulacra2": achieved - 0.5,
+                "butteraugli_pnorm3": None,
+            },
             "requested_score": requested,
             "achieved_score": achieved,
             "quality_status": "met",
             "probes": 3,
             "prices": 2,
+            "structural_builds": 1,
+        }
+
+    @staticmethod
+    def _rate_record(setting, size, ssim):
+        return {
+            "schema": codec_compare.RECORD_SCHEMA,
+            "kind": "curve",
+            "codec": "jpxl",
+            "input": {"id": "img"},
+            "setting": {
+                "kind": "bpp",
+                "value": setting,
+                "preset": "balanced",
+                "threads": 4,
+                "role": "quality_rate_baseline",
+            },
+            "rate_outcome": {"bytes": size, "bpp": size / 100.0},
+            "metrics": {
+                "ssimulacra2_jpxl": ssim,
+                "ssimulacra2": ssim - 0.5,
+                "butteraugli_pnorm3": None,
+            },
         }
 
     @staticmethod
@@ -391,35 +541,37 @@ argv = sys.argv
 if '--version' in argv:
     print('jpxl fake 1')
 elif len(argv) > 1 and argv[1] == 'compare':
-    print('psnr_db=40 ssimulacra2=85.5 butteraugli=2 butteraugli_pnorm3=1')
+    print('psnr_db=40 ssimulacra2_jpxl=85.5 ssimulacra2=85.0 '
+          'butteraugli=2 butteraugli_pnorm3=1')
 elif len(argv) > 1 and argv[1] == 'encode':
     src, out = argv[-2], argv[-1]
     shutil.copyfile(src, out)
-    requested = float(argv[argv.index('--quality') + 1])
-    achieved = requested + 0.2
-    size = pathlib.Path(out).stat().st_size
-    print(
-        'quality_target=%.4f achieved=%.4f bytes=%d metric=ssimulacra2-jpxl-1 '
-        'effort=balanced probes=3 prices=2 status=met' % (requested, achieved, size)
-    )
-    trace = os.environ.get('JPXL_QUALITY_TRACE')
-    if trace:
-        with open(trace, 'w') as handle:
-            handle.write(json.dumps({{
-                'schema': 'jpxl.quality-trace/1',
-                'requested_score': requested,
-                'achieved_score': achieved,
-                'final_exact_bytes': size,
-                'pixel_probes': 3,
-                'exact_prices': 2,
-                'structural_builds': 1,
-                'status': 'met',
-                'wall_by_phase': {{
-                    'analysis': 1.0, 'plan': 2.0, 'render': 3.0,
-                    'metric': 4.0, 'entropy': 5.0, 'emit': 6.0,
-                }},
-                'probes': [],
-            }}) + '\\n')
+    if '--quality' in argv:
+        requested = float(argv[argv.index('--quality') + 1])
+        achieved = requested + 0.2
+        size = pathlib.Path(out).stat().st_size
+        print(
+            'quality_target=%.4f achieved=%.4f bytes=%d metric=ssimulacra2-jpxl-1 '
+            'effort=balanced probes=3 prices=2 status=met' % (requested, achieved, size)
+        )
+        trace = os.environ.get('JPXL_QUALITY_TRACE')
+        if trace:
+            with open(trace, 'w') as handle:
+                handle.write(json.dumps({{
+                    'schema': 'jpxl.quality-trace/1',
+                    'requested_score': requested,
+                    'achieved_score': achieved,
+                    'final_exact_bytes': size,
+                    'pixel_probes': 3,
+                    'exact_prices': 2,
+                    'structural_builds': 1,
+                    'status': 'met',
+                    'wall_by_phase': {{
+                        'analysis': 1.0, 'plan': 2.0, 'render': 3.0,
+                        'metric': 4.0, 'entropy': 5.0, 'emit': 6.0,
+                    }},
+                    'probes': [],
+                }}) + '\\n')
 else:
     shutil.copyfile(argv[-2], argv[-1])
 """
@@ -434,7 +586,8 @@ import pathlib, shutil, sys
 if '--version' in sys.argv:
     print('{kind} fake 1')
 elif '{kind}' == 'jpxl' and len(sys.argv) > 1 and sys.argv[1] == 'compare':
-    print('psnr_db=40 ssimulacra2=80 butteraugli=2 butteraugli_pnorm3=1')
+    print('psnr_db=40 ssimulacra2_jpxl=80.5 ssimulacra2=80 '
+          'butteraugli=2 butteraugli_pnorm3=1')
 elif '{kind}' == 'jpxl':
     shutil.copyfile(sys.argv[-2], sys.argv[-1])
 elif '{kind}' == 'cjxl':

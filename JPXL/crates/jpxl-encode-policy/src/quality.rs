@@ -61,6 +61,26 @@ pub trait PerceptualEvaluator {
     /// Whatever the renderer or metric refuses.
     fn evaluate(&mut self, candidate: &ValidatedPixelPlan) -> Result<PerceptualObservation>;
 
+    /// Reconstructs and scores an owned `candidate`, returning it when the
+    /// evaluator wants the policy to retain its coefficient payload for exact
+    /// pricing.
+    ///
+    /// The default keeps the plan. A memory-bounded evaluator may instead
+    /// render it, release it before allocating metric scratch, and return
+    /// `None`; the policy already knows how to rebuild a dropped finalist from
+    /// its quantizer and captured structure without changing its stream.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::evaluate`].
+    fn evaluate_owned(
+        &mut self,
+        candidate: ValidatedPixelPlan,
+    ) -> Result<(PerceptualObservation, Option<ValidatedPixelPlan>)> {
+        let observation = self.evaluate(&candidate)?;
+        Ok((observation, Some(candidate)))
+    }
+
     /// The pinned metric identity the scores come from.
     fn metric_version(&self) -> &'static str;
 }
@@ -734,7 +754,8 @@ impl Navigator<'_, '_, '_, '_, '_> {
             .saturating_add(u64::try_from(plan_start.elapsed().as_millis()).unwrap_or(u64::MAX));
 
         let score_start = Instant::now();
-        let score = self.evaluator.evaluate(&pixels)?.score;
+        let (observation, pixels) = self.evaluator.evaluate_owned(pixels)?;
+        let score = observation.score;
         let millis = u64::try_from(score_start.elapsed().as_millis()).unwrap_or(u64::MAX);
         self.local.render_metric_ms = self.local.render_metric_ms.saturating_add(millis);
         self.local.pixel_probes = self.local.pixel_probes.saturating_add(1);
@@ -756,7 +777,7 @@ impl Navigator<'_, '_, '_, '_, '_> {
             score,
             feasible,
             structure,
-            pixels: Some((pixels, geometry)),
+            pixels: pixels.map(|pixels| (pixels, geometry)),
         });
         self.retain_finalist_pixels();
         Ok(self.probes.len() - 1)
@@ -1124,24 +1145,33 @@ fn solve_baseline(
             let fresh_index = nav.probe(rung, true)?;
             let fresh_ok = nav.probes.get(fresh_index).is_some_and(|p| p.feasible);
             if fresh_ok {
-                let taken = nav
+                let fresh_score = nav.probes.get(fresh_index).map_or(score, |p| p.score);
+                let retained = nav
                     .probes
                     .get_mut(fresh_index)
                     .and_then(|p| p.pixels.take());
-                if let Some((pixels, geometry)) = taken {
-                    let fresh_score = nav.probes.get(fresh_index).map_or(score, |p| p.score);
-                    let priced = price_pixels(
-                        &mut nav,
+                let (pixels, geometry) = match retained {
+                    Some(planned) => planned,
+                    None => nav.ctx.pixel_plan_for(
+                        nav.request,
                         quantizer,
-                        fresh_score,
-                        StructureSource::Fresh,
-                        &pixels,
-                        &geometry,
-                    )?;
-                    rescued = true;
-                    finalists.push(priced);
-                    continue;
-                }
+                        nav.enable_cfl,
+                        nav.structure_tier,
+                        AnchorReuse::None,
+                        None,
+                    )?,
+                };
+                let priced = price_pixels(
+                    &mut nav,
+                    quantizer,
+                    fresh_score,
+                    StructureSource::Fresh,
+                    &pixels,
+                    &geometry,
+                )?;
+                rescued = true;
+                finalists.push(priced);
+                continue;
             }
         }
         // Reused (or anchor) structure: price the retained pixels, or rebuild
@@ -1694,6 +1724,7 @@ mod tests {
     /// exercised without rendering.
     struct CurveEvaluator {
         calls: u32,
+        discard: bool,
     }
 
     impl PerceptualEvaluator for CurveEvaluator {
@@ -1716,6 +1747,14 @@ mod tests {
             Ok(PerceptualObservation {
                 score: 100.0 - loss,
             })
+        }
+
+        fn evaluate_owned(
+            &mut self,
+            candidate: ValidatedPixelPlan,
+        ) -> Result<(PerceptualObservation, Option<ValidatedPixelPlan>)> {
+            let observation = self.evaluate(&candidate)?;
+            Ok((observation, (!self.discard).then_some(candidate)))
         }
 
         fn metric_version(&self) -> &'static str {
@@ -1748,12 +1787,24 @@ mod tests {
         target: f64,
         budget: QualityBudget,
     ) -> (QualityOutcome, u32) {
+        run_with_budget_and_retention(preset, target, budget, true)
+    }
+
+    fn run_with_budget_and_retention(
+        preset: RateSearchPreset,
+        target: f64,
+        budget: QualityBudget,
+        retain: bool,
+    ) -> (QualityOutcome, u32) {
         let frame = frame();
         let atlas = AnalysisAtlas::analyze(&frame);
         let mut request = EncodeRequest::for_quality(preset);
         request.restoration.gaborish = false;
         let executor = request.resources.executor();
-        let mut evaluator = CurveEvaluator { calls: 0 };
+        let mut evaluator = CurveEvaluator {
+            calls: 0,
+            discard: !retain,
+        };
         let target = PerceptualTarget::new(PerceptualMetric::Ssimulacra2, target).expect("target");
         let outcome = search_frame_perceptual_with_budget(
             &frame,
@@ -1766,6 +1817,26 @@ mod tests {
         )
         .expect("search");
         (outcome, evaluator.calls)
+    }
+
+    #[test]
+    fn dropping_probe_plans_rebuilds_the_byte_identical_finalist() {
+        let budget = QualityBudget::for_preset(RateSearchPreset::Balanced);
+        let (retained, retained_calls) =
+            run_with_budget_and_retention(RateSearchPreset::Balanced, 85.0, budget, true);
+        let (dropped, dropped_calls) =
+            run_with_budget_and_retention(RateSearchPreset::Balanced, 85.0, budget, false);
+
+        assert_eq!(dropped.codestream, retained.codestream);
+        assert_eq!(dropped.plan, retained.plan);
+        assert_eq!(dropped.sizing, retained.sizing);
+        assert_eq!(dropped.chosen, retained.chosen);
+        assert_eq!(
+            dropped.achieved_score.to_bits(),
+            retained.achieved_score.to_bits()
+        );
+        assert_eq!(dropped.status, retained.status);
+        assert_eq!(dropped_calls, retained_calls);
     }
 
     /// Total pixel probes across every policy (the trace counts them all;
@@ -2046,7 +2117,10 @@ mod tests {
         let base_request = baseline_policy.apply(&request);
         let mut ctx = CandidateSearchContext::new(&frame, &frame, &atlas, &base_request, &executor);
         let mut trace = Vec::new();
-        let mut evaluator = CurveEvaluator { calls: 0 };
+        let mut evaluator = CurveEvaluator {
+            calls: 0,
+            discard: false,
+        };
         let (baseline, _stats, anchor) = solve_baseline(
             &mut ctx,
             &base_request,
