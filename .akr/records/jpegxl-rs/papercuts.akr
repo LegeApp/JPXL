@@ -13,6 +13,18 @@ record jpegxl-rs.papercut.a-completed-work-revision-retained-two-evidence/1 : pa
     created_at 2026-08-21
 }
 
+record jpegxl-rs.papercut.a-full-13-image-curve-run-was-oom-killed-on-the/1 : papercut {
+    title "A full 13-image curve run was OOM-killed on the first 50 MP input after…"
+    state verified
+    statement """
+        A full 13-image curve run was OOM-killed on the first 50 MP input after ten minutes, and codec_compare.py had not written any JSONL because it buffers every image until completion. Per-image selection or incremental/checkpointed output is needed so completed corpus work is resumable.
+        """
+    observed_at git:628b6c7b24577e61b4e06c1d6fea428e1a155541
+    about "JPXL codec comparison harness"
+    author "codex"
+    created_at 2026-08-23
+}
+
 record jpegxl-rs.papercut.a-harmless-scratch-setup-command-was-rejected/1 : papercut {
     title "A harmless scratch setup command was rejected because it combined…"
     state verified
@@ -35,6 +47,30 @@ record jpegxl-rs.papercut.after-a-temporary-comparison-worktree-restored/1 : pap
     about "cargo"
     author "codex"
     created_at 2026-08-21
+}
+
+record jpegxl-rs.papercut.after-akr-scratch-keep-quality-rate-curve/1 : papercut {
+    title "After `akr scratch keep quality-rate-curve-closure-20260823` and `akr…"
+    state verified
+    statement """
+        After `akr scratch keep quality-rate-curve-closure-20260823` and `akr build`, `akr scratch list` showed the entry as kept, but knowledge.evidence_add twice rejected a file inside it with AKR-C004 as disposable. MCP scratch-keep detection appears out of sync with the CLI metadata.
+        """
+    observed_at git:628b6c7b24577e61b4e06c1d6fea428e1a155541
+    about "akr"
+    author "codex-gpt-5"
+    created_at 2026-08-23
+}
+
+record jpegxl-rs.papercut.after-akr-scratch-keep-visibly-added-a-new/1 : papercut {
+    title "After `akr scratch keep` visibly added a new entry,…"
+    state verified
+    statement """
+        After `akr scratch keep` visibly added a new entry, knowledge.evidence_add still rejected that kept artifact from its cached workspace. The CLI fallback revalidated ~230 unrelated historical scratch citations lacking current keep markers and refused an otherwise valid atomic write; omitting the typed artifact was the only scoped path forward.
+        """
+    observed_at git:628b6c7b24577e61b4e06c1d6fea428e1a155541
+    about "akr"
+    author "codex"
+    created_at 2026-08-23
 }
 
 record jpegxl-rs.papercut.akr-check-strict-exits-1-on-akr-g004-alone-when/1 : papercut {
@@ -231,6 +267,30 @@ record jpegxl-rs.papercut.knowledge-propose-documents-observation/1 : papercut {
     created_at 2026-08-11
 }
 
+record jpegxl-rs.papercut.knowledge-propose-exposes-scope-as-array/1 : papercut {
+    title "knowledge.propose exposes scope as Array<unknown>; passing intuitive…"
+    state verified
+    statement """
+        knowledge.propose exposes scope as Array<unknown>; passing intuitive {path: ...} objects fails only with 'unknown scope form'. The accepted MCP shape is {form: 'path', glob: ...}, which should be expressed in the tool schema or error.
+        """
+    observed_at git:628b6c7b24577e61b4e06c1d6fea428e1a155541
+    about "akr"
+    author "codex"
+    created_at 2026-08-23
+}
+
+record jpegxl-rs.papercut.knowledge-propose-exposes-topic-for-every/1 : papercut {
+    title "knowledge.propose exposes `topic` for every record kind, but a work…"
+    state verified
+    statement """
+        knowledge.propose exposes `topic` for every record kind, but a work proposal containing it fails only after full validation with AKR-T034 because topic is normative-only. The tool schema or preflight should state/reject this earlier.
+        """
+    observed_at git:628b6c7b24577e61b4e06c1d6fea428e1a155541
+    about "akr"
+    author "codex-gpt-5"
+    created_at 2026-08-23
+}
+
 record jpegxl-rs.papercut.knowledge-propose-says-observation-requires/1 : papercut {
     title "knowledge.propose says observation requires statement and observed_at,…"
     state verified
@@ -310,6 +370,18 @@ record jpegxl-rs.papercut.the-first-phase-26-diagnostic-harness-run/1 : papercut
     observed_at git:61330eae78ef84e6c1fce88266ed1ddc99f42f82
     author "codex"
     created_at 2026-08-16
+}
+
+record jpegxl-rs.papercut.the-frozen-pqc-holdout-reducer-scripts-and/1 : papercut {
+    title "The frozen PQC holdout/reducer scripts and manifest embed…"
+    state verified
+    statement """
+        The frozen PQC holdout/reducer scripts and manifest embed /mnt/Samsung980_1TB/Rust-projects/jpegXL-rs, but the current checkout is D:\Rust-projects\jpegXL-rs and WSL exposes it elsewhere. Re-running the locked gate requires a scratch path rebasing step; future harnesses should derive the repo root.
+        """
+    observed_at git:628b6c7b24577e61b4e06c1d6fea428e1a155541
+    about "project measurement harness"
+    author "codex"
+    created_at 2026-08-22
 }
 
 record jpegxl-rs.papercut.the-installed-akr-0-3-1-rejected-four-existing/1 : papercut {

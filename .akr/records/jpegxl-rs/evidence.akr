@@ -4704,6 +4704,64 @@ record jpegxl-rs.evidence.phase9-quant-scheduling-speed-2026-08-15/1 : evidence 
         """
 }
 
+record jpegxl-rs.evidence.pqc-low-memory-12mp-2026-08-23/1 : evidence {
+    title "Low-memory Balanced q85 path meets the 12 MP two-GiB RSS ceiling"
+    state verified
+    result pass
+    method observation
+    observed_at git:628b6c7b24577e61b4e06c1d6fea428e1a155541
+    summary """
+        Kept /usr/bin/time evidence: .agent/scratch/pqc-cost-20260823/large-q85-v5.time.txt. A serialized four-thread release Balanced q85 encode of the locked 4000x3000 anchor completed at 2,081,396 KiB maximum RSS, below the 2,097,152 KiB ceiling. It emitted 1,288,620 bytes with SHA-256 525d13ea0f9429a414af44292bacb669c3d09f6248bc9567f916a838089345c0, identical to the pre-lifetime-change output; wall was 14.41 s, so this establishes memory, not the separate wall target.
+        """
+}
+
+record jpegxl-rs.evidence.pqc-low-memory-production-identity-2026-08-23/1 : evidence {
+    title "Low-memory quality path passes the full locked production-identity matrix"
+    state verified
+    result pass
+    method command
+    observed_at git:628b6c7b24577e61b4e06c1d6fea428e1a155541
+    command "python3 .agent/scratch/pqc-cost-20260823/identity_current.py"
+    summary """
+        Kept raw rows and report: .agent/scratch/pqc-cost-20260823/README.md. The frozen current release binary encoded all 13 locked images at q70/q85 with both Fast and Balanced, each at threads 1, threads 4, and threads 4 with JPXL_DISABLE_AVX2=1 under a 9 GiB child-process cap. All 52/52 cells were byte-identical across variants, including all twelve 50 MP cells.
+        """
+}
+
+record jpegxl-rs.evidence.pqc-low-memory-wall-anchors-2026-08-23/1 : evidence {
+    title "Controlled matched-score wall anchors after low-memory PQC changes"
+    state verified
+    result fail
+    method command
+    observed_at git:628b6c7b24577e61b4e06c1d6fea428e1a155541
+    command "python3 .agent/scratch/pqc-cost-20260823/wall_current.py"
+    summary """
+        Kept wall-current.json (SHA-256 1ef8e08b...6432c3) records five interleaved measured runs per path: Balanced q85 quality/rate medians are 1.539/0.501 s (3.072x) at 4.3 MP and 8.082/1.010 s (7.999x) at 12 MP, so neither meets the <=2x target; matched-score quality files are smaller on both anchors.
+        """
+}
+
+record jpegxl-rs.evidence.pqc-low-memory-workspace-gates-2026-08-23/1 : evidence {
+    title "Combined quality-rate and low-memory workspace gates pass"
+    state verified
+    result pass
+    method command
+    observed_at git:628b6c7b24577e61b4e06c1d6fea428e1a155541
+    command "cd JPXL && cargo build --workspace && cargo test --workspace --release && cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all --check"
+    summary """
+        The exact chained final-state gate passed after the quality-rate harness and low-memory scorer/renderer changes: workspace debug build, complete release tests including oracle-backed suites, clippy with warnings denied, and formatting check.
+        """
+}
+
+record jpegxl-rs.evidence.pqc-low-memory-xlarge-identity-2026-08-23/1 : evidence {
+    title "Low-memory quality path makes 50 MP usable and preserves all xlarge quality streams"
+    state verified
+    result pass
+    method observation
+    observed_at git:628b6c7b24577e61b4e06c1d6fea428e1a155541
+    summary """
+        Kept identity audit: .agent/scratch/quality-rate-curve-xlarge-exact-20260823/xlarge-identity-audit.json. Balanced q85 on 8160x6120 completed under a 9 GiB virtual-memory cap at 7,532,608 KiB RSS, replacing the former approximately 12.5 GiB/SIGKILL behavior. Across the three 50 MP images, seven targets, and both production efforts, all 42 current codestream SHA-256 values, byte counts, and controller scores exactly match the historical pre-low-memory rows.
+        """
+}
+
 record jpegxl-rs.evidence.pqc-pr0-corpus-manifest-2026-08-22/1 : evidence {
     title "The generator reproduces 47 fixtures (47 PPM + 29 PNG + 47 JSON provenance sidecars, idempotent sha256) and the jpxl.codec-corpus/1 manifest test-set/quality-corpus.json (gitignored) validates; splits are calibration 19, development 15, holdout 13 with no source family in two splits; classes text-screenshot 5, line-art 5, gradient 6, saturated 4, tiny 6, noise-lowlight 1, grayscale 2, photo-scene 7, photo 11. 14 generator unit tests pass."
     state verified
@@ -5068,6 +5126,103 @@ record jpegxl-rs.evidence.pqc-pr7-dev-split-2026-08-22/1 : evidence {
     artifact ".agent/scratch/pr7-20260822/report.md"
     summary """
         Development split, Balanced with the reducer on versus off: bytes geomean 0.9825 at target 70 (photos 0.9903, min 0.888) and 0.9912 at 85 (photos 0.9886, min 0.9835); zero floor violations in 30 cells (the reduced stream is kept only when its exact size is smaller and every accepted batch is re-scored canonically); at most 6 evaluations; wall geomean 1.53x / 1.63x. Bytes down at matched-or-better score with bounded work, but the wall exceeds Balanced's +25% budget, so the reducer ships default-off on Balanced (BALANCED_DEFAULT_REDUCER = None) and on for the feature-gated Quality effort; the locked-holdout gate is still to be measured.
+        """
+}
+
+record jpegxl-rs.evidence.pqc-pr7-quality-promotion-rejected-2026-08-22/1 : evidence {
+    title "Partial locked holdout definitively rejects public Quality promotion"
+    state verified
+    result fail
+    method command
+    observed_at git:628b6c7b24577e61b4e06c1d6fea428e1a155541
+    command "python .agent/scratch/pr7-holdout-20260822/analyze_partial.py"
+    artifact ".agent/scratch/pr7-holdout-20260822/rows.jsonl"
+    summary """
+        Stopped by user after 64/91 Quality cells (10/13 images; 55 decoded-score-matched cells): geomean Quality/Balanced bytes 0.9447 overall but 0.9926 on photos; zero canonical floor violations and zero JPXL/djxl/jxl-oxide failures, yet Contract B fails already (Butteraugli mean ratio 1.0744, worst pnorm3 ratio 1.8688, PSNR mean -0.098 dB, worst -2.949 dB). Quality remains hidden/reference-only.
+        """
+    author "GitHub Uploader"
+}
+
+record jpegxl-rs.evidence.pqc-pr7-reducer-holdout-partial-2026-08-22/1 : evidence {
+    title "Partial locked-holdout reducer screen stopped by user"
+    state verified
+    result inconclusive
+    method command
+    observed_at git:628b6c7b24577e61b4e06c1d6fea428e1a155541
+    command "python .agent/scratch/pr7-holdout-20260822/analyze_partial.py"
+    artifact ".agent/scratch/pr7-holdout-20260822/rows.jsonl"
+    summary """
+        Across 64 completed Quality cells the reducer had zero canonical floor violations, at most 6 evaluations, saved 147845 exact bytes total, and produced a 0.98925 final/before geomean (0.98626 on 50 eligible cells). The reducer-off decoded guard baseline and 27 remaining Quality cells were not run; reducer-gate remains open and is deferred with no more Quality testing requested.
+        """
+    author "GitHub Uploader"
+}
+
+record jpegxl-rs.evidence.pqc-quality-rate-curve-exact-10of13-2026-08-23/1 : evidence {
+    title "Corrected common-axis rate curve is exact on 10/13 holdout images; xlarge quality remains memory-blocked"
+    state verified
+    result inconclusive
+    method observation
+    observed_at git:628b6c7b24577e61b4e06c1d6fea428e1a155541
+    summary """
+        Kept report and raw rows: .agent/scratch/quality-rate-curve-full-20260823/README.md. Exact decoded-pair in-tree SSIMULACRA2 on 10/13 locked images gives Balanced 1.0043 byte geomean / +0.71% mean BD-rate and Fast 0.9854 / -3.94% versus same-effort rate; controller floors and budgets are 0 violations/overages. Full acceptance is inconclusive: two 50 MP quality attempts were SIGKILLed, including a single-thread run at 10,456,936 KiB RSS. A separately labelled 13-image controller-substitution sensitivity is retained but is not decoded-pair acceptance evidence.
+        """
+}
+
+record jpegxl-rs.evidence.pqc-quality-rate-curve-exact-13of13-2026-08-23/1 : evidence {
+    title "Exact decoded-pair quality/rate curve closes all 13 locked holdout images"
+    state verified
+    result pass
+    method observation
+    observed_at git:628b6c7b24577e61b4e06c1d6fea428e1a155541
+    summary """
+        Kept report and raw rows: .agent/scratch/quality-rate-curve-xlarge-exact-20260823/README.md. The checked-in resumable harness produced 231 rows per effort across all 13 locked images and decoded-pair in-tree SSIMULACRA2 for all 91 quality cells. Balanced matched the same-effort rate path in 52/91 cells with 0.99281 byte geomean and -2.32% mean per-image BD-rate; Fast matched 49/91 with 0.98184 and -6.05%. Controller floors and work budgets have zero failures; the three previously known small decoded-floor deltas remain, while all 42 new 50 MP cells pass decoded floors.
+        """
+}
+
+record jpegxl-rs.evidence.pqc-quality-rate-curve-replay-2026-08-23/1 : evidence {
+    title "Integrated quality/rate curve replay emits common-axis matches for both production efforts"
+    state superseded
+    result pass
+    method observation
+    observed_at git:628b6c7b24577e61b4e06c1d6fea428e1a155541
+    summary """
+        Kept report and raw rows: .agent/scratch/quality-rate-curve-closure-20260823/README.md. On two locked-holdout classes at targets 70/80/85/90, the checked-in harness emitted quality, same-effort JPXL-rate, and cjxl rows for Balanced and Fast. Common-reference SSIMULACRA2 matched 7/8 cells per effort; all 16 controller cells held the strict floor and budgets and were monotone in controller score, common score, and bytes. The replay also demonstrates that controller and reference scores must not be mixed for rate interpolation.
+        """
+}
+
+record jpegxl-rs.evidence.pqc-quality-rate-curve-replay-2026-08-23/2 : evidence {
+    title "Integrated quality/rate curve replay emits common in-tree metric matches for both production efforts"
+    state verified
+    result pass
+    method observation
+    observed_at git:628b6c7b24577e61b4e06c1d6fea428e1a155541
+    summary """
+        Kept report and raw rows: .agent/scratch/quality-rate-curve-closure-20260823/README.md. On two locked-holdout classes at targets 70/80/85/90, the checked-in harness emitted quality, same-effort JPXL-rate, and cjxl rows for Balanced and Fast. In-tree decoded-pair SSIMULACRA2 matched 7/8 cells per effort; all 16 controller cells held the strict floor and budgets and were monotone in controller score, common comparison score, and bytes. The independent rust-av score remains a separately named guard.
+        """
+    supersedes [ @jpegxl-rs.evidence.pqc-quality-rate-curve-replay-2026-08-23/1 ]
+}
+
+record jpegxl-rs.evidence.pqc-quality-rate-harness-tests-2026-08-23/1 : evidence {
+    title "Quality-rate harness tests pass"
+    state verified
+    result pass
+    method command
+    observed_at git:628b6c7b24577e61b4e06c1d6fea428e1a155541
+    command "cd JPXL && python3 -m unittest tools.tests.test_codec_compare"
+    summary """
+        All 20 codec_compare unit tests passed, covering matched-score interpolation, BD-rate, decoded-pair source tracking, controller substitution, rate ladders, reporting, and resumable image selection.
+        """
+}
+
+record jpegxl-rs.evidence.pqc-quality-rate-workspace-gates-2026-08-23/1 : evidence {
+    title "Quality-rate workspace gates pass"
+    state verified
+    result pass
+    method command
+    observed_at git:628b6c7b24577e61b4e06c1d6fea428e1a155541
+    command "cd JPXL && cargo build --workspace && cargo test --workspace --release && cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all --check"
+    summary """
+        The complete chained workspace build, release-test, clippy-with-warnings-denied, and formatting gate exited successfully.
         """
 }
 

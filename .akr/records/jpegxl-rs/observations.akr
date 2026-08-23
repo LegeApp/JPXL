@@ -1811,6 +1811,32 @@ record jpegxl-rs.observation.pqc-pr4-development-split-2026-08-22/1 : observatio
     ]
 }
 
+record jpegxl-rs.observation.pqc-pr4-rate-curve-axis-audit-2026-08-23/1 : observation {
+    title "PR4's byte-neutral rate-curve conclusion mixed SSIMULACRA2 implementations and is not a like-for-like baseline"
+    state verified
+    scope [
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/tools/codec_compare.py",
+        path "JPXL/tools/tests/test_codec_compare.py"
+    ]
+    statement """
+        The earlier @jpegxl-rs.evidence.pqc-pr4-holdout-byte-neutral-ss2-2026-08-22/1 interpolated rate/cjxl curves scored by the independent rust-av SSIMULACRA2 implementation at quality-controller scores produced by the in-tree f64 metric. On the corrected exact 10/13 locked-holdout replay, those metric implementations differ by as much as 6.49 points on flat or saturated content. One in-tree decoded-pair axis changes the same-effort result to a 1.0043 byte geomean and +0.71% mean per-image BD-rate for Balanced, and 0.9854 / -3.94% for Fast. A labelled 13-image sensitivity using controller scores only for the three memory-blocked xlarge quality rows gives 0.9878 / -2.59% and 0.9808 / -5.45%, but is not decoded-pair acceptance evidence. Therefore the old 0.892/0.899 conclusion must not be used as the current rate-curve claim.
+        """
+    observed_at git:628b6c7b24577e61b4e06c1d6fea428e1a155541
+    method command
+    watches [
+        "JPXL/crates/jpxl-cli/src/main.rs",
+        "JPXL/tools/codec_compare.py",
+        "JPXL/tools/tests/test_codec_compare.py"
+    ]
+    review_after 2026-11-30
+    derived_from [
+        @jpegxl-rs.evidence.pqc-pr4-holdout-byte-neutral-ss2-2026-08-22/1,
+        @jpegxl-rs.evidence.pqc-quality-rate-curve-exact-10of13-2026-08-23/1,
+        @jpegxl-rs.observation.ssimulacra2-f32-recursion-ripple-2026-08-22/1
+    ]
+}
+
 record jpegxl-rs.observation.preopt-encode-baseline-2026-08-06/1 : observation {
     title "Pre-optimization encode wall-time ladder (release jpxl bench)"
     state superseded
