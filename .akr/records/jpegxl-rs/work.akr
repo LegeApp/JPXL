@@ -1028,6 +1028,7 @@ record jpegxl-rs.work.arch-phase24-hfmul-overlay/3 : work {
     depends_on [ @jpegxl-rs.work.arch-phase23-cow-geometry ]
     part_of [ @jpegxl-rs.track.encoder-optimization ]
     supersedes [ @jpegxl-rs.work.arch-phase24-hfmul-overlay/2 ]
+    source { kind legacy }
 }
 
 record jpegxl-rs.work.arch-phase25-multi-quantizer-workspace/1 : work {
@@ -1093,6 +1094,7 @@ record jpegxl-rs.work.arch-phase25-multi-quantizer-workspace/1 : work {
     }
     depends_on [ @jpegxl-rs.work.arch-phase24-hfmul-overlay/3 ]
     part_of [ @jpegxl-rs.track.encoder-optimization ]
+    source { kind legacy }
 }
 
 record jpegxl-rs.work.arch-phase27-finalist-only-entropy/1 : work {
@@ -1153,6 +1155,7 @@ record jpegxl-rs.work.arch-phase27-finalist-only-entropy/1 : work {
     depends_on [ @jpegxl-rs.evidence.phase26-rate-multiplicity-2026-08-16/1 ]
     implements [ @jpegxl-rs.policy.optimization-correctness-gates/1 ]
     part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+    source { kind legacy }
 }
 
 record jpegxl-rs.work.arch-phase28-cfl-lf-scratch-reuse/1 : work {
@@ -1535,6 +1538,7 @@ record jpegxl-rs.work.arch-phase31-lane4-vector-select/1 : work {
             verified_by [ @jpegxl-rs.evidence.phase31-profile-2026-08-16/2 ]
         }
     }
+    source { kind legacy }
 }
 
 record jpegxl-rs.work.arch-phase32-dirty-frontier-screen/1 : work {
@@ -2774,6 +2778,7 @@ record jpegxl-rs.work.arch-phase5a-aq-policy-gate/1 : work {
         @jpegxl-rs.policy.research-out-of-core
     ]
     part_of [ @jpegxl-rs.track.encoder-optimization ]
+    source { kind legacy }
 }
 
 record jpegxl-rs.work.arch-phase5b-restoration-screen/1 : work {
@@ -2824,6 +2829,7 @@ record jpegxl-rs.work.arch-phase5b-restoration-screen/1 : work {
         @jpegxl-rs.policy.clean-room-boundary
     ]
     part_of [ @jpegxl-rs.track.encoder-optimization ]
+    source { kind legacy }
 }
 
 record jpegxl-rs.work.arch-phase5c-lf-hf-balance-screen/1 : work {
@@ -2919,6 +2925,7 @@ record jpegxl-rs.work.arch-phase5c-lf-hf-balance-screen/2 : work {
     ]
     part_of [ @jpegxl-rs.track.encoder-optimization ]
     supersedes [ @jpegxl-rs.work.arch-phase5c-lf-hf-balance-screen/1 ]
+    source { kind legacy }
 }
 
 record jpegxl-rs.work.arch-phase5d-cover-quality-screen/1 : work {
@@ -2968,6 +2975,7 @@ record jpegxl-rs.work.arch-phase5d-cover-quality-screen/1 : work {
         @jpegxl-rs.policy.clean-room-boundary
     ]
     part_of [ @jpegxl-rs.track.encoder-optimization ]
+    source { kind legacy }
 }
 
 record jpegxl-rs.work.arch-phase5e-epf-screen/1 : work {
@@ -3018,6 +3026,7 @@ record jpegxl-rs.work.arch-phase5e-epf-screen/1 : work {
         @jpegxl-rs.policy.clean-room-boundary
     ]
     part_of [ @jpegxl-rs.track.encoder-optimization ]
+    source { kind legacy }
 }
 
 record jpegxl-rs.work.arch-phase5f-aqoff-oracle-compat/1 : work {
@@ -3135,6 +3144,7 @@ record jpegxl-rs.work.arch-phase5f-aqoff-oracle-compat/2 : work {
     ]
     part_of [ @jpegxl-rs.track.encoder-optimization ]
     supersedes [ @jpegxl-rs.work.arch-phase5f-aqoff-oracle-compat/1 ]
+    source { kind legacy }
 }
 
 record jpegxl-rs.work.arch-phase5g-aqoff-broader-corpus-gate/1 : work {
@@ -3179,6 +3189,7 @@ record jpegxl-rs.work.arch-phase5g-aqoff-broader-corpus-gate/1 : work {
         @jpegxl-rs.policy.optimization-correctness-gates/1
     ]
     part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+    source { kind legacy }
 }
 
 record jpegxl-rs.work.arch-phase5h-quant-lf-tail-gate/1 : work {
@@ -3214,6 +3225,7 @@ record jpegxl-rs.work.arch-phase5h-quant-lf-tail-gate/1 : work {
         @jpegxl-rs.policy.optimization-correctness-gates/1
     ]
     part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+    source { kind legacy }
 }
 
 record jpegxl-rs.work.arch-phase5i-active-epf-screen/1 : work {
@@ -3258,6 +3270,7 @@ record jpegxl-rs.work.arch-phase5i-active-epf-screen/1 : work {
         @jpegxl-rs.policy.optimization-correctness-gates/1
     ]
     part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+    source { kind legacy }
 }
 
 record jpegxl-rs.work.arch-phase5j-two-pass-error-aq-screen/1 : work {
@@ -3306,6 +3319,7 @@ record jpegxl-rs.work.arch-phase5j-two-pass-error-aq-screen/1 : work {
         @jpegxl-rs.policy.optimization-correctness-gates/1
     ]
     part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+    source { kind legacy }
 }
 
 record jpegxl-rs.work.arch-phase5k-active-epf-depth-screen/1 : work {
@@ -3378,6 +3392,7 @@ record jpegxl-rs.work.arch-phase5k-active-epf-depth-screen/2 : work {
     ]
     part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
     supersedes [ @jpegxl-rs.work.arch-phase5k-active-epf-depth-screen/1 ]
+    source { kind legacy }
 }
 
 record jpegxl-rs.work.arch-phase5l-chroma-qm-allocation-screen/1 : work {
@@ -3426,6 +3441,7 @@ record jpegxl-rs.work.arch-phase5l-chroma-qm-allocation-screen/1 : work {
         @jpegxl-rs.policy.optimization-correctness-gates/1
     ]
     part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+    source { kind legacy }
 }
 
 record jpegxl-rs.work.arch-phase5m-spatial-epf-sharpness-screen/1 : work {
@@ -3470,6 +3486,7 @@ record jpegxl-rs.work.arch-phase5m-spatial-epf-sharpness-screen/1 : work {
         @jpegxl-rs.policy.optimization-correctness-gates/1
     ]
     part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+    source { kind legacy }
 }
 
 record jpegxl-rs.work.arch-phase5n-fine-aq-lattice-screen/1 : work {
@@ -3516,6 +3533,7 @@ record jpegxl-rs.work.arch-phase5n-fine-aq-lattice-screen/1 : work {
         @jpegxl-rs.policy.optimization-correctness-gates/1
     ]
     part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+    source { kind legacy }
 }
 
 record jpegxl-rs.work.arch-phase5o-special8-transform-screen/1 : work {
@@ -3570,6 +3588,7 @@ record jpegxl-rs.work.arch-phase5o-special8-transform-screen/1 : work {
         @jpegxl-rs.policy.optimization-correctness-gates/1
     ]
     part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+    source { kind legacy }
 }
 
 record jpegxl-rs.work.arch-phase5p-special8-exact-distortion-screen/1 : work {
@@ -3664,6 +3683,7 @@ record jpegxl-rs.work.arch-phase6-0-distortion-currency/1 : work {
         @jpegxl-rs.policy.optimization-correctness-gates
     ]
     part_of [ @jpegxl-rs.track.encoder-optimization ]
+    source { kind legacy }
 }
 
 record jpegxl-rs.work.arch-phase6-1-quantizer-normalised-residual/1 : work {
@@ -4602,6 +4622,7 @@ record jpegxl-rs.work.arch-phase8-4-finalist-token-tape/2 : work {
     depends_on [ @jpegxl-rs.work.arch-phase8-3-anchor-sketch ]
     part_of [ @jpegxl-rs.track.encoder-optimization ]
     supersedes [ @jpegxl-rs.work.arch-phase8-4-finalist-token-tape/1 ]
+    source { kind legacy }
 }
 
 record jpegxl-rs.work.arch-phase8-5-leaf-finishing/1 : work {
@@ -4948,6 +4969,7 @@ record jpegxl-rs.work.arch-phase8-6-butteraugli-localization/2 : work {
     ]
     part_of [ @jpegxl-rs.track.encoder-optimization ]
     supersedes [ @jpegxl-rs.work.arch-phase8-6-butteraugli-localization/1 ]
+    source { kind legacy }
 }
 
 record jpegxl-rs.work.arch-phase8-6-finalist-measured-hf-allocation/1 : work {
@@ -6130,6 +6152,7 @@ record jpegxl-rs.work.gap-g2-selective-coefficient-refinement/1 : work {
             Adopts the staged entropy-cost, context-aware trailing-cost, bounded finalist beam, exact-walk mismatch, fresh-chroma, and promotion-gate shape as an experiment; the report remains non-authoritative.
             """
     }
+    source { kind legacy }
 }
 
 record jpegxl-rs.work.gap-g3-bounded-truthful-rate-controller/1 : work {
@@ -6227,6 +6250,7 @@ record jpegxl-rs.work.gap-g3-bounded-truthful-rate-controller/1 : work {
             Implements the G3 milestone boundary after completed G2.
             """
     }
+    source { kind legacy }
 }
 
 record jpegxl-rs.work.gap-g4-selective-cover-refresh/1 : work {
@@ -8044,6 +8068,7 @@ record jpegxl-rs.work.quality-q2-chroma-hf/1 : work {
     }
     depends_on [ @jpegxl-rs.work.quality-q1-quantizer/1 ]
     part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+    source { kind legacy }
 }
 
 record jpegxl-rs.work.quality-q3-ladder-ceiling-and-allocation-screens/1 : work {
@@ -8114,6 +8139,7 @@ record jpegxl-rs.work.quality-q3-ladder-ceiling-and-allocation-screens/1 : work 
     }
     depends_on [ @jpegxl-rs.work.quality-q2-chroma-hf/1 ]
     part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+    source { kind legacy }
 }
 
 record jpegxl-rs.work.quality-q4-cover-rate-model/1 : work {
@@ -8177,6 +8203,7 @@ record jpegxl-rs.work.quality-q4-cover-rate-model/1 : work {
     }
     depends_on [ @jpegxl-rs.work.quality-q3-ladder-ceiling-and-allocation-screens/1 ]
     part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+    source { kind legacy }
 }
 
 record jpegxl-rs.work.quality-q5-anchored-controller-above-ceiling/1 : work {
@@ -8212,6 +8239,7 @@ record jpegxl-rs.work.quality-q5-anchored-controller-above-ceiling/1 : work {
     }
     depends_on [ @jpegxl-rs.work.quality-q4-cover-rate-model/1 ]
     part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+    source { kind legacy }
 }
 
 record jpegxl-rs.work.quality-q6-cheaper-exhaustive-search/1 : work {
@@ -8254,6 +8282,7 @@ record jpegxl-rs.work.quality-q6-cheaper-exhaustive-search/1 : work {
     }
     depends_on [ @jpegxl-rs.work.quality-q5-anchored-controller-above-ceiling/1 ]
     part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+    source { kind legacy }
 }
 
 record jpegxl-rs.work.quality-q7-effective-scale-controller/1 : work {
