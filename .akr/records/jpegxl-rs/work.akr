@@ -956,7 +956,7 @@ record jpegxl-rs.work.arch-phase24-hfmul-overlay/2 : work {
                 Pinned interleaved Balanced timing measures the overlay retarget path on canonical mid and large inputs with binary/input hashes and dispersion, run without competing benchmark load; masking-AQ timing exercises the overlay directly.
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.phase24-speed-2026-08-16/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase24-speed-2026-08-16/2 ]
         }
     }
     depends_on [ @jpegxl-rs.work.arch-phase23-cow-geometry ]
@@ -1022,7 +1022,7 @@ record jpegxl-rs.work.arch-phase24-hfmul-overlay/3 : work {
                 Pinned interleaved Balanced timing measures the overlay retarget path on canonical mid and large inputs with binary/input hashes and dispersion, run without competing benchmark load; masking-AQ timing exercises the overlay directly.
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.phase24-speed-2026-08-16/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase24-speed-2026-08-16/2 ]
         }
     }
     depends_on [ @jpegxl-rs.work.arch-phase23-cow-geometry ]
@@ -1052,7 +1052,7 @@ record jpegxl-rs.work.arch-phase25-multi-quantizer-workspace/1 : work {
                 """
             method command
             command "bash .agent/scratch/phase25-multi-quantizer-workspace/identity.sh"
-            verified_by [ @jpegxl-rs.evidence.phase25-identity-2026-08-16/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase25-identity-2026-08-16/2 ]
         }
         check focused-policy-tests {
             statement """
@@ -1060,7 +1060,7 @@ record jpegxl-rs.work.arch-phase25-multi-quantizer-workspace/1 : work {
                 """
             method command
             command "cargo test -p jpxl-encode-policy --all-features"
-            verified_by [ @jpegxl-rs.evidence.phase25-policy-tests-2026-08-16/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase25-policy-tests-2026-08-16/2 ]
         }
         check timing-screen {
             statement """
@@ -1068,7 +1068,7 @@ record jpegxl-rs.work.arch-phase25-multi-quantizer-workspace/1 : work {
                 """
             method command
             command "bash .agent/scratch/phase25-multi-quantizer-workspace/timing-balanced.sh; bash .agent/scratch/phase25-multi-quantizer-workspace/timing-masking-aq.sh"
-            verified_by [ @jpegxl-rs.evidence.phase25-timing-2026-08-16/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase25-timing-2026-08-16/2 ]
         }
         check wire-identity {
             statement """
@@ -1076,7 +1076,7 @@ record jpegxl-rs.work.arch-phase25-multi-quantizer-workspace/1 : work {
                 """
             method command
             command "bash .agent/scratch/phase25-multi-quantizer-workspace/identity.sh"
-            verified_by [ @jpegxl-rs.evidence.phase25-identity-2026-08-16/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase25-identity-2026-08-16/2 ]
         }
         check workspace-safety {
             statement """
@@ -1119,7 +1119,7 @@ record jpegxl-rs.work.arch-phase27-finalist-only-entropy/1 : work {
                 """
             method command
             verified_by [
-                @jpegxl-rs.evidence.phase27-finalist-only-entropy-correctness-2026-08-16/1
+                @jpegxl-rs.evidence.phase27-finalist-only-entropy-correctness-2026-08-16/2
             ]
         }
         check multiplicity-reduction {
@@ -1128,7 +1128,7 @@ record jpegxl-rs.work.arch-phase27-finalist-only-entropy/1 : work {
                 """
             method command
             verified_by [
-                @jpegxl-rs.evidence.phase27-finalist-only-entropy-screen-2026-08-16/1
+                @jpegxl-rs.evidence.phase27-finalist-only-entropy-screen-2026-08-16/2
             ]
         }
         check quality-target-screen {
@@ -1137,7 +1137,7 @@ record jpegxl-rs.work.arch-phase27-finalist-only-entropy/1 : work {
                 """
             method command
             verified_by [
-                @jpegxl-rs.evidence.phase27-finalist-only-entropy-screen-2026-08-16/1
+                @jpegxl-rs.evidence.phase27-finalist-only-entropy-screen-2026-08-16/2
             ]
         }
         check workspace-validation {
@@ -1518,21 +1518,21 @@ record jpegxl-rs.work.arch-phase31-lane4-vector-select/1 : work {
                 Workspace build (with and without --tests) is warning-free, formatting is clean, and the full test suite passes. Workspace clippy is documented as failing at HEAD on pre-existing jpxl-core/src/color.rs indexing_slicing hits (f3be8b8), outside this brief.
                 """
             method command
-            verified_by [ @jpegxl-rs.evidence.phase31-gates-2026-08-16/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase31-gates-2026-08-16/2 ]
         }
         check identity {
             statement """
                 Canonical Fast, Balanced, Quality, and masking-AQ streams on mid and large inputs remain byte-identical to the pre-Phase-31 binary; every candidate output decodes.
                 """
             method command
-            verified_by [ @jpegxl-rs.evidence.phase31-identity-2026-08-16/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase31-identity-2026-08-16/2 ]
         }
         check profile {
             statement """
                 A DWARF-unwound profile traces the candidate-selection cost inside choose_lane4, and a post-change profile shows the quantize-loop family reduced (34.8% -> 27.2% of samples). A pinned wall-clock screen was recorded but is mixed/noise-dominated (as in Phase 30); the profile delta carries the cost claim.
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.phase31-profile-2026-08-16/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase31-profile-2026-08-16/2 ]
         }
     }
 }
@@ -3155,21 +3155,21 @@ record jpegxl-rs.work.arch-phase5g-aqoff-broader-corpus-gate/1 : work {
                 All six distinct scenes are measured at 1 and 2 bpp for Masking/quant_lf16 and AQ-Off/quant_lf8 with symmetric djxl decoding and exact sizes.
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.phase5g-corpus-matrix-2026-08-11/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase5g-corpus-matrix-2026-08-11/2 ]
         }
         check default-decision {
             statement """
                 The production AQ/LF policy is promoted, revised, or explicitly retained from the corpus and oracle evidence.
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.phase5g-target-default-2026-08-11/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase5g-target-default-2026-08-11/2 ]
         }
         check oracle-anchor {
             statement """
                 The settled finalist has measured equal-rate cjxl e7 Butteraugli anchors on the representative scenes, with requested distance never substituted for measured distance.
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.phase5g-cjxl-equal-rate-anchors-2026-08-11/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase5g-cjxl-equal-rate-anchors-2026-08-11/2 ]
         }
     }
     depends_on [ @jpegxl-rs.work.arch-phase5f-aqoff-oracle-compat/2 ]
@@ -3198,14 +3198,14 @@ record jpegxl-rs.work.arch-phase5h-quant-lf-tail-gate/1 : work {
                 The production quant_lf default is retained or revised from the per-scene Butteraugli and SSIMULACRA2 evidence.
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.phase5h-quant-lf-tail-2026-08-11/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase5h-quant-lf-tail-2026-08-11/2 ]
         }
         check tail-screen {
             statement """
                 quant_lf 4 is measured on six scenes at one and two bpp, and quant_lf 2 is direction-checked on two scenes.
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.phase5h-quant-lf-tail-2026-08-11/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase5h-quant-lf-tail-2026-08-11/2 ]
         }
     }
     depends_on [ @jpegxl-rs.work.arch-phase5g-aqoff-broader-corpus-gate/1 ]
@@ -3249,7 +3249,7 @@ record jpegxl-rs.work.arch-phase5i-active-epf-screen/1 : work {
                 EPF step 1 with uniform Sharpness=7 is compared against restoration off at matched achieved rate on at least the dense-detail and flat/edge small scenes using symmetric djxl and Butteraugli.
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.phase5i-active-epf-quality-2026-08-11/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase5i-active-epf-quality-2026-08-11/2 ]
         }
     }
     depends_on [ @jpegxl-rs.work.arch-phase5h-quant-lf-tail-gate/1 ]
@@ -3297,7 +3297,7 @@ record jpegxl-rs.work.arch-phase5j-two-pass-error-aq-screen/1 : work {
                 Matched-rate Butteraugli and SSIMULACRA2 results on the representative screen determine whether to broaden, revise, or reject the two-pass signal.
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.phase5j-two-pass-error-quality-2026-08-11/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase5j-two-pass-error-quality-2026-08-11/2 ]
         }
     }
     depends_on [ @jpegxl-rs.work.arch-phase5i-active-epf-screen/1 ]
@@ -3368,7 +3368,7 @@ record jpegxl-rs.work.arch-phase5k-active-epf-depth-screen/2 : work {
                 Matched-rate Butteraugli and SSIMULACRA2 results on two representative scenes select one EPF depth for broader testing or retain the one-step default.
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.phase5k-active-epf-depth-quality-2026-08-11/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase5k-active-epf-depth-quality-2026-08-11/2 ]
         }
     }
     depends_on [ @jpegxl-rs.work.arch-phase5j-two-pass-error-aq-screen/1 ]
@@ -3410,7 +3410,7 @@ record jpegxl-rs.work.arch-phase5l-chroma-qm-allocation-screen/1 : work {
                 Matched-rate perceptual results select a chroma allocation for broader testing or reject the control.
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.phase5l-chroma-qm-quality-2026-08-11/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase5l-chroma-qm-quality-2026-08-11/2 ]
         }
         check wire-proof {
             statement """
@@ -3447,21 +3447,21 @@ record jpegxl-rs.work.arch-phase5m-spatial-epf-sharpness-screen/1 : work {
                 The EPF1 Uniform7 production default remains byte-identical unless a full six-scene promotion gate passes.
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.phase5m-spatial-epf-policy-2026-08-11/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase5m-spatial-epf-policy-2026-08-11/2 ]
         }
         check quality-screen {
             statement """
                 Matched-rate Butteraugli and SSIMULACRA2 on small1, small3, and mid2 at one and two bpp select one spatial policy for broader testing or reject both.
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.phase5m-spatial-epf-quality-2026-08-11/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase5m-spatial-epf-quality-2026-08-11/2 ]
         }
         check spatial-proof {
             statement """
                 Unit and oracle tests prove each research policy emits both legal 0 and 7 sharpness levels in source-activity-dependent spatial positions and remains accepted by djxl and jxl-oxide.
                 """
             method command
-            verified_by [ @jpegxl-rs.evidence.phase5m-spatial-epf-wire-2026-08-11/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase5m-spatial-epf-wire-2026-08-11/2 ]
         }
     }
     depends_on [ @jpegxl-rs.work.arch-phase5l-chroma-qm-allocation-screen/1 ]
@@ -3493,21 +3493,21 @@ record jpegxl-rs.work.arch-phase5n-fine-aq-lattice-screen/1 : work {
                 Tests prove the fine factorization preserves the baseline HF and LF quantizer products, produces more than the coarse lattice's values, stays deterministic and target-safe, and is accepted by djxl and jxl-oxide.
                 """
             method command
-            verified_by [ @jpegxl-rs.evidence.phase5n-fine-aq-structure-2026-08-11/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase5n-fine-aq-structure-2026-08-11/2 ]
         }
         check policy-decision {
             statement """
                 The AQ-Off production default remains byte-identical unless a full six-scene promotion gate passes.
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.phase5n-fine-aq-policy-2026-08-11/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase5n-fine-aq-policy-2026-08-11/2 ]
         }
         check quality-screen {
             statement """
                 Matched-rate Butteraugli and SSIMULACRA2 on small1 and small2 at one and two bpp select one fine AQ direction for broader testing or reject both.
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.phase5n-fine-aq-quality-2026-08-11/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase5n-fine-aq-quality-2026-08-11/2 ]
         }
     }
     depends_on [ @jpegxl-rs.work.arch-phase5m-spatial-epf-sharpness-screen/1 ]
@@ -3540,28 +3540,28 @@ record jpegxl-rs.work.arch-phase5o-special8-transform-screen/1 : work {
                 The candidate is broadened only on a uniformly safe direction; otherwise its temporary source and CLI surface are removed and the production fingerprint is restored.
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.phase5o-special8-cleanup-2026-08-11/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase5o-special8-cleanup-2026-08-11/2 ]
         }
         check quality-screen {
             statement """
                 Small1 and small2 at one and two bpp are scored with symmetric djxl decode at Phase 5I byte caps.
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.phase5o-special8-quality-2026-08-11/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase5o-special8-quality-2026-08-11/2 ]
         }
         check rate-oracle {
             statement """
                 The research mode obeys the exact byte target and a stream carrying a special transform decodes in djxl and jxl-oxide.
                 """
             method command
-            verified_by [ @jpegxl-rs.evidence.phase5o-special8-wire-rate-2026-08-11/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase5o-special8-wire-rate-2026-08-11/2 ]
         }
         check selection-proof {
             statement """
                 A synthetic fixture selects at least one same-footprint special transform and preserves a legal validated plan.
                 """
             method command
-            verified_by [ @jpegxl-rs.evidence.phase5o-special8-wire-rate-2026-08-11/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase5o-special8-wire-rate-2026-08-11/2 ]
         }
     }
     depends_on [ @jpegxl-rs.work.arch-phase5n-fine-aq-lattice-screen/1 ]
@@ -3647,7 +3647,7 @@ record jpegxl-rs.work.arch-phase6-0-distortion-currency/1 : work {
                 """
             method command
             command "JPXL_CALIB_REF=<ref.ppm> cargo test --release -p jpxl-conformance --features perceptual --test perceptual_frequency -- --ignored --nocapture"
-            verified_by [ @jpegxl-rs.evidence.phase6-0-frequency-harness-2026-08-12/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase6-0-frequency-harness-2026-08-12/2 ]
         }
         check spread-decided {
             statement """
@@ -4589,14 +4589,14 @@ record jpegxl-rs.work.arch-phase8-4-finalist-token-tape/2 : work {
                 Census, training, and exact writer amplification fall and total encode time improves; Count-then-Store is adopted only if its median win is at least 3%.
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.phase8-4-windows-speed/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase8-4-windows-speed/2 ]
         }
         check quality-and-target {
             statement """
                 The Phase 8.3 target and strict per-cell quality gates remain satisfied.
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.phase8-4-quality-identity/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase8-4-quality-identity/2 ]
         }
     }
     depends_on [ @jpegxl-rs.work.arch-phase8-3-anchor-sketch ]
@@ -4923,14 +4923,14 @@ record jpegxl-rs.work.arch-phase8-6-butteraugli-localization/2 : work {
                 A bounded clean-room implementation brief names owned files, mechanism, speed risk and fixed-rate multi-metric promotion gates.
                 """
             method manual
-            verified_by [ @jpegxl-rs.evidence.phase8-6-architecture-brief-2026-08-14/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase8-6-architecture-brief-2026-08-14/2 ]
         }
         check deficit-localized {
             statement """
                 Spatial, channel, frequency and fixed-rate policy screens distinguish a broad architectural deficit from a local metric outlier.
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.phase8-6-deficit-localization-2026-08-14/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase8-6-deficit-localization-2026-08-14/2 ]
         }
         check metric-valid {
             statement """
@@ -4938,7 +4938,7 @@ record jpegxl-rs.work.arch-phase8-6-butteraugli-localization/2 : work {
                 """
             method observation
             verified_by [
-                @jpegxl-rs.evidence.phase8-6-independent-metric-validation-2026-08-14/1
+                @jpegxl-rs.evidence.phase8-6-independent-metric-validation-2026-08-14/2
             ]
         }
     }
@@ -6097,7 +6097,7 @@ record jpegxl-rs.work.gap-g2-selective-coefficient-refinement/1 : work {
                 The final production stream remains within the target, byte-identical to the G1 baseline, and decodes through JPXL and jxl-oxide.
                 """
             method command
-            verified_by [ @jpegxl-rs.evidence.gap-g2-rate-decoder-identity-2026-08-21/1 ]
+            verified_by [ @jpegxl-rs.evidence.gap-g2-rate-decoder-identity-2026-08-21/2 ]
         }
         check release-gates {
             statement """
@@ -6111,7 +6111,7 @@ record jpegxl-rs.work.gap-g2-selective-coefficient-refinement/1 : work {
                 The canonical HF walk's release-mode audit uses EntropyCostView and reports nonzero, coefficient, and interior-zero costs on the frozen three-image corpus.
                 """
             method command
-            verified_by [ @jpegxl-rs.evidence.gap-g2-run-aware-audit-2026-08-21/1 ]
+            verified_by [ @jpegxl-rs.evidence.gap-g2-run-aware-audit-2026-08-21/2 ]
         }
     }
     depends_on [ @jpegxl-rs.work.gap-g1-edge-risk-atlas ]
@@ -6165,7 +6165,7 @@ record jpegxl-rs.work.gap-g3-bounded-truthful-rate-controller/1 : work {
                 """
             method command
             command "cargo test --workspace --release"
-            verified_by [ @jpegxl-rs.evidence.gap-g3-decoder-parity-2026-08-21/1 ]
+            verified_by [ @jpegxl-rs.evidence.gap-g3-decoder-parity-2026-08-21/2 ]
         }
         check no-hidden-exhaustive {
             statement """
@@ -6180,7 +6180,7 @@ record jpegxl-rs.work.gap-g3-bounded-truthful-rate-controller/1 : work {
                 A representative existing Balanced encode is byte-identical to the pre-G3 G2 artifact when no rescue is triggered.
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.gap-g3-ordinary-path-identity-2026-08-21/1 ]
+            verified_by [ @jpegxl-rs.evidence.gap-g3-ordinary-path-identity-2026-08-21/2 ]
         }
         check release-gates {
             statement """
@@ -6254,7 +6254,7 @@ record jpegxl-rs.work.gap-g4-selective-cover-refresh/1 : work {
                 """
             method command
             command "cargo test --workspace --release"
-            verified_by [ @jpegxl-rs.evidence.gap-g3-ordinary-path-identity-2026-08-21/1 ]
+            verified_by [ @jpegxl-rs.evidence.gap-g3-ordinary-path-identity-2026-08-21/2 ]
         }
         check margin-evidence {
             statement """
@@ -8004,35 +8004,35 @@ record jpegxl-rs.work.quality-q2-chroma-hf/1 : work {
                 The X/B QM, EPF, and undershoot-tolerance sweeps are recorded separately enough to attribute any quality gain; a promoted setting has an explicit per-channel/per-rate rationale rather than an unexplained bundle.
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.quality-q2-chroma-attribution-2026-08-18/1 ]
+            verified_by [ @jpegxl-rs.evidence.quality-q2-chroma-attribution-2026-08-18/2 ]
         }
         check compatibility-control {
             statement """
                 The previous Phase Q1 policy remains reachable through explicit CLI research controls and reproduces its retained codestream fingerprints on the canonical mid and large images.
                 """
             method command
-            verified_by [ @jpegxl-rs.evidence.quality-q2-compatibility-control-2026-08-18/1 ]
+            verified_by [ @jpegxl-rs.evidence.quality-q2-compatibility-control-2026-08-18/2 ]
         }
         check determinism-decoders {
             statement """
                 Promoted target-rate outputs are byte-identical across one and four threads and with AVX2 disabled, and representative/corpus streams are accepted by djxl and jxl-oxide.
                 """
             method command
-            verified_by [ @jpegxl-rs.evidence.quality-q2-determinism-decoders-2026-08-18/1 ]
+            verified_by [ @jpegxl-rs.evidence.quality-q2-determinism-decoders-2026-08-18/2 ]
         }
         check gates {
             statement """
                 Workspace formatting, build, tests, strict Clippy, no-default-features checks, and AKR validation pass, or any unchanged pre-existing diagnostic is explicitly retained with raw output.
                 """
             method command
-            verified_by [ @jpegxl-rs.evidence.quality-q2-rust-gates-2026-08-18/1 ]
+            verified_by [ @jpegxl-rs.evidence.quality-q2-rust-gates-2026-08-18/2 ]
         }
         check quality-gate {
             statement """
                 The promoted Q2 candidate passes the standing ladder and seven-scene Contract B gate against the Phase Q1 binary: SSIMULACRA2 mean delta is non-negative with no cell below -0.5, Butteraugli max-norm mean is no worse than +2%, Butteraugli pnorm3 has no cell worse than +5%, and matched-SSIMULACRA2 bytes do not increase.
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.quality-q2-corpus-gates-2026-08-18/1 ]
+            verified_by [ @jpegxl-rs.evidence.quality-q2-corpus-gates-2026-08-18/2 ]
         }
         check speed-budget {
             statement """
@@ -8080,14 +8080,14 @@ record jpegxl-rs.work.quality-q3-ladder-ceiling-and-allocation-screens/1 : work 
                 Changed target-rate outputs are byte-identical across one and four threads, and every changed stream decodes in djxl and jxl-oxide.
                 """
             method command
-            verified_by [ @jpegxl-rs.evidence.quality-q3-determinism-decoders-2026-08-18/1 ]
+            verified_by [ @jpegxl-rs.evidence.quality-q3-determinism-decoders-2026-08-18/2 ]
         }
         check gates {
             statement """
                 cargo fmt --check, clippy -D warnings, the full workspace test suite (Windows fixture links materialised, JPXL_DISABLE_AVX2=1 as in Q2), and the no-default-features check pass on a clean worktree carrying only this pass's patch.
                 """
             method command
-            verified_by [ @jpegxl-rs.evidence.quality-q3-rust-gates-2026-08-18/1 ]
+            verified_by [ @jpegxl-rs.evidence.quality-q3-rust-gates-2026-08-18/2 ]
         }
         check ladder-ceiling-fix {
             statement """
@@ -8095,21 +8095,21 @@ record jpegxl-rs.work.quality-q3-ladder-ceiling-and-allocation-screens/1 : work 
                 """
             method command
             command "bash .agent/scratch/quality-track/q3-arm.sh q3-final"
-            verified_by [ @jpegxl-rs.evidence.quality-q3-ladder-ceiling-fix-2026-08-18/1 ]
+            verified_by [ @jpegxl-rs.evidence.quality-q3-ladder-ceiling-fix-2026-08-18/2 ]
         }
         check quality-gate {
             statement """
                 The final binary passes the standing ladder and seven-scene Contract B gate against the Phase Q2 outputs: SSIMULACRA2 mean delta non-negative with no cell below -0.5, Butteraugli max-norm mean no worse than +2%, no 3-norm cell worse than +5%, every stream accepted by djxl and jxl-oxide; the only changed cells are the ceiling-bound ones and they improve.
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.quality-q3-corpus-gates-2026-08-18/1 ]
+            verified_by [ @jpegxl-rs.evidence.quality-q3-corpus-gates-2026-08-18/2 ]
         }
         check speed-budget {
             statement """
                 Alternating native Windows A/B timing on the standing mid 1 bpp Balanced cell keeps the cumulative quality-track cost within +15% of Phase 42: the Q3 binary is within noise of the frozen Phase Q1 binary.
                 """
             method command
-            verified_by [ @jpegxl-rs.evidence.quality-q3-speed-budget-2026-08-18/1 ]
+            verified_by [ @jpegxl-rs.evidence.quality-q3-speed-budget-2026-08-18/2 ]
         }
     }
     depends_on [ @jpegxl-rs.work.quality-q2-chroma-hf/1 ]
@@ -8150,7 +8150,7 @@ record jpegxl-rs.work.quality-q4-cover-rate-model/1 : work {
                 """
             method command
             verified_by [
-                @jpegxl-rs.evidence.quality-q4-compatibility-determinism-2026-08-18/1
+                @jpegxl-rs.evidence.quality-q4-compatibility-determinism-2026-08-18/2
             ]
         }
         check gates {
@@ -8158,21 +8158,21 @@ record jpegxl-rs.work.quality-q4-cover-rate-model/1 : work {
                 cargo fmt --check, clippy -D warnings, the full workspace test suite (Windows fixture links, JPXL_DISABLE_AVX2=1) and the no-default-features check pass.
                 """
             method command
-            verified_by [ @jpegxl-rs.evidence.quality-q4-rust-gates-2026-08-18/1 ]
+            verified_by [ @jpegxl-rs.evidence.quality-q4-rust-gates-2026-08-18/2 ]
         }
         check quality-gate {
             statement """
                 The calibrated rate model passes the standing ladder and seven-scene Contract B gate against Phase Q3 with SSIMULACRA2 mean and Butteraugli 3-norm mean both improving (no seesaw), every stream accepted by djxl and jxl-oxide.
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.quality-q4-corpus-gates-2026-08-18/1 ]
+            verified_by [ @jpegxl-rs.evidence.quality-q4-corpus-gates-2026-08-18/2 ]
         }
         check speed-budget {
             statement """
                 Alternating A/B timing of the calibrated model against legacy is neutral on the standing mid 1 bpp and large 1 bpp Balanced cells.
                 """
             method command
-            verified_by [ @jpegxl-rs.evidence.quality-q4-speed-budget-2026-08-18/1 ]
+            verified_by [ @jpegxl-rs.evidence.quality-q4-speed-budget-2026-08-18/2 ]
         }
     }
     depends_on [ @jpegxl-rs.work.quality-q3-ladder-ceiling-and-allocation-screens/1 ]
@@ -8207,7 +8207,7 @@ record jpegxl-rs.work.quality-q5-anchored-controller-above-ceiling/1 : work {
                 The three controller changes and the fresh-finalist variant are screened on the standing corpus against Phase Q4 with per-cell numbers, the fallback-as-hidden-tier finding is documented, and the committed defaults reproduce the Phase Q4 hashes.
                 """
             method command
-            verified_by [ @jpegxl-rs.evidence.quality-q5-controller-screen-2026-08-18/1 ]
+            verified_by [ @jpegxl-rs.evidence.quality-q5-controller-screen-2026-08-18/2 ]
         }
     }
     depends_on [ @jpegxl-rs.work.quality-q4-cover-rate-model/1 ]
@@ -8249,7 +8249,7 @@ record jpegxl-rs.work.quality-q6-cheaper-exhaustive-search/1 : work {
                 Against Phase Q4 the standing photo ladder and seven-scene screen stay within Contract B (SSIMULACRA2 mean non-negative, worst above -0.5, Butteraugli max-norm mean within +2%, 3-norm worst within +5%), every stream accepted by djxl and jxl-oxide, and Fast/Balanced non-fallback cells are byte-identical.
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.quality-q6-corpus-gates-2026-08-18/1 ]
+            verified_by [ @jpegxl-rs.evidence.quality-q6-corpus-gates-2026-08-18/2 ]
         }
     }
     depends_on [ @jpegxl-rs.work.quality-q5-anchored-controller-above-ceiling/1 ]

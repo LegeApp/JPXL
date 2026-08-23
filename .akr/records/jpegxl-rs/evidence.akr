@@ -193,6 +193,18 @@ record jpegxl-rs.evidence.gap-g2-entropy-cost-tests-2026-08-21/1 : evidence {
 
 record jpegxl-rs.evidence.gap-g2-rate-decoder-identity-2026-08-21/1 : evidence {
     title "G2 rate and decoder identity"
+    state superseded
+    result pass
+    method command
+    observed_at git:82a13868bf7879a07d3f2067f683b4dd49298484
+    command "cd JPXL && target/release/jpxl encode --bpp 1 --lossy-preset balanced <mid.ppm> <final-mid.jxl> && sha256sum <final-mid.jxl> <g1-baseline.jxl> && target/release/jpxl decode <final-mid.jxl> <self.ppm> && jxl-oxide decode -q --output-format png -o <oxide.png> <final-mid.jxl>"
+    summary """
+        The 2400x1800 production stream stayed at 539958 bytes with SHA-256 35b1e40a…31ab, identical to G1; JPXL and jxl-oxide both decoded it.
+        """
+}
+
+record jpegxl-rs.evidence.gap-g2-rate-decoder-identity-2026-08-21/2 : evidence {
+    title "G2 rate and decoder identity"
     state verified
     result pass
     method command
@@ -201,6 +213,7 @@ record jpegxl-rs.evidence.gap-g2-rate-decoder-identity-2026-08-21/1 : evidence {
     summary """
         The 2400x1800 production stream stayed at 539958 bytes with SHA-256 35b1e40a…31ab, identical to G1; JPXL and jxl-oxide both decoded it.
         """
+    supersedes [ @jpegxl-rs.evidence.gap-g2-rate-decoder-identity-2026-08-21/1 ]
 }
 
 record jpegxl-rs.evidence.gap-g2-release-gates-2026-08-21/1 : evidence {
@@ -217,6 +230,18 @@ record jpegxl-rs.evidence.gap-g2-release-gates-2026-08-21/1 : evidence {
 
 record jpegxl-rs.evidence.gap-g2-run-aware-audit-2026-08-21/1 : evidence {
     title "G2 canonical run-aware entropy audit"
+    state superseded
+    result pass
+    method command
+    observed_at git:82a13868bf7879a07d3f2067f683b4dd49298484
+    command "cd JPXL && JPXL_RATE_AUDIT_PPM='<source.ppm>;<mid.ppm>;<large.ppm>' JPXL_RATE_AUDIT_BPP=1 cargo test -p jpxl-encode-policy --release --test rate_proxy_audit -- --ignored --nocapture"
+    summary """
+        The canonical I.4 walk used EntropyCostView on all three frozen 1 bpp Balanced images and attributed nonzero, nonzero-token, interior-zero, and per-transform costs.
+        """
+}
+
+record jpegxl-rs.evidence.gap-g2-run-aware-audit-2026-08-21/2 : evidence {
+    title "G2 canonical run-aware entropy audit"
     state verified
     result pass
     method command
@@ -225,6 +250,7 @@ record jpegxl-rs.evidence.gap-g2-run-aware-audit-2026-08-21/1 : evidence {
     summary """
         The canonical I.4 walk used EntropyCostView on all three frozen 1 bpp Balanced images and attributed nonzero, nonzero-token, interior-zero, and per-transform costs.
         """
+    supersedes [ @jpegxl-rs.evidence.gap-g2-run-aware-audit-2026-08-21/1 ]
 }
 
 record jpegxl-rs.evidence.gap-g3-bounded-controller-tests-2026-08-21/1 : evidence {
@@ -241,7 +267,7 @@ record jpegxl-rs.evidence.gap-g3-bounded-controller-tests-2026-08-21/1 : evidenc
 
 record jpegxl-rs.evidence.gap-g3-decoder-parity-2026-08-21/1 : evidence {
     title "JPXL and jxl-oxide both decoded the representative 2400x1800 G3 Balanced codestream successfully."
-    state verified
+    state superseded
     result pass
     method command
     observed_at git:d32b365cb46847844682a808693635c8bbbc87ed
@@ -251,7 +277,32 @@ record jpegxl-rs.evidence.gap-g3-decoder-parity-2026-08-21/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.gap-g3-decoder-parity-2026-08-21/2 : evidence {
+    title "JPXL and jxl-oxide both decoded the representative 2400x1800 G3 Balanced codestream successfully."
+    state verified
+    result pass
+    method command
+    observed_at git:d32b365cb46847844682a808693635c8bbbc87ed
+    command "JPXL/target/release/jpxl decode .agent/scratch/gap-g3-2026-08-21/mid.jxl /tmp/jpxl-g3-mid.ppm && jxl-oxide .agent/scratch/gap-g3-2026-08-21/mid.jxl -o /tmp/jpxl-g3-mid.png -f png8"
+    summary """
+        JPXL and jxl-oxide both decoded the representative 2400x1800 G3 Balanced codestream successfully.
+        """
+    supersedes [ @jpegxl-rs.evidence.gap-g3-decoder-parity-2026-08-21/1 ]
+}
+
 record jpegxl-rs.evidence.gap-g3-ordinary-path-identity-2026-08-21/1 : evidence {
+    title "All three frozen 1 bpp Balanced cells stayed on InsideBand with zero rescues and retained their G2 sizes; the 539,958-byte mid stream remained SHA-256 35b1e40af953744efc728b0e6aa81e6753fdafa33ef31e68013e7b98754a31ab."
+    state superseded
+    result pass
+    method command
+    observed_at git:d32b365cb46847844682a808693635c8bbbc87ed
+    command "Release jpxl encode --bpp 1 --lossy-preset balanced on the frozen source/mid/large corpus, then sha256sum against the G2 mid artifact"
+    summary """
+        All three frozen 1 bpp Balanced cells stayed on InsideBand with zero rescues and retained their G2 sizes; the 539,958-byte mid stream remained SHA-256 35b1e40af953744efc728b0e6aa81e6753fdafa33ef31e68013e7b98754a31ab.
+        """
+}
+
+record jpegxl-rs.evidence.gap-g3-ordinary-path-identity-2026-08-21/2 : evidence {
     title "All three frozen 1 bpp Balanced cells stayed on InsideBand with zero rescues and retained their G2 sizes; the 539,958-byte mid stream remained SHA-256 35b1e40af953744efc728b0e6aa81e6753fdafa33ef31e68013e7b98754a31ab."
     state verified
     result pass
@@ -261,6 +312,7 @@ record jpegxl-rs.evidence.gap-g3-ordinary-path-identity-2026-08-21/1 : evidence 
     summary """
         All three frozen 1 bpp Balanced cells stayed on InsideBand with zero rescues and retained their G2 sizes; the 539,958-byte mid stream remained SHA-256 35b1e40af953744efc728b0e6aa81e6753fdafa33ef31e68013e7b98754a31ab.
         """
+    supersedes [ @jpegxl-rs.evidence.gap-g3-ordinary-path-identity-2026-08-21/1 ]
 }
 
 record jpegxl-rs.evidence.gap-g3-release-gates-2026-08-21/1 : evidence {
@@ -884,6 +936,18 @@ record jpegxl-rs.evidence.opt-p-thread-byte-identity-at-head/1 : evidence {
 
 record jpegxl-rs.evidence.opt-v1-count-only-arenas/1 : evidence {
     title "Count-only BitWriter price_codestream matches emit sizing; group HF coeff arenas; rate_loop 11/11; vardct-fixed 256 fingerprint 37145644e7e1857f (Contract A). Scratch: .agent/scratch/preopt-baseline-2026-08-06.md"
+    state superseded
+    result pass
+    method command
+    observed_at git:788a3b4ebce146cacbe3412b12de6f712da58304
+    command "cd JPXL && cargo test -p jpxl-encode a_priced_size_is_the_emitted_size && cargo test -p jpxl-encode-policy --lib && cargo test -p jpxl-encode-policy --test rate_loop"
+    summary """
+        Count-only BitWriter price_codestream matches emit sizing; group HF coeff arenas; rate_loop 11/11; vardct-fixed 256 fingerprint 37145644e7e1857f (Contract A). Scratch: .agent/scratch/preopt-baseline-2026-08-06.md
+        """
+}
+
+record jpegxl-rs.evidence.opt-v1-count-only-arenas/2 : evidence {
+    title "Count-only BitWriter price_codestream matches emit sizing; group HF coeff arenas; rate_loop 11/11; vardct-fixed 256 fingerprint 37145644e7e1857f (Contract A). Scratch: .agent/scratch/preopt-baseline-2026-08-06.md"
     state verified
     result pass
     method command
@@ -892,6 +956,7 @@ record jpegxl-rs.evidence.opt-v1-count-only-arenas/1 : evidence {
     summary """
         Count-only BitWriter price_codestream matches emit sizing; group HF coeff arenas; rate_loop 11/11; vardct-fixed 256 fingerprint 37145644e7e1857f (Contract A). Scratch: .agent/scratch/preopt-baseline-2026-08-06.md
         """
+    supersedes [ @jpegxl-rs.evidence.opt-v1-count-only-arenas/1 ]
 }
 
 record jpegxl-rs.evidence.opt-v1-count-only-arenas-at-head/1 : evidence {
@@ -1846,6 +1911,18 @@ record jpegxl-rs.evidence.phase24-safety-recommit-2026-08-16/1 : evidence {
 
 record jpegxl-rs.evidence.phase24-speed-2026-08-16/1 : evidence {
     title "Pinned image timing covers Balanced and overlay-exercising masking-AQ paths with identical outputs."
+    state superseded
+    result pass
+    method observation
+    observed_at git:61330eae78ef84e6c1fce88266ed1ddc99f42f82
+    command "bash .agent/scratch/phase24-hfmul-overlay/timing-balanced-final.sh; bash .agent/scratch/phase24-hfmul-overlay/timing-masking-aq.sh; decode and cmp the baseline/candidate canonical streams"
+    summary """
+        Pinned interleaved 2400x1800 and 4000x3000 image runs used hashed baseline/candidate binaries and inputs, four workers on CPUs 0,2,4,6, and three arm samples with five timed iterations each. Balanced medians were candidate 821.823 ms vs baseline 801.560 ms mid and candidate 1689.535 ms vs baseline 1710.202 ms large; masking-AQ medians were candidate 527 ms vs baseline 560 ms mid and candidate 1233 ms vs baseline 1235 ms large. Output sizes, fingerprints, and SHA-256s matched; decoded canonical PPMs were byte-identical. The mixed deltas are neutral within observed run-to-run spread.
+        """
+}
+
+record jpegxl-rs.evidence.phase24-speed-2026-08-16/2 : evidence {
+    title "Pinned image timing covers Balanced and overlay-exercising masking-AQ paths with identical outputs."
     state verified
     result pass
     method observation
@@ -1854,6 +1931,7 @@ record jpegxl-rs.evidence.phase24-speed-2026-08-16/1 : evidence {
     summary """
         Pinned interleaved 2400x1800 and 4000x3000 image runs used hashed baseline/candidate binaries and inputs, four workers on CPUs 0,2,4,6, and three arm samples with five timed iterations each. Balanced medians were candidate 821.823 ms vs baseline 801.560 ms mid and candidate 1689.535 ms vs baseline 1710.202 ms large; masking-AQ medians were candidate 527 ms vs baseline 560 ms mid and candidate 1233 ms vs baseline 1235 ms large. Output sizes, fingerprints, and SHA-256s matched; decoded canonical PPMs were byte-identical. The mixed deltas are neutral within observed run-to-run spread.
         """
+    supersedes [ @jpegxl-rs.evidence.phase24-speed-2026-08-16/1 ]
 }
 
 record jpegxl-rs.evidence.phase25-build-2026-08-16/1 : evidence {
@@ -1894,7 +1972,7 @@ record jpegxl-rs.evidence.phase25-format-2026-08-16/1 : evidence {
 
 record jpegxl-rs.evidence.phase25-identity-2026-08-16/1 : evidence {
     title "Phase 25 codestream and decoded-image identity"
-    state verified
+    state superseded
     result pass
     method command
     observed_at git:61330eae78ef84e6c1fce88266ed1ddc99f42f82
@@ -1904,9 +1982,22 @@ record jpegxl-rs.evidence.phase25-identity-2026-08-16/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase25-identity-2026-08-16/2 : evidence {
+    title "Phase 25 codestream and decoded-image identity"
+    state verified
+    result pass
+    method command
+    observed_at git:61330eae78ef84e6c1fce88266ed1ddc99f42f82
+    command "bash .agent/scratch/phase25-multi-quantizer-workspace/identity.sh"
+    summary """
+        Fast, Balanced, Quality, large Fast, and masking-AQ canonical cases all matched baseline codestream bytes and candidate-decoded PPM bytes; no cmp failure occurred.
+        """
+    supersedes [ @jpegxl-rs.evidence.phase25-identity-2026-08-16/1 ]
+}
+
 record jpegxl-rs.evidence.phase25-policy-tests-2026-08-16/1 : evidence {
     title "Phase 25 focused policy tests pass"
-    state verified
+    state superseded
     result pass
     method command
     observed_at git:61330eae78ef84e6c1fce88266ed1ddc99f42f82
@@ -1916,7 +2007,32 @@ record jpegxl-rs.evidence.phase25-policy-tests-2026-08-16/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase25-policy-tests-2026-08-16/2 : evidence {
+    title "Phase 25 focused policy tests pass"
+    state verified
+    result pass
+    method command
+    observed_at git:61330eae78ef84e6c1fce88266ed1ddc99f42f82
+    command "cargo test -p jpxl-encode-policy --all-features"
+    summary """
+        The focused all-features policy suite passed: 100 unit tests, rate-loop, truncation, VarDCT oracle, and VarDCT roundtrip suites.
+        """
+    supersedes [ @jpegxl-rs.evidence.phase25-policy-tests-2026-08-16/1 ]
+}
+
 record jpegxl-rs.evidence.phase25-timing-2026-08-16/1 : evidence {
+    title "Phase 25 image timing screen"
+    state superseded
+    result pass
+    method command
+    observed_at git:61330eae78ef84e6c1fce88266ed1ddc99f42f82
+    command "bash .agent/scratch/phase25-multi-quantizer-workspace/timing-balanced.sh && bash .agent/scratch/phase25-multi-quantizer-workspace/timing-masking-aq.sh"
+    summary """
+        Interleaved Balanced medians were 807.379 ms candidate vs 792.170 ms baseline at 2400x1800 and 1706.301 vs 1767.633 ms at 4000x3000; masking-AQ was 530 vs 559 ms and 1204 vs 1296 ms. General Balanced is neutral/mixed, while the targeted AQ path is faster.
+        """
+}
+
+record jpegxl-rs.evidence.phase25-timing-2026-08-16/2 : evidence {
     title "Phase 25 image timing screen"
     state verified
     result pass
@@ -1926,6 +2042,7 @@ record jpegxl-rs.evidence.phase25-timing-2026-08-16/1 : evidence {
     summary """
         Interleaved Balanced medians were 807.379 ms candidate vs 792.170 ms baseline at 2400x1800 and 1706.301 vs 1767.633 ms at 4000x3000; masking-AQ was 530 vs 559 ms and 1204 vs 1296 ms. General Balanced is neutral/mixed, while the targeted AQ path is faster.
         """
+    supersedes [ @jpegxl-rs.evidence.phase25-timing-2026-08-16/1 ]
 }
 
 record jpegxl-rs.evidence.phase25-workspace-tests-2026-08-16/1 : evidence {
@@ -1978,6 +2095,17 @@ record jpegxl-rs.evidence.phase27-finalist-only-entropy-clippy-2026-08-16/1 : ev
 
 record jpegxl-rs.evidence.phase27-finalist-only-entropy-correctness-2026-08-16/1 : evidence {
     title "Phase 27 exact-final and decode checks"
+    state superseded
+    result pass
+    method observation
+    observed_at git:61330eae78ef84e6c1fce88266ed1ddc99f42f82
+    summary """
+        Quality mid and large streams encoded and decoded successfully. Current-decoder comparisons were mid RMSE 4.961744 / SSIMULACRA2 72.1255 / Butteraugli 3.2240 and large RMSE 3.206832 / SSIMULACRA2 83.5149 / Butteraugli 1.9513; threads 1 and 4 were byte-identical with hashes d4b03810d0bcb73981bb559815c8952eda0fbe2b27040abf8c99d4792c98c2fa and c3321262010e37f6a2874bed91aca8a90480ae3e1572179b3bcc3510976bf495.
+        """
+}
+
+record jpegxl-rs.evidence.phase27-finalist-only-entropy-correctness-2026-08-16/2 : evidence {
+    title "Phase 27 exact-final and decode checks"
     state verified
     result pass
     method observation
@@ -1985,6 +2113,7 @@ record jpegxl-rs.evidence.phase27-finalist-only-entropy-correctness-2026-08-16/1
     summary """
         Quality mid and large streams encoded and decoded successfully. Current-decoder comparisons were mid RMSE 4.961744 / SSIMULACRA2 72.1255 / Butteraugli 3.2240 and large RMSE 3.206832 / SSIMULACRA2 83.5149 / Butteraugli 1.9513; threads 1 and 4 were byte-identical with hashes d4b03810d0bcb73981bb559815c8952eda0fbe2b27040abf8c99d4792c98c2fa and c3321262010e37f6a2874bed91aca8a90480ae3e1572179b3bcc3510976bf495.
         """
+    supersedes [ @jpegxl-rs.evidence.phase27-finalist-only-entropy-correctness-2026-08-16/1 ]
 }
 
 record jpegxl-rs.evidence.phase27-finalist-only-entropy-rate-tests-2026-08-16/1 : evidence {
@@ -2001,6 +2130,18 @@ record jpegxl-rs.evidence.phase27-finalist-only-entropy-rate-tests-2026-08-16/1 
 
 record jpegxl-rs.evidence.phase27-finalist-only-entropy-screen-2026-08-16/1 : evidence {
     title "Phase 27 six-case image screen"
+    state superseded
+    result pass
+    method command
+    observed_at git:61330eae78ef84e6c1fce88266ed1ddc99f42f82
+    command "bash .agent/scratch/phase27-finalist-only-entropy/run-diag.sh > .agent/scratch/phase27-finalist-only-entropy/diag.log 2>&1"
+    summary """
+        Pinned 2400x1800 and 4000x3000 Fast/Balanced/Quality screen completed with no target or encode errors. Quality was 5.545 s / 539315 bytes and 11.213 s / 1490211 bytes; internal Full Counts were 6 on both images, writer amplification 21x and 20x, and all outputs stayed below the 1 bpp targets.
+        """
+}
+
+record jpegxl-rs.evidence.phase27-finalist-only-entropy-screen-2026-08-16/2 : evidence {
+    title "Phase 27 six-case image screen"
     state verified
     result pass
     method command
@@ -2009,6 +2150,7 @@ record jpegxl-rs.evidence.phase27-finalist-only-entropy-screen-2026-08-16/1 : ev
     summary """
         Pinned 2400x1800 and 4000x3000 Fast/Balanced/Quality screen completed with no target or encode errors. Quality was 5.545 s / 539315 bytes and 11.213 s / 1490211 bytes; internal Full Counts were 6 on both images, writer amplification 21x and 20x, and all outputs stayed below the 1 bpp targets.
         """
+    supersedes [ @jpegxl-rs.evidence.phase27-finalist-only-entropy-screen-2026-08-16/1 ]
 }
 
 record jpegxl-rs.evidence.phase27-finalist-only-entropy-workspace-2026-08-16/1 : evidence {
@@ -2217,7 +2359,7 @@ record jpegxl-rs.evidence.phase30-speed-2026-08-16/1 : evidence {
 
 record jpegxl-rs.evidence.phase31-gates-2026-08-16/1 : evidence {
     title "Workspace build and build --tests warning-free; all 40 workspace test suites pass (0 failures); cargo fmt --all --check clean. Pre-existing (verified at clean HEAD by stashing this change): workspace clippy -D warnings fails on 70 indexing_slicing hits in jpxl-core/src/color.rs from f3be8b8 -- outside this brief, reported in the work note."
-    state verified
+    state superseded
     result pass
     method command
     observed_at git:8357f0408d03cbcd0826762447a962fff84f1903
@@ -2227,9 +2369,22 @@ record jpegxl-rs.evidence.phase31-gates-2026-08-16/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase31-gates-2026-08-16/2 : evidence {
+    title "Workspace build and build --tests warning-free; all 40 workspace test suites pass (0 failures); cargo fmt --all --check clean. Pre-existing (verified at clean HEAD by stashing this change): workspace clippy -D warnings fails on 70 indexing_slicing hits in jpxl-core/src/color.rs from f3be8b8 -- outside this brief, reported in the work note."
+    state verified
+    result pass
+    method command
+    observed_at git:8357f0408d03cbcd0826762447a962fff84f1903
+    command "cargo build --workspace; cargo build --workspace --tests; cargo test --workspace; cargo fmt --all --check"
+    summary """
+        Workspace build and build --tests warning-free; all 40 workspace test suites pass (0 failures); cargo fmt --all --check clean. Pre-existing (verified at clean HEAD by stashing this change): workspace clippy -D warnings fails on 70 indexing_slicing hits in jpxl-core/src/color.rs from f3be8b8 -- outside this brief, reported in the work note.
+        """
+    supersedes [ @jpegxl-rs.evidence.phase31-gates-2026-08-16/1 ]
+}
+
 record jpegxl-rs.evidence.phase31-identity-2026-08-16/1 : evidence {
     title "All 8 canonical/masking-AQ streams byte-identical to the pre-change binary (quality-mid sha256 d4b03810... unchanged); every candidate output decodes cleanly (0 failures)."
-    state verified
+    state superseded
     result pass
     method command
     observed_at git:8357f0408d03cbcd0826762447a962fff84f1903
@@ -2239,7 +2394,31 @@ record jpegxl-rs.evidence.phase31-identity-2026-08-16/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase31-identity-2026-08-16/2 : evidence {
+    title "All 8 canonical/masking-AQ streams byte-identical to the pre-change binary (quality-mid sha256 d4b03810... unchanged); every candidate output decodes cleanly (0 failures)."
+    state verified
+    result pass
+    method command
+    observed_at git:8357f0408d03cbcd0826762447a962fff84f1903
+    command "baseline-jpxl vs candidate-jpxl: 8 streams (fast/balanced/quality x mid/large + balanced masking-AQ mid/large), sha256 compare; decode each candidate"
+    summary """
+        All 8 canonical/masking-AQ streams byte-identical to the pre-change binary (quality-mid sha256 d4b03810... unchanged); every candidate output decodes cleanly (0 failures).
+        """
+    supersedes [ @jpegxl-rs.evidence.phase31-identity-2026-08-16/1 ]
+}
+
 record jpegxl-rs.evidence.phase31-profile-2026-08-16/1 : evidence {
+    title "Pre-change Quality-mid DWARF profile: choose_lane4 12.7% self, quantize-loop family 34.8% of samples. Post-change same scenario: family 27.2% (choose_lane4 self 10.5%), ~22% relative family reduction. Pinned wall-clock screen mixed/noisy on 2 of 6 cases (same host-contamination signature as Phase 30); profile delta carries the cost claim."
+    state superseded
+    result pass
+    method observation
+    observed_at git:8357f0408d03cbcd0826762447a962fff84f1903
+    summary """
+        Pre-change Quality-mid DWARF profile: choose_lane4 12.7% self, quantize-loop family 34.8% of samples. Post-change same scenario: family 27.2% (choose_lane4 self 10.5%), ~22% relative family reduction. Pinned wall-clock screen mixed/noisy on 2 of 6 cases (same host-contamination signature as Phase 30); profile delta carries the cost claim.
+        """
+}
+
+record jpegxl-rs.evidence.phase31-profile-2026-08-16/2 : evidence {
     title "Pre-change Quality-mid DWARF profile: choose_lane4 12.7% self, quantize-loop family 34.8% of samples. Post-change same scenario: family 27.2% (choose_lane4 self 10.5%), ~22% relative family reduction. Pinned wall-clock screen mixed/noisy on 2 of 6 cases (same host-contamination signature as Phase 30); profile delta carries the cost claim."
     state verified
     result pass
@@ -2248,6 +2427,7 @@ record jpegxl-rs.evidence.phase31-profile-2026-08-16/1 : evidence {
     summary """
         Pre-change Quality-mid DWARF profile: choose_lane4 12.7% self, quantize-loop family 34.8% of samples. Post-change same scenario: family 27.2% (choose_lane4 self 10.5%), ~22% relative family reduction. Pinned wall-clock screen mixed/noisy on 2 of 6 cases (same host-contamination signature as Phase 30); profile delta carries the cost claim.
         """
+    supersedes [ @jpegxl-rs.evidence.phase31-profile-2026-08-16/1 ]
 }
 
 record jpegxl-rs.evidence.phase32-gates-2026-08-17/1 : evidence {
@@ -3099,7 +3279,7 @@ record jpegxl-rs.evidence.phase5-scoped-tests-2026-08-11/1 : evidence {
 
 record jpegxl-rs.evidence.phase5a-aq-policy-gate-2026-08-11/1 : evidence {
     title "AQ Off wins the three-photo matched-rate gate"
-    state verified
+    state superseded
     result pass
     method observation
     observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
@@ -3108,9 +3288,21 @@ record jpegxl-rs.evidence.phase5a-aq-policy-gate-2026-08-11/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase5a-aq-policy-gate-2026-08-11/2 : evidence {
+    title "AQ Off wins the three-photo matched-rate gate"
+    state verified
+    result pass
+    method observation
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    summary """
+        On a dirty worktree based at 25213f6, symmetric djxl decoding shows AQ Off lowering Butteraugli versus Masking on all three unique test-set photos by 10.2%, 31.6%, and 31.8%; Uniform remains far behind Off on the screened 4.3 MP scene, and untouched/default control encodes are byte-identical to the explicit selected mode.
+        """
+    supersedes [ @jpegxl-rs.evidence.phase5a-aq-policy-gate-2026-08-11/1 ]
+}
+
 record jpegxl-rs.evidence.phase5b-gaborish-negative-2026-08-11/1 : evidence {
     title "Gaborish screen is an honest negative"
-    state verified
+    state superseded
     result pass
     method observation
     observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
@@ -3119,9 +3311,21 @@ record jpegxl-rs.evidence.phase5b-gaborish-negative-2026-08-11/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase5b-gaborish-negative-2026-08-11/2 : evidence {
+    title "Gaborish screen is an honest negative"
+    state verified
+    result pass
+    method observation
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    summary """
+        With AQ Off at matched target rate, Gaborish worsens Butteraugli by 10.1% on the dense-detail photo and is noise-level neutral on the flat/edge photo while SSIMULACRA2 declines; the temporary CLI control was removed and restoration remains Off.
+        """
+    supersedes [ @jpegxl-rs.evidence.phase5b-gaborish-negative-2026-08-11/1 ]
+}
+
 record jpegxl-rs.evidence.phase5c-lf-hf-balance-2026-08-11/1 : evidence {
     title "quant_lf 8 improves all three screened photographs"
-    state verified
+    state superseded
     result pass
     method observation
     observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
@@ -3130,9 +3334,21 @@ record jpegxl-rs.evidence.phase5c-lf-hf-balance-2026-08-11/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase5c-lf-hf-balance-2026-08-11/2 : evidence {
+    title "quant_lf 8 improves all three screened photographs"
+    state verified
+    result pass
+    method observation
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    summary """
+        At matched target rate with AQ Off and LF fill disabled, quant_lf 8 improves both Butteraugli and SSIMULACRA2 versus 16 on three unique test-set photos; Butteraugli changes are -7.3%, -3.8%, and -0.2%, and the post-change untouched request is byte-identical to explicit quant_lf 8.
+        """
+    supersedes [ @jpegxl-rs.evidence.phase5c-lf-hf-balance-2026-08-11/1 ]
+}
+
 record jpegxl-rs.evidence.phase5d-fixed-cover-negative-2026-08-11/1 : evidence {
     title "Forced DCT8 cover loses to hierarchical cover"
-    state verified
+    state superseded
     result pass
     method observation
     observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
@@ -3141,9 +3357,21 @@ record jpegxl-rs.evidence.phase5d-fixed-cover-negative-2026-08-11/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase5d-fixed-cover-negative-2026-08-11/2 : evidence {
+    title "Forced DCT8 cover loses to hierarchical cover"
+    state verified
+    result pass
+    method observation
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    summary """
+        The matched-rate fixed-DCT8 counterfactual worsens Butteraugli and SSIMULACRA2 on both screened test-set photos, so the temporary control was removed and the current hierarchical DCT8/16/32 cover remains the production choice.
+        """
+    supersedes [ @jpegxl-rs.evidence.phase5d-fixed-cover-negative-2026-08-11/1 ]
+}
+
 record jpegxl-rs.evidence.phase5e-epf-signalling-noop-2026-08-11/1 : evidence {
     title "EPF iteration signalling is a pixel no-op without filter planning"
-    state verified
+    state superseded
     result pass
     method observation
     observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
@@ -3152,7 +3380,30 @@ record jpegxl-rs.evidence.phase5e-epf-signalling-noop-2026-08-11/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase5e-epf-signalling-noop-2026-08-11/2 : evidence {
+    title "EPF iteration signalling is a pixel no-op without filter planning"
+    state verified
+    result pass
+    method observation
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    summary """
+        At epf_iters 1 and 2, two test-set streams grew by one byte but djxl output and perceptual scores were pixel-identical to EPF Off; the temporary control was removed and unmodelled EPF is pruned until sharpness/sigma planning is scoped.
+        """
+    supersedes [ @jpegxl-rs.evidence.phase5e-epf-signalling-noop-2026-08-11/1 ]
+}
+
 record jpegxl-rs.evidence.phase5f-lfquant-boundary-2026-08-11/1 : evidence {
+    title "jxl-oxide failure begins exactly above signed-16-bit LfQuant"
+    state superseded
+    result pass
+    method observation
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    summary """
+        With all other controls fixed, quant_lf 78 produced LF peak 32669 and decoder agreement at peak 1, while quant_lf 79 produced LF peak 33088 and jxl-oxide disagreement at peak 255/RMSE 71.28; fixed HfMul 1..65 remained decoder-consistent.
+        """
+}
+
+record jpegxl-rs.evidence.phase5f-lfquant-boundary-2026-08-11/2 : evidence {
     title "jxl-oxide failure begins exactly above signed-16-bit LfQuant"
     state verified
     result pass
@@ -3161,6 +3412,7 @@ record jpegxl-rs.evidence.phase5f-lfquant-boundary-2026-08-11/1 : evidence {
     summary """
         With all other controls fixed, quant_lf 78 produced LF peak 32669 and decoder agreement at peak 1, while quant_lf 79 produced LF peak 33088 and jxl-oxide disagreement at peak 255/RMSE 71.28; fixed HfMul 1..65 remained decoder-consistent.
         """
+    supersedes [ @jpegxl-rs.evidence.phase5f-lfquant-boundary-2026-08-11/1 ]
 }
 
 record jpegxl-rs.evidence.phase5f-oracle-gate-2026-08-11/1 : evidence {
@@ -3189,7 +3441,7 @@ record jpegxl-rs.evidence.phase5f-policy-tests-2026-08-11/1 : evidence {
 
 record jpegxl-rs.evidence.phase5f-quality-regate-2026-08-11/1 : evidence {
     title "AQ-Off plus quant_lf 8 candidate is byte-identical after compatibility fix"
-    state verified
+    state superseded
     result pass
     method observation
     observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
@@ -3198,9 +3450,21 @@ record jpegxl-rs.evidence.phase5f-quality-regate-2026-08-11/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase5f-quality-regate-2026-08-11/2 : evidence {
+    title "AQ-Off plus quant_lf 8 candidate is byte-identical after compatibility fix"
+    state verified
+    result pass
+    method observation
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    summary """
+        The three Phase 5A/5C candidate streams regenerated byte-identically at 97537, 195816 and 1072481 bytes; untouched and explicit Masking also match, and Off/quant_lf8 control hashes remain pinned.
+        """
+    supersedes [ @jpegxl-rs.evidence.phase5f-quality-regate-2026-08-11/1 ]
+}
+
 record jpegxl-rs.evidence.phase5g-cjxl-equal-rate-anchors-2026-08-11/1 : evidence {
     title "Phase 5G cjxl effort-7 equal-rate anchors"
-    state verified
+    state superseded
     result pass
     method observation
     observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
@@ -3209,9 +3473,21 @@ record jpegxl-rs.evidence.phase5g-cjxl-equal-rate-anchors-2026-08-11/1 : evidenc
         """
 }
 
+record jpegxl-rs.evidence.phase5g-cjxl-equal-rate-anchors-2026-08-11/2 : evidence {
+    title "Phase 5G cjxl effort-7 equal-rate anchors"
+    state verified
+    result pass
+    method observation
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    summary """
+        Measured cjxl effort-7 anchors decoded through the same djxl show the JPXL candidate remains 26.6% to 85.9% above cjxl Butteraugli distance; mid2/2's anchor applies to the initial 841754-byte candidate rather than the later 795208-byte matched-policy rerun.
+        """
+    supersedes [ @jpegxl-rs.evidence.phase5g-cjxl-equal-rate-anchors-2026-08-11/1 ]
+}
+
 record jpegxl-rs.evidence.phase5g-corpus-matrix-2026-08-11/1 : evidence {
     title "Phase 5G six-scene target-rate corpus matrix"
-    state verified
+    state superseded
     result pass
     method observation
     observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
@@ -3220,9 +3496,21 @@ record jpegxl-rs.evidence.phase5g-corpus-matrix-2026-08-11/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase5g-corpus-matrix-2026-08-11/2 : evidence {
+    title "Phase 5G six-scene target-rate corpus matrix"
+    state verified
+    result pass
+    method observation
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    summary """
+        Same-djxl matched-rate scoring found AQ Off plus quant_lf 8 reduced Butteraugli distance by 7.6% to 34.2% in all 12 scene/rate cells; RMSE improved in all cells, while SSIMULACRA2 regressed in 2 of 12 by at most 4.3685.
+        """
+    supersedes [ @jpegxl-rs.evidence.phase5g-corpus-matrix-2026-08-11/1 ]
+}
+
 record jpegxl-rs.evidence.phase5g-target-default-2026-08-11/1 : evidence {
     title "Phase 5G target-rate default promotion verification"
-    state verified
+    state superseded
     result pass
     method command
     observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
@@ -3232,7 +3520,31 @@ record jpegxl-rs.evidence.phase5g-target-default-2026-08-11/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase5g-target-default-2026-08-11/2 : evidence {
+    title "Phase 5G target-rate default promotion verification"
+    state verified
+    result pass
+    method command
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    command "cargo test -p jpxl-encode-policy --lib request::tests && cargo test -p jpxl-encode-policy --test rate_loop && JPXL_ORACLE_BIN=../libjxl/build/tools cargo test -p jpxl-encode-policy --test vardct_oracle; release CLI default and explicit Off/quant_lf=8 fingerprints compared with cmp"
+    summary """
+        Target-rate constructor and CLI now select AQ Off, quant_lf 8, and no LF fill; request tests passed 4/4, rate-loop tests 11/11 with 1 ignored, independent-decoder tests 10/10, and untouched versus explicit candidate streams were byte-identical at 97537 bytes (SHA-256 1dba812c5e39aa2d3b9a25394f8c4adff79113c99296e2caffb79aacc1a4f935).
+        """
+    supersedes [ @jpegxl-rs.evidence.phase5g-target-default-2026-08-11/1 ]
+}
+
 record jpegxl-rs.evidence.phase5h-quant-lf-tail-2026-08-11/1 : evidence {
+    title "Phase 5H quant_lf tail screen"
+    state superseded
+    result pass
+    method observation
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    summary """
+        On the six-scene one/two-bpp matrix, quant_lf 4 improved Butteraugli in six cells and regressed six, including both 4 MP scenes; a quant_lf 2 two-scene probe improved Butteraugli but materially regressed low-rate SSIMULACRA2. The global target-rate default remains quant_lf 8, and the mixed direction points to content-adaptive LF/HF planning.
+        """
+}
+
+record jpegxl-rs.evidence.phase5h-quant-lf-tail-2026-08-11/2 : evidence {
     title "Phase 5H quant_lf tail screen"
     state verified
     result pass
@@ -3241,6 +3553,7 @@ record jpegxl-rs.evidence.phase5h-quant-lf-tail-2026-08-11/1 : evidence {
     summary """
         On the six-scene one/two-bpp matrix, quant_lf 4 improved Butteraugli in six cells and regressed six, including both 4 MP scenes; a quant_lf 2 two-scene probe improved Butteraugli but materially regressed low-rate SSIMULACRA2. The global target-rate default remains quant_lf 8, and the mixed direction points to content-adaptive LF/HF planning.
         """
+    supersedes [ @jpegxl-rs.evidence.phase5h-quant-lf-tail-2026-08-11/1 ]
 }
 
 record jpegxl-rs.evidence.phase5i-active-epf-activation-2026-08-11/1 : evidence {
@@ -3269,6 +3582,17 @@ record jpegxl-rs.evidence.phase5i-active-epf-promotion-2026-08-11/1 : evidence {
 
 record jpegxl-rs.evidence.phase5i-active-epf-quality-2026-08-11/1 : evidence {
     title "Active EPF improves Butteraugli in all twelve representative cells"
+    state superseded
+    result pass
+    method observation
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    summary """
+        At matched achieved rate across six scenes and 1/2 bpp, EPF step 1 plus uniform Sharpness 7 improved Butteraugli by 0.7% to 11.4% in all 12 cells, improved RMSE and BA pnorm3 in all 12, and kept the only SSIM regression to 0.0351.
+        """
+}
+
+record jpegxl-rs.evidence.phase5i-active-epf-quality-2026-08-11/2 : evidence {
+    title "Active EPF improves Butteraugli in all twelve representative cells"
     state verified
     result pass
     method observation
@@ -3276,6 +3600,7 @@ record jpegxl-rs.evidence.phase5i-active-epf-quality-2026-08-11/1 : evidence {
     summary """
         At matched achieved rate across six scenes and 1/2 bpp, EPF step 1 plus uniform Sharpness 7 improved Butteraugli by 0.7% to 11.4% in all 12 cells, improved RMSE and BA pnorm3 in all 12, and kept the only SSIM regression to 0.0351.
         """
+    supersedes [ @jpegxl-rs.evidence.phase5i-active-epf-quality-2026-08-11/1 ]
 }
 
 record jpegxl-rs.evidence.phase5j-two-pass-error-implementation-2026-08-11/1 : evidence {
@@ -3304,6 +3629,17 @@ record jpegxl-rs.evidence.phase5j-two-pass-error-oracle-2026-08-11/1 : evidence 
 
 record jpegxl-rs.evidence.phase5j-two-pass-error-quality-2026-08-11/1 : evidence {
     title "Exact-rate screen rejects the two-pass reconstruction-error AQ signal"
+    state superseded
+    result pass
+    method observation
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    summary """
+        Across two representative scenes at one and two bpp, the strength sweep either snapped neutral or traded inconsistent Butteraugli wins for regressions. Exact-byte-cap reruns regressed both 1-bpp cells; the lone 6.2% BA win lost 0.7443 SSIMULACRA2, and the other 2-bpp scene regressed. The temporary mode was removed.
+        """
+}
+
+record jpegxl-rs.evidence.phase5j-two-pass-error-quality-2026-08-11/2 : evidence {
+    title "Exact-rate screen rejects the two-pass reconstruction-error AQ signal"
     state verified
     result pass
     method observation
@@ -3311,6 +3647,7 @@ record jpegxl-rs.evidence.phase5j-two-pass-error-quality-2026-08-11/1 : evidence
     summary """
         Across two representative scenes at one and two bpp, the strength sweep either snapped neutral or traded inconsistent Butteraugli wins for regressions. Exact-byte-cap reruns regressed both 1-bpp cells; the lone 6.2% BA win lost 0.7443 SSIMULACRA2, and the other 2-bpp scene regressed. The temporary mode was removed.
         """
+    supersedes [ @jpegxl-rs.evidence.phase5j-two-pass-error-quality-2026-08-11/1 ]
 }
 
 record jpegxl-rs.evidence.phase5k-active-epf-depth-policy-2026-08-11/1 : evidence {
@@ -3327,6 +3664,17 @@ record jpegxl-rs.evidence.phase5k-active-epf-depth-policy-2026-08-11/1 : evidenc
 
 record jpegxl-rs.evidence.phase5k-active-epf-depth-quality-2026-08-11/1 : evidence {
     title "Deeper active EPF is content-dependent and fails the global gate"
+    state superseded
+    result pass
+    method observation
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    summary """
+        EPF3 with uniform Sharpness 7 improved Butteraugli in 9/12 six-scene cells but regressed three cells by up to 7.2% and lost as much as 6.03 SSIMULACRA2. Intermediate uniform Sharpness 3/5 did not remove the inconsistent regressions.
+        """
+}
+
+record jpegxl-rs.evidence.phase5k-active-epf-depth-quality-2026-08-11/2 : evidence {
+    title "Deeper active EPF is content-dependent and fails the global gate"
     state verified
     result pass
     method observation
@@ -3334,6 +3682,7 @@ record jpegxl-rs.evidence.phase5k-active-epf-depth-quality-2026-08-11/1 : eviden
     summary """
         EPF3 with uniform Sharpness 7 improved Butteraugli in 9/12 six-scene cells but regressed three cells by up to 7.2% and lost as much as 6.03 SSIMULACRA2. Intermediate uniform Sharpness 3/5 did not remove the inconsistent regressions.
         """
+    supersedes [ @jpegxl-rs.evidence.phase5k-active-epf-depth-quality-2026-08-11/1 ]
 }
 
 record jpegxl-rs.evidence.phase5l-chroma-qm-policy-2026-08-11/1 : evidence {
@@ -3350,6 +3699,17 @@ record jpegxl-rs.evidence.phase5l-chroma-qm-policy-2026-08-11/1 : evidence {
 
 record jpegxl-rs.evidence.phase5l-chroma-qm-quality-2026-08-11/1 : evidence {
     title "Coarser chroma QM allocation is beneficial but not globally safe"
+    state superseded
+    result pass
+    method observation
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    summary """
+        X=0/B=0 improved Butteraugli in 8/12 six-scene cells, regressed three, and was neutral in one; asymmetric channel probes were also inconsistent. SSIM regressions were systematic and reached about 1.49 points.
+        """
+}
+
+record jpegxl-rs.evidence.phase5l-chroma-qm-quality-2026-08-11/2 : evidence {
+    title "Coarser chroma QM allocation is beneficial but not globally safe"
     state verified
     result pass
     method observation
@@ -3357,6 +3717,7 @@ record jpegxl-rs.evidence.phase5l-chroma-qm-quality-2026-08-11/1 : evidence {
     summary """
         X=0/B=0 improved Butteraugli in 8/12 six-scene cells, regressed three, and was neutral in one; asymmetric channel probes were also inconsistent. SSIM regressions were systematic and reached about 1.49 points.
         """
+    supersedes [ @jpegxl-rs.evidence.phase5l-chroma-qm-quality-2026-08-11/1 ]
 }
 
 record jpegxl-rs.evidence.phase5l-chroma-qm-wire-2026-08-11/1 : evidence {
@@ -3373,7 +3734,7 @@ record jpegxl-rs.evidence.phase5l-chroma-qm-wire-2026-08-11/1 : evidence {
 
 record jpegxl-rs.evidence.phase5m-spatial-epf-policy-2026-08-11/1 : evidence {
     title "Temporary activity-split modes were removed; the target-rate production stream remains 97,539 bytes with the Phase 5I SHA-256 470ef5f172a54b7ef2822b5e0e07db1640fa9de8a940b9c175a05a9a6bc996b2."
-    state verified
+    state superseded
     result pass
     method command
     observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
@@ -3383,9 +3744,22 @@ record jpegxl-rs.evidence.phase5m-spatial-epf-policy-2026-08-11/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase5m-spatial-epf-policy-2026-08-11/2 : evidence {
+    title "Temporary activity-split modes were removed; the target-rate production stream remains 97,539 bytes with the Phase 5I SHA-256 470ef5f172a54b7ef2822b5e0e07db1640fa9de8a940b9c175a05a9a6bc996b2."
+    state verified
+    result pass
+    method command
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    command "target/release/jpxl encode /tmp/phase5m-spatial-epf/small1-ref.ppm /tmp/phase5m-production-control.jxl --bpp 1; sha256sum /tmp/phase5m-production-control.jxl"
+    summary """
+        Temporary activity-split modes were removed; the target-rate production stream remains 97,539 bytes with the Phase 5I SHA-256 470ef5f172a54b7ef2822b5e0e07db1640fa9de8a940b9c175a05a9a6bc996b2.
+        """
+    supersedes [ @jpegxl-rs.evidence.phase5m-spatial-epf-policy-2026-08-11/1 ]
+}
+
 record jpegxl-rs.evidence.phase5m-spatial-epf-quality-2026-08-11/1 : evidence {
     title "On small1, small3, and mid2 at one/two bpp, eleven of twelve spatial-polarity cells regressed Butteraugli and every cell regressed SSIMULACRA2; median source variance is rejected as the sharpness signal."
-    state verified
+    state superseded
     result pass
     method observation
     observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
@@ -3394,9 +3768,21 @@ record jpegxl-rs.evidence.phase5m-spatial-epf-quality-2026-08-11/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase5m-spatial-epf-quality-2026-08-11/2 : evidence {
+    title "On small1, small3, and mid2 at one/two bpp, eleven of twelve spatial-polarity cells regressed Butteraugli and every cell regressed SSIMULACRA2; median source variance is rejected as the sharpness signal."
+    state verified
+    result pass
+    method observation
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    summary """
+        On small1, small3, and mid2 at one/two bpp, eleven of twelve spatial-polarity cells regressed Butteraugli and every cell regressed SSIMULACRA2; median source variance is rejected as the sharpness signal.
+        """
+    supersedes [ @jpegxl-rs.evidence.phase5m-spatial-epf-quality-2026-08-11/1 ]
+}
+
 record jpegxl-rs.evidence.phase5m-spatial-epf-wire-2026-08-11/1 : evidence {
     title "Before removal, the temporary median-variance policies emitted a real mixed 0/7 sharpness plane with inverse polarities; djxl and jxl-oxide accepted the active spatial EPF stream."
-    state verified
+    state superseded
     result pass
     method command
     observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
@@ -3406,9 +3792,22 @@ record jpegxl-rs.evidence.phase5m-spatial-epf-wire-2026-08-11/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase5m-spatial-epf-wire-2026-08-11/2 : evidence {
+    title "Before removal, the temporary median-variance policies emitted a real mixed 0/7 sharpness plane with inverse polarities; djxl and jxl-oxide accepted the active spatial EPF stream."
+    state verified
+    result pass
+    method command
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    command "cargo test -p jpxl-encode-policy activity_split_sharpness_is_spatial_and_the_polarities_are_inverse --lib; PATH=../libjxl/build/tools:$PATH cargo test -p jpxl-encode-policy --test vardct_oracle both_oracles_decode_an_active_epf_stream -- --nocapture"
+    summary """
+        Before removal, the temporary median-variance policies emitted a real mixed 0/7 sharpness plane with inverse polarities; djxl and jxl-oxide accepted the active spatial EPF stream.
+        """
+    supersedes [ @jpegxl-rs.evidence.phase5m-spatial-epf-wire-2026-08-11/1 ]
+}
+
 record jpegxl-rs.evidence.phase5n-fine-aq-policy-2026-08-11/1 : evidence {
     title "Phase 5N negative candidate cleanup"
-    state verified
+    state superseded
     result pass
     method command
     observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
@@ -3418,9 +3817,22 @@ record jpegxl-rs.evidence.phase5n-fine-aq-policy-2026-08-11/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase5n-fine-aq-policy-2026-08-11/2 : evidence {
+    title "Phase 5N negative candidate cleanup"
+    state verified
+    result pass
+    method command
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    command "cd JPXL && cargo build --release -p jpxl-cli --features perceptual && target/release/jpxl encode ../.agent/scratch/realworld-bench-20260806T072202Z/small_0p8MP.ppm /tmp/phase5n-production.jxl --bpp 1 && sha256sum /tmp/phase5n-production.jxl && stat -c %s /tmp/phase5n-production.jxl"
+    summary """
+        The rejected fine AQ source and CLI surface were removed; the retained production stream returned exactly to 97,539 bytes and SHA-256 470ef5f172a54b7ef2822b5e0e07db1640fa9de8a940b9c175a05a9a6bc996b2.
+        """
+    supersedes [ @jpegxl-rs.evidence.phase5n-fine-aq-policy-2026-08-11/1 ]
+}
+
 record jpegxl-rs.evidence.phase5n-fine-aq-quality-2026-08-11/1 : evidence {
     title "Phase 5N fine AQ perceptual screen"
-    state verified
+    state superseded
     result pass
     method command
     observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
@@ -3430,9 +3842,22 @@ record jpegxl-rs.evidence.phase5n-fine-aq-quality-2026-08-11/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase5n-fine-aq-quality-2026-08-11/2 : evidence {
+    title "Phase 5N fine AQ perceptual screen"
+    state verified
+    result pass
+    method command
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    command "bash .agent/scratch/phase5n-fine-aq-screen.sh"
+    summary """
+        At Phase 5I production byte caps, both fine AQ polarities regressed Butteraugli in every small1/small2 one- and two-bpp cell; seven of eight also regressed SSIMULACRA2.
+        """
+    supersedes [ @jpegxl-rs.evidence.phase5n-fine-aq-quality-2026-08-11/1 ]
+}
+
 record jpegxl-rs.evidence.phase5n-fine-aq-structure-2026-08-11/1 : evidence {
     title "Phase 5N fine AQ structural and rate gates"
-    state verified
+    state superseded
     result pass
     method command
     observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
@@ -3442,9 +3867,22 @@ record jpegxl-rs.evidence.phase5n-fine-aq-structure-2026-08-11/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase5n-fine-aq-structure-2026-08-11/2 : evidence {
+    title "Phase 5N fine AQ structural and rate gates"
+    state verified
+    result pass
+    method command
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    command "cd JPXL && cargo test -p jpxl-encode-policy fine_lattice_preserves_adjustments_the_half_octave_lattice_erases && cargo test -p jpxl-encode-policy fine_aq_factorization_preserves_lf_and_baseline_hf_products && cargo test -p jpxl-encode-policy --test rate_loop the_byte_target_contract_holds_with_adaptive_quantization_on -- --nocapture"
+    summary """
+        The temporary factor-eight lattice preserved LF and baseline-HF products, emitted at least three multipliers, and passed all eight 4,000/9,000-byte rate-contract cases after confinement to global-scale rungs.
+        """
+    supersedes [ @jpegxl-rs.evidence.phase5n-fine-aq-structure-2026-08-11/1 ]
+}
+
 record jpegxl-rs.evidence.phase5o-special8-cleanup-2026-08-11/1 : evidence {
     title "Phase 5O research rollback and production restoration"
-    state verified
+    state superseded
     result pass
     method command
     observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
@@ -3454,9 +3892,22 @@ record jpegxl-rs.evidence.phase5o-special8-cleanup-2026-08-11/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase5o-special8-cleanup-2026-08-11/2 : evidence {
+    title "Phase 5O research rollback and production restoration"
+    state verified
+    result pass
+    method command
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    command "cd JPXL && cargo build --release -p jpxl-cli --features perceptual && target/release/jpxl encode ../.agent/scratch/realworld-bench-20260806T072202Z/small_0p8MP.ppm /tmp/phase5o-production.jxl --bpp 1 && sha256sum /tmp/phase5o-production.jxl && stat -c %s /tmp/phase5o-production.jxl && cargo test -p jpxl-encode a_non_dct8x8_transform_is_refused -- --nocapture"
+    summary """
+        All temporary special-transform policy, CLI, tests, and writer-gate changes were removed; production returned to 97,539 bytes and SHA-256 470ef5f172a54b7ef2822b5e0e07db1640fa9de8a940b9c175a05a9a6bc996b2.
+        """
+    supersedes [ @jpegxl-rs.evidence.phase5o-special8-cleanup-2026-08-11/1 ]
+}
+
 record jpegxl-rs.evidence.phase5o-special8-quality-2026-08-11/1 : evidence {
     title "Phase 5O special-transform perceptual matrix"
-    state verified
+    state superseded
     result pass
     method observation
     observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
@@ -3465,7 +3916,31 @@ record jpegxl-rs.evidence.phase5o-special8-quality-2026-08-11/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase5o-special8-quality-2026-08-11/2 : evidence {
+    title "Phase 5O special-transform perceptual matrix"
+    state verified
+    result pass
+    method observation
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    summary """
+        Zero-penalty same-footprint transform selection improved Butteraugli in 8/12 cells by up to 15.0% but regressed four by up to 6.2%; an eight-bit global transition charge retained low-rate regressions.
+        """
+    supersedes [ @jpegxl-rs.evidence.phase5o-special8-quality-2026-08-11/1 ]
+}
+
 record jpegxl-rs.evidence.phase5o-special8-wire-rate-2026-08-11/1 : evidence {
+    title "Phase 5O special-transform wire and rate gates"
+    state superseded
+    result pass
+    method command
+    observed_at git:25213f6821b695e5b60a8d34c785a09aed9ee327
+    command "JPXL_ORACLE_BIN=/mnt/Samsung980_1TB/Rust-projects/jpegXL-rs/libjxl/build/tools cargo test -p jpxl-encode-policy special8_cover_selects_a_same_footprint_transform && cargo test -p jpxl-encode-policy --test vardct_oracle both_oracles_decode_a_special8_transform_stream -- --nocapture && cargo test -p jpxl-encode-policy --test rate_loop the_byte_target_contract_holds_with_special8_transforms -- --nocapture"
+    summary """
+        Before rollback, the temporary chooser emitted same-footprint special transforms, stayed under a 9,000-byte target, and decoded consistently in djxl, jxl-oxide, and JPXL.
+        """
+}
+
+record jpegxl-rs.evidence.phase5o-special8-wire-rate-2026-08-11/2 : evidence {
     title "Phase 5O special-transform wire and rate gates"
     state verified
     result pass
@@ -3475,6 +3950,7 @@ record jpegxl-rs.evidence.phase5o-special8-wire-rate-2026-08-11/1 : evidence {
     summary """
         Before rollback, the temporary chooser emitted same-footprint special transforms, stayed under a 9,000-byte target, and decoded consistently in djxl, jxl-oxide, and JPXL.
         """
+    supersedes [ @jpegxl-rs.evidence.phase5o-special8-wire-rate-2026-08-11/1 ]
 }
 
 record jpegxl-rs.evidence.phase5p-distortion-proof-2026-08-12/1 : evidence {
@@ -3527,6 +4003,18 @@ record jpegxl-rs.evidence.phase5p-rate-oracle-2026-08-12/1 : evidence {
 
 record jpegxl-rs.evidence.phase6-0-frequency-harness-2026-08-12/1 : evidence {
     title "Phase 6.0 frequency-response harness ran clean on two photographs, control passed"
+    state superseded
+    result pass
+    method command
+    observed_at git:cddce2b966a06b03e8ec92c096b3e1695d69ed55
+    command "JPXL_CALIB_REF=.agent/scratch/realworld-bench-20260806T072202Z/{small_0p8MP,mid_4MP}.ppm JPXL_CALIB_SIDE=512 JPXL_CALIB_AMPS=0.25,0.5,1.0 cargo test --release -p jpxl-conformance --features perceptual --test perceptual_frequency -- --ignored --nocapture"
+    summary """
+        18 runs (2 photographs x 3 XYB channels x 3 amplitudes x 64 cells) completed; the harness asserted zero self-distance before each sweep, and the sample-domain SSE control varied 8.2% across cells against a 165% perceptual spread
+        """
+}
+
+record jpegxl-rs.evidence.phase6-0-frequency-harness-2026-08-12/2 : evidence {
+    title "Phase 6.0 frequency-response harness ran clean on two photographs, control passed"
     state verified
     result pass
     method command
@@ -3535,6 +4023,7 @@ record jpegxl-rs.evidence.phase6-0-frequency-harness-2026-08-12/1 : evidence {
     summary """
         18 runs (2 photographs x 3 XYB channels x 3 amplitudes x 64 cells) completed; the harness asserted zero self-distance before each sweep, and the sample-domain SSE control varied 8.2% across cells against a 165% perceptual spread
         """
+    supersedes [ @jpegxl-rs.evidence.phase6-0-frequency-harness-2026-08-12/1 ]
 }
 
 record jpegxl-rs.evidence.phase6-0-frequency-spread-2026-08-12/1 : evidence {
@@ -4124,7 +4613,7 @@ record jpegxl-rs.evidence.phase8-4-correctness/1 : evidence {
 
 record jpegxl-rs.evidence.phase8-4-quality-identity/1 : evidence {
     title "Phase 8.4 preserves all Phase 8.3 quality and target cells byte-for-byte"
-    state verified
+    state superseded
     result pass
     method observation
     observed_at git:545724f48888b007ab90defbc96ced06329170fe
@@ -4133,7 +4622,30 @@ record jpegxl-rs.evidence.phase8-4-quality-identity/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase8-4-quality-identity/2 : evidence {
+    title "Phase 8.4 preserves all Phase 8.3 quality and target cells byte-for-byte"
+    state verified
+    result pass
+    method observation
+    observed_at git:545724f48888b007ab90defbc96ced06329170fe
+    summary """
+        All seven canonical 1024x768 1 bpp t4 outputs were byte-identical to the Phase 8.3 anchor7 streams, so achieved sizes, fallback decisions, SSIMULACRA2, Butteraugli, and oracle-decode results are unchanged.
+        """
+    supersedes [ @jpegxl-rs.evidence.phase8-4-quality-identity/1 ]
+}
+
 record jpegxl-rs.evidence.phase8-4-windows-speed/1 : evidence {
+    title "Phase 8.4 cached finalist prices clear the Windows speed gate"
+    state superseded
+    result pass
+    method observation
+    observed_at git:545724f48888b007ab90defbc96ced06329170fe
+    summary """
+        Five interleaved 2400x1800 1 bpp t4 pairs reduced median end-to-end time 5034.715 ms to 4876.715 ms (3.14%), internal Counts 10 to 6, Full section traversals 1008 to 672, and writer amplification 14 to 10 with identical 535987-byte output; Store-every-finalist was 1.23% slower and the typed event tape improved only 0.28%, so both were removed.
+        """
+}
+
+record jpegxl-rs.evidence.phase8-4-windows-speed/2 : evidence {
     title "Phase 8.4 cached finalist prices clear the Windows speed gate"
     state verified
     result pass
@@ -4142,6 +4654,7 @@ record jpegxl-rs.evidence.phase8-4-windows-speed/1 : evidence {
     summary """
         Five interleaved 2400x1800 1 bpp t4 pairs reduced median end-to-end time 5034.715 ms to 4876.715 ms (3.14%), internal Counts 10 to 6, Full section traversals 1008 to 672, and writer amplification 14 to 10 with identical 535987-byte output; Store-every-finalist was 1.23% slower and the typed event tape improved only 0.28%, so both were removed.
         """
+    supersedes [ @jpegxl-rs.evidence.phase8-4-windows-speed/1 ]
 }
 
 record jpegxl-rs.evidence.phase8-5-checked-round-correctness-2026-08-15/1 : evidence {
@@ -4396,7 +4909,7 @@ record jpegxl-rs.evidence.phase8-5-sketch-speed-2026-08-14/1 : evidence {
 
 record jpegxl-rs.evidence.phase8-6-architecture-brief-2026-08-14/1 : evidence {
     title "Phase 8.6 finalist-measured HF allocation brief"
-    state verified
+    state superseded
     result pass
     method manual
     observed_at git:d0529ded85eb1070a9451d6936c33d29bde2fad9
@@ -4405,9 +4918,21 @@ record jpegxl-rs.evidence.phase8-6-architecture-brief-2026-08-14/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.phase8-6-architecture-brief-2026-08-14/2 : evidence {
+    title "Phase 8.6 finalist-measured HF allocation brief"
+    state verified
+    result pass
+    method manual
+    observed_at git:d0529ded85eb1070a9451d6936c33d29bde2fad9
+    summary """
+        Source-verified design reuses cached forward coefficients and the anchored Full correction pass to test measured HF allocation, with explicit file ownership and fixed-rate quality, speed and correctness gates.
+        """
+    supersedes [ @jpegxl-rs.evidence.phase8-6-architecture-brief-2026-08-14/1 ]
+}
+
 record jpegxl-rs.evidence.phase8-6-deficit-localization-2026-08-14/1 : evidence {
     title "Phase 8.6 spatial, channel and frequency localization"
-    state verified
+    state superseded
     result pass
     method observation
     observed_at git:d0529ded85eb1070a9451d6936c33d29bde2fad9
@@ -4416,7 +4941,31 @@ record jpegxl-rs.evidence.phase8-6-deficit-localization-2026-08-14/1 : evidence 
         """
 }
 
+record jpegxl-rs.evidence.phase8-6-deficit-localization-2026-08-14/2 : evidence {
+    title "Phase 8.6 spatial, channel and frequency localization"
+    state verified
+    result pass
+    method observation
+    observed_at git:d0529ded85eb1070a9451d6936c33d29bde2fad9
+    summary """
+        The 60.4% maximum-distance gap contracts to 19.6% pnorm3 and 7.7% mean distance; almost all remaining gap is high-frequency red/green detail, while low and mid bands are near parity.
+        """
+    supersedes [ @jpegxl-rs.evidence.phase8-6-deficit-localization-2026-08-14/1 ]
+}
+
 record jpegxl-rs.evidence.phase8-6-independent-metric-validation-2026-08-14/1 : evidence {
+    title "Phase 8.6 independent metric validation"
+    state superseded
+    result pass
+    method command
+    observed_at git:d0529ded85eb1070a9451d6936c33d29bde2fad9
+    command "libjxl/build-metrics/tools/ssimulacra2 REF DIST && libjxl/build-metrics/tools/butteraugli_main REF DIST DISTMAP"
+    summary """
+        Fresh black-box libjxl dev tools exactly reproduced the Rust SSIMULACRA2, Butteraugli maximum and pnorm3 values on both parity fixtures.
+        """
+}
+
+record jpegxl-rs.evidence.phase8-6-independent-metric-validation-2026-08-14/2 : evidence {
     title "Phase 8.6 independent metric validation"
     state verified
     result pass
@@ -4426,6 +4975,7 @@ record jpegxl-rs.evidence.phase8-6-independent-metric-validation-2026-08-14/1 : 
     summary """
         Fresh black-box libjxl dev tools exactly reproduced the Rust SSIMULACRA2, Butteraugli maximum and pnorm3 values on both parity fixtures.
         """
+    supersedes [ @jpegxl-rs.evidence.phase8-6-independent-metric-validation-2026-08-14/1 ]
 }
 
 record jpegxl-rs.evidence.phase8-6-measured-hf-quality-screen-2026-08-14/1 : evidence {
@@ -5074,7 +5624,7 @@ record jpegxl-rs.evidence.q1-sweeps-2026-08-17/1 : evidence {
 
 record jpegxl-rs.evidence.quality-q2-chroma-attribution-2026-08-18/1 : evidence {
     title "Q2 chroma-HF attribution sweep"
-    state verified
+    state superseded
     result pass
     method command
     observed_at git:e337cefd96bb5452fac01aab39535829f59f01b7
@@ -5084,9 +5634,22 @@ record jpegxl-rs.evidence.quality-q2-chroma-attribution-2026-08-18/1 : evidence 
         """
 }
 
+record jpegxl-rs.evidence.quality-q2-chroma-attribution-2026-08-18/2 : evidence {
+    title "Q2 chroma-HF attribution sweep"
+    state verified
+    result pass
+    method command
+    observed_at git:e337cefd96bb5452fac01aab39535829f59f01b7
+    command "python .agent/scratch/quality-track/summarise.py .agent/scratch/quality-track/out/ladder-q2-native-selective-b5.tsv .agent/scratch/quality-track/out/scenes-q2-native-selective-b5.tsv"
+    summary """
+        B=5 produced the photo gain; global B=5 failed scenes, Quality-wide B=5 missed one 2 bpp pnorm3 cell, and Quality at <=1 bpp passed both corpora.
+        """
+    supersedes [ @jpegxl-rs.evidence.quality-q2-chroma-attribution-2026-08-18/1 ]
+}
+
 record jpegxl-rs.evidence.quality-q2-compatibility-control-2026-08-18/1 : evidence {
     title "Q2 compatibility control"
-    state verified
+    state superseded
     result pass
     method command
     observed_at git:e337cefd96bb5452fac01aab39535829f59f01b7
@@ -5096,9 +5659,22 @@ record jpegxl-rs.evidence.quality-q2-compatibility-control-2026-08-18/1 : eviden
         """
 }
 
+record jpegxl-rs.evidence.quality-q2-compatibility-control-2026-08-18/2 : evidence {
+    title "Q2 compatibility control"
+    state verified
+    result pass
+    method command
+    observed_at git:e337cefd96bb5452fac01aab39535829f59f01b7
+    command "powershell -File .agent/scratch/quality-track/ladder.ps1 -Candidate JPXL/target/release/jpxl.exe -Baseline .agent/scratch/quality-track/jpxl-q1-windows.exe -Out .agent/scratch/quality-track/out/ladder-q2-production-smoke.tsv"
+    summary """
+        Fast and Balanced at every screened rate and Quality above 1 bpp retained Q1 hashes; explicit --b-qm-scale 2 restored the Q1 Quality 1 bpp hash.
+        """
+    supersedes [ @jpegxl-rs.evidence.quality-q2-compatibility-control-2026-08-18/1 ]
+}
+
 record jpegxl-rs.evidence.quality-q2-corpus-gates-2026-08-18/1 : evidence {
     title "Q2 corpus gates"
-    state verified
+    state superseded
     result pass
     method command
     observed_at git:e337cefd96bb5452fac01aab39535829f59f01b7
@@ -5108,9 +5684,22 @@ record jpegxl-rs.evidence.quality-q2-corpus-gates-2026-08-18/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.quality-q2-corpus-gates-2026-08-18/2 : evidence {
+    title "Q2 corpus gates"
+    state verified
+    result pass
+    method command
+    observed_at git:e337cefd96bb5452fac01aab39535829f59f01b7
+    command "python .agent/scratch/quality-track/summarise.py .agent/scratch/quality-track/out/ladder-q2-native-selective-b5.tsv .agent/scratch/quality-track/out/scenes-q2-native-selective-b5.tsv"
+    summary """
+        Photo ladder SSIMULACRA2 mean +0.149, worst +0.000 and pnorm3 worst +2.88%; scenes mean +0.022, worst -0.269 and pnorm3 worst +2.78%; every decode passed.
+        """
+    supersedes [ @jpegxl-rs.evidence.quality-q2-corpus-gates-2026-08-18/1 ]
+}
+
 record jpegxl-rs.evidence.quality-q2-determinism-decoders-2026-08-18/1 : evidence {
     title "Q2 deterministic dual-decoder verification"
-    state verified
+    state superseded
     result pass
     method command
     observed_at git:e337cefd96bb5452fac01aab39535829f59f01b7
@@ -5120,7 +5709,32 @@ record jpegxl-rs.evidence.quality-q2-determinism-decoders-2026-08-18/1 : evidenc
         """
 }
 
+record jpegxl-rs.evidence.quality-q2-determinism-decoders-2026-08-18/2 : evidence {
+    title "Q2 deterministic dual-decoder verification"
+    state verified
+    result pass
+    method command
+    observed_at git:e337cefd96bb5452fac01aab39535829f59f01b7
+    command "powershell -File .agent/scratch/quality-track/verify-q2-production.ps1"
+    summary """
+        All 13 production-changed cells matched the screened candidate byte for byte and decoded with djxl and jxl-oxide; 1-thread and 4-thread output hashes were identical.
+        """
+    supersedes [ @jpegxl-rs.evidence.quality-q2-determinism-decoders-2026-08-18/1 ]
+}
+
 record jpegxl-rs.evidence.quality-q2-rust-gates-2026-08-18/1 : evidence {
+    title "Q2 Rust workspace gates"
+    state superseded
+    result pass
+    method command
+    observed_at git:e337cefd96bb5452fac01aab39535829f59f01b7
+    command "powershell -File .agent/scratch/quality-track/test-workspace-windows.ps1 -DisableAvx2"
+    summary """
+        Full native Windows cargo test --workspace passed in 275.2 s with fixture links materialized and AVX2 disabled; build, clippy -D warnings, fmt --check, no-default-features check, and the encode-policy suite also passed.
+        """
+}
+
+record jpegxl-rs.evidence.quality-q2-rust-gates-2026-08-18/2 : evidence {
     title "Q2 Rust workspace gates"
     state verified
     result pass
@@ -5130,6 +5744,7 @@ record jpegxl-rs.evidence.quality-q2-rust-gates-2026-08-18/1 : evidence {
     summary """
         Full native Windows cargo test --workspace passed in 275.2 s with fixture links materialized and AVX2 disabled; build, clippy -D warnings, fmt --check, no-default-features check, and the encode-policy suite also passed.
         """
+    supersedes [ @jpegxl-rs.evidence.quality-q2-rust-gates-2026-08-18/1 ]
 }
 
 record jpegxl-rs.evidence.quality-q2-speed-budget-2026-08-18/1 : evidence {
@@ -5157,7 +5772,7 @@ record jpegxl-rs.evidence.quality-q3-allocation-screens-2026-08-18/1 : evidence 
 
 record jpegxl-rs.evidence.quality-q3-corpus-gates-2026-08-18/1 : evidence {
     title "Q3 corpus gates against the Phase Q2 outputs"
-    state verified
+    state superseded
     result pass
     method observation
     observed_at git:13498bb933ab27f28e2b0580d2bdea1c19b9c7e0
@@ -5166,9 +5781,21 @@ record jpegxl-rs.evidence.quality-q3-corpus-gates-2026-08-18/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.quality-q3-corpus-gates-2026-08-18/2 : evidence {
+    title "Q3 corpus gates against the Phase Q2 outputs"
+    state verified
+    result pass
+    method observation
+    observed_at git:13498bb933ab27f28e2b0580d2bdea1c19b9c7e0
+    summary """
+        Photo ladder (27 cells) SSIMULACRA2 mean +0.528, worst -0.008, best +2.865; Butteraugli max-norm mean -5.94% worst +0.03%; 3-norm mean -5.87% worst +0.03%; only the ten ceiling-bound cells changed and every one improved; the 14 scene cells are byte-identical; every stream decoded in djxl and jxl-oxide (summarise.py verdict PASS; scenes-q3-final.tsv).
+        """
+    supersedes [ @jpegxl-rs.evidence.quality-q3-corpus-gates-2026-08-18/1 ]
+}
+
 record jpegxl-rs.evidence.quality-q3-determinism-decoders-2026-08-18/1 : evidence {
     title "Q3 changed cells are thread-deterministic and dual-decodable"
-    state verified
+    state superseded
     result pass
     method command
     observed_at git:13498bb933ab27f28e2b0580d2bdea1c19b9c7e0
@@ -5178,9 +5805,22 @@ record jpegxl-rs.evidence.quality-q3-determinism-decoders-2026-08-18/1 : evidenc
         """
 }
 
+record jpegxl-rs.evidence.quality-q3-determinism-decoders-2026-08-18/2 : evidence {
+    title "Q3 changed cells are thread-deterministic and dual-decodable"
+    state verified
+    result pass
+    method command
+    observed_at git:13498bb933ab27f28e2b0580d2bdea1c19b9c7e0
+    command "for each of mid2 2 bpp, large 2 bpp, mid 2 bpp, mid2 1 bpp Balanced: jpxl encode --threads 1 vs --threads 4, sha256 compared; djxl/oxide flags in ladder-q3-final.tsv"
+    summary """
+        One- and four-thread outputs are byte-identical on all four changed Balanced cells (0d710fec509074bf, cb57b2296d18cc63, 535fb4d565278095, c9bba7532fb84bb8); every ladder and scene stream decoded in djxl and jxl-oxide 0.12.6. JPXL_DISABLE_AVX2=1 still differs on Windows/MSVC as recorded by the Q2 observation.
+        """
+    supersedes [ @jpegxl-rs.evidence.quality-q3-determinism-decoders-2026-08-18/1 ]
+}
+
 record jpegxl-rs.evidence.quality-q3-ladder-ceiling-fix-2026-08-18/1 : evidence {
     title "Q3 dense upper ladder reaches ceiling-bound targets"
-    state verified
+    state superseded
     result pass
     method command
     observed_at git:13498bb933ab27f28e2b0580d2bdea1c19b9c7e0
@@ -5190,9 +5830,22 @@ record jpegxl-rs.evidence.quality-q3-ladder-ceiling-fix-2026-08-18/1 : evidence 
         """
 }
 
+record jpegxl-rs.evidence.quality-q3-ladder-ceiling-fix-2026-08-18/2 : evidence {
+    title "Q3 dense upper ladder reaches ceiling-bound targets"
+    state verified
+    result pass
+    method command
+    observed_at git:13498bb933ab27f28e2b0580d2bdea1c19b9c7e0
+    command "JPXL=.agent/scratch/q3/wt-target/release/jpxl.exe INPUT_DIR=<non-symlink copies of quality-track/inputs> bash .agent/scratch/quality-track/q3-arm.sh q3-final"
+    summary """
+        mid2 2 bpp Balanced 1,079,753 B and large 2 bpp 2,998,909 B against 1,080,000 / 3,000,000 targets (previously 698,435 / 2,181,655, 'budget spent, not at the ladder's limit'); the 17 cells below the ceiling keep their Phase Q2 sha16 hashes; the rate:: unit tests (18) pin every upper rung as distinct, invertible and quant_lf-coupled.
+        """
+    supersedes [ @jpegxl-rs.evidence.quality-q3-ladder-ceiling-fix-2026-08-18/1 ]
+}
+
 record jpegxl-rs.evidence.quality-q3-rust-gates-2026-08-18/1 : evidence {
     title "Q3 Rust workspace gates on a clean worktree carrying only this pass's patch"
-    state verified
+    state superseded
     result pass
     method command
     observed_at git:13498bb933ab27f28e2b0580d2bdea1c19b9c7e0
@@ -5202,9 +5855,22 @@ record jpegxl-rs.evidence.quality-q3-rust-gates-2026-08-18/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.quality-q3-rust-gates-2026-08-18/2 : evidence {
+    title "Q3 Rust workspace gates on a clean worktree carrying only this pass's patch"
+    state verified
+    result pass
+    method command
+    observed_at git:13498bb933ab27f28e2b0580d2bdea1c19b9c7e0
+    command "git worktree add --detach .agent/scratch/q3/wt HEAD; git apply .agent/scratch/q3/mine.diff; cargo fmt --all --check; cargo clippy --workspace --all-targets --profile fast-debug -- -D warnings; JPXL_JXLINFO=<oracle-bin jxlinfo.exe> test-workspace-windows.ps1 -DisableAvx2 -CargoArgs test,--workspace,--profile,fast-debug,--no-fail-fast; cargo check --workspace --no-default-features"
+    summary """
+        fmt clean, clippy clean, 1424 tests passed / 0 failed with fixture links materialised, AVX2 disabled and the pinned jxlinfo, no-default-features check clean; with AVX2 enabled only the two pre-existing 1-ULP jpxl-core tests differ (Q2's Windows/MSVC observation).
+        """
+    supersedes [ @jpegxl-rs.evidence.quality-q3-rust-gates-2026-08-18/1 ]
+}
+
 record jpegxl-rs.evidence.quality-q3-speed-budget-2026-08-18/1 : evidence {
     title "Q3 native Windows speed budget"
-    state verified
+    state superseded
     result pass
     method command
     observed_at git:13498bb933ab27f28e2b0580d2bdea1c19b9c7e0
@@ -5214,9 +5880,22 @@ record jpegxl-rs.evidence.quality-q3-speed-budget-2026-08-18/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.quality-q3-speed-budget-2026-08-18/2 : evidence {
+    title "Q3 native Windows speed budget"
+    state verified
+    result pass
+    method command
+    observed_at git:13498bb933ab27f28e2b0580d2bdea1c19b9c7e0
+    command "bash .agent/scratch/quality-track/q3-ab-bin.sh 3 mid-photo.ppm jpxl-q1-windows.exe <Q3 release jpxl.exe> (alternating, --threads 4, --bpp 1, balanced)"
+    summary """
+        Alternating 4x3 medians 428 ms (frozen Phase Q1) vs 423 ms (Q3) on the mid photo at 1 bpp Balanced; large 1 bpp 895 vs 896 ms; the cumulative quality-track cost stays at Q0b's ~+9%, below +15%. mid2 2 bpp Balanced is 5,920 vs 5,219 ms because it now reaches its target and still falls back to the exhaustive controller (recorded observation).
+        """
+    supersedes [ @jpegxl-rs.evidence.quality-q3-speed-budget-2026-08-18/1 ]
+}
+
 record jpegxl-rs.evidence.quality-q4-compatibility-determinism-2026-08-18/1 : evidence {
     title "Q4 compatibility control and thread determinism"
-    state verified
+    state superseded
     result pass
     method command
     observed_at git:95f5464ce6a75fe55a81ff289a94962c3afc5c29
@@ -5226,7 +5905,31 @@ record jpegxl-rs.evidence.quality-q4-compatibility-determinism-2026-08-18/1 : ev
         """
 }
 
+record jpegxl-rs.evidence.quality-q4-compatibility-determinism-2026-08-18/2 : evidence {
+    title "Q4 compatibility control and thread determinism"
+    state verified
+    result pass
+    method command
+    observed_at git:95f5464ce6a75fe55a81ff289a94962c3afc5c29
+    command "jpxl encode --bpp 1 --lossy-preset balanced --cover-rate-model legacy mid-photo.ppm (sha16 636c33907922d029 == Phase Q3); default encodes of mid 1 / large 0.5 quality / mid2 2 fast / mid 0.5 reproduce the q4-calibrated arm hashes; --threads 1 vs 4 on mid 1, large 0.5, mid2 2 Balanced"
+    summary """
+        --cover-rate-model legacy reproduces the Phase Q3 stream (636c33907922d029); the promoted default reproduces the screened arm's hashes cell for cell; one- and four-thread outputs are byte-identical (22a57d34875f0737, c0c5f8b34045651b, 7c32fa1f26993c52); the request tests pin defaults() to Legacy and for_target to Calibrated.
+        """
+    supersedes [ @jpegxl-rs.evidence.quality-q4-compatibility-determinism-2026-08-18/1 ]
+}
+
 record jpegxl-rs.evidence.quality-q4-corpus-gates-2026-08-18/1 : evidence {
+    title "Q4 corpus gates: calibrated rate model against Phase Q3"
+    state superseded
+    result pass
+    method observation
+    observed_at git:95f5464ce6a75fe55a81ff289a94962c3afc5c29
+    summary """
+        Photo ladder (27 cells) SSIMULACRA2 mean +0.048 worst -0.195; Butteraugli max-norm mean +0.04% worst +6.26%; 3-norm mean -0.15% worst +3.22%; scenes (14 cells) +0.059 / -0.05, +0.61% / +2.52%, -0.13% / +0.08%; every stream accepted by djxl and jxl-oxide (summarise.py verdict PASS; scenes-q4p-calibrated.tsv). The size-ordering-only variant (ladder-q4p-relative.tsv) was +0.036 / +0.083 SSIMULACRA2 but +0.50% / +1.22% max-norm and was not promoted.
+        """
+}
+
+record jpegxl-rs.evidence.quality-q4-corpus-gates-2026-08-18/2 : evidence {
     title "Q4 corpus gates: calibrated rate model against Phase Q3"
     state verified
     result pass
@@ -5235,6 +5938,7 @@ record jpegxl-rs.evidence.quality-q4-corpus-gates-2026-08-18/1 : evidence {
     summary """
         Photo ladder (27 cells) SSIMULACRA2 mean +0.048 worst -0.195; Butteraugli max-norm mean +0.04% worst +6.26%; 3-norm mean -0.15% worst +3.22%; scenes (14 cells) +0.059 / -0.05, +0.61% / +2.52%, -0.13% / +0.08%; every stream accepted by djxl and jxl-oxide (summarise.py verdict PASS; scenes-q4p-calibrated.tsv). The size-ordering-only variant (ladder-q4p-relative.tsv) was +0.036 / +0.083 SSIMULACRA2 but +0.50% / +1.22% max-norm and was not promoted.
         """
+    supersedes [ @jpegxl-rs.evidence.quality-q4-corpus-gates-2026-08-18/1 ]
 }
 
 record jpegxl-rs.evidence.quality-q4-rate-audit-2026-08-18/1 : evidence {
@@ -5252,7 +5956,7 @@ record jpegxl-rs.evidence.quality-q4-rate-audit-2026-08-18/1 : evidence {
 
 record jpegxl-rs.evidence.quality-q4-rust-gates-2026-08-18/1 : evidence {
     title "Q4 Rust workspace gates (with the 16-bit API work in the tree)"
-    state verified
+    state superseded
     result pass
     method command
     observed_at git:95f5464ce6a75fe55a81ff289a94962c3afc5c29
@@ -5262,9 +5966,22 @@ record jpegxl-rs.evidence.quality-q4-rust-gates-2026-08-18/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.quality-q4-rust-gates-2026-08-18/2 : evidence {
+    title "Q4 Rust workspace gates (with the 16-bit API work in the tree)"
+    state verified
+    result pass
+    method command
+    observed_at git:95f5464ce6a75fe55a81ff289a94962c3afc5c29
+    command "cargo fmt --all --check; cargo clippy --workspace --all-targets --profile fast-debug -- -D warnings; JPXL_JXLINFO=<oracle-bin jxlinfo.exe> test-workspace-windows.ps1 -DisableAvx2 -CargoArgs test,--workspace,--profile,fast-debug,--no-fail-fast; cargo check --workspace --no-default-features"
+    summary """
+        fmt clean, clippy clean, 1429 tests passed / 0 failed with fixture links materialised, AVX2 disabled and the pinned jxlinfo, no-default-features check clean.
+        """
+    supersedes [ @jpegxl-rs.evidence.quality-q4-rust-gates-2026-08-18/1 ]
+}
+
 record jpegxl-rs.evidence.quality-q4-speed-budget-2026-08-18/1 : evidence {
     title "Q4 A/B timing: calibrated rate model vs legacy"
-    state verified
+    state superseded
     result pass
     method command
     observed_at git:95f5464ce6a75fe55a81ff289a94962c3afc5c29
@@ -5274,7 +5991,32 @@ record jpegxl-rs.evidence.quality-q4-speed-budget-2026-08-18/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.quality-q4-speed-budget-2026-08-18/2 : evidence {
+    title "Q4 A/B timing: calibrated rate model vs legacy"
+    state verified
+    result pass
+    method command
+    observed_at git:95f5464ce6a75fe55a81ff289a94962c3afc5c29
+    command "B_FLAGS=\"--cover-rate-model calibrated\" bash .agent/scratch/quality-track/q3-ab-time.sh 3 mid-photo.ppm; ... 1 large-photo.ppm (alternating, --threads 4, Balanced)"
+    summary """
+        Alternating medians: mid 1 bpp 477.5 ms legacy vs 470 ms calibrated (4x3), large 1 bpp 886.5 vs 889 ms (4x1): neutral within noise; the cumulative quality-track cost stays at ~+9% of Phase 42.
+        """
+    supersedes [ @jpegxl-rs.evidence.quality-q4-speed-budget-2026-08-18/1 ]
+}
+
 record jpegxl-rs.evidence.quality-q5-controller-screen-2026-08-18/1 : evidence {
+    title "Q5 anchored-controller screen recorded; committed defaults reproduce Q4"
+    state superseded
+    result pass
+    method command
+    observed_at git:3744717be36a92f15ab52ff6eb9fee8d11bbec69
+    command "bash .agent/scratch/quality-track/q3-arm.sh q5-anchor (exponent 1.5, rebuild ratio 2, two corrections); pair-arms.py q4-calibrated q5-anchor; then with legacy constants: default encodes of mid 1/mid2 2/mid2 1/mid 0.5 Balanced, large 0.5 Fast and the 20240503_105759 scene at Fast compared by sha16 with ladder-q4-calibrated.tsv / scenes-q4-calibrated.tsv"
+    summary """
+        Screen: photos +0.021 / -0.25 SSIMULACRA2, scenes -0.272 / -4.04 (former fallback cells), mid2 2 bpp Balanced 5.9 s -> 0.78 s; committed legacy constants reproduce the Q4 hashes on all six checked cells (22a57d34875f0737, 7c32fa1f26993c52, 2c62b5b5a7dec7d2, 9a7b843a4cca58ea, 8a74ce5763ba9474, 2304b4adb0f5076a).
+        """
+}
+
+record jpegxl-rs.evidence.quality-q5-controller-screen-2026-08-18/2 : evidence {
     title "Q5 anchored-controller screen recorded; committed defaults reproduce Q4"
     state verified
     result pass
@@ -5284,6 +6026,7 @@ record jpegxl-rs.evidence.quality-q5-controller-screen-2026-08-18/1 : evidence {
     summary """
         Screen: photos +0.021 / -0.25 SSIMULACRA2, scenes -0.272 / -4.04 (former fallback cells), mid2 2 bpp Balanced 5.9 s -> 0.78 s; committed legacy constants reproduce the Q4 hashes on all six checked cells (22a57d34875f0737, 7c32fa1f26993c52, 2c62b5b5a7dec7d2, 9a7b843a4cca58ea, 8a74ce5763ba9474, 2304b4adb0f5076a).
         """
+    supersedes [ @jpegxl-rs.evidence.quality-q5-controller-screen-2026-08-18/1 ]
 }
 
 record jpegxl-rs.evidence.quality-q5-rust-gates-2026-08-18/1 : evidence {
@@ -5300,6 +6043,17 @@ record jpegxl-rs.evidence.quality-q5-rust-gates-2026-08-18/1 : evidence {
 
 record jpegxl-rs.evidence.quality-q6-corpus-gates-2026-08-18/1 : evidence {
     title "Q6 corpus gates against Phase Q4"
+    state superseded
+    result pass
+    method observation
+    observed_at git:b4fadb8df5b9a42204662e7b82431b4e0574c153
+    summary """
+        Photo ladder (27 cells) SSIMULACRA2 +0.003 mean / -0.06 worst, Butteraugli max-norm -0.03% / +1.34%, 3-norm -0.12% / +0.11%; scenes (14) +0.015 / +0.00, +0.02% / +0.80%, -0.02% / +0.00%; every stream accepted by djxl and jxl-oxide; only Quality cells and the two fallback cells changed (Fast/Balanced non-fallback cells byte-identical, e.g. mid 1 bpp Balanced 22a57d34875f0737).
+        """
+}
+
+record jpegxl-rs.evidence.quality-q6-corpus-gates-2026-08-18/2 : evidence {
+    title "Q6 corpus gates against Phase Q4"
     state verified
     result pass
     method observation
@@ -5307,6 +6061,7 @@ record jpegxl-rs.evidence.quality-q6-corpus-gates-2026-08-18/1 : evidence {
     summary """
         Photo ladder (27 cells) SSIMULACRA2 +0.003 mean / -0.06 worst, Butteraugli max-norm -0.03% / +1.34%, 3-norm -0.12% / +0.11%; scenes (14) +0.015 / +0.00, +0.02% / +0.80%, -0.02% / +0.00%; every stream accepted by djxl and jxl-oxide; only Quality cells and the two fallback cells changed (Fast/Balanced non-fallback cells byte-identical, e.g. mid 1 bpp Balanced 22a57d34875f0737).
         """
+    supersedes [ @jpegxl-rs.evidence.quality-q6-corpus-gates-2026-08-18/1 ]
 }
 
 record jpegxl-rs.evidence.quality-q6-determinism-gates-2026-08-18/1 : evidence {
