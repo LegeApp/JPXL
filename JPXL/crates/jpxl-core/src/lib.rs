@@ -21,6 +21,10 @@
 //!   the coefficients-to-samples reconstruction.
 //! * [`forward`] — the exact inverse of that reconstruction: the allocation-free
 //!   analysis transforms an encoder needs, and `lf_from_llf`.
+//! * [`reconstruct`] — the I.5/I.6 scalar rules (multipliers, bias, CfL) a
+//!   sample is rebuilt from.
+//! * [`restoration`] — the Annex J Gabor-like and edge-preserving filter
+//!   kernels.
 
 pub mod color;
 pub mod cpu;
@@ -31,6 +35,8 @@ pub mod forward;
 pub mod geometry;
 pub mod limits;
 pub mod modular_weighted;
+pub mod reconstruct;
+pub mod restoration;
 pub mod simd;
 pub mod varblock;
 

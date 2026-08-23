@@ -11,12 +11,16 @@ jpxl-core = { path = "../jpxl-core", version = "0.3.0", default-features = false
 jpxl-decode.workspace = true
 jpxl-encode = { path = "../jpxl-encode", version = "0.3.0", default-features = false }
 jpxl-encode-policy = { path = "../jpxl-encode-policy", version = "0.3.0", default-features = false }
+jpxl-perceptual = { path = "../jpxl-perceptual", version = "0.3.0", features = ["evaluator"] }
 
 [features]
 default = ["parallel", "simd", "anchor-sketch"]
 parallel = ["jpxl-encode/parallel", "jpxl-encode-policy/parallel"]
 simd = ["jpxl-core/simd", "jpxl-encode/simd", "jpxl-encode-policy/simd"]
 anchor-sketch = ["jpxl-encode-policy/anchor-sketch"]
+# Expose the exhaustive-reference `Effort::Quality` lossy effort. Off by
+# default; the internal `RateSearchPreset::Quality` is unaffected either way.
+quality-effort = []
 
 [lints]
 workspace = true

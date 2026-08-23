@@ -22,8 +22,10 @@ trail libjxl on important perceptual axes.
 - Lossless encoding: grayscale/RGB, reversible colour transform, palette and
   Squeeze transforms, MA trees, ANS/LZ77, multi-section streams, and
   `jxlc` containers.
-- Lossy encoding: RGB8 VarDCT with square DCT 8/16/32 transforms, CfL,
-  adaptive quantization, entropy clustering, and a byte-targeted rate loop.
+- Lossy encoding: RGB8/RGB16 VarDCT with square DCT 8/16/32 transforms, CfL,
+  entropy clustering, and a perceptual quality controller (`--quality N`, a
+  minimum SSIMULACRA2 score verified on the reconstructed pixels) with a
+  byte-targeted rate loop and a fixed quantizer as expert modes.
 - Interoperability: supported encoder streams are validated by JPXL, `djxl`,
   and `jxl-oxide`; lossless paths require exact samples.
 
@@ -70,8 +72,15 @@ black-box validation tools.
 # Lossless Modular encode (default)
 jpxl encode input.png output.jxl
 
-# Lossy VarDCT encode to a byte rate
+# Lossy VarDCT to a minimum SSIMULACRA2 quality (the normal contract):
+# the smallest stream that scores at least N. Balanced (archival) defaults
+# to 85, `--effort fast` (web) to 70; 100 is exact-lossless.
+jpxl encode --quality 85 input.jpg output.jxl
+jpxl encode --quality --effort fast input.jpg output.jxl
+
+# Expert modes: an exact byte rate, or a pinned VarDCT quantizer
 jpxl encode --bpp 1.0 input.jpg output.jxl
+jpxl encode --global-scale 40000 input.jpg output.jxl
 
 # Decode and inspect
 jpxl decode output.jxl decoded.png
@@ -90,10 +99,64 @@ is inferred from the filename or selected with `--format`; `-` means stdin or
 stdout. PNG, TIFF, and PNM retain 16-bit samples. Run `jpxl --help` and
 `jpxl bench --help` for the full option set and isolated encoder timing modes.
 
-Target-rate encoding defaults to the production `Balanced` preset. Use
-`--lossy-preset fast` when lower latency matters more than the extra quality,
-or `--lossy-preset quality` for the deliberately exhaustive reference path;
-`Quality` is not the production speed preset.
+`--quality` is a minimum SSIMULACRA2 score (0..100, 100 = lossless), not a
+distance: cjxl's `-d` targets Butteraugli, a different and inverted scale. The
+lossy effort defaults to `balanced`; `--effort fast` (or `--lossy-preset fast`)
+trades quality for lower latency and also lowers the `--quality` default score
+(fast 70, balanced 85). The exhaustive-reference `quality` effort is gated
+behind the `quality-effort` build feature; it also runs the perceptual policy
+bank and the terminal coefficient reducer, both measured and kept off for
+`fast`/`balanced` because their byte savings (0.4–1.8 %) cost more wall than
+those efforts' budgets allow.
+
+## Perceptual quality controller
+
+A `--quality N` encode minimises exact codestream bytes subject to
+`SSIMULACRA2(source, decoded) >= N`. Nothing in the loop infers quality from a
+byte count: every candidate quantizer is planned, its pixels are reconstructed
+from the plan by `jpxl-plan-render` (no codestream is serialised or decoded for
+a probe), and the reconstruction is scored by `jpxl-perceptual`, an in-tree,
+clean-room SSIMULACRA2 with a precomputed source reference. The score that is
+reported is the score the written file has: the reconstruction is bit-exact
+with `jpxl-decode`, and the scorer quantizes to the frame's bit depth the way
+a viewer would see it.
+
+- **Search.** A calibrated table (`jpxl features` source statistics → starting
+  quantizer) picks the first probe; the controller brackets the target by
+  extrapolating the measured loss slope, aims at the log-loss crossing, and
+  then attaches entropy coding to only the coarsest qualifying candidates and
+  keeps the smallest exact stream. Probes reuse the first candidate's cover and
+  chroma-from-luma; a finalist far from that anchor is re-planned fresh and
+  re-scored.
+- **Budgets.** Fast: at most 3 scored probes and 2 exact prices. Balanced: 5
+  and 3. These are hard caps; there is no hidden exhaustive fallback.
+- **Reporting.** Every perceptual encode prints one line,
+  `quality_target=85.0000 achieved=85.1372 bytes=… metric=ssimulacra2-jpxl-1
+  effort=balanced probes=3 prices=2 status=met`. Statuses are explicit:
+  `met`, `met_work_cap` (target met, budget stopped the tightening),
+  `met_adjacent_rungs`, `rescued_fresh_structure`, `saturated_top` (even the
+  finest quantizer misses the target; reported, never silent),
+  `under_target_work_cap`, `saturated_floor`, `routed_to_lossless` (score 100)
+  and `unsupported_too_small` (below the metric's 8×8 floor). Setting
+  `JPXL_QUALITY_TRACE=<path>` appends a machine-readable
+  `jpxl.quality-trace/1` record per encode: source features, the predicted
+  rung, every probe's quantizer/score/bytes, and wall time by phase.
+- **Determinism.** The same input produces the same codestream across worker
+  counts: the metric reduces fixed-size row bands in fixed order, the renderer
+  bands rows without cross-band reductions, and the cube root and blur use
+  host-independent arithmetic.
+
+On the development split of the quality-guard corpus (15 images × 5 targets,
+2026-08-22) the controller met the requested score in 150 of 150 encodes, with
+a median overshoot of 0.9 points (Balanced) and 2.2 (Fast); achieved score is
+monotone in the request on every image larger than 8×8. At matched achieved
+score JPXL is smaller than `cjxl -e 7` on photographs, gradients, grayscale
+and noisy content (BD-rate −4% to −20%) and larger on synthetic text and line
+art (up to +135%), which is a VarDCT-on-synthetic-content gap rather than a
+controller one. The probing costs about 3.5× the wall time of a fixed-rate
+encode at the same score (4 MP, four threads: `--quality 85` in 4.2 s against
+0.46 s); reducing that overhead is the next performance target.
+`JPXL/tools/codec_compare.py curve --quality …` reproduces the measurement.
 
 ## Rust API
 
@@ -102,7 +165,7 @@ dependencies out of the library path and presents the encoder as ordinary
 interleaved pixel buffers:
 
 ```rust
-use jpxl::{Encoder, Preset};
+use jpxl::{Effort, Encoder};
 
 fn encode_generated(width: u32, height: u32, rgb: &[u8]) -> jpxl::Result<Vec<u8>> {
     // Exact-lossless by default.
@@ -110,11 +173,12 @@ fn encode_generated(width: u32, height: u32, rgb: &[u8]) -> jpxl::Result<Vec<u8>
     let decoded = jpxl::decode(&lossless)?;
     assert_eq!((decoded.width, decoded.height), (width, height));
 
-    // Production target-rate encoding. This is a byte ceiling, not a
-    // libjxl-style perceptual-distance promise.
+    // The normal lossy contract: a minimum SSIMULACRA2 quality, verified on
+    // the reconstructed pixels; 100 routes to the lossless path. Expert
+    // modes `with_target_bpp` / `with_global_scale` pin a size or quantizer.
     Encoder::new()
-        .with_target_bpp(1.0)?
-        .with_preset(Preset::Balanced)
+        .with_ssimulacra2_score(85.0)?
+        .with_effort(Effort::Balanced)
         .encode_rgb8(width, height, rgb)
 }
 ```
@@ -176,7 +240,8 @@ committing test images or generated streams.
   implementation guidance.
 - Decoder first: every encoder layer is validated against independent decoding.
 - Safe parser boundaries: checked arithmetic, allocation limits, typed errors,
-  and no `unsafe` code in the workspace.
+  and no `unsafe` code beyond the documented runtime CPU-feature dispatch
+  call sites in `jpxl-core`.
 - Traceable bitstreams: bit-position tracing exists before field parsing and is
   feature-gated away when disabled.
 - Honest coverage: unsupported features are named and rejected, and benchmark

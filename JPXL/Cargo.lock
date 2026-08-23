@@ -275,6 +275,7 @@ dependencies = [
  "jpxl-decode",
  "jpxl-encode",
  "jpxl-encode-policy",
+ "jpxl-perceptual",
 ]
 
 [[package]]
@@ -293,6 +294,7 @@ dependencies = [
  "jpxl-decode",
  "jpxl-encode",
  "jpxl-encode-policy",
+ "jpxl-perceptual",
 ]
 
 [[package]]
@@ -353,6 +355,28 @@ version = "0.3.0"
 dependencies = [
  "jpxl-bitstream",
  "jpxl-core",
+]
+
+[[package]]
+name = "jpxl-perceptual"
+version = "0.3.0"
+dependencies = [
+ "jpxl-core",
+ "jpxl-encode",
+ "jpxl-encode-policy",
+ "jpxl-plan-render",
+ "ssimulacra2",
+]
+
+[[package]]
+name = "jpxl-plan-render"
+version = "0.3.0"
+dependencies = [
+ "jpxl-core",
+ "jpxl-decode",
+ "jpxl-encode",
+ "jpxl-encode-policy",
+ "jpxl-perceptual",
 ]
 
 [[package]]

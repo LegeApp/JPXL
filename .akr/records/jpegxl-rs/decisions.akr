@@ -60,7 +60,7 @@ record jpegxl-rs.decision.cover-rate-model-calibrated-for-target-rate/1 : decisi
 
 record jpegxl-rs.decision.encoder-architecture-phases/1 : decision {
     title "Reorient encoder work to architecture phases 0-6 (outside-advice)"
-    state active
+    state superseded
     scope [
         path "JPXL/crates/jpxl-cli/**",
         path "JPXL/crates/jpxl-encode-policy/**",
@@ -96,6 +96,46 @@ record jpegxl-rs.decision.encoder-architecture-phases/1 : decision {
     ]
     supported_by [ @jpegxl-rs.assessment.encoder-architecture-outside-advice ]
     author "grok-build"
+}
+
+record jpegxl-rs.decision.encoder-architecture-phases/2 : decision {
+    title "Execute the evidence-gated G0-G6 libjxl-gap bridge"
+    state active
+    scope [
+        path "JPXL/crates/jpxl-cli/**",
+        path "JPXL/crates/jpxl-encode-policy/**",
+        path "JPXL/crates/jpxl-encode/**",
+        path "JPXL/crates/jpxl-entropy/**",
+        path "JPXL/tools/**"
+    ]
+    decision """
+        The earlier architecture phases through dense coefficient banks, anchored search, finalist token traversal, leaf finishing and Butteraugli localization are complete and are not restarted. Continue with the registered 2026-08-21 gap bridge in evidence order: G0 comparison truth; G1 diagnostic edge-flat risk localization; G2 selective finalist-only run-aware quantization; G3 a bounded truthful production controller; G4 selective low-margin cover/CfL refresh; G5 packed entropy representation and bounded alternatives; G6 only after a fresh profile. No production decision change precedes the G0 baseline, and G2 does not start unless G1 concentrates held-out failures into a small area.
+        """
+    context """
+        Real-world benches showed ~15x VarDCT and ~30-100x Modular gaps with
+        parallel+simd features already default-on. Flamegraphs and outside advice
+        attribute the gap to call multiplicity and multi-pass planning, not missing
+        AVX kernels on leaves that are already small fractions of wall time.
+        """
+    consequences """
+        jpegxl-rs.work.encoder-optimization-plan and Opt-* leaf milestones remain
+        historical; new work items attach to architecture-phase work under this
+        decision. sources/outside-advice.md is retained per policy.
+        """
+    implements [
+        @jpegxl-rs.constraint.correctness-before-speed,
+        @jpegxl-rs.policy.sources-advice-completion
+    ]
+    supersedes [ @jpegxl-rs.decision.encoder-architecture-phases/1 ]
+    supported_by [ @jpegxl-rs.assessment.gap-bridge-2026-08-21 ]
+    source {
+        kind external
+        role origin
+        path "sources/external/jpxl-bridging-libjxl-gap-2026-08-21--ae1ed657.md"
+        use """
+            Adopts the roadmap ordering while keeping each recommendation subject to JPXL evidence.
+            """
+    }
 }
 
 record jpegxl-rs.decision.image-io-at-cli-boundary/1 : decision {
@@ -166,7 +206,7 @@ record jpegxl-rs.decision.ledger-conventions/1 : decision {
 
 record jpegxl-rs.decision.lossy-production-presets/1 : decision {
     title "Balanced and Fast are the production lossy presets; Quality is the exhaustive reference preset"
-    state active
+    state superseded
     scope [
         path "JPXL/crates/jpxl-cli/src/main.rs",
         path "JPXL/crates/jpxl-encode-policy/**",
@@ -343,6 +383,54 @@ record jpegxl-rs.decision.optimization-pass-opened/1 : decision {
         excerpt """
             Recommended implementation order: Common foundation, then Modular track,
             then VarDCT track, then parallel and SIMD, finish with LTO and PGO.
+            """
+    }
+}
+
+record jpegxl-rs.decision.perceptual-quality-contract/1 : decision {
+    title "A minimum SSIMULACRA2 score is the public lossy contract; Fast (70) and Balanced (85) are the production efforts; Quality stays feature-gated until it is smaller at matched score"
+    state proposed
+    scope [
+        path "JPXL/crates/jpxl-cli/**",
+        path "JPXL/crates/jpxl-encode-policy/**",
+        path "JPXL/crates/jpxl-perceptual/**",
+        path "JPXL/crates/jpxl-plan-render/**",
+        path "JPXL/crates/jpxl/**",
+        path "JPXL/tools/**"
+    ]
+    decision """
+        Normal lossy encoding is specified by a minimum perceptual score, not a byte budget: the encoder minimises exact codestream bytes subject to SSIMULACRA2(source, decoded) >= requested score. Two production efforts exist: Fast (web; default --quality 70) and Balanced (archival; default --quality 85). Both accept an explicit --quality 0..100; 100 routes to lossless; the same score must mean the same minimum quality at every effort, and higher effort may only reduce bytes or overshoot, never the achieved score. Hard probe/price budgets are enforced in code for both production efforts with no hidden exhaustive fallback. The exhaustive RateSearchPreset::Quality path and the perceptual Quality effort (policy bank, terminal reducer) are compiled only under the `quality-effort` cargo feature; a public Quality effort is re-exposed only when evidence on the locked holdout shows geomean bytes at matched achieved SSIMULACRA2 <= 0.98x Balanced with Contract B guards intact. --bpp, --bytes and a fixed-quantizer --global-scale remain as expert, benchmarking and constrained-delivery modes; they no longer define the normal lossy policy. Quality-mode policy contains no requested-bitrate branch (at_most_one_bpp and the bpp-keyed chroma QM arms are removed from the quality path); chroma allocation is a per-preset starting value and a policy-bank axis compared at equal score. The production metric is the in-tree jpxl-perceptual implementation (first backend: clean-room SSIMULACRA2, parity-tested); a metric-version change is an encoder-behaviour change.
+        """
+    context """
+        The byte-target contract made the lossy path unusable for real work: a user cannot ask for archival or web quality, only for a byte count whose perceptual meaning changes per image (user, 2026-08-22). The G0 baseline of 2026-08-21 already shows JPXL Balanced 9-12% smaller than cjxl -e7 at equal SSIMULACRA2 on the mid/large photos while trailing Butteraugli 3-norm and PSNR at matched bytes, so the goal is a usable score contract that preserves that byte advantage and the guard metrics, not a libjxl density chase. The registered 2026-08-21 controller plan and the 2026-08-22 metric advice are the outside sources; this decision adopts the controller plan's public contract and effort semantics, keeps the doc's PR 1-5 and PR 7 in scope with PR 6/8 as follow-ups, and records the metric advice as a separate later workstream (JPXL-PQ/JPXL-PCost) in which SSIMULACRA2 and Butteraugli remain independent guards.
+        """
+    consequences """
+        Supersedes jpegxl-rs.decision.lossy-production-presets/1 (Quality as a public exhaustive reference preset). Work is tracked under jpegxl-rs.track.perceptual-quality-controller as PR 0-5 and PR 7 work records with measurable gates; promotion is measured at equal achieved SSIMULACRA2 (geomean byte ratio, BD-rate), never at equal bpp. Rate-mode (--bpp/--bytes) production streams must remain byte-identical through the refactors. The wall-time budget for the perceptual Balanced path is recorded per PR from measurement (provisional PR 4 bound 2.0x rate-mode Balanced at matched score; +25% is the later profiling target), not assumed.
+        """
+    implements [
+        @jpegxl-rs.decision.ssimulacra2-is-the-primary-promotion-metric/1,
+        @jpegxl-rs.policy.clean-room-boundary/1,
+        @jpegxl-rs.policy.sources-advice-completion/2
+    ]
+    supersedes [ @jpegxl-rs.decision.lossy-production-presets/1 ]
+    supported_by [
+        @jpegxl-rs.observation.libjxl-comparison-2026-08-18/2,
+        @jpegxl-rs.observation.q5-exhaustive-fallback-is-a-hidden-quality-tier-2026-08-18/3
+    ]
+    source {
+        kind external
+        role origin
+        document "jpxl-ssimulacra2-quality-controller-plan-2026-08-21"
+        use """
+            Public quality contract, effort/quality independence, hard budgets, Pareto selection, PR sequence and acceptance gates.
+            """
+    }
+    source {
+        kind external
+        role rationale
+        document "jpxl-encoder-metric-advice-2026-08-22"
+        use """
+            Metric framework exposes error fields; JPXL-specific metric is a separate later workstream; SSIMULACRA2 and Butteraugli stay independent guards (Goodhart rule).
             """
     }
 }

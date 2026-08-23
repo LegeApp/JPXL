@@ -1,6 +1,30 @@
 akr 0.1
 project jpegxl-rs
 
+record jpegxl-rs.papercut.a-completed-work-revision-retained-two-evidence/1 : papercut {
+    title "A completed work revision retained two evidence references observed…"
+    state verified
+    statement """
+        A completed work revision retained two evidence references observed before that revision; the earlier follow-up refreshed only the other two checks, so `akr build` later surfaced R022. A completion/update path that reports every stale acceptance reference together would make partial refreshes harder to miss.
+        """
+    observed_at git:498fa6af878cfd1cb17f552db464a060075ffa5d
+    about "akr"
+    author "codex"
+    created_at 2026-08-21
+}
+
+record jpegxl-rs.papercut.a-full-13-image-curve-run-was-oom-killed-on-the/1 : papercut {
+    title "A full 13-image curve run was OOM-killed on the first 50 MP input after…"
+    state verified
+    statement """
+        A full 13-image curve run was OOM-killed on the first 50 MP input after ten minutes, and codec_compare.py had not written any JSONL because it buffers every image until completion. Per-image selection or incremental/checkpointed output is needed so completed corpus work is resumable.
+        """
+    observed_at git:628b6c7b24577e61b4e06c1d6fea428e1a155541
+    about "JPXL codec comparison harness"
+    author "codex"
+    created_at 2026-08-23
+}
+
 record jpegxl-rs.papercut.a-harmless-scratch-setup-command-was-rejected/1 : papercut {
     title "A harmless scratch setup command was rejected because it combined…"
     state verified
@@ -11,6 +35,42 @@ record jpegxl-rs.papercut.a-harmless-scratch-setup-command-was-rejected/1 : pape
     about "shell_command"
     author "fugu-ultra"
     created_at 2026-08-18
+}
+
+record jpegxl-rs.papercut.after-a-temporary-comparison-worktree-restored/1 : papercut {
+    title "After a temporary comparison worktree restored a modified source with…"
+    state verified
+    statement """
+        After a temporary comparison worktree restored a modified source with an older mtime, Cargo treated stale jpxl-entropy artifacts as fresh even after `cargo clean -p`; a meaningful source edit finally forced the dependency rebuild.
+        """
+    observed_at git:498fa6af878cfd1cb17f552db464a060075ffa5d
+    about "cargo"
+    author "codex"
+    created_at 2026-08-21
+}
+
+record jpegxl-rs.papercut.after-akr-scratch-keep-quality-rate-curve/1 : papercut {
+    title "After `akr scratch keep quality-rate-curve-closure-20260823` and `akr…"
+    state verified
+    statement """
+        After `akr scratch keep quality-rate-curve-closure-20260823` and `akr build`, `akr scratch list` showed the entry as kept, but knowledge.evidence_add twice rejected a file inside it with AKR-C004 as disposable. MCP scratch-keep detection appears out of sync with the CLI metadata.
+        """
+    observed_at git:628b6c7b24577e61b4e06c1d6fea428e1a155541
+    about "akr"
+    author "codex-gpt-5"
+    created_at 2026-08-23
+}
+
+record jpegxl-rs.papercut.after-akr-scratch-keep-visibly-added-a-new/1 : papercut {
+    title "After `akr scratch keep` visibly added a new entry,…"
+    state verified
+    statement """
+        After `akr scratch keep` visibly added a new entry, knowledge.evidence_add still rejected that kept artifact from its cached workspace. The CLI fallback revalidated ~230 unrelated historical scratch citations lacking current keep markers and refused an otherwise valid atomic write; omitting the typed artifact was the only scoped path forward.
+        """
+    observed_at git:628b6c7b24577e61b4e06c1d6fea428e1a155541
+    about "akr"
+    author "codex"
+    created_at 2026-08-23
 }
 
 record jpegxl-rs.papercut.akr-check-strict-exits-1-on-akr-g004-alone-when/1 : papercut {
@@ -139,6 +199,29 @@ record jpegxl-rs.papercut.fff-multi-grep-again-failed-with-transport/1 : papercu
     created_at 2026-08-15
 }
 
+record jpegxl-rs.papercut.finalizing-a-cited-source-with-context-block/1 : papercut {
+    title "Finalizing a cited source with --context block produced AKR-S022 on…"
+    state superseded
+    statement """
+        Finalizing a cited source with --context block produced AKR-S022 on every retained citation because captured byte ranges were reported as covering one or two lines beyond their stored end_line; cited-only sources cannot be re-finalized with exact context. The safe fallback was to restore the uncommitted finalization and retain metadata only.
+        """
+    observed_at git:3bc2453cde8140a6d670ec9fa7a7f07645980793
+    about "akr"
+    author "gpt-5"
+    created_at 2026-08-21
+}
+
+record jpegxl-rs.papercut.finalizing-a-cited-source-with-context-block/2 : papercut {
+    title "Finalizing a cited source with --context block produced AKR-S022 on…"
+    state verified
+    statement """
+        Finalizing a cited source with --context block produced AKR-S022 on every retained citation because captured byte ranges were reported as covering one or two lines beyond their stored end_line; cited-only sources cannot be re-finalized with exact context. The safe fallback was to restore the uncommitted finalization, leave the exact-cited source full, and metadata-finalize only uncited sources.
+        """
+    observed_at git:3bc2453cde8140a6d670ec9fa7a7f07645980793
+    about "akr"
+    supersedes [ @jpegxl-rs.papercut.finalizing-a-cited-source-with-context-block/1 ]
+}
+
 record jpegxl-rs.papercut.hybrid-intel-plain-cycles-u-records-cpu-atom/1 : papercut {
     title "Hybrid Intel: plain cycles:u records cpu_atom+cpu_core; atom samples…"
     state verified
@@ -182,6 +265,30 @@ record jpegxl-rs.papercut.knowledge-propose-documents-observation/1 : papercut {
     about "akr"
     author "gpt-5"
     created_at 2026-08-11
+}
+
+record jpegxl-rs.papercut.knowledge-propose-exposes-scope-as-array/1 : papercut {
+    title "knowledge.propose exposes scope as Array<unknown>; passing intuitive…"
+    state verified
+    statement """
+        knowledge.propose exposes scope as Array<unknown>; passing intuitive {path: ...} objects fails only with 'unknown scope form'. The accepted MCP shape is {form: 'path', glob: ...}, which should be expressed in the tool schema or error.
+        """
+    observed_at git:628b6c7b24577e61b4e06c1d6fea428e1a155541
+    about "akr"
+    author "codex"
+    created_at 2026-08-23
+}
+
+record jpegxl-rs.papercut.knowledge-propose-exposes-topic-for-every/1 : papercut {
+    title "knowledge.propose exposes `topic` for every record kind, but a work…"
+    state verified
+    statement """
+        knowledge.propose exposes `topic` for every record kind, but a work proposal containing it fails only after full validation with AKR-T034 because topic is normative-only. The tool schema or preflight should state/reject this earlier.
+        """
+    observed_at git:628b6c7b24577e61b4e06c1d6fea428e1a155541
+    about "akr"
+    author "codex-gpt-5"
+    created_at 2026-08-23
 }
 
 record jpegxl-rs.papercut.knowledge-propose-says-observation-requires/1 : papercut {
@@ -265,6 +372,18 @@ record jpegxl-rs.papercut.the-first-phase-26-diagnostic-harness-run/1 : papercut
     created_at 2026-08-16
 }
 
+record jpegxl-rs.papercut.the-frozen-pqc-holdout-reducer-scripts-and/1 : papercut {
+    title "The frozen PQC holdout/reducer scripts and manifest embed…"
+    state verified
+    statement """
+        The frozen PQC holdout/reducer scripts and manifest embed /mnt/Samsung980_1TB/Rust-projects/jpegXL-rs, but the current checkout is D:\Rust-projects\jpegXL-rs and WSL exposes it elsewhere. Re-running the locked gate requires a scratch path rebasing step; future harnesses should derive the repo root.
+        """
+    observed_at git:628b6c7b24577e61b4e06c1d6fea428e1a155541
+    about "project measurement harness"
+    author "codex"
+    created_at 2026-08-22
+}
+
 record jpegxl-rs.papercut.the-installed-akr-0-3-1-rejected-four-existing/1 : papercut {
     title "The installed akr 0.3.1 rejected four existing observation records…"
     state verified
@@ -286,6 +405,17 @@ record jpegxl-rs.papercut.the-native-windows-workspace-test-gate-treated/1 : pap
     observed_at git:0fbb8941f2c4fe3598b74ad602b3777c1e7e1ae1
     author "fugu-ultra"
     created_at 2026-08-19
+}
+
+record jpegxl-rs.papercut.the-phase-32-corpus-harness-resolves-jpxl/1 : papercut {
+    title "The Phase-32 corpus harness resolves JPXL_PHASE32_PPM paths from the…"
+    state verified
+    statement """
+        The Phase-32 corpus harness resolves JPXL_PHASE32_PPM paths from the package test working directory, so repo-relative paths that exist from the cargo invocation directory fail with an unlabelled Os NotFound. The harness should report the failing path or document that paths must be absolute.
+        """
+    observed_at git:537ff2822a2fde163a594097d7e7915307ae8185
+    author "Codex"
+    created_at 2026-08-21
 }
 
 record jpegxl-rs.papercut.the-photo-measurement-used-paths-relative-to/1 : papercut {

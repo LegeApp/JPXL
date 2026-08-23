@@ -956,7 +956,7 @@ record jpegxl-rs.work.arch-phase24-hfmul-overlay/2 : work {
                 Pinned interleaved Balanced timing measures the overlay retarget path on canonical mid and large inputs with binary/input hashes and dispersion, run without competing benchmark load; masking-AQ timing exercises the overlay directly.
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.phase24-speed-2026-08-16/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase24-speed-2026-08-16/2 ]
         }
     }
     depends_on [ @jpegxl-rs.work.arch-phase23-cow-geometry ]
@@ -1022,12 +1022,13 @@ record jpegxl-rs.work.arch-phase24-hfmul-overlay/3 : work {
                 Pinned interleaved Balanced timing measures the overlay retarget path on canonical mid and large inputs with binary/input hashes and dispersion, run without competing benchmark load; masking-AQ timing exercises the overlay directly.
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.phase24-speed-2026-08-16/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase24-speed-2026-08-16/2 ]
         }
     }
     depends_on [ @jpegxl-rs.work.arch-phase23-cow-geometry ]
     part_of [ @jpegxl-rs.track.encoder-optimization ]
     supersedes [ @jpegxl-rs.work.arch-phase24-hfmul-overlay/2 ]
+    source { kind legacy }
 }
 
 record jpegxl-rs.work.arch-phase25-multi-quantizer-workspace/1 : work {
@@ -1052,7 +1053,7 @@ record jpegxl-rs.work.arch-phase25-multi-quantizer-workspace/1 : work {
                 """
             method command
             command "bash .agent/scratch/phase25-multi-quantizer-workspace/identity.sh"
-            verified_by [ @jpegxl-rs.evidence.phase25-identity-2026-08-16/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase25-identity-2026-08-16/2 ]
         }
         check focused-policy-tests {
             statement """
@@ -1060,7 +1061,7 @@ record jpegxl-rs.work.arch-phase25-multi-quantizer-workspace/1 : work {
                 """
             method command
             command "cargo test -p jpxl-encode-policy --all-features"
-            verified_by [ @jpegxl-rs.evidence.phase25-policy-tests-2026-08-16/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase25-policy-tests-2026-08-16/2 ]
         }
         check timing-screen {
             statement """
@@ -1068,7 +1069,7 @@ record jpegxl-rs.work.arch-phase25-multi-quantizer-workspace/1 : work {
                 """
             method command
             command "bash .agent/scratch/phase25-multi-quantizer-workspace/timing-balanced.sh; bash .agent/scratch/phase25-multi-quantizer-workspace/timing-masking-aq.sh"
-            verified_by [ @jpegxl-rs.evidence.phase25-timing-2026-08-16/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase25-timing-2026-08-16/2 ]
         }
         check wire-identity {
             statement """
@@ -1076,7 +1077,7 @@ record jpegxl-rs.work.arch-phase25-multi-quantizer-workspace/1 : work {
                 """
             method command
             command "bash .agent/scratch/phase25-multi-quantizer-workspace/identity.sh"
-            verified_by [ @jpegxl-rs.evidence.phase25-identity-2026-08-16/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase25-identity-2026-08-16/2 ]
         }
         check workspace-safety {
             statement """
@@ -1093,6 +1094,7 @@ record jpegxl-rs.work.arch-phase25-multi-quantizer-workspace/1 : work {
     }
     depends_on [ @jpegxl-rs.work.arch-phase24-hfmul-overlay/3 ]
     part_of [ @jpegxl-rs.track.encoder-optimization ]
+    source { kind legacy }
 }
 
 record jpegxl-rs.work.arch-phase27-finalist-only-entropy/1 : work {
@@ -1119,7 +1121,7 @@ record jpegxl-rs.work.arch-phase27-finalist-only-entropy/1 : work {
                 """
             method command
             verified_by [
-                @jpegxl-rs.evidence.phase27-finalist-only-entropy-correctness-2026-08-16/1
+                @jpegxl-rs.evidence.phase27-finalist-only-entropy-correctness-2026-08-16/2
             ]
         }
         check multiplicity-reduction {
@@ -1128,7 +1130,7 @@ record jpegxl-rs.work.arch-phase27-finalist-only-entropy/1 : work {
                 """
             method command
             verified_by [
-                @jpegxl-rs.evidence.phase27-finalist-only-entropy-screen-2026-08-16/1
+                @jpegxl-rs.evidence.phase27-finalist-only-entropy-screen-2026-08-16/2
             ]
         }
         check quality-target-screen {
@@ -1137,7 +1139,7 @@ record jpegxl-rs.work.arch-phase27-finalist-only-entropy/1 : work {
                 """
             method command
             verified_by [
-                @jpegxl-rs.evidence.phase27-finalist-only-entropy-screen-2026-08-16/1
+                @jpegxl-rs.evidence.phase27-finalist-only-entropy-screen-2026-08-16/2
             ]
         }
         check workspace-validation {
@@ -1153,6 +1155,7 @@ record jpegxl-rs.work.arch-phase27-finalist-only-entropy/1 : work {
     depends_on [ @jpegxl-rs.evidence.phase26-rate-multiplicity-2026-08-16/1 ]
     implements [ @jpegxl-rs.policy.optimization-correctness-gates/1 ]
     part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+    source { kind legacy }
 }
 
 record jpegxl-rs.work.arch-phase28-cfl-lf-scratch-reuse/1 : work {
@@ -1518,23 +1521,24 @@ record jpegxl-rs.work.arch-phase31-lane4-vector-select/1 : work {
                 Workspace build (with and without --tests) is warning-free, formatting is clean, and the full test suite passes. Workspace clippy is documented as failing at HEAD on pre-existing jpxl-core/src/color.rs indexing_slicing hits (f3be8b8), outside this brief.
                 """
             method command
-            verified_by [ @jpegxl-rs.evidence.phase31-gates-2026-08-16/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase31-gates-2026-08-16/2 ]
         }
         check identity {
             statement """
                 Canonical Fast, Balanced, Quality, and masking-AQ streams on mid and large inputs remain byte-identical to the pre-Phase-31 binary; every candidate output decodes.
                 """
             method command
-            verified_by [ @jpegxl-rs.evidence.phase31-identity-2026-08-16/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase31-identity-2026-08-16/2 ]
         }
         check profile {
             statement """
                 A DWARF-unwound profile traces the candidate-selection cost inside choose_lane4, and a post-change profile shows the quantize-loop family reduced (34.8% -> 27.2% of samples). A pinned wall-clock screen was recorded but is mixed/noise-dominated (as in Phase 30); the profile delta carries the cost claim.
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.phase31-profile-2026-08-16/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase31-profile-2026-08-16/2 ]
         }
     }
+    source { kind legacy }
 }
 
 record jpegxl-rs.work.arch-phase32-dirty-frontier-screen/1 : work {
@@ -2774,6 +2778,7 @@ record jpegxl-rs.work.arch-phase5a-aq-policy-gate/1 : work {
         @jpegxl-rs.policy.research-out-of-core
     ]
     part_of [ @jpegxl-rs.track.encoder-optimization ]
+    source { kind legacy }
 }
 
 record jpegxl-rs.work.arch-phase5b-restoration-screen/1 : work {
@@ -2824,6 +2829,7 @@ record jpegxl-rs.work.arch-phase5b-restoration-screen/1 : work {
         @jpegxl-rs.policy.clean-room-boundary
     ]
     part_of [ @jpegxl-rs.track.encoder-optimization ]
+    source { kind legacy }
 }
 
 record jpegxl-rs.work.arch-phase5c-lf-hf-balance-screen/1 : work {
@@ -2919,6 +2925,7 @@ record jpegxl-rs.work.arch-phase5c-lf-hf-balance-screen/2 : work {
     ]
     part_of [ @jpegxl-rs.track.encoder-optimization ]
     supersedes [ @jpegxl-rs.work.arch-phase5c-lf-hf-balance-screen/1 ]
+    source { kind legacy }
 }
 
 record jpegxl-rs.work.arch-phase5d-cover-quality-screen/1 : work {
@@ -2968,6 +2975,7 @@ record jpegxl-rs.work.arch-phase5d-cover-quality-screen/1 : work {
         @jpegxl-rs.policy.clean-room-boundary
     ]
     part_of [ @jpegxl-rs.track.encoder-optimization ]
+    source { kind legacy }
 }
 
 record jpegxl-rs.work.arch-phase5e-epf-screen/1 : work {
@@ -3018,6 +3026,7 @@ record jpegxl-rs.work.arch-phase5e-epf-screen/1 : work {
         @jpegxl-rs.policy.clean-room-boundary
     ]
     part_of [ @jpegxl-rs.track.encoder-optimization ]
+    source { kind legacy }
 }
 
 record jpegxl-rs.work.arch-phase5f-aqoff-oracle-compat/1 : work {
@@ -3135,6 +3144,7 @@ record jpegxl-rs.work.arch-phase5f-aqoff-oracle-compat/2 : work {
     ]
     part_of [ @jpegxl-rs.track.encoder-optimization ]
     supersedes [ @jpegxl-rs.work.arch-phase5f-aqoff-oracle-compat/1 ]
+    source { kind legacy }
 }
 
 record jpegxl-rs.work.arch-phase5g-aqoff-broader-corpus-gate/1 : work {
@@ -3155,21 +3165,21 @@ record jpegxl-rs.work.arch-phase5g-aqoff-broader-corpus-gate/1 : work {
                 All six distinct scenes are measured at 1 and 2 bpp for Masking/quant_lf16 and AQ-Off/quant_lf8 with symmetric djxl decoding and exact sizes.
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.phase5g-corpus-matrix-2026-08-11/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase5g-corpus-matrix-2026-08-11/2 ]
         }
         check default-decision {
             statement """
                 The production AQ/LF policy is promoted, revised, or explicitly retained from the corpus and oracle evidence.
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.phase5g-target-default-2026-08-11/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase5g-target-default-2026-08-11/2 ]
         }
         check oracle-anchor {
             statement """
                 The settled finalist has measured equal-rate cjxl e7 Butteraugli anchors on the representative scenes, with requested distance never substituted for measured distance.
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.phase5g-cjxl-equal-rate-anchors-2026-08-11/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase5g-cjxl-equal-rate-anchors-2026-08-11/2 ]
         }
     }
     depends_on [ @jpegxl-rs.work.arch-phase5f-aqoff-oracle-compat/2 ]
@@ -3179,6 +3189,7 @@ record jpegxl-rs.work.arch-phase5g-aqoff-broader-corpus-gate/1 : work {
         @jpegxl-rs.policy.optimization-correctness-gates/1
     ]
     part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+    source { kind legacy }
 }
 
 record jpegxl-rs.work.arch-phase5h-quant-lf-tail-gate/1 : work {
@@ -3198,14 +3209,14 @@ record jpegxl-rs.work.arch-phase5h-quant-lf-tail-gate/1 : work {
                 The production quant_lf default is retained or revised from the per-scene Butteraugli and SSIMULACRA2 evidence.
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.phase5h-quant-lf-tail-2026-08-11/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase5h-quant-lf-tail-2026-08-11/2 ]
         }
         check tail-screen {
             statement """
                 quant_lf 4 is measured on six scenes at one and two bpp, and quant_lf 2 is direction-checked on two scenes.
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.phase5h-quant-lf-tail-2026-08-11/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase5h-quant-lf-tail-2026-08-11/2 ]
         }
     }
     depends_on [ @jpegxl-rs.work.arch-phase5g-aqoff-broader-corpus-gate/1 ]
@@ -3214,6 +3225,7 @@ record jpegxl-rs.work.arch-phase5h-quant-lf-tail-gate/1 : work {
         @jpegxl-rs.policy.optimization-correctness-gates/1
     ]
     part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+    source { kind legacy }
 }
 
 record jpegxl-rs.work.arch-phase5i-active-epf-screen/1 : work {
@@ -3249,7 +3261,7 @@ record jpegxl-rs.work.arch-phase5i-active-epf-screen/1 : work {
                 EPF step 1 with uniform Sharpness=7 is compared against restoration off at matched achieved rate on at least the dense-detail and flat/edge small scenes using symmetric djxl and Butteraugli.
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.phase5i-active-epf-quality-2026-08-11/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase5i-active-epf-quality-2026-08-11/2 ]
         }
     }
     depends_on [ @jpegxl-rs.work.arch-phase5h-quant-lf-tail-gate/1 ]
@@ -3258,6 +3270,7 @@ record jpegxl-rs.work.arch-phase5i-active-epf-screen/1 : work {
         @jpegxl-rs.policy.optimization-correctness-gates/1
     ]
     part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+    source { kind legacy }
 }
 
 record jpegxl-rs.work.arch-phase5j-two-pass-error-aq-screen/1 : work {
@@ -3297,7 +3310,7 @@ record jpegxl-rs.work.arch-phase5j-two-pass-error-aq-screen/1 : work {
                 Matched-rate Butteraugli and SSIMULACRA2 results on the representative screen determine whether to broaden, revise, or reject the two-pass signal.
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.phase5j-two-pass-error-quality-2026-08-11/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase5j-two-pass-error-quality-2026-08-11/2 ]
         }
     }
     depends_on [ @jpegxl-rs.work.arch-phase5i-active-epf-screen/1 ]
@@ -3306,6 +3319,7 @@ record jpegxl-rs.work.arch-phase5j-two-pass-error-aq-screen/1 : work {
         @jpegxl-rs.policy.optimization-correctness-gates/1
     ]
     part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+    source { kind legacy }
 }
 
 record jpegxl-rs.work.arch-phase5k-active-epf-depth-screen/1 : work {
@@ -3368,7 +3382,7 @@ record jpegxl-rs.work.arch-phase5k-active-epf-depth-screen/2 : work {
                 Matched-rate Butteraugli and SSIMULACRA2 results on two representative scenes select one EPF depth for broader testing or retain the one-step default.
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.phase5k-active-epf-depth-quality-2026-08-11/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase5k-active-epf-depth-quality-2026-08-11/2 ]
         }
     }
     depends_on [ @jpegxl-rs.work.arch-phase5j-two-pass-error-aq-screen/1 ]
@@ -3378,6 +3392,7 @@ record jpegxl-rs.work.arch-phase5k-active-epf-depth-screen/2 : work {
     ]
     part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
     supersedes [ @jpegxl-rs.work.arch-phase5k-active-epf-depth-screen/1 ]
+    source { kind legacy }
 }
 
 record jpegxl-rs.work.arch-phase5l-chroma-qm-allocation-screen/1 : work {
@@ -3410,7 +3425,7 @@ record jpegxl-rs.work.arch-phase5l-chroma-qm-allocation-screen/1 : work {
                 Matched-rate perceptual results select a chroma allocation for broader testing or reject the control.
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.phase5l-chroma-qm-quality-2026-08-11/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase5l-chroma-qm-quality-2026-08-11/2 ]
         }
         check wire-proof {
             statement """
@@ -3426,6 +3441,7 @@ record jpegxl-rs.work.arch-phase5l-chroma-qm-allocation-screen/1 : work {
         @jpegxl-rs.policy.optimization-correctness-gates/1
     ]
     part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+    source { kind legacy }
 }
 
 record jpegxl-rs.work.arch-phase5m-spatial-epf-sharpness-screen/1 : work {
@@ -3447,21 +3463,21 @@ record jpegxl-rs.work.arch-phase5m-spatial-epf-sharpness-screen/1 : work {
                 The EPF1 Uniform7 production default remains byte-identical unless a full six-scene promotion gate passes.
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.phase5m-spatial-epf-policy-2026-08-11/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase5m-spatial-epf-policy-2026-08-11/2 ]
         }
         check quality-screen {
             statement """
                 Matched-rate Butteraugli and SSIMULACRA2 on small1, small3, and mid2 at one and two bpp select one spatial policy for broader testing or reject both.
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.phase5m-spatial-epf-quality-2026-08-11/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase5m-spatial-epf-quality-2026-08-11/2 ]
         }
         check spatial-proof {
             statement """
                 Unit and oracle tests prove each research policy emits both legal 0 and 7 sharpness levels in source-activity-dependent spatial positions and remains accepted by djxl and jxl-oxide.
                 """
             method command
-            verified_by [ @jpegxl-rs.evidence.phase5m-spatial-epf-wire-2026-08-11/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase5m-spatial-epf-wire-2026-08-11/2 ]
         }
     }
     depends_on [ @jpegxl-rs.work.arch-phase5l-chroma-qm-allocation-screen/1 ]
@@ -3470,6 +3486,7 @@ record jpegxl-rs.work.arch-phase5m-spatial-epf-sharpness-screen/1 : work {
         @jpegxl-rs.policy.optimization-correctness-gates/1
     ]
     part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+    source { kind legacy }
 }
 
 record jpegxl-rs.work.arch-phase5n-fine-aq-lattice-screen/1 : work {
@@ -3493,21 +3510,21 @@ record jpegxl-rs.work.arch-phase5n-fine-aq-lattice-screen/1 : work {
                 Tests prove the fine factorization preserves the baseline HF and LF quantizer products, produces more than the coarse lattice's values, stays deterministic and target-safe, and is accepted by djxl and jxl-oxide.
                 """
             method command
-            verified_by [ @jpegxl-rs.evidence.phase5n-fine-aq-structure-2026-08-11/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase5n-fine-aq-structure-2026-08-11/2 ]
         }
         check policy-decision {
             statement """
                 The AQ-Off production default remains byte-identical unless a full six-scene promotion gate passes.
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.phase5n-fine-aq-policy-2026-08-11/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase5n-fine-aq-policy-2026-08-11/2 ]
         }
         check quality-screen {
             statement """
                 Matched-rate Butteraugli and SSIMULACRA2 on small1 and small2 at one and two bpp select one fine AQ direction for broader testing or reject both.
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.phase5n-fine-aq-quality-2026-08-11/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase5n-fine-aq-quality-2026-08-11/2 ]
         }
     }
     depends_on [ @jpegxl-rs.work.arch-phase5m-spatial-epf-sharpness-screen/1 ]
@@ -3516,6 +3533,7 @@ record jpegxl-rs.work.arch-phase5n-fine-aq-lattice-screen/1 : work {
         @jpegxl-rs.policy.optimization-correctness-gates/1
     ]
     part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+    source { kind legacy }
 }
 
 record jpegxl-rs.work.arch-phase5o-special8-transform-screen/1 : work {
@@ -3540,28 +3558,28 @@ record jpegxl-rs.work.arch-phase5o-special8-transform-screen/1 : work {
                 The candidate is broadened only on a uniformly safe direction; otherwise its temporary source and CLI surface are removed and the production fingerprint is restored.
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.phase5o-special8-cleanup-2026-08-11/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase5o-special8-cleanup-2026-08-11/2 ]
         }
         check quality-screen {
             statement """
                 Small1 and small2 at one and two bpp are scored with symmetric djxl decode at Phase 5I byte caps.
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.phase5o-special8-quality-2026-08-11/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase5o-special8-quality-2026-08-11/2 ]
         }
         check rate-oracle {
             statement """
                 The research mode obeys the exact byte target and a stream carrying a special transform decodes in djxl and jxl-oxide.
                 """
             method command
-            verified_by [ @jpegxl-rs.evidence.phase5o-special8-wire-rate-2026-08-11/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase5o-special8-wire-rate-2026-08-11/2 ]
         }
         check selection-proof {
             statement """
                 A synthetic fixture selects at least one same-footprint special transform and preserves a legal validated plan.
                 """
             method command
-            verified_by [ @jpegxl-rs.evidence.phase5o-special8-wire-rate-2026-08-11/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase5o-special8-wire-rate-2026-08-11/2 ]
         }
     }
     depends_on [ @jpegxl-rs.work.arch-phase5n-fine-aq-lattice-screen/1 ]
@@ -3570,6 +3588,7 @@ record jpegxl-rs.work.arch-phase5o-special8-transform-screen/1 : work {
         @jpegxl-rs.policy.optimization-correctness-gates/1
     ]
     part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+    source { kind legacy }
 }
 
 record jpegxl-rs.work.arch-phase5p-special8-exact-distortion-screen/1 : work {
@@ -3647,7 +3666,7 @@ record jpegxl-rs.work.arch-phase6-0-distortion-currency/1 : work {
                 """
             method command
             command "JPXL_CALIB_REF=<ref.ppm> cargo test --release -p jpxl-conformance --features perceptual --test perceptual_frequency -- --ignored --nocapture"
-            verified_by [ @jpegxl-rs.evidence.phase6-0-frequency-harness-2026-08-12/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase6-0-frequency-harness-2026-08-12/2 ]
         }
         check spread-decided {
             statement """
@@ -3664,6 +3683,7 @@ record jpegxl-rs.work.arch-phase6-0-distortion-currency/1 : work {
         @jpegxl-rs.policy.optimization-correctness-gates
     ]
     part_of [ @jpegxl-rs.track.encoder-optimization ]
+    source { kind legacy }
 }
 
 record jpegxl-rs.work.arch-phase6-1-quantizer-normalised-residual/1 : work {
@@ -4589,19 +4609,20 @@ record jpegxl-rs.work.arch-phase8-4-finalist-token-tape/2 : work {
                 Census, training, and exact writer amplification fall and total encode time improves; Count-then-Store is adopted only if its median win is at least 3%.
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.phase8-4-windows-speed/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase8-4-windows-speed/2 ]
         }
         check quality-and-target {
             statement """
                 The Phase 8.3 target and strict per-cell quality gates remain satisfied.
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.phase8-4-quality-identity/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase8-4-quality-identity/2 ]
         }
     }
     depends_on [ @jpegxl-rs.work.arch-phase8-3-anchor-sketch ]
     part_of [ @jpegxl-rs.track.encoder-optimization ]
     supersedes [ @jpegxl-rs.work.arch-phase8-4-finalist-token-tape/1 ]
+    source { kind legacy }
 }
 
 record jpegxl-rs.work.arch-phase8-5-leaf-finishing/1 : work {
@@ -4923,14 +4944,14 @@ record jpegxl-rs.work.arch-phase8-6-butteraugli-localization/2 : work {
                 A bounded clean-room implementation brief names owned files, mechanism, speed risk and fixed-rate multi-metric promotion gates.
                 """
             method manual
-            verified_by [ @jpegxl-rs.evidence.phase8-6-architecture-brief-2026-08-14/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase8-6-architecture-brief-2026-08-14/2 ]
         }
         check deficit-localized {
             statement """
                 Spatial, channel, frequency and fixed-rate policy screens distinguish a broad architectural deficit from a local metric outlier.
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.phase8-6-deficit-localization-2026-08-14/1 ]
+            verified_by [ @jpegxl-rs.evidence.phase8-6-deficit-localization-2026-08-14/2 ]
         }
         check metric-valid {
             statement """
@@ -4938,7 +4959,7 @@ record jpegxl-rs.work.arch-phase8-6-butteraugli-localization/2 : work {
                 """
             method observation
             verified_by [
-                @jpegxl-rs.evidence.phase8-6-independent-metric-validation-2026-08-14/1
+                @jpegxl-rs.evidence.phase8-6-independent-metric-validation-2026-08-14/2
             ]
         }
     }
@@ -4948,6 +4969,7 @@ record jpegxl-rs.work.arch-phase8-6-butteraugli-localization/2 : work {
     ]
     part_of [ @jpegxl-rs.track.encoder-optimization ]
     supersedes [ @jpegxl-rs.work.arch-phase8-6-butteraugli-localization/1 ]
+    source { kind legacy }
 }
 
 record jpegxl-rs.work.arch-phase8-6-finalist-measured-hf-allocation/1 : work {
@@ -5769,6 +5791,42 @@ record jpegxl-rs.work.arch-s8-phase-d-prune-wired/1 : work {
     part_of [ @jpegxl-rs.work.arch-s8-full-redesign-scoped ]
 }
 
+record jpegxl-rs.work.cli-netpbm-subtype-contract/1 : work {
+    title "Honor explicit PGM and PPM output subtypes"
+    state completed
+    scope [ path "JPXL/crates/jpxl-cli/src/image_io.rs" ]
+    intent """
+        Make explicit CLI pgm and ppm output requests emit binary P5 and P6 respectively, so the decoder output matches its advertised extension and the PPM output is directly consumable by jpxl compare; retain generic pnm as the image library's dynamically selected PNM subtype.
+        """
+    acceptance {
+        check explicit-subtypes {
+            statement """
+                Focused CLI tests prove explicit ppm emits P6 and explicit pgm emits P5.
+                """
+            method command
+            command "cd JPXL && cargo test -p jpxl-cli --profile fast-debug"
+            verified_by [ @jpegxl-rs.evidence.cli-netpbm-subtypes-2026-08-21/1 ]
+        }
+        check layout-errors {
+            statement """
+                Focused CLI tests prove incompatible RGB-to-PGM and grayscale-to-PPM layouts return errors.
+                """
+            method command
+            command "cd JPXL && cargo test -p jpxl-cli --profile fast-debug"
+            verified_by [ @jpegxl-rs.evidence.cli-netpbm-subtypes-2026-08-21/1 ]
+        }
+        check workspace-gates {
+            statement """
+                The full workspace build, tests, clippy, and formatting gates pass.
+                """
+            method command
+            command "cd JPXL && cargo build --workspace && cargo test --workspace --profile fast-debug && cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all --check"
+            verified_by [ @jpegxl-rs.evidence.cli-netpbm-workspace-gates-2026-08-21/1 ]
+        }
+    }
+    implements [ @jpegxl-rs.requirement.general-use-integration-surface ]
+}
+
 record jpegxl-rs.work.dispose-performance-md/1 : work {
     title "Dispose PERFORMANCE.md into AKR and scratch"
     state superseded
@@ -5868,6 +5926,708 @@ record jpegxl-rs.work.encoder-optimization-plan/1 : work {
         excerpt """
             Recommended implementation order: Common foundation; Modular track; VarDCT
             track; parallel and SIMD; LTO and PGO.
+            """
+    }
+}
+
+record jpegxl-rs.work.gap-advice-source-migration/1 : work {
+    title "Archive gap advice and retire top-level status Markdown"
+    state completed
+    scope [
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/**",
+        path "sources/**"
+    ]
+    intent """
+        Register the current bridge and historical outside-advice documents in the immutable AKR source library, remove their top-level intake copies and stale status sidecar, and replace live source-code path references with stable source IDs.
+        """
+    acceptance {
+        check ledger-valid {
+            statement """
+                The AKR ledger, catalog, and generated views validate.
+                """
+            method command
+            command "akr check"
+            verified_by [ @jpegxl-rs.evidence.gap-advice-ledger-valid-2026-08-21/1 ]
+        }
+        check sources-verified {
+            statement """
+                Every registered source hash verifies.
+                """
+            method command
+            command "akr source verify"
+            verified_by [ @jpegxl-rs.evidence.gap-advice-sources-verified-2026-08-21/1 ]
+        }
+        check top-level-clean {
+            statement """
+                No outside-advice intake or status Markdown remains at sources/ top level; registered copies remain under sources/external.
+                """
+            method manual
+            verified_by [ @jpegxl-rs.evidence.gap-advice-top-level-clean-2026-08-21/1 ]
+        }
+    }
+    part_of [ @jpegxl-rs.track.akr-adoption ]
+    source {
+        kind external
+        role origin
+        path "sources/external/jpxl-bridging-libjxl-gap-2026-08-21--ae1ed657.md"
+        use """
+            Defines the current continuation roadmap.
+            """
+    }
+    source {
+        kind external
+        role rationale
+        path "sources/external/outside-advice-2026-08-06--945338a6.md"
+        use """
+            Historical advice remains auditable after top-level cleanup.
+            """
+    }
+}
+
+record jpegxl-rs.work.gap-g0-comparison-truth/1 : work {
+    title "G0: comparison harness v2 and current parity baseline"
+    state completed
+    scope [ path ".agent/scratch/**", path "JPXL/tools/**" ]
+    intent """
+        Replace the misleading PowerShell-only comparison loop with a dependency-free Python core and compatibility wrapper that builds equivalent-output curves, times frozen settings in counterbalanced order, records complete provenance and work metadata, and emits authoritative JSONL plus derived flat summaries. Establish a scoped current photo baseline before changing encoder policy.
+        """
+    acceptance {
+        check baseline-report {
+            statement """
+                A scoped current baseline reports equal-byte, equal-SSIMULACRA2, equal-Butteraugli-3-norm, production latency, rate work, and 1/2/4/8-thread scaling with corpus limitations explicit.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.gap-g0-photo-baseline-2026-08-21/1 ]
+        }
+        check harness-tests {
+            statement """
+                Deterministic harness tests cover scheduling, metadata, hashes, interpolation refusal, invalid runs, and schema output.
+                """
+            method command
+            command "python3 -m unittest discover -s JPXL/tools/tests -p 'test_codec_compare.py'"
+            verified_by [ @jpegxl-rs.evidence.gap-g0-harness-tests-2026-08-21/1 ]
+        }
+        check oracle-smoke {
+            statement """
+                The Python harness completes a real JPXL/cjxl/djxl curve and frozen-setting timing smoke with pinned binary hashes.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.gap-g0-real-oracle-smoke-2026-08-21/1 ]
+        }
+    }
+    depends_on [ @jpegxl-rs.work.gap-advice-source-migration ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+    supported_by [ @jpegxl-rs.assessment.gap-bridge-2026-08-21 ]
+    source {
+        kind external
+        role origin
+        path "sources/external/jpxl-bridging-libjxl-gap-2026-08-21--ae1ed657.md"
+        use """
+            Adopts workstream G0 and its comparison-truth requirements.
+            """
+    }
+}
+
+record jpegxl-rs.work.gap-g1-edge-risk-atlas/1 : work {
+    title "G1: diagnostic edge-flat risk atlas"
+    state completed
+    scope [
+        path ".agent/scratch/**",
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/analysis.rs",
+        path "JPXL/tools/**"
+    ]
+    intent """
+        Add an explicit diagnostic-only AnalysisAtlasV2 and JSONL export with source-side edge, smoothness, noise and covariance features. Correlate them against JPXL reconstruction leakage on held-out images without changing production analysis or encoding decisions; continue to G2 only if the top-risk area concentrates failures.
+        """
+    acceptance {
+        check atlas-export {
+            statement """
+                The research CLI emits parseable jpxl.analysis-atlas/1 JSONL in raster order.
+                """
+            method command
+            command "cargo test -p jpxl-cli analyze_atlas"
+            verified_by [ @jpegxl-rs.evidence.gap-g1-atlas-export-2026-08-21/1 ]
+        }
+        check feature-tests {
+            statement """
+                Flat, oriented-edge, noisy/texture and partial-atom fixtures produce finite deterministic diagnostic features with the expected ordering.
+                """
+            method command
+            command "cargo test -p jpxl-encode-policy analysis"
+            verified_by [ @jpegxl-rs.evidence.gap-g1-analysis-feature-tests-2026-08-21/1 ]
+        }
+        check production-identity {
+            statement """
+                Existing production streams remain byte-identical because AnalysisAtlasV2 is invoked only by the explicit diagnostic command.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.gap-g1-production-identity-2026-08-21/1 ]
+        }
+        check risk-recall {
+            statement """
+                Held-out recall at top 1/5/10 percent is recorded; G2 is allowed only if top 10 percent captures at least half of the top 5 percent leakage atoms.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.gap-g1-heldout-risk-2026-08-21/1 ]
+        }
+    }
+    depends_on [ @jpegxl-rs.work.gap-g0-comparison-truth ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+    supported_by [ @jpegxl-rs.assessment.gap-bridge-2026-08-21 ]
+    source {
+        kind external
+        role origin
+        path "sources/external/jpxl-bridging-libjxl-gap-2026-08-21--ae1ed657.md"
+        use """
+            Adopts diagnostic workstream G1 and its promotion gate.
+            """
+    }
+}
+
+record jpegxl-rs.work.gap-g2-selective-coefficient-refinement/1 : work {
+    title "G2 selective entropy-aware coefficient refinement"
+    state completed
+    scope [
+        path ".agent/scratch/**",
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/**",
+        path "JPXL/crates/jpxl-encode/src/vardct/**",
+        path "JPXL/tools/**"
+    ]
+    intent """
+        Evaluate G2's entropy-aware DCT8 finalist refinement against the frozen corpus, retain only reusable pricing infrastructure that passes its own gates, and reject the coefficient beam unless it produces an exact-size, decoder-valid Contract-B quality win. The attempted beam produced no retained candidate and is not shipped; the deterministic EntropyCostView remains as measured infrastructure for later bounded work.
+        """
+    acceptance {
+        check entropy-cost {
+            statement """
+                A deterministic compact EntropyCostView prices hybrid tokens plus extra bits monotonically and the policy test suite passes.
+                """
+            method command
+            verified_by [ @jpegxl-rs.evidence.gap-g2-entropy-cost-tests-2026-08-21/1 ]
+        }
+        check promotion-gate {
+            statement """
+                The attempted bounded DCT8 coefficient beam is either a matched-byte Contract-B quality win or is rejected without leaving a production or CLI decision surface.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.gap-g2-candidate-rejected-2026-08-21/1 ]
+        }
+        check rate-decoders {
+            statement """
+                The final production stream remains within the target, byte-identical to the G1 baseline, and decodes through JPXL and jxl-oxide.
+                """
+            method command
+            verified_by [ @jpegxl-rs.evidence.gap-g2-rate-decoder-identity-2026-08-21/2 ]
+        }
+        check release-gates {
+            statement """
+                The full workspace build, test, clippy and format handoff gates pass in release mode.
+                """
+            method command
+            verified_by [ @jpegxl-rs.evidence.gap-g2-release-gates-2026-08-21/1 ]
+        }
+        check run-aware-audit {
+            statement """
+                The canonical HF walk's release-mode audit uses EntropyCostView and reports nonzero, coefficient, and interior-zero costs on the frozen three-image corpus.
+                """
+            method command
+            verified_by [ @jpegxl-rs.evidence.gap-g2-run-aware-audit-2026-08-21/2 ]
+        }
+    }
+    depends_on [ @jpegxl-rs.work.gap-g1-edge-risk-atlas ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+    source {
+        kind external
+        role origin
+        document "jpxl-bridging-libjxl-gap-2026-08-21"
+        path "sources/external/jpxl-bridging-libjxl-gap-2026-08-21--ae1ed657.md"
+        start_byte 23876
+        end_byte 29487
+        start_line 511
+        end_line 638
+        excerpt_hash "sha256:0593fc68c12fc038e4c7118784c94e4470ccc7a52fdd261b27038c07e6374760"
+        use """
+            Adopts the staged entropy-cost, context-aware trailing-cost, bounded finalist beam, exact-walk mismatch, fresh-chroma, and promotion-gate shape as an experiment; the report remains non-authoritative.
+            """
+    }
+    source { kind legacy }
+}
+
+record jpegxl-rs.work.gap-g3-bounded-truthful-rate-controller/1 : work {
+    title "G3: bounded truthful rate controller"
+    state completed
+    scope [
+        path ".agent/scratch/**",
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/rate.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/request.rs",
+        path "JPXL/crates/jpxl-encode-policy/tests/rate_loop.rs",
+        path "JPXL/tools/**"
+    ]
+    intent """
+        Replace hidden Fast/Balanced escalation into the exhaustive Quality controller with an explicit bounded controller outcome, a hard six-price exact cap, and at most one two-price fresh-structure rescue while preserving ordinary-path codestream identity.
+        """
+    note """
+        Balanced rescue uses exact Full entropy at no more than two fresh-structure prices so an unreachable result reports the actual encoded floor; this is bounded finalist work, not an exhaustive controller search.
+        """
+    acceptance {
+        check bounded-state-machine {
+            statement """
+                Tests enumerate terminal statuses and prove the configured exact-price and fresh-structure rescue caps.
+                """
+            method command
+            command "cargo test -p jpxl-encode-policy --release --features anchor-sketch"
+            verified_by [ @jpegxl-rs.evidence.gap-g3-bounded-controller-tests-2026-08-21/1 ]
+        }
+        check decoder-parity {
+            statement """
+                A representative G3 output decodes successfully with JPXL and the independent decoder oracle.
+                """
+            method command
+            command "cargo test --workspace --release"
+            verified_by [ @jpegxl-rs.evidence.gap-g3-decoder-parity-2026-08-21/2 ]
+        }
+        check no-hidden-exhaustive {
+            statement """
+                Fast and Balanced searches never enter the exhaustive Quality controller; exhaustive outcomes are labelled and restricted to Quality.
+                """
+            method command
+            command "cargo test -p jpxl-encode-policy --release --features anchor-sketch"
+            verified_by [ @jpegxl-rs.evidence.gap-g3-bounded-controller-tests-2026-08-21/1 ]
+        }
+        check ordinary-path-identity {
+            statement """
+                A representative existing Balanced encode is byte-identical to the pre-G3 G2 artifact when no rescue is triggered.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.gap-g3-ordinary-path-identity-2026-08-21/2 ]
+        }
+        check release-gates {
+            statement """
+                The release workspace build, tests, clippy, and formatting gates pass.
+                """
+            method command
+            command "cargo build --workspace --release && cargo test --workspace --release && cargo clippy --workspace --all-targets --release -- -D warnings && cargo fmt --all --check"
+            verified_by [ @jpegxl-rs.evidence.gap-g3-release-gates-2026-08-21/1 ]
+        }
+        check target-contract {
+            statement """
+                Representative rate fixtures either meet their declared target band or return an explicit bounded miss/saturation status.
+                """
+            method command
+            command "cargo test -p jpxl-encode-policy --release --features anchor-sketch"
+            verified_by [ @jpegxl-rs.evidence.gap-g3-bounded-controller-tests-2026-08-21/1 ]
+        }
+    }
+    depends_on [ @jpegxl-rs.work.gap-g2-selective-coefficient-refinement ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+    source {
+        kind external
+        role rationale
+        document "jpxl-bridging-libjxl-gap-2026-08-21"
+        start_byte 13928
+        end_byte 18943
+        start_line 270
+        end_line 405
+        excerpt_hash "sha256:43e74334cfebd573469dbd856eb6089d831a6f6632f66fb4cea861f5ee871585"
+        use """
+            Adopts the audit's bounded-controller and truthful-status direction, subject to implementation evidence.
+            """
+    }
+    source {
+        kind external
+        role origin
+        document "jpxl-bridging-libjxl-gap-2026-08-21"
+        start_byte 44993
+        end_byte 45312
+        start_line 1027
+        end_line 1038
+        excerpt_hash "sha256:c80c88aef59745bc1ff745e960c39044b1fb2f024c138a2f463bdb0b62383629"
+        use """
+            Implements the G3 milestone boundary after completed G2.
+            """
+    }
+    source { kind legacy }
+}
+
+record jpegxl-rs.work.gap-g4-selective-cover-refresh/1 : work {
+    title "G4: measure and gate selective cover refresh"
+    state superseded
+    scope [
+        path ".agent/scratch/**",
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/regret.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/stability.rs",
+        path "JPXL/crates/jpxl-encode-policy/tests/**",
+        path "JPXL/tools/**"
+    ]
+    intent """
+        Use the existing exact dirty-frontier harness to quantify cover decision margins across the bounded controller's anchors and finalist, then implement selective finalist cover/CfL refresh only if the measured dirty area and exact quality gate justify its common-path cost; otherwise retain the calibrated bit-identical controller and record the negative result.
+        """
+    note """
+        Rejected after the release corpus screen. At zero guard, dirty area was 3.75% on the small image and about 6.24-6.28% on the medium/large images, but 0.98-1.30% of provisionally stable nodes still changed at the finalist. A 0.05 relative-margin guard reduced false-stable nodes to 1/199, 1/16640 and 0/44371 only by expanding dirty work to 17.08%, 20.76% and 23.99%. Coupled with the earlier full-fresh finalist screen (+0.10/-0.03 SSIMULACRA2 for +6-22% wall cost), no selective-refresh operating point cleared the promotion gate. No production code changed, so the G3 streams remain byte-identical.
+        """
+    acceptance {
+        check decoder-identity {
+            statement """
+                Any promoted candidate passes exact target and independent decoder gates, or a rejected candidate leaves production streams byte-identical.
+                """
+            method command
+            command "cargo test --workspace --release"
+            verified_by [ @jpegxl-rs.evidence.gap-g3-ordinary-path-identity-2026-08-21/2 ]
+        }
+        check margin-evidence {
+            statement """
+                Release dirty-frontier measurements report node stability, false-stable rate, and dirty fraction on the frozen real-image corpus.
+                """
+            method command
+            command "JPXL_PHASE32_PPM=<frozen corpus> cargo test -p jpxl-encode-policy --release regret::tests::phase32_dirty_frontier_photo_screen -- --ignored --nocapture"
+            verified_by [ @jpegxl-rs.evidence.gap-g4-dirty-frontier-screen-2026-08-21/1 ]
+        }
+        check promotion-gate {
+            statement """
+                Selective refresh is promoted only if repriced area is small, exact bytes/quality improve, and common-path wall cost remains low single digit; otherwise the attempted mechanism is rejected and production stays byte-identical.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.gap-g4-promotion-rejected-2026-08-21/1 ]
+        }
+        check release-gates {
+            statement """
+                The release workspace build, tests, clippy, and formatting gates pass.
+                """
+            method command
+            command "cargo build --workspace --release && cargo test --workspace --release && cargo clippy --workspace --all-targets --release -- -D warnings && cargo fmt --all --check"
+            verified_by [ @jpegxl-rs.evidence.gap-g3-release-gates-2026-08-21/1 ]
+        }
+    }
+    depends_on [ @jpegxl-rs.work.gap-g3-bounded-truthful-rate-controller ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+    source {
+        kind external
+        role rationale
+        document "jpxl-bridging-libjxl-gap-2026-08-21"
+        start_byte 29488
+        end_byte 33508
+        start_line 640
+        end_line 730
+        excerpt_hash "sha256:4f6ea6b6b2c3215581ae5f432ab42038b1039154fb7fd6be055c0fa38922e9d6"
+        use """
+            Adopts the low-margin evidence, selective repricing, and separate CfL gate, with promotion conditional on exact corpus evidence.
+            """
+    }
+}
+
+record jpegxl-rs.work.gap-g4-selective-cover-refresh/2 : work {
+    title "G4: measure and gate selective cover refresh"
+    state superseded
+    scope [
+        path ".agent/scratch/**",
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/regret.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/stability.rs",
+        path "JPXL/crates/jpxl-encode-policy/tests/**",
+        path "JPXL/tools/**"
+    ]
+    intent """
+        Use the existing exact dirty-frontier harness to quantify cover decision margins across the bounded controller's anchors and finalist, then implement selective finalist cover/CfL refresh only if the measured dirty area and exact quality gate justify its common-path cost; otherwise retain the calibrated bit-identical controller and record the negative result.
+        """
+    note """
+        Rejected after the release corpus screen. At zero guard, dirty area was 3.75% on the small image and about 6.24-6.28% on the medium/large images, but 0.98-1.30% of provisionally stable nodes still changed at the finalist. A 0.05 relative-margin guard reduced false-stable nodes to 1/199, 1/16640 and 0/44371 only by expanding dirty work to 17.08%, 20.76% and 23.99%. Coupled with the earlier full-fresh finalist screen (+0.10/-0.03 SSIMULACRA2 for +6-22% wall cost), no selective-refresh operating point cleared the promotion gate. No production code changed, so the G3 streams remain byte-identical.
+        """
+    acceptance {
+        check decoder-identity {
+            statement """
+                Any promoted candidate passes exact target and independent decoder gates, or a rejected candidate leaves production streams byte-identical.
+                """
+            method command
+            command "cargo test --workspace --release"
+            verified_by [ @jpegxl-rs.evidence.gap-g4-production-identity-2026-08-21/1 ]
+        }
+        check margin-evidence {
+            statement """
+                Release dirty-frontier measurements report node stability, false-stable rate, and dirty fraction on the frozen real-image corpus.
+                """
+            method command
+            command "JPXL_PHASE32_PPM=<frozen corpus> cargo test -p jpxl-encode-policy --release regret::tests::phase32_dirty_frontier_photo_screen -- --ignored --nocapture"
+            verified_by [ @jpegxl-rs.evidence.gap-g4-dirty-frontier-screen-2026-08-21/1 ]
+        }
+        check promotion-gate {
+            statement """
+                Selective refresh is promoted only if repriced area is small, exact bytes/quality improve, and common-path wall cost remains low single digit; otherwise the attempted mechanism is rejected and production stays byte-identical.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.gap-g4-promotion-rejected-2026-08-21/1 ]
+        }
+        check release-gates {
+            statement """
+                The release workspace build, tests, clippy, and formatting gates pass.
+                """
+            method command
+            command "cargo build --workspace --release && cargo test --workspace --release && cargo clippy --workspace --all-targets --release -- -D warnings && cargo fmt --all --check"
+            verified_by [ @jpegxl-rs.evidence.gap-g4-release-gates-2026-08-21/1 ]
+        }
+    }
+    depends_on [ @jpegxl-rs.work.gap-g3-bounded-truthful-rate-controller ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+    supersedes [ @jpegxl-rs.work.gap-g4-selective-cover-refresh/1 ]
+    source {
+        kind external
+        role rationale
+        document "jpxl-bridging-libjxl-gap-2026-08-21"
+        start_byte 29488
+        end_byte 33508
+        start_line 640
+        end_line 730
+        excerpt_hash "sha256:4f6ea6b6b2c3215581ae5f432ab42038b1039154fb7fd6be055c0fa38922e9d6"
+        use """
+            Adopts the low-margin evidence, selective repricing, and separate CfL gate, with promotion conditional on exact corpus evidence.
+            """
+    }
+}
+
+record jpegxl-rs.work.gap-g4-selective-cover-refresh/3 : work {
+    title "G4: measure and gate selective cover refresh"
+    state completed
+    scope [
+        path ".agent/scratch/**",
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/regret.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/stability.rs",
+        path "JPXL/crates/jpxl-encode-policy/tests/**",
+        path "JPXL/tools/**"
+    ]
+    intent """
+        Use the existing exact dirty-frontier harness to quantify cover decision margins across the bounded controller's anchors and finalist, then implement selective finalist cover/CfL refresh only if the measured dirty area and exact quality gate justify its common-path cost; otherwise retain the calibrated bit-identical controller and record the negative result.
+        """
+    note """
+        Rejected after the release corpus screen. At zero guard, dirty area was 3.75% on the small image and about 6.24-6.28% on the medium/large images, but 0.98-1.30% of provisionally stable nodes still changed at the finalist. A 0.05 relative-margin guard reduced false-stable nodes to 1/199, 1/16640 and 0/44371 only by expanding dirty work to 17.08%, 20.76% and 23.99%. Coupled with the earlier full-fresh finalist screen (+0.10/-0.03 SSIMULACRA2 for +6-22% wall cost), no selective-refresh operating point cleared the promotion gate. No production code changed, so the G3 streams remain byte-identical.
+        """
+    acceptance {
+        check decoder-identity {
+            statement """
+                Any promoted candidate passes exact target and independent decoder gates, or a rejected candidate leaves production streams byte-identical.
+                """
+            method command
+            command "cargo test --workspace --release"
+            verified_by [
+                @jpegxl-rs.evidence.gap-g4-production-identity-2026-08-21/1,
+                @jpegxl-rs.evidence.gap-g4-production-no-diff-refresh-2026-08-21/1
+            ]
+        }
+        check margin-evidence {
+            statement """
+                Release dirty-frontier measurements report node stability, false-stable rate, and dirty fraction on the frozen real-image corpus.
+                """
+            method command
+            command "JPXL_PHASE32_PPM=<frozen corpus> cargo test -p jpxl-encode-policy --release regret::tests::phase32_dirty_frontier_photo_screen -- --ignored --nocapture"
+            verified_by [
+                @jpegxl-rs.evidence.gap-g4-dirty-frontier-screen-2026-08-21/1,
+                @jpegxl-rs.evidence.gap-g4-margin-rejection-refresh-2026-08-21/1
+            ]
+        }
+        check promotion-gate {
+            statement """
+                Selective refresh is promoted only if repriced area is small, exact bytes/quality improve, and common-path wall cost remains low single digit; otherwise the attempted mechanism is rejected and production stays byte-identical.
+                """
+            method observation
+            verified_by [
+                @jpegxl-rs.evidence.gap-g4-margin-rejection-refresh-2026-08-21/1,
+                @jpegxl-rs.evidence.gap-g4-promotion-rejected-2026-08-21/1
+            ]
+        }
+        check release-gates {
+            statement """
+                The release workspace build, tests, clippy, and formatting gates pass.
+                """
+            method command
+            command "cargo build --workspace --release && cargo test --workspace --release && cargo clippy --workspace --all-targets --release -- -D warnings && cargo fmt --all --check"
+            verified_by [
+                @jpegxl-rs.evidence.gap-g4-release-gates-2026-08-21/1,
+                @jpegxl-rs.evidence.gap-g5-release-workspace-gates-2026-08-21/1
+            ]
+        }
+    }
+    depends_on [ @jpegxl-rs.work.gap-g3-bounded-truthful-rate-controller ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+    supersedes [ @jpegxl-rs.work.gap-g4-selective-cover-refresh/2 ]
+    source {
+        kind external
+        role rationale
+        document "jpxl-bridging-libjxl-gap-2026-08-21"
+        start_byte 29488
+        end_byte 33508
+        start_line 640
+        end_line 730
+        excerpt_hash "sha256:4f6ea6b6b2c3215581ae5f432ab42038b1039154fb7fd6be055c0fa38922e9d6"
+        use """
+            Adopts the low-margin evidence, selective repricing, and separate CfL gate, with promotion conditional on exact corpus evidence.
+            """
+    }
+}
+
+record jpegxl-rs.work.gap-g5-packed-entropy-and-bounded-alternatives/1 : work {
+    title "G5: pack entropy tapes and screen bounded finalist alternatives"
+    state completed
+    scope [
+        path ".agent/scratch/**",
+        path "JPXL/crates/**/tests/**",
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/entropy.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/rate.rs",
+        path "JPXL/crates/jpxl-encode/src/vardct/diagnostics.rs",
+        path "JPXL/crates/jpxl-encode/src/vardct/write.rs",
+        path "JPXL/crates/jpxl-entropy/src/encode/stream.rs",
+        path "JPXL/crates/jpxl-entropy/src/encode/tape.rs"
+    ]
+    intent """
+        Measure extra-bit prevalence on real HF token streams, replace TokenTape's four dense columns with a packed base word and sparse extra sidecar under exact replay invariants, then use the resulting census statistics to screen a two-candidate hybrid-uint finalist mode for Balanced. Promote the bounded entropy mode only if fixed-rate density/quality improves within the standing Contract B wall and decoder gates; otherwise retain it as a measured rejection. Screen the smaller control-image cache opportunity after the tape result and implement it only if multiplicity evidence justifies new cache keys.
+        """
+    acceptance {
+        check bounded-entropy-gate {
+            statement """
+                At most two ranked hybrid-uint configurations are screened for a Balanced finalist and promoted only if exact matched-rate density/quality improves without exceeding the standing wall and decoder gates; otherwise production Balanced remains unchanged.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.gap-g5-bounded-entropy-screen-2026-08-21/1 ]
+        }
+        check byte-identity {
+            statement """
+                Packed-tape output is byte-identical to the two-walk oracle and across 1/4 threads on representative multi-group images.
+                """
+            method command
+            verified_by [ @jpegxl-rs.evidence.gap-g5-packed-layout-identity-2026-08-21/1 ]
+        }
+        check decoder-parity {
+            statement """
+                Representative packed-tape streams decode successfully with JPXL, djxl, and jxl-oxide.
+                """
+            method command
+            verified_by [ @jpegxl-rs.evidence.gap-g5-three-decoder-parity-2026-08-21/1 ]
+        }
+        check memory-evidence {
+            statement """
+                Release diagnostics on the frozen real-image corpus report symbol count, extra-symbol fraction, legacy payload bytes, packed payload bytes, and peak RSS; the packed representation materially reduces tape payload.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.gap-g5-packed-memory-2026-08-21/1 ]
+        }
+        check packed-layout {
+            statement """
+                TokenTape stores cluster/token/extra-bit count in one 32-bit base word and stores extra values only for symbols with nonzero extra bits; replay checks exact sidecar consumption.
+                """
+            method command
+            command "cargo test -p jpxl-entropy --release"
+            verified_by [ @jpegxl-rs.evidence.gap-g5-packed-layout-identity-2026-08-21/1 ]
+        }
+        check release-gates {
+            statement """
+                Release workspace build, tests, clippy, and formatting gates pass.
+                """
+            method command
+            command "cargo build --workspace --release && cargo test --workspace --release && cargo clippy --workspace --all-targets --release -- -D warnings && cargo fmt --all --check"
+            verified_by [ @jpegxl-rs.evidence.gap-g5-release-workspace-gates-2026-08-21/1 ]
+        }
+    }
+    depends_on [ @jpegxl-rs.work.gap-g4-selective-cover-refresh ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+    source {
+        kind external
+        role rationale
+        document "jpxl-bridging-libjxl-gap-2026-08-21"
+        start_byte 33508
+        end_byte 36230
+        start_line 731
+        end_line 800
+        excerpt_hash "sha256:c77a6762872e51b32f4dc216c1907129dd05f5307d1597bb8a0cf0fa3a06abad"
+        use """
+            Adopts packed token storage with sparse extras, explicit replay invariants, real-stream memory measurement, and a bounded hybrid-uint candidate screen; treats control-image caching as conditional cleanup.
+            """
+    }
+}
+
+record jpegxl-rs.work.gap-g6-current-scaling-matrix/1 : work {
+    title "G6: measure current executor scaling before leaf optimization"
+    state completed
+    scope [
+        path ".agent/scratch/**",
+        path "JPXL/crates/jpxl-cli/**",
+        path "JPXL/crates/jpxl-encode-policy/**",
+        path "JPXL/crates/jpxl-encode/**"
+    ]
+    intent """
+        Run a fresh release 1/2/4/8-worker matrix on the finalized G5 build for fixed VarDCT, one fixed probe, production Balanced without rescue, a Balanced rescue case if one can be reproduced, Quality, and low/high-effort Modular. Record wall, CPU, context switches, peak RSS, and hardware counters when the host permits them. Profile and change production code only if the current matrix confirms deficient dominant-size scaling and a safe output-preserving region above roughly 5-8% self cost; otherwise close G6 as the measured stop condition.
+        """
+    acceptance {
+        check determinism {
+            statement """
+                Each mode's output fingerprint is identical across 1/2/4/8 workers.
+                """
+            method command
+            verified_by [ @jpegxl-rs.evidence.gap-g6-scaling-matrix-2026-08-21/1 ]
+        }
+        check profile-gate {
+            statement """
+                Production code changes only if the matrix/profile confirms a credible deterministic improvement above the stop threshold; otherwise the negative result and remaining bottleneck class are recorded.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.gap-g6-modular-profile-and-ab-2026-08-21/1 ]
+        }
+        check release-gates {
+            statement """
+                The finalized implementation state passes the release workspace build, tests, clippy, and formatting gates.
+                """
+            method command
+            command "cargo build --workspace --release && cargo test --workspace --release && cargo clippy --workspace --all-targets --release -- -D warnings && cargo fmt --all --check"
+            verified_by [ @jpegxl-rs.evidence.gap-g6-release-workspace-gates-2026-08-21/1 ]
+        }
+        check scaling-matrix {
+            statement """
+                A fresh release 1/2/4/8-worker matrix covers fixed VarDCT, one predetermined probe, production Balanced, Quality, and low/high-effort Modular, plus a reproducible Balanced rescue cell or explicit evidence that the bounded controller no longer enters rescue on the frozen matrix.
+                """
+            method command
+            verified_by [ @jpegxl-rs.evidence.gap-g6-scaling-matrix-2026-08-21/1 ]
+        }
+        check system-counters {
+            statement """
+                The matrix records wall and CPU time, voluntary/involuntary context switches, and peak RSS; instructions and cache misses are recorded when host perf permissions allow them, or the permission failure is explicit.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.gap-g6-scaling-matrix-2026-08-21/1 ]
+        }
+    }
+    depends_on [ @jpegxl-rs.work.gap-g5-packed-entropy-and-bounded-alternatives ]
+    part_of [ @jpegxl-rs.track.encoder-optimization ]
+    source {
+        kind external
+        role rationale
+        document "jpxl-bridging-libjxl-gap-2026-08-21"
+        start_byte 36230
+        end_byte 38552
+        start_line 801
+        end_line 849
+        excerpt_hash "sha256:bdbb8cce11b4c71b74fc81b883d2729d0dc57ced938822c52d76a22b1787f062"
+        use """
+            Adopts the fresh 1/2/4/8 scaling matrix, system-counter capture, CPU/wall interpretation, and profile-only optimization gate.
+            """
+    }
+    source {
+        kind external
+        role constraint
+        document "jpxl-bridging-libjxl-gap-2026-08-21"
+        start_byte 37580
+        end_byte 41789
+        start_line 830
+        end_line 929
+        excerpt_hash "sha256:30014fec76c7cbd06e43a238710109a0649cce150f7527afe0770571c1e9f6e8"
+        use """
+            Adopts deterministic candidate constraints and the leaf-optimization stop condition; keeps later lossless density work separate from G6 scaling.
             """
     }
 }
@@ -6273,6 +7033,857 @@ record jpegxl-rs.work.optional-semantic-guidance-consumer/1 : work {
     part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
 }
 
+record jpegxl-rs.work.pqc-pr0-provenance-corpus-calibration/1 : work {
+    title "PQC PR 0: register sources, quality-guard corpus with splits, initial-rung calibration data"
+    state completed
+    scope [
+        path ".agent/scratch/**",
+        path "JPXL/tools/**",
+        path "sources/external/**",
+        path "test-set/**"
+    ]
+    intent """
+        Register the controller plan and metric advice as AKR sources; add the missing guard content classes (text/screenshot, line art, gradients/banding, low-light noise, grayscale, tiny, saturated colour) as provenance-tracked fixtures with a jpxl.codec-corpus/1 manifest that assigns every image to calibration, development or locked holdout by source family; and produce the first (target score, source features) -> initial effective_scale table from fixed-quantizer sweeps scored with the reference SSIMULACRA2 (tools/calibrate_initial_rung.py, emitted as quality_predictor.rs).
+        """
+    acceptance {
+        check corpus-manifest {
+            statement """
+                A jpxl.codec-corpus/1 manifest covering the existing photos/scenes plus the new guard classes passes codec_compare.py manifest-check, every fixture has a provenance sidecar, and no source family appears in more than one split.
+                """
+            method command
+            command "python3 JPXL/tools/codec_compare.py manifest-check --manifest test-set/quality-corpus.json"
+            verified_by [ @jpegxl-rs.evidence.pqc-pr0-corpus-manifest-2026-08-22/1 ]
+        }
+        check predictor-table {
+            statement """
+                calibrate_initial_rung.py produces quality_predictor.rs from calibration-split sweeps with a report of per-bucket fit error.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.pqc-pr0-predictor-table-2026-08-22/1 ]
+        }
+        check sources-registered {
+            statement """
+                Both 2026-08-21/22 advice documents are registered in sources/external with content hashes and the intake copies are removed.
+                """
+            method command
+            command "akr source list"
+            verified_by [ @jpegxl-rs.evidence.pqc-pr0-sources-registered-2026-08-22/1 ]
+        }
+    }
+    implements [
+        @jpegxl-rs.decision.perceptual-quality-contract/1,
+        @jpegxl-rs.policy.sources-advice-completion/2
+    ]
+    part_of [ @jpegxl-rs.track.perceptual-quality-controller/1 ]
+}
+
+record jpegxl-rs.work.pqc-pr1-target-semantics/1 : work {
+    title "PQC PR 1: LossyTarget/Effort semantics, with_ssimulacra2_score, --quality, --global-scale, mutual exclusion, reported outcomes"
+    state completed
+    scope [
+        path "JPXL/crates/jpxl-cli/**",
+        path "JPXL/crates/jpxl-encode-policy/src/request.rs",
+        path "JPXL/crates/jpxl/**"
+    ]
+    intent """
+        Introduce LossyTarget { Perceptual, Rate, FixedQuantizer }, PerceptualTarget, PerceptualMetric and MetricVersion in request.rs; replace the facade Preset with Effort { Fast, Balanced, Quality (feature quality-effort) }; add with_ssimulacra2_score, with_global_scale, with_effort(Effort), with_lossless_effort(u8), encode_*_reported returning an EncodeReport; CLI --quality [N] (defaults 70 fast / 85 balanced), --global-scale, mutual exclusion with --bpp/--target-bytes, score 100 routed to lossless, usage text rewritten. Perceptual scores below 100 return an explicit unsupported error until PR 4. Rate-mode streams stay byte-identical.
+        """
+    acceptance {
+        check api-semantics {
+            statement """
+                Facade tests prove score 100 is byte-identical to lossless, out-of-range scores and conflicting targets are rejected, and a perceptual score below 100 returns the pinned unimplemented error.
+                """
+            method command
+            command "cd JPXL && cargo test -p jpxl --profile fast-debug"
+            verified_by [ @jpegxl-rs.evidence.pqc-pr1-api-semantics-2026-08-22/1 ]
+        }
+        check cli-contract {
+            statement """
+                CLI accepts --quality with effort-dependent defaults and --global-scale, rejects conflicting targets, and its usage text no longer claims JPXL has no perceptual model.
+                """
+            method command
+            command "cd JPXL && cargo test -p jpxl-cli --profile fast-debug"
+            verified_by [ @jpegxl-rs.evidence.pqc-pr1-cli-contract-2026-08-22/1 ]
+        }
+        check workspace-gates {
+            statement """
+                cargo test --workspace --release, clippy -D warnings and fmt --check pass with and without --features quality-effort; rate-mode production streams are byte-identical to the pre-PR baseline.
+                """
+            method command
+            command "cd JPXL && cargo test --workspace --release && cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all --check"
+            verified_by [ @jpegxl-rs.evidence.pqc-workspace-gates-2026-08-22/1 ]
+        }
+    }
+    depends_on [ @jpegxl-rs.work.pqc-pr0-provenance-corpus-calibration/1 ]
+    implements [ @jpegxl-rs.decision.perceptual-quality-contract/1 ]
+    part_of [ @jpegxl-rs.track.perceptual-quality-controller/1 ]
+}
+
+record jpegxl-rs.work.pqc-pr2-perceptual-metric/1 : work {
+    title "PQC PR 2: jpxl-perceptual in-tree clean-room SSIMULACRA2 framework and canonical source reference"
+    state completed
+    scope [
+        path "JPXL/Cargo.toml",
+        path "JPXL/crates/jpxl-encode-policy/src/source.rs",
+        path "JPXL/crates/jpxl-perceptual/**"
+    ]
+    intent """
+        Create jpxl-perceptual: a metric pipeline (own opponent colour transform, recursive Gaussian blur, 6-scale pyramid, per-scale/component SSIM, added-edge and lost-edge fields, pooling backends) whose first backend reproduces SSIMULACRA2 with a precomputed reference and reusable scratch, deterministic fixed-order reductions, bounded memory; plus an optional PerceptualReferenceFrame retained from the normalised input before XYB conversion. The rust-av ssimulacra2 0.5.1 crate is a dev-dependency parity oracle only.
+        """
+    acceptance {
+        check determinism {
+            statement """
+                Scores are bit-identical across executor widths and between runs; the precomputed-reference path equals a cold pairwise score.
+                """
+            method command
+            command "cd JPXL && cargo test -p jpxl-perceptual --release"
+            verified_by [ @jpegxl-rs.evidence.pqc-pr2-determinism-2026-08-22/1 ]
+        }
+        check harness-agreement {
+            statement """
+                An emitted-and-decoded fixture scored in memory matches jpxl compare --ssimulacra2 within the pinned tolerance for 8-bit and 16-bit input.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.pqc-pr2-harness-agreement-2026-08-22/1 ]
+        }
+        check reference-parity {
+            statement """
+                On the scenes, photos and guard fixtures the in-tree score differs from the rust-av crate by median <= 0.05 and max <= 0.25, with the measured spread pinned in a test; identical images score 100; score falls monotonically with distortion; official/golden vectors pass.
+                """
+            method command
+            command "cd JPXL && cargo test -p jpxl-perceptual --release --features parity-oracle"
+            verified_by [ @jpegxl-rs.evidence.pqc-pr2-reference-parity-2026-08-22/1 ]
+        }
+    }
+    depends_on [ @jpegxl-rs.work.pqc-pr1-target-semantics/1 ]
+    implements [
+        @jpegxl-rs.decision.perceptual-quality-contract/1,
+        @jpegxl-rs.policy.perceptual-metric-clean-room/1
+    ]
+    part_of [ @jpegxl-rs.track.perceptual-quality-controller/1 ]
+}
+
+record jpegxl-rs.work.pqc-pr3-pixel-plan-render/1 : work {
+    title "PQC PR 3: PixelPlan/ValidatedPixelPlan split, attach_entropy seam, jpxl-plan-render with decoder parity"
+    state completed
+    scope [
+        path "JPXL/crates/jpxl-core/**",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode/src/vardct/plan.rs",
+        path "JPXL/crates/jpxl-encode/src/vardct/validate.rs",
+        path "JPXL/crates/jpxl-plan-render/**"
+    ]
+    intent """
+        Split the pre-entropy plan (spatial + quantized) into a validated PixelPlan with entropy attached later; extract build_pixel_plan/attach_entropy in policy without changing output; lift Gaborish, EPF and LF-smoothing kernel math into jpxl-core; add jpxl-plan-render reconstructing canonical linear RGB from a ValidatedPixelPlan with its own orchestration, never calling jpxl-decode.
+        """
+    acceptance {
+        check byte-identity {
+            statement """
+                All existing rate-loop and multi-group byte-identity tests pass unchanged and production rate-mode stream hashes equal the baseline.
+                """
+            method command
+            command "cd JPXL && cargo test --workspace --release"
+            verified_by [ @jpegxl-rs.evidence.pqc-pr3-byte-identity-2026-08-22/1 ]
+        }
+        check render-parity {
+            statement """
+                Plan-rendered pixels match jpxl-decode of the emitted stream within a pinned tolerance across every transform size, CfL on/off, the production QM scales, Gaborish on/off, EPF 0/1, LF smoothing and coefficient extremes on >=256x256 fixtures; djxl and jxl-oxide parity holds within decoder tolerances.
+                """
+            method command
+            command "cd JPXL && cargo test -p jpxl-plan-render --release"
+            verified_by [ @jpegxl-rs.evidence.pqc-pr3-render-parity-2026-08-22/1 ]
+        }
+        check score-parity {
+            statement """
+                The plan-rendered score equals the emitted-and-decoded score within the PR 2 tolerance.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.pqc-pr2-harness-agreement-2026-08-22/1 ]
+        }
+    }
+    depends_on [ @jpegxl-rs.work.pqc-pr1-target-semantics/1 ]
+    implements [
+        @jpegxl-rs.decision.optimization-determinism-contract/1,
+        @jpegxl-rs.decision.perceptual-quality-contract/1,
+        @jpegxl-rs.policy.perceptual-metric-clean-room/1
+    ]
+    part_of [ @jpegxl-rs.track.perceptual-quality-controller/1 ]
+}
+
+record jpegxl-rs.work.pqc-pr4-quality-navigator/1 : work {
+    title "PQC PR 4: fixed-policy quality navigator — CandidateSearchContext, quality.rs, budgets, guard, trace, quality-curve harness"
+    state completed
+    scope [
+        path "JPXL/crates/jpxl-cli/**",
+        path "JPXL/crates/jpxl-encode-policy/**",
+        path "JPXL/crates/jpxl/**",
+        path "JPXL/tools/codec_compare.py"
+    ]
+    intent """
+        Make Fast and Balanced score-targeted: move PreparedSearch to CandidateSearchContext with pixel_plan/emission_plan doors; define PerceptualEvaluator in policy and implement it in jpxl-perceptual over jpxl-plan-render; generalise the two-anchor crossing helpers to a log-loss observable; bracket, interpolate with a reserve, one bounded correction, Pareto frontier, finalist-only entropy, canonical re-score, hard budgets (Fast 2-3 probes/1-2 prices, Balanced 3-5/2-3), explicit QualityStatus, measured score guard, jpxl.quality-trace/1 telemetry, and a codec_compare quality-curve mode with matched-score byte ratios and BD-rate.
+        """
+    note """
+        Code landed in commit 23635f68 (2026-08-22): candidate.rs, quality.rs, quality_features.rs, the calibrated quality_predictor.rs, the jpxl-perceptual evaluator, facade and CLI wiring, and the codec_compare quality mode. Evidence so far: bounded passes; target-met on the development split (0 violations/150, Balanced median miss 0.93, Fast 2.19), byte-neutral (measured against cjxl, not the rate controller) and determinism-decoders (AVX2-off and full external-decoder sweep not run) are inconclusive; wall-reported fails the provisional 2.0x bound at 3.46x median. Remaining before completion: run the locked holdout at 30..95, tabulate matched-score bytes against the rate controller, the AVX2-off identity run, and the PR 4b performance pass (render+metric is the whole probe cost: 0.6 s per 4 MP probe on four threads, 2.97 GB RSS at 12 MP).
+        """
+    acceptance {
+        check bounded {
+            statement """
+                Every cell's pixel probes and exact prices are inside the effort budget table with no exhaustive fallback reachable from Fast or Balanced.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.pqc-pr4-bounded-2026-08-22/1 ]
+        }
+        check byte-neutral {
+            statement """
+                Geomean bytes at matched achieved SSIMULACRA2 are within +-1% of the rate controller interpolated to the same score; Butteraugli pnorm3 and PSNR guards reported.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.pqc-pr4-holdout-byte-neutral-ss2-2026-08-22/1 ]
+        }
+        check determinism-decoders {
+            statement """
+                Perceptual streams are byte-identical across 1/4 threads and with AVX2 disabled; jpxl-decode, djxl and jxl-oxide accept every stream; rate-mode streams unchanged.
+                """
+            method command
+            command "cd JPXL && cargo test --workspace --release"
+            verified_by [ @jpegxl-rs.evidence.pqc-pr4-holdout-identity-decoders-2026-08-22/1 ]
+        }
+        check target-met {
+            statement """
+                On the holdout at targets 30/50/70/80/85/90/95 for both efforts there are zero canonical floor violations, median |achieved - requested| <= 2, and achieved score is monotone in the requested score per image.
+                """
+            method command
+            command "python3 JPXL/tools/codec_compare.py curve --quality 30 50 70 80 85 90 95"
+            verified_by [ @jpegxl-rs.evidence.pqc-pr4-holdout-floor-budget-2026-08-22/1 ]
+        }
+        check wall-reported {
+            statement """
+                Balanced(quality)/Balanced(rate) wall ratio at matched score is reported on the 4 MP and 12 MP anchors and is <= 2.0 (provisional bound; +25% is the PR 4b profiling target).
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.pqc-pr4-holdout-wall-reported-2026-08-22/1 ]
+        }
+    }
+    depends_on [
+        @jpegxl-rs.work.pqc-pr2-perceptual-metric/1,
+        @jpegxl-rs.work.pqc-pr3-pixel-plan-render/1
+    ]
+    implements [
+        @jpegxl-rs.decision.optimization-determinism-contract/1,
+        @jpegxl-rs.decision.perceptual-quality-contract/1
+    ]
+    part_of [ @jpegxl-rs.track.perceptual-quality-controller/1 ]
+}
+
+record jpegxl-rs.work.pqc-pr5-policy-bank/1 : work {
+    title "PQC PR 5: EncodeRequest::for_quality, removal of bpp-keyed policy branches, bounded perceptual policy bank with equal-score comparison"
+    state abandoned
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/src/policy_bank.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/quality.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/request.rs"
+    ]
+    intent """
+        Add for_quality with the Balanced knobs as a labelled starting policy and no requested-bitrate branch (at_most_one_bpp deleted); define a bounded policy bank over chroma QM, quant_lf, restoration, CfL and truncation lambda; Balanced solves baseline plus the two most relevant alternatives to the same score and keeps the smallest exact stream; Quality (feature) runs bounded coordinate descent with a 0.5% minimum-saving stop rule.
+        """
+    note """
+        Landed in 548f410f and 997d4bdb, but the usable-mode gate failed: bytes fall only 0.6-1.3% where the bank moves them while Balanced wall rose +78% mean (+57..+122%) after structure reuse, beyond the +25% bound. BALANCED_DEFAULT_POLICY_TRIALS remains 0. At user direction on 2026-08-22, no more Quality/reference-effort testing is planned; the full bank remains feature-gated reference machinery. Any future Fast/Balanced bank work must be a separate usable-mode item built around a cheaper navigation scorer or shared/partial entropy, and must rerun the wall and Contract B guards.
+        """
+    acceptance {
+        check material-reduction {
+            statement """
+                Matched-achieved-score geomean bytes on the development corpus are materially below PR 4 with no content class worse than -0.5 SSIMULACRA2-equivalent, Butteraugli max mean <= +2%, pnorm3 worst <= +5%, and Balanced wall <= +25% over PR 4 Balanced.
+                """
+            method observation
+        }
+        check no-bpp-branch {
+            statement """
+                Quality-mode requests cannot reach any requested-bitrate policy gate; rate-mode streams remain byte-identical.
+                """
+            method command
+            command "cd JPXL && cargo test -p jpxl-encode-policy --release"
+        }
+    }
+    depends_on [ @jpegxl-rs.work.pqc-pr4-quality-navigator/1 ]
+    implements [ @jpegxl-rs.decision.perceptual-quality-contract/1 ]
+    part_of [ @jpegxl-rs.track.perceptual-quality-controller/1 ]
+}
+
+record jpegxl-rs.work.pqc-pr7-terminal-reducer/1 : work {
+    title "PQC PR 7: finalist terminal-coefficient reducer exchanging measured score reserve for exact bytes, and the Quality-effort promotion gate"
+    state abandoned
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/src/quality.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/reducer.rs"
+    ]
+    intent """
+        Enumerate legal terminal-nonzero removals per varblock/channel from the real coefficient walk, price them with the trained entropy tables, rank by bytes saved per estimated perceptual loss, apply bounded non-overlapping batches accepted only by a canonical full-frame score above the floor (rollback and halve otherwise), retrain at checkpoints, and exact-price/full-score the final candidate. Then run the Quality-effort promotion gate: geomean bytes at matched achieved SSIMULACRA2 <= 0.98x Balanced on the locked holdout with Contract B guards intact, or keep the feature hidden and record the negative.
+        """
+    note """
+        Reducer implementation landed in 38f71671 and remains available only to the feature-gated reference Quality effort; Balanced keeps BALANCED_DEFAULT_REDUCER = None. The locked-holdout run was intentionally stopped at user direction after 64/91 Quality cells (10/13 images, 55 decoded-score-matched cells). That partial screen was already decisive against public promotion: overall matched-score byte geomean 0.9447 but photo-only 0.9926, zero canonical floor or decoder failures, and Contract B guard failures (Butteraugli mean ratio 1.0744, worst pnorm3 ratio 1.8688, PSNR mean -0.098 dB / worst -2.949 dB). Quality stays hidden/reference-only and must not receive more testing unless explicitly requested. If reference-mode research is ever resumed, the remaining handoff is 27 Quality cells on the final three holdout images plus a reducer-off decoded-metric baseline; raw resumable artifacts are under .agent/scratch/pr7-holdout-20260822/. The reducer-only partial is encouraging but inconclusive: 147845 bytes saved across 64 cells, final/before geomean 0.98925 (0.98626 over 50 eligible cells), max 6 evaluations, zero canonical floor violations. Any attempt to expose a reducer in a usable effort belongs in a separate Fast/Balanced work item with its own wall and guard gate.
+        """
+    acceptance {
+        check promotion-verdict {
+            statement """
+                The Quality-effort promotion criterion is evaluated and recorded as pass or fail evidence; the feature is exposed publicly only on pass.
+                """
+            method observation
+        }
+        check reducer-gate {
+            statement """
+                On the locked holdout the reducer lowers matched-score bytes with zero floor violations, bounded edit/rollback counts, and Butteraugli/PSNR guards within Contract B.
+                """
+            method observation
+        }
+    }
+    depends_on [ @jpegxl-rs.work.pqc-pr5-policy-bank/1 ]
+    implements [
+        @jpegxl-rs.decision.perceptual-quality-contract/1,
+        @jpegxl-rs.decision.ssimulacra2-is-the-primary-promotion-metric/1
+    ]
+    part_of [ @jpegxl-rs.track.perceptual-quality-controller/1 ]
+}
+
+record jpegxl-rs.work.pqc-quality-rate-curve-closure/1 : work {
+    title "PQC quality-rate curve closure: integrated JPXL rate baseline and matched-SSIMULACRA2 reporting"
+    state superseded
+    scope [ path "JPXL/tools/codec_compare.py", path "JPXL/tools/tests/test_codec_compare.py" ]
+    intent """
+        Make the checked-in quality-curve mode reproduce the PR4 comparison without bespoke scratch scripts: when --quality is selected, collect a same-effort JPXL bitrate ladder as well as cjxl, interpolate log(bytes) at each achieved SSIMULACRA2 score, report coverage and matched-byte ratios/BD-rate against both baselines, and preserve the floor, monotonicity, budget, trace, and guard reporting needed to interpret the curve.
+        """
+    note """
+        Created after auditing the completed PR4 record and its kept holdout artifact. The locked run exists, but codec_compare currently omits the JPXL rate-controller baseline and its summary labels only cjxl ratios; the SSIMULACRA2 rate comparison was produced by rate_ladder_ss2.py in kept scratch.
+        """
+    acceptance {
+        check holdout-replay {
+            statement """
+                A representative locked-holdout replay with the checked-in harness produces non-null matched JPXL-rate ratios directly and records its raw JSONL and derived report in kept scratch.
+                """
+            method observation
+        }
+        check integrated-rate-baseline {
+            statement """
+                A quality-mode curve emits explicit same-effort JPXL rate-ladder records alongside quality-target and cjxl records, without requiring a second run or JSONL concatenation.
+                """
+            method command
+            command "python3 -m unittest JPXL/tools/tests/test_codec_compare.py"
+        }
+        check matched-score-report {
+            statement """
+                The quality summary, TSV, and Markdown report distinguish JPXL-rate and cjxl matches, use log-rate interpolation on the SSIMULACRA2 axis, report in-range coverage and both BD-rate aggregates, and retain floor/monotonicity/probe/price reporting.
+                """
+            method command
+            command "python3 -m unittest JPXL/tools/tests/test_codec_compare.py"
+        }
+        check workspace-gates {
+            statement """
+                The repository build, release tests, clippy, formatting, AKR validation, and generated-view checks pass after the harness change.
+                """
+            method command
+            command "cd JPXL && cargo build --workspace && cargo test --workspace --release && cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all --check"
+        }
+    }
+    depends_on [ @jpegxl-rs.work.pqc-pr4-quality-navigator/1 ]
+    implements [
+        @jpegxl-rs.decision.perceptual-quality-contract/1,
+        @jpegxl-rs.decision.ssimulacra2-is-the-primary-promotion-metric/1
+    ]
+    part_of [ @jpegxl-rs.track.perceptual-quality-controller/1 ]
+}
+
+record jpegxl-rs.work.pqc-quality-rate-curve-closure/2 : work {
+    title "PQC quality-rate curve closure: integrated JPXL rate baseline and matched-SSIMULACRA2 reporting"
+    state superseded
+    scope [
+        path "JPXL/crates/jpxl-cli/Cargo.toml",
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/tools/codec_compare.py",
+        path "JPXL/tools/tests/test_codec_compare.py"
+    ]
+    intent """
+        Make the checked-in quality-curve mode reproduce the PR4 comparison without bespoke scratch scripts: expose the in-tree production SSIMULACRA2 as a decoded-pair CLI metric; when --quality is selected, collect a same-effort JPXL bitrate ladder as well as cjxl; interpolate log(bytes) at each common in-tree score; report coverage and matched-byte ratios/BD-rate against both baselines; and preserve the controller floor, independent-reference guard, monotonicity, budget, trace, and guard reporting needed to interpret the curve.
+        """
+    note """
+        Expanded after the first real replay exposed a second gap: PR4 mixed the controller's in-tree achieved score with rate/cjxl scores from the independent rust-av reference, which differs materially on flat synthetic content. The harness must score every decoded stream on the in-tree metric for its primary matched-rate axis and retain rust-av SSIMULACRA2 only as a separately named reference guard.
+        """
+    acceptance {
+        check holdout-replay {
+            statement """
+                A representative locked-holdout replay with the checked-in harness produces non-null matched JPXL-rate ratios directly and records its raw JSONL and derived report in kept scratch.
+                """
+            method observation
+        }
+        check integrated-rate-baseline {
+            statement """
+                A quality-mode curve emits explicit same-effort JPXL rate-ladder records alongside quality-target and cjxl records, without requiring a second run or JSONL concatenation.
+                """
+            method command
+            command "python3 -m unittest JPXL/tools/tests/test_codec_compare.py"
+        }
+        check matched-score-report {
+            statement """
+                The quality summary, TSV, and Markdown report distinguish JPXL-rate and cjxl matches, use log-rate interpolation on the SSIMULACRA2 axis, report in-range coverage and both BD-rate aggregates, and retain floor/monotonicity/probe/price reporting.
+                """
+            method command
+            command "python3 -m unittest JPXL/tools/tests/test_codec_compare.py"
+        }
+        check workspace-gates {
+            statement """
+                The repository build, release tests, clippy, formatting, AKR validation, and generated-view checks pass after the harness change.
+                """
+            method command
+            command "cd JPXL && cargo build --workspace && cargo test --workspace --release && cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all --check"
+        }
+    }
+    depends_on [ @jpegxl-rs.work.pqc-pr4-quality-navigator/1 ]
+    implements [
+        @jpegxl-rs.decision.perceptual-quality-contract/1,
+        @jpegxl-rs.decision.ssimulacra2-is-the-primary-promotion-metric/1
+    ]
+    part_of [ @jpegxl-rs.track.perceptual-quality-controller/1 ]
+    supersedes [ @jpegxl-rs.work.pqc-quality-rate-curve-closure/1 ]
+}
+
+record jpegxl-rs.work.pqc-quality-rate-curve-closure/3 : work {
+    title "PQC quality-rate curve closure: integrated JPXL rate baseline and matched-SSIMULACRA2 reporting"
+    state superseded
+    scope [
+        path "JPXL/crates/jpxl-cli/Cargo.toml",
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/tools/codec_compare.py",
+        path "JPXL/tools/tests/test_codec_compare.py"
+    ]
+    intent """
+        Make the checked-in quality-curve mode reproduce the PR4 comparison without bespoke scratch scripts: expose the in-tree production SSIMULACRA2 as a decoded-pair CLI metric; when --quality is selected, collect a same-effort JPXL bitrate ladder as well as cjxl; interpolate log(bytes) at each common in-tree score; report coverage and matched-byte ratios/BD-rate against both baselines; and preserve the controller floor, independent-reference guard, monotonicity, budget, trace, and guard reporting needed to interpret the curve.
+        """
+    note """
+        Expanded after real replay exposed that PR4 mixed the controller's achieved score with rate/cjxl scores from the independent rust-av reference. The primary comparison must score every decoded stream on the in-tree metric, retain rust-av only as a named guard, and close on all 13 locked-holdout images rather than only the representative smoke replay.
+        """
+    acceptance {
+        check holdout-replay {
+            statement """
+                A full 13-image locked-holdout replay with both production efforts and the checked-in harness produces non-null matched JPXL-rate ratios directly and records its raw JSONL and derived reports in kept scratch.
+                """
+            method observation
+        }
+        check integrated-rate-baseline {
+            statement """
+                A quality-mode curve emits explicit same-effort JPXL rate-ladder records alongside quality-target and cjxl records, without requiring a second run or JSONL concatenation.
+                """
+            method command
+            command "cd JPXL && python3 -m unittest tools.tests.test_codec_compare"
+        }
+        check matched-score-report {
+            statement """
+                The quality summary, TSV, and Markdown report distinguish JPXL-rate and cjxl matches, use log-rate interpolation on the in-tree SSIMULACRA2 axis, report in-range coverage and both BD-rate aggregates, and retain controller/decoded floor, independent-reference, monotonicity, probe, price, structural-build, and budget reporting.
+                """
+            method command
+            command "cd JPXL && python3 -m unittest tools.tests.test_codec_compare"
+        }
+        check workspace-gates {
+            statement """
+                The repository build, release tests, clippy, formatting, AKR validation, and generated-view checks pass after the harness change.
+                """
+            method command
+            command "cd JPXL && cargo build --workspace && cargo test --workspace --release && cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all --check"
+        }
+    }
+    depends_on [ @jpegxl-rs.work.pqc-pr4-quality-navigator/1 ]
+    implements [
+        @jpegxl-rs.decision.perceptual-quality-contract/1,
+        @jpegxl-rs.decision.ssimulacra2-is-the-primary-promotion-metric/1
+    ]
+    part_of [ @jpegxl-rs.track.perceptual-quality-controller/1 ]
+    supersedes [ @jpegxl-rs.work.pqc-quality-rate-curve-closure/2 ]
+}
+
+record jpegxl-rs.work.pqc-quality-rate-curve-closure/4 : work {
+    title "PQC quality-rate curve closure: integrated JPXL rate baseline and matched-SSIMULACRA2 reporting"
+    state superseded
+    scope [
+        path "JPXL/crates/jpxl-cli/Cargo.toml",
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/tools/codec_compare.py",
+        path "JPXL/tools/tests/test_codec_compare.py"
+    ]
+    intent """
+        Make the checked-in quality-curve mode reproduce the PR4 comparison without bespoke scratch scripts: expose the in-tree production SSIMULACRA2 as a decoded-pair CLI metric; when --quality is selected, collect a same-effort JPXL bitrate ladder as well as cjxl; interpolate log(bytes) at each common in-tree score; report coverage and matched-byte ratios/BD-rate against both baselines; and preserve the controller floor, independent-reference guard, monotonicity, budget, trace, and guard reporting needed to interpret the curve.
+        """
+    note """
+        The integrated harness and reporting are implemented and exact decoded-pair evidence covers 10/13 locked-holdout images for both efforts. The three 50 MP quality inputs remain open: both a four-thread full run and a bounded one-thread probe were SIGKILLed, the latter at 10,456,936 KiB RSS on a 31 GiB/no-swap host with substantial concurrent memory use. New xlarge rate/cjxl rows and a clearly labelled 13-image controller-substitution sensitivity are retained, but holdout-replay cannot pass until 21 xlarge quality cells per effort are rerun with enough process headroom and replace the substitutions.
+        """
+    acceptance {
+        check holdout-replay {
+            statement """
+                A full 13-image locked-holdout replay with both production efforts and the checked-in harness produces non-null matched JPXL-rate ratios directly and records its raw JSONL and derived reports in kept scratch.
+                """
+            method observation
+        }
+        check integrated-rate-baseline {
+            statement """
+                A quality-mode curve emits explicit same-effort JPXL rate-ladder records alongside quality-target and cjxl records, without requiring a second run or JSONL concatenation.
+                """
+            method command
+            command "cd JPXL && python3 -m unittest tools.tests.test_codec_compare"
+        }
+        check matched-score-report {
+            statement """
+                The quality summary, TSV, and Markdown report distinguish JPXL-rate and cjxl matches, use log-rate interpolation on the in-tree SSIMULACRA2 axis, report in-range coverage and both BD-rate aggregates, and retain controller/decoded floor, independent-reference, monotonicity, probe, price, structural-build, and budget reporting.
+                """
+            method command
+            command "cd JPXL && python3 -m unittest tools.tests.test_codec_compare"
+        }
+        check workspace-gates {
+            statement """
+                The repository build, release tests, clippy, formatting, AKR validation, and generated-view checks pass after the harness change.
+                """
+            method command
+            command "cd JPXL && cargo build --workspace && cargo test --workspace --release && cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all --check"
+        }
+    }
+    depends_on [ @jpegxl-rs.work.pqc-pr4-quality-navigator/1 ]
+    implements [
+        @jpegxl-rs.decision.perceptual-quality-contract/1,
+        @jpegxl-rs.decision.ssimulacra2-is-the-primary-promotion-metric/1
+    ]
+    part_of [ @jpegxl-rs.track.perceptual-quality-controller/1 ]
+    supersedes [ @jpegxl-rs.work.pqc-quality-rate-curve-closure/3 ]
+}
+
+record jpegxl-rs.work.pqc-quality-rate-curve-closure/5 : work {
+    title "PQC quality-rate curve closure: integrated JPXL rate baseline and matched-SSIMULACRA2 reporting"
+    state completed
+    scope [
+        path "JPXL/crates/jpxl-cli/Cargo.toml",
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/tools/codec_compare.py",
+        path "JPXL/tools/tests/test_codec_compare.py"
+    ]
+    intent """
+        Make the checked-in quality-curve mode reproduce the PR4 comparison without bespoke scratch scripts: expose the in-tree production SSIMULACRA2 as a decoded-pair CLI metric; when --quality is selected, collect a same-effort JPXL bitrate ladder as well as cjxl; interpolate log(bytes) at each common in-tree score; report coverage and matched-byte ratios/BD-rate against both baselines; and preserve the controller floor, independent-reference guard, monotonicity, budget, trace, and guard reporting needed to interpret the curve.
+        """
+    note """
+        The integrated harness is implemented and exact decoded-pair evidence now covers all 13 locked-holdout images for both efforts. The low-memory scorer/renderer path removed the former 50 MP OOM: the three missing images contributed 21 exact quality cells per effort under a 9 GiB process cap, all with decoded scores at or above target and all within effort budgets. The full common-axis result is Balanced 52/91 JPXL-rate matches, 0.99281 byte geomean and -2.32% mean per-image BD-rate; Fast is 49/91, 0.98184 and -6.05%. All 42 new codestream hashes match the historical pre-low-memory rows. Workspace gates and evidence linkage remain before completion.
+        """
+    acceptance {
+        check holdout-replay {
+            statement """
+                A full 13-image locked-holdout replay with both production efforts and the checked-in harness produces non-null matched JPXL-rate ratios directly and records its raw JSONL and derived reports in kept scratch.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.pqc-quality-rate-curve-exact-13of13-2026-08-23/1 ]
+        }
+        check integrated-rate-baseline {
+            statement """
+                A quality-mode curve emits explicit same-effort JPXL rate-ladder records alongside quality-target and cjxl records, without requiring a second run or JSONL concatenation.
+                """
+            method command
+            command "cd JPXL && python3 -m unittest tools.tests.test_codec_compare"
+            verified_by [ @jpegxl-rs.evidence.pqc-quality-rate-harness-tests-2026-08-23/1 ]
+        }
+        check matched-score-report {
+            statement """
+                The quality summary, TSV, and Markdown report distinguish JPXL-rate and cjxl matches, use log-rate interpolation on the in-tree SSIMULACRA2 axis, report in-range coverage and both BD-rate aggregates, and retain controller/decoded floor, independent-reference, monotonicity, probe, price, structural-build, and budget reporting.
+                """
+            method command
+            command "cd JPXL && python3 -m unittest tools.tests.test_codec_compare"
+            verified_by [ @jpegxl-rs.evidence.pqc-quality-rate-harness-tests-2026-08-23/1 ]
+        }
+        check workspace-gates {
+            statement """
+                The repository build, release tests, clippy, formatting, AKR validation, and generated-view checks pass after the harness change.
+                """
+            method command
+            command "cd JPXL && cargo build --workspace && cargo test --workspace --release && cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all --check"
+            verified_by [ @jpegxl-rs.evidence.pqc-low-memory-workspace-gates-2026-08-23/1 ]
+        }
+    }
+    depends_on [ @jpegxl-rs.work.pqc-pr4-quality-navigator/1 ]
+    implements [
+        @jpegxl-rs.decision.perceptual-quality-contract/1,
+        @jpegxl-rs.decision.ssimulacra2-is-the-primary-promotion-metric/1
+    ]
+    part_of [ @jpegxl-rs.track.perceptual-quality-controller/1 ]
+    supersedes [ @jpegxl-rs.work.pqc-quality-rate-curve-closure/4 ]
+}
+
+record jpegxl-rs.work.pqc-usable-efforts-cost/1 : work {
+    title "PQC usable efforts: reduce Fast/Balanced wall time and peak memory"
+    state superseded
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/src/quality.rs",
+        path "JPXL/crates/jpxl-perceptual/src/**",
+        path "JPXL/crates/jpxl-plan-render/src/**",
+        path "JPXL/crates/jpxl/src/lib.rs"
+    ]
+    intent """
+        Profile and reduce the production Fast and Balanced perceptual path's full-frame render/metric allocation and rescue-probe cost. Work only on usable efforts: do not spend measurement time on the feature-gated Quality reference effort. Pure scorer, renderer, and lifetime changes must preserve Fast/Balanced codestream bytes; any deliberate search-policy change requires the standing Contract B screen.
+        """
+    note """
+        Starting evidence: Balanced q85 at matched score costs 4.08x wall / 2.16x RSS on 4.3 MP and 10.65x / 2.37x on 12 MP; 12 MP peak is about 2.9 GB against the 2.0 GB target, and 50 MP requires about 12.5 GB. PR 4b already made a 4.3 MP four-thread score probe 161-170 ms and banded render about 155 ms; remaining usable-mode cost is full-frame scorer scratch and the five-probe rescued_fresh_structure path. Quality policy-bank/reducer work is explicitly out of this item.
+        """
+    acceptance {
+        check memory-12mp {
+            statement """
+                Balanced q85 on the locked 12 MP anchor peaks at no more than 2.0 GB RSS, with the measurement serialized and process-capped.
+                """
+            method observation
+        }
+        check production-identity {
+            statement """
+                Pure scorer/renderer/lifetime changes leave Fast and Balanced codestreams byte-identical across the locked identity cells, threads 1/4, and AVX2 on/off; any search-policy change instead passes the standing Contract B gate.
+                """
+            method command
+        }
+        check wall-anchors {
+            statement """
+                At matched achieved SSIMULACRA2, Balanced end-to-end wall is no more than 2.0x the rate path on both the 4.3 MP and 12 MP anchors; phase timings identify any remaining gap.
+                """
+            method observation
+        }
+        check workspace-gates {
+            statement """
+                The workspace release tests, clippy, and formatting gates pass.
+                """
+            method command
+            command "cd JPXL && cargo test --workspace --release && cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all --check"
+        }
+    }
+    depends_on [ @jpegxl-rs.work.pqc-pr4-quality-navigator/1 ]
+    implements [ @jpegxl-rs.decision.perceptual-quality-contract/1 ]
+    part_of [ @jpegxl-rs.track.perceptual-quality-controller/1 ]
+    supported_by [
+        @jpegxl-rs.evidence.pqc-pr4-holdout-wall-reported-2026-08-22/1,
+        @jpegxl-rs.evidence.pqc-pr4b-memory-12mp-2026-08-22/1,
+        @jpegxl-rs.evidence.pqc-pr4b-probe-speed-2026-08-22/1
+    ]
+    author "GitHub Uploader"
+}
+
+record jpegxl-rs.work.pqc-usable-efforts-cost/2 : work {
+    title "PQC usable efforts: reduce Fast/Balanced wall time and peak memory"
+    state superseded
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/src/quality.rs",
+        path "JPXL/crates/jpxl-perceptual/src/**",
+        path "JPXL/crates/jpxl-plan-render/src/**",
+        path "JPXL/crates/jpxl/src/lib.rs"
+    ]
+    intent """
+        Profile and reduce the production Fast and Balanced perceptual path's full-frame render/metric allocation and rescue-probe cost. Work only on usable efforts: do not spend measurement time on the feature-gated Quality reference effort. Pure scorer, renderer, and lifetime changes must preserve Fast/Balanced codestream bytes; any deliberate search-policy change requires the standing Contract B screen.
+        """
+    note """
+        Starting evidence: Balanced q85 at matched score costs 4.08x wall / 2.16x RSS on 4.3 MP and 10.65x / 2.37x on 12 MP; 12 MP peak is about 2.9 GB against the 2.0 GB target, and 50 MP requires about 12.5 GB. PR 4b already made a 4.3 MP four-thread score probe 161-170 ms and banded render about 155 ms; remaining usable-mode cost is full-frame scorer scratch and the five-probe rescued_fresh_structure path. Quality policy-bank/reducer work is explicitly out of this item.
+        """
+    acceptance {
+        check memory-12mp {
+            statement """
+                Balanced q85 on the locked 12 MP anchor peaks at no more than 2.0 GB RSS, with the measurement serialized and process-capped.
+                """
+            method observation
+        }
+        check production-identity {
+            statement """
+                Pure scorer/renderer/lifetime changes leave Fast and Balanced codestreams byte-identical across the locked identity cells, threads 1/4, and AVX2 on/off; any search-policy change instead passes the standing Contract B gate.
+                """
+            method command
+        }
+        check wall-anchors {
+            statement """
+                At matched achieved SSIMULACRA2, Balanced end-to-end wall is no more than 2.0x the rate path on both the 4.3 MP and 12 MP anchors; phase timings identify any remaining gap.
+                """
+            method observation
+        }
+        check workspace-gates {
+            statement """
+                The workspace release tests, clippy, and formatting gates pass.
+                """
+            method command
+            command "cd JPXL && cargo test --workspace --release && cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all --check"
+        }
+    }
+    depends_on [ @jpegxl-rs.work.pqc-pr4-quality-navigator/1 ]
+    implements [ @jpegxl-rs.decision.perceptual-quality-contract/1 ]
+    part_of [ @jpegxl-rs.track.perceptual-quality-controller/1 ]
+    supersedes [ @jpegxl-rs.work.pqc-usable-efforts-cost/1 ]
+    supported_by [
+        @jpegxl-rs.evidence.pqc-pr4-holdout-wall-reported-2026-08-22/1,
+        @jpegxl-rs.evidence.pqc-pr4b-memory-12mp-2026-08-22/1,
+        @jpegxl-rs.evidence.pqc-pr4b-probe-speed-2026-08-22/1
+    ]
+}
+
+record jpegxl-rs.work.pqc-usable-efforts-cost/3 : work {
+    title "PQC usable efforts: reduce Fast/Balanced wall time and peak memory"
+    state superseded
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/src/quality.rs",
+        path "JPXL/crates/jpxl-perceptual/src/**",
+        path "JPXL/crates/jpxl-plan-render/src/**",
+        path "JPXL/crates/jpxl/src/lib.rs"
+    ]
+    intent """
+        Profile and reduce the production Fast and Balanced perceptual path's full-frame render/metric allocation and rescue-probe cost. Work only on usable efforts: do not spend measurement time on the feature-gated Quality reference effort. Pure scorer, renderer, and lifetime changes must preserve Fast/Balanced codestream bytes; any deliberate search-policy change requires the standing Contract B screen.
+        """
+    note """
+        The low-memory implementation now passes two of four checks. Serialized four-thread Balanced q85 on the locked 12 MP anchor peaks at 2,081,396 KiB, below the 2,097,152 KiB ceiling, and keeps the historical 1,288,620-byte codestream. The full locked production-identity matrix passes 52/52 cells across both efforts, q70/q85, threads 1/4, and AVX2 on/off, including all three 50 MP images; a 50 MP Balanced q85 encode now completes at 7,532,608 KiB RSS under a 9 GiB cap instead of SIGKILLing around 12.5 GiB. Wall remains open: the measured 12 MP v5 run took 14.41 s with 9,245 ms in render/metric, so the memory-saving serialization trades time for RSS and does not meet the <=2x matched-rate target. Current workspace gates must be linked after the final code state.
+        """
+    acceptance {
+        check memory-12mp {
+            statement """
+                Balanced q85 on the locked 12 MP anchor peaks at no more than 2.0 GB RSS, with the measurement serialized and process-capped.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.pqc-low-memory-12mp-2026-08-23/1 ]
+        }
+        check production-identity {
+            statement """
+                Pure scorer/renderer/lifetime changes leave Fast and Balanced codestreams byte-identical across the locked identity cells, threads 1/4, and AVX2 on/off; any search-policy change instead passes the standing Contract B gate.
+                """
+            method command
+            command "python3 .agent/scratch/pqc-cost-20260823/identity_current.py"
+            verified_by [ @jpegxl-rs.evidence.pqc-low-memory-production-identity-2026-08-23/1 ]
+        }
+        check wall-anchors {
+            statement """
+                At matched achieved SSIMULACRA2, Balanced end-to-end wall is no more than 2.0x the rate path on both the 4.3 MP and 12 MP anchors; phase timings identify any remaining gap.
+                """
+            method observation
+        }
+        check workspace-gates {
+            statement """
+                The workspace release tests, clippy, and formatting gates pass.
+                """
+            method command
+            command "cd JPXL && cargo test --workspace --release && cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all --check"
+        }
+    }
+    depends_on [ @jpegxl-rs.work.pqc-pr4-quality-navigator/1 ]
+    implements [ @jpegxl-rs.decision.perceptual-quality-contract/1 ]
+    part_of [ @jpegxl-rs.track.perceptual-quality-controller/1 ]
+    supersedes [ @jpegxl-rs.work.pqc-usable-efforts-cost/2 ]
+    supported_by [
+        @jpegxl-rs.evidence.pqc-pr4-holdout-wall-reported-2026-08-22/1,
+        @jpegxl-rs.evidence.pqc-pr4b-memory-12mp-2026-08-22/1,
+        @jpegxl-rs.evidence.pqc-pr4b-probe-speed-2026-08-22/1
+    ]
+}
+
+record jpegxl-rs.work.pqc-usable-efforts-cost/4 : work {
+    title "PQC usable efforts: reduce Fast/Balanced wall time and peak memory"
+    state superseded
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/src/quality.rs",
+        path "JPXL/crates/jpxl-perceptual/src/**",
+        path "JPXL/crates/jpxl-plan-render/src/**",
+        path "JPXL/crates/jpxl/src/lib.rs"
+    ]
+    intent """
+        Profile and reduce the production Fast and Balanced perceptual path's full-frame render/metric allocation and rescue-probe cost. Work only on usable efforts: do not spend measurement time on the feature-gated Quality reference effort. Pure scorer, renderer, and lifetime changes must preserve Fast/Balanced codestream bytes; any deliberate search-policy change requires the standing Contract B screen.
+        """
+    note """
+        Memory, production identity, and workspace gates now pass. Serialized four-thread Balanced q85 on the locked 12 MP anchor peaks at 2,081,396 KiB, below the 2,097,152 KiB ceiling, and keeps the historical 1,288,620-byte codestream. The full locked identity matrix passes 52/52 cells across both efforts, q70/q85, threads 1/4, and AVX2 on/off, including all three 50 MP images; a 50 MP Balanced q85 encode completes at 7,532,608 KiB RSS under a 9 GiB cap instead of SIGKILLing around 12.5 GiB. Wall remains the sole open check: the measured 12 MP v5 run took 14.41 s with 9,245 ms in render/metric, so the memory-saving serialization trades time for RSS and does not meet the <=2x matched-rate target.
+        """
+    acceptance {
+        check memory-12mp {
+            statement """
+                Balanced q85 on the locked 12 MP anchor peaks at no more than 2.0 GB RSS, with the measurement serialized and process-capped.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.pqc-low-memory-12mp-2026-08-23/1 ]
+        }
+        check production-identity {
+            statement """
+                Pure scorer/renderer/lifetime changes leave Fast and Balanced codestreams byte-identical across the locked identity cells, threads 1/4, and AVX2 on/off; any search-policy change instead passes the standing Contract B gate.
+                """
+            method command
+            command "python3 .agent/scratch/pqc-cost-20260823/identity_current.py"
+            verified_by [ @jpegxl-rs.evidence.pqc-low-memory-production-identity-2026-08-23/1 ]
+        }
+        check wall-anchors {
+            statement """
+                At matched achieved SSIMULACRA2, Balanced end-to-end wall is no more than 2.0x the rate path on both the 4.3 MP and 12 MP anchors; phase timings identify any remaining gap.
+                """
+            method observation
+        }
+        check workspace-gates {
+            statement """
+                The workspace release tests, clippy, and formatting gates pass.
+                """
+            method command
+            command "cd JPXL && cargo test --workspace --release && cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all --check"
+            verified_by [ @jpegxl-rs.evidence.pqc-low-memory-workspace-gates-2026-08-23/1 ]
+        }
+    }
+    depends_on [ @jpegxl-rs.work.pqc-pr4-quality-navigator/1 ]
+    implements [ @jpegxl-rs.decision.perceptual-quality-contract/1 ]
+    part_of [ @jpegxl-rs.track.perceptual-quality-controller/1 ]
+    supersedes [ @jpegxl-rs.work.pqc-usable-efforts-cost/3 ]
+    supported_by [
+        @jpegxl-rs.evidence.pqc-pr4-holdout-wall-reported-2026-08-22/1,
+        @jpegxl-rs.evidence.pqc-pr4b-memory-12mp-2026-08-22/1,
+        @jpegxl-rs.evidence.pqc-pr4b-probe-speed-2026-08-22/1
+    ]
+}
+
+record jpegxl-rs.work.pqc-usable-efforts-cost/5 : work {
+    title "PQC usable efforts: reduce Fast/Balanced wall time and peak memory"
+    state active
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/src/quality.rs",
+        path "JPXL/crates/jpxl-perceptual/src/**",
+        path "JPXL/crates/jpxl-plan-render/src/**",
+        path "JPXL/crates/jpxl/src/lib.rs"
+    ]
+    intent """
+        Profile and reduce the production Fast and Balanced perceptual path's full-frame render/metric allocation and rescue-probe cost. Work only on usable efforts: do not spend measurement time on the feature-gated Quality reference effort. Pure scorer, renderer, and lifetime changes must preserve Fast/Balanced codestream bytes; any deliberate search-policy change requires the standing Contract B screen.
+        """
+    note """
+        Memory, production identity, and workspace gates pass. Serialized four-thread Balanced q85 on the locked 12 MP anchor peaks at 2,081,396 KiB, below the 2,097,152 KiB ceiling, and keeps the historical 1,288,620-byte codestream. The full locked identity matrix passes 52/52 cells across both efforts, q70/q85, threads 1/4, and AVX2 on/off, including all three 50 MP images; a 50 MP Balanced q85 encode completes at 7,532,608 KiB RSS under a 9 GiB cap instead of SIGKILLing around 12.5 GiB. Wall is the sole open check and now has controlled failure evidence: five interleaved measured runs per path give quality/rate medians of 1.539/0.501 s (3.072x) at 4.3 MP and 8.082/1.010 s (7.999x) at 12 MP. Quality mode is smaller at matched decoded SSIMULACRA2 on both anchors, but the memory-saving serialized render/metric search does not meet the <=2x wall target.
+        """
+    acceptance {
+        check memory-12mp {
+            statement """
+                Balanced q85 on the locked 12 MP anchor peaks at no more than 2.0 GB RSS, with the measurement serialized and process-capped.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.pqc-low-memory-12mp-2026-08-23/1 ]
+        }
+        check production-identity {
+            statement """
+                Pure scorer/renderer/lifetime changes leave Fast and Balanced codestreams byte-identical across the locked identity cells, threads 1/4, and AVX2 on/off; any search-policy change instead passes the standing Contract B gate.
+                """
+            method command
+            command "python3 .agent/scratch/pqc-cost-20260823/identity_current.py"
+            verified_by [ @jpegxl-rs.evidence.pqc-low-memory-production-identity-2026-08-23/1 ]
+        }
+        check wall-anchors {
+            statement """
+                At matched achieved SSIMULACRA2, Balanced end-to-end wall is no more than 2.0x the rate path on both the 4.3 MP and 12 MP anchors; phase timings identify any remaining gap.
+                """
+            method observation
+        }
+        check workspace-gates {
+            statement """
+                The workspace release tests, clippy, and formatting gates pass.
+                """
+            method command
+            command "cd JPXL && cargo test --workspace --release && cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all --check"
+            verified_by [ @jpegxl-rs.evidence.pqc-low-memory-workspace-gates-2026-08-23/1 ]
+        }
+    }
+    depends_on [ @jpegxl-rs.work.pqc-pr4-quality-navigator/1 ]
+    implements [ @jpegxl-rs.decision.perceptual-quality-contract/1 ]
+    part_of [ @jpegxl-rs.track.perceptual-quality-controller/1 ]
+    supersedes [ @jpegxl-rs.work.pqc-usable-efforts-cost/4 ]
+    supported_by [
+        @jpegxl-rs.evidence.pqc-low-memory-wall-anchors-2026-08-23/1,
+        @jpegxl-rs.evidence.pqc-pr4-holdout-wall-reported-2026-08-22/1,
+        @jpegxl-rs.evidence.pqc-pr4b-memory-12mp-2026-08-22/1,
+        @jpegxl-rs.evidence.pqc-pr4b-probe-speed-2026-08-22/1
+    ]
+}
+
 record jpegxl-rs.work.publish-readme-benchmark-mit/1 : work {
     title "Publish-ready README, reproducible libjxl comparison, and MIT-only licensing"
     state proposed
@@ -6417,35 +8028,35 @@ record jpegxl-rs.work.quality-q2-chroma-hf/1 : work {
                 The X/B QM, EPF, and undershoot-tolerance sweeps are recorded separately enough to attribute any quality gain; a promoted setting has an explicit per-channel/per-rate rationale rather than an unexplained bundle.
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.quality-q2-chroma-attribution-2026-08-18/1 ]
+            verified_by [ @jpegxl-rs.evidence.quality-q2-chroma-attribution-2026-08-18/2 ]
         }
         check compatibility-control {
             statement """
                 The previous Phase Q1 policy remains reachable through explicit CLI research controls and reproduces its retained codestream fingerprints on the canonical mid and large images.
                 """
             method command
-            verified_by [ @jpegxl-rs.evidence.quality-q2-compatibility-control-2026-08-18/1 ]
+            verified_by [ @jpegxl-rs.evidence.quality-q2-compatibility-control-2026-08-18/2 ]
         }
         check determinism-decoders {
             statement """
                 Promoted target-rate outputs are byte-identical across one and four threads and with AVX2 disabled, and representative/corpus streams are accepted by djxl and jxl-oxide.
                 """
             method command
-            verified_by [ @jpegxl-rs.evidence.quality-q2-determinism-decoders-2026-08-18/1 ]
+            verified_by [ @jpegxl-rs.evidence.quality-q2-determinism-decoders-2026-08-18/2 ]
         }
         check gates {
             statement """
                 Workspace formatting, build, tests, strict Clippy, no-default-features checks, and AKR validation pass, or any unchanged pre-existing diagnostic is explicitly retained with raw output.
                 """
             method command
-            verified_by [ @jpegxl-rs.evidence.quality-q2-rust-gates-2026-08-18/1 ]
+            verified_by [ @jpegxl-rs.evidence.quality-q2-rust-gates-2026-08-18/2 ]
         }
         check quality-gate {
             statement """
                 The promoted Q2 candidate passes the standing ladder and seven-scene Contract B gate against the Phase Q1 binary: SSIMULACRA2 mean delta is non-negative with no cell below -0.5, Butteraugli max-norm mean is no worse than +2%, Butteraugli pnorm3 has no cell worse than +5%, and matched-SSIMULACRA2 bytes do not increase.
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.quality-q2-corpus-gates-2026-08-18/1 ]
+            verified_by [ @jpegxl-rs.evidence.quality-q2-corpus-gates-2026-08-18/2 ]
         }
         check speed-budget {
             statement """
@@ -6457,6 +8068,7 @@ record jpegxl-rs.work.quality-q2-chroma-hf/1 : work {
     }
     depends_on [ @jpegxl-rs.work.quality-q1-quantizer/1 ]
     part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+    source { kind legacy }
 }
 
 record jpegxl-rs.work.quality-q3-ladder-ceiling-and-allocation-screens/1 : work {
@@ -6493,14 +8105,14 @@ record jpegxl-rs.work.quality-q3-ladder-ceiling-and-allocation-screens/1 : work 
                 Changed target-rate outputs are byte-identical across one and four threads, and every changed stream decodes in djxl and jxl-oxide.
                 """
             method command
-            verified_by [ @jpegxl-rs.evidence.quality-q3-determinism-decoders-2026-08-18/1 ]
+            verified_by [ @jpegxl-rs.evidence.quality-q3-determinism-decoders-2026-08-18/2 ]
         }
         check gates {
             statement """
                 cargo fmt --check, clippy -D warnings, the full workspace test suite (Windows fixture links materialised, JPXL_DISABLE_AVX2=1 as in Q2), and the no-default-features check pass on a clean worktree carrying only this pass's patch.
                 """
             method command
-            verified_by [ @jpegxl-rs.evidence.quality-q3-rust-gates-2026-08-18/1 ]
+            verified_by [ @jpegxl-rs.evidence.quality-q3-rust-gates-2026-08-18/2 ]
         }
         check ladder-ceiling-fix {
             statement """
@@ -6508,25 +8120,26 @@ record jpegxl-rs.work.quality-q3-ladder-ceiling-and-allocation-screens/1 : work 
                 """
             method command
             command "bash .agent/scratch/quality-track/q3-arm.sh q3-final"
-            verified_by [ @jpegxl-rs.evidence.quality-q3-ladder-ceiling-fix-2026-08-18/1 ]
+            verified_by [ @jpegxl-rs.evidence.quality-q3-ladder-ceiling-fix-2026-08-18/2 ]
         }
         check quality-gate {
             statement """
                 The final binary passes the standing ladder and seven-scene Contract B gate against the Phase Q2 outputs: SSIMULACRA2 mean delta non-negative with no cell below -0.5, Butteraugli max-norm mean no worse than +2%, no 3-norm cell worse than +5%, every stream accepted by djxl and jxl-oxide; the only changed cells are the ceiling-bound ones and they improve.
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.quality-q3-corpus-gates-2026-08-18/1 ]
+            verified_by [ @jpegxl-rs.evidence.quality-q3-corpus-gates-2026-08-18/2 ]
         }
         check speed-budget {
             statement """
                 Alternating native Windows A/B timing on the standing mid 1 bpp Balanced cell keeps the cumulative quality-track cost within +15% of Phase 42: the Q3 binary is within noise of the frozen Phase Q1 binary.
                 """
             method command
-            verified_by [ @jpegxl-rs.evidence.quality-q3-speed-budget-2026-08-18/1 ]
+            verified_by [ @jpegxl-rs.evidence.quality-q3-speed-budget-2026-08-18/2 ]
         }
     }
     depends_on [ @jpegxl-rs.work.quality-q2-chroma-hf/1 ]
     part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+    source { kind legacy }
 }
 
 record jpegxl-rs.work.quality-q4-cover-rate-model/1 : work {
@@ -6563,7 +8176,7 @@ record jpegxl-rs.work.quality-q4-cover-rate-model/1 : work {
                 """
             method command
             verified_by [
-                @jpegxl-rs.evidence.quality-q4-compatibility-determinism-2026-08-18/1
+                @jpegxl-rs.evidence.quality-q4-compatibility-determinism-2026-08-18/2
             ]
         }
         check gates {
@@ -6571,25 +8184,26 @@ record jpegxl-rs.work.quality-q4-cover-rate-model/1 : work {
                 cargo fmt --check, clippy -D warnings, the full workspace test suite (Windows fixture links, JPXL_DISABLE_AVX2=1) and the no-default-features check pass.
                 """
             method command
-            verified_by [ @jpegxl-rs.evidence.quality-q4-rust-gates-2026-08-18/1 ]
+            verified_by [ @jpegxl-rs.evidence.quality-q4-rust-gates-2026-08-18/2 ]
         }
         check quality-gate {
             statement """
                 The calibrated rate model passes the standing ladder and seven-scene Contract B gate against Phase Q3 with SSIMULACRA2 mean and Butteraugli 3-norm mean both improving (no seesaw), every stream accepted by djxl and jxl-oxide.
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.quality-q4-corpus-gates-2026-08-18/1 ]
+            verified_by [ @jpegxl-rs.evidence.quality-q4-corpus-gates-2026-08-18/2 ]
         }
         check speed-budget {
             statement """
                 Alternating A/B timing of the calibrated model against legacy is neutral on the standing mid 1 bpp and large 1 bpp Balanced cells.
                 """
             method command
-            verified_by [ @jpegxl-rs.evidence.quality-q4-speed-budget-2026-08-18/1 ]
+            verified_by [ @jpegxl-rs.evidence.quality-q4-speed-budget-2026-08-18/2 ]
         }
     }
     depends_on [ @jpegxl-rs.work.quality-q3-ladder-ceiling-and-allocation-screens/1 ]
     part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+    source { kind legacy }
 }
 
 record jpegxl-rs.work.quality-q5-anchored-controller-above-ceiling/1 : work {
@@ -6620,11 +8234,12 @@ record jpegxl-rs.work.quality-q5-anchored-controller-above-ceiling/1 : work {
                 The three controller changes and the fresh-finalist variant are screened on the standing corpus against Phase Q4 with per-cell numbers, the fallback-as-hidden-tier finding is documented, and the committed defaults reproduce the Phase Q4 hashes.
                 """
             method command
-            verified_by [ @jpegxl-rs.evidence.quality-q5-controller-screen-2026-08-18/1 ]
+            verified_by [ @jpegxl-rs.evidence.quality-q5-controller-screen-2026-08-18/2 ]
         }
     }
     depends_on [ @jpegxl-rs.work.quality-q4-cover-rate-model/1 ]
     part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+    source { kind legacy }
 }
 
 record jpegxl-rs.work.quality-q6-cheaper-exhaustive-search/1 : work {
@@ -6662,11 +8277,12 @@ record jpegxl-rs.work.quality-q6-cheaper-exhaustive-search/1 : work {
                 Against Phase Q4 the standing photo ladder and seven-scene screen stay within Contract B (SSIMULACRA2 mean non-negative, worst above -0.5, Butteraugli max-norm mean within +2%, 3-norm worst within +5%), every stream accepted by djxl and jxl-oxide, and Fast/Balanced non-fallback cells are byte-identical.
                 """
             method observation
-            verified_by [ @jpegxl-rs.evidence.quality-q6-corpus-gates-2026-08-18/1 ]
+            verified_by [ @jpegxl-rs.evidence.quality-q6-corpus-gates-2026-08-18/2 ]
         }
     }
     depends_on [ @jpegxl-rs.work.quality-q5-anchored-controller-above-ceiling/1 ]
     part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+    source { kind legacy }
 }
 
 record jpegxl-rs.work.quality-q7-effective-scale-controller/1 : work {

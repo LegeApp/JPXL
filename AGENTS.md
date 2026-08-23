@@ -122,7 +122,7 @@ hypotheses instead of accumulating them; git preserves history. Only
 ```
 cd JPXL
 cargo build   --workspace
-cargo test    --workspace
+cargo test    --workspace --release
 cargo clippy  --workspace --all-targets -- -D warnings
 cargo fmt     --all --check
 ```

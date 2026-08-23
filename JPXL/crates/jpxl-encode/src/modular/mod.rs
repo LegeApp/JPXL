@@ -1271,8 +1271,20 @@ pub fn build_global_residual_model(
     source: &ModularSource,
     geometry: &Geometry,
 ) -> Result<GlobalResidualModel> {
+    build_global_residual_model_with_resources(source, geometry, crate::EncodeResources::serial())
+}
+
+/// Builds the shared residual model while collecting independent section
+/// events on the request's worker budget. Results remain in section order, so
+/// histogram sums, LZ77 section boundaries, tie behavior, and output bytes do
+/// not depend on scheduling.
+pub(crate) fn build_global_residual_model_with_resources(
+    source: &ModularSource,
+    geometry: &Geometry,
+    resources: crate::EncodeResources,
+) -> Result<GlobalResidualModel> {
     source.validate()?;
-    let section_events = collect_all_section_residuals(source, geometry)?;
+    let section_events = collect_all_section_residuals(source, geometry, resources)?;
     let num_contexts = source.tree.num_contexts().max(1);
     let plain = tables_from_plain_events(num_contexts, &section_events)?;
     let tables = if source.allow_lz77 {
@@ -1300,6 +1312,7 @@ struct SectionResiduals {
 fn collect_all_section_residuals(
     source: &ModularSource,
     geometry: &Geometry,
+    resources: crate::EncodeResources,
 ) -> Result<Vec<SectionResiduals>> {
     let part = partition_channels(source, geometry.group_dim());
     let mut out = Vec::new();
@@ -1319,50 +1332,54 @@ fn collect_all_section_residuals(
         });
     }
 
-    let n_lf = usize::try_from(geometry.num_lf_groups()).unwrap_or(0);
-    for index in 0..n_lf {
-        let (x0, y0, width, height) = geometry
-            .lf_group_rect(u64::try_from(index).unwrap_or(u64::MAX))
-            .ok_or_else(|| EncodeError::unsupported("an LF group index past the grid", "G.2"))?;
-        if part.lf_group.is_empty() {
-            continue;
-        }
-        out.push(SectionResiduals {
-            events: collect_residuals_indices(
-                source,
-                &part.lf_group,
-                Some(Rect {
-                    x0,
-                    y0,
-                    width,
-                    height,
-                }),
-            )?,
-            dist_multiplier: dist_mul(&part.lf_group),
-        });
+    if !part.lf_group.is_empty() {
+        let n_lf = usize::try_from(geometry.num_lf_groups()).unwrap_or(0);
+        let workers = resources.workers_for(n_lf);
+        let sections = crate::resources::ordered_map(n_lf, workers, |index| {
+            let (x0, y0, width, height) = geometry
+                .lf_group_rect(u64::try_from(index).unwrap_or(u64::MAX))
+                .ok_or_else(|| {
+                    EncodeError::unsupported("an LF group index past the grid", "G.2")
+                })?;
+            Ok::<_, EncodeError>(SectionResiduals {
+                events: collect_residuals_indices(
+                    source,
+                    &part.lf_group,
+                    Some(Rect {
+                        x0,
+                        y0,
+                        width,
+                        height,
+                    }),
+                )?,
+                dist_multiplier: dist_mul(&part.lf_group),
+            })
+        })?;
+        out.extend(sections);
     }
 
-    let n_pg = usize::try_from(geometry.num_groups()).unwrap_or(0);
-    for index in 0..n_pg {
-        let (x0, y0, width, height) = geometry
-            .group_rect(u64::try_from(index).unwrap_or(u64::MAX))
-            .ok_or_else(|| EncodeError::unsupported("a group index past the grid", "G.4"))?;
-        if part.pass_group.is_empty() {
-            continue;
-        }
-        out.push(SectionResiduals {
-            events: collect_residuals_indices(
-                source,
-                &part.pass_group,
-                Some(Rect {
-                    x0,
-                    y0,
-                    width,
-                    height,
-                }),
-            )?,
-            dist_multiplier: dist_mul(&part.pass_group),
-        });
+    if !part.pass_group.is_empty() {
+        let n_pg = usize::try_from(geometry.num_groups()).unwrap_or(0);
+        let workers = resources.workers_for(n_pg);
+        let sections = crate::resources::ordered_map(n_pg, workers, |index| {
+            let (x0, y0, width, height) = geometry
+                .group_rect(u64::try_from(index).unwrap_or(u64::MAX))
+                .ok_or_else(|| EncodeError::unsupported("a group index past the grid", "G.4"))?;
+            Ok::<_, EncodeError>(SectionResiduals {
+                events: collect_residuals_indices(
+                    source,
+                    &part.pass_group,
+                    Some(Rect {
+                        x0,
+                        y0,
+                        width,
+                        height,
+                    }),
+                )?,
+                dist_multiplier: dist_mul(&part.pass_group),
+            })
+        })?;
+        out.extend(sections);
     }
 
     // Always at least one residual stream (possibly empty) so tables seed.

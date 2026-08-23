@@ -3,7 +3,7 @@ project jpegxl-rs
 
 record jpegxl-rs.assessment.encoder-architecture-outside-advice/1 : assessment {
     title "Architecture diagnosis: choose multiplicity and modular rescans (outside-advice)"
-    state verified
+    state superseded
     scope [
         path "JPXL/crates/jpxl-encode-policy/**",
         path "JPXL/crates/jpxl-encode/**",
@@ -29,6 +29,72 @@ record jpegxl-rs.assessment.encoder-architecture-outside-advice/1 : assessment {
     source {
         kind external
         path "sources/outside-advice.md"
+    }
+}
+
+record jpegxl-rs.assessment.encoder-architecture-outside-advice/2 : assessment {
+    title "Architecture diagnosis: choose multiplicity and modular rescans (outside-advice)"
+    state superseded
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/**",
+        path "JPXL/crates/jpxl-encode/**",
+        path "sources/external/outside-advice-2026-08-06--945338a6.md"
+    ]
+    statement """
+        External review in sources/outside-advice.md (2026-08-06) diagnoses the
+        ~15x VarDCT and ~30-100x Modular gaps versus libjxl as structural, not
+        leaf-SIMD deficits. VarDCT: EncodeRequest::defaults for bench_vardct_fixed
+        still runs hierarchical cover, AQ, CfL, and full entropy search; scalar
+        HfQuantizer::choose is invoked on the order of 10^8 calls at 12 MP
+        (cover scoring + CfL samples + factor trials + final quant); planning is
+        serial while rayon only parallelizes emission. Modular: plan_for rescans
+        residuals ~67-72 times and deep-clones planes each trial (~10 GB traffic
+        at 12 MP RGB) while producing e1-class density. Recommended order is
+        Phase 0 instrumentation, Phase 1 output-preserving fixes, then replace
+        quant/CfL/cover units of work, modular planner, perceptual calibration,
+        and only then entropy/SIMD/LTO. Rankings are source findings pending
+        Phase-0 measured counters.
+        """
+    confidence high
+    supersedes [ @jpegxl-rs.assessment.encoder-architecture-outside-advice/1 ]
+    source {
+        kind external
+        role origin
+        path "sources/external/outside-advice-2026-08-06--945338a6.md"
+        use """
+            Preserves the historical architecture diagnosis under its immutable source-library path.
+            """
+    }
+}
+
+record jpegxl-rs.assessment.encoder-architecture-outside-advice/3 : assessment {
+    title "Architecture diagnosis: choose multiplicity and modular rescans (outside-advice)"
+    state verified
+    scope [ path "JPXL/crates/jpxl-encode-policy/**", path "JPXL/crates/jpxl-encode/**" ]
+    statement """
+        External review in sources/outside-advice.md (2026-08-06) diagnoses the
+        ~15x VarDCT and ~30-100x Modular gaps versus libjxl as structural, not
+        leaf-SIMD deficits. VarDCT: EncodeRequest::defaults for bench_vardct_fixed
+        still runs hierarchical cover, AQ, CfL, and full entropy search; scalar
+        HfQuantizer::choose is invoked on the order of 10^8 calls at 12 MP
+        (cover scoring + CfL samples + factor trials + final quant); planning is
+        serial while rayon only parallelizes emission. Modular: plan_for rescans
+        residuals ~67-72 times and deep-clones planes each trial (~10 GB traffic
+        at 12 MP RGB) while producing e1-class density. Recommended order is
+        Phase 0 instrumentation, Phase 1 output-preserving fixes, then replace
+        quant/CfL/cover units of work, modular planner, perceptual calibration,
+        and only then entropy/SIMD/LTO. Rankings are source findings pending
+        Phase-0 measured counters.
+        """
+    confidence high
+    supersedes [ @jpegxl-rs.assessment.encoder-architecture-outside-advice/2 ]
+    source {
+        kind external
+        role origin
+        path "sources/external/outside-advice-2026-08-06--945338a6.md"
+        use """
+            Preserves the historical architecture diagnosis under its immutable source-library path.
+            """
     }
 }
 
@@ -59,6 +125,32 @@ record jpegxl-rs.assessment.encoder-static-optimization/1 : assessment {
             The supplied snapshot has no root workspace Cargo.toml, so I could not build
             and produce measured hotspot percentages. The rankings below are static
             source findings, not substitutes for the flamegraph.
+            """
+    }
+}
+
+record jpegxl-rs.assessment.gap-bridge-2026-08-21/1 : assessment {
+    title "Assess the 2026-08-21 libjxl-gap bridge against current JPXL"
+    state verified
+    scope [
+        path "JPXL/crates/jpxl-cli/**",
+        path "JPXL/crates/jpxl-encode-policy/**",
+        path "JPXL/tools/**"
+    ]
+    statement """
+        The registered 2026-08-21 gap bridge is non-authoritative outside advice whose opening sequence matches current repository evidence: the comparison harness still misattributes per-codec metadata and does not perform equivalent-output matching; the current quality deficit is localized around edge-flat cases; and production Balanced can still enter an exhaustive fallback. Earlier broad speed architecture through dense banks, anchored search, token-tape traversal, leaf finishing and Butteraugli localization is already completed and must not be restarted. Adopt G0 comparison truth followed by diagnostic-only G1 risk localization; require new evidence before G2 or production policy changes.
+        """
+    supported_by [
+        @jpegxl-rs.observation.libjxl-comparison-2026-08-18/2,
+        @jpegxl-rs.observation.q4-rate-proxy-audit-and-metric-divergence-2026-08-18/3,
+        @jpegxl-rs.observation.q5-exhaustive-fallback-is-a-hidden-quality-tier-2026-08-18/3
+    ]
+    source {
+        kind external
+        role origin
+        path "sources/external/jpxl-bridging-libjxl-gap-2026-08-21--ae1ed657.md"
+        use """
+            Roadmap proposal assessed against current code and AKR evidence.
             """
     }
 }

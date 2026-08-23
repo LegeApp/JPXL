@@ -34,6 +34,30 @@ record jpegxl-rs.track.encoder-optimization/1 : track {
     }
 }
 
+record jpegxl-rs.track.perceptual-quality-controller/1 : track {
+    title "Perceptual quality controller: SSIMULACRA2 score target for Fast and Balanced, gated Quality effort"
+    state proposed
+    scope [ path "JPXL/**", path "sources/external/**", path "test-set/**" ]
+    intent """
+        Deliver the perceptual quality contract of jpegxl-rs.decision.perceptual-quality-contract: PR 0 provenance/corpus/calibration, PR 1 target semantics and CLI, PR 2 in-tree metric and canonical reference, PR 3 pixel-plan split and plan renderer, PR 4 fixed-policy navigator (the usable Fast/Balanced), PR 5 policy bank, PR 7 terminal reducer, then the Quality-effort promotion gate. PR 6 (attribution) and PR 8 (surrogate/JPXL-PCost) and the JPXL-PQ metric workstream follow as separate work once the controller exists and has produced traces.
+        """
+    cadence """
+        One work record per PR; each closes with codec_compare quality-curve evidence on the relevant corpus split, the four workspace gates, and byte-identity of rate-mode production streams.
+        """
+    note """
+        Plan file of record for this session: ~/.claude/plans/based-on-this-doc-drifting-horizon.md (2026-08-22). Baseline hash reference: G0 smoke artifacts under .agent/scratch/gap-g0-smoke-20260821/.
+        """
+    supported_by [ @jpegxl-rs.observation.libjxl-comparison-2026-08-18/2 ]
+    source {
+        kind external
+        role origin
+        document "jpxl-ssimulacra2-quality-controller-plan-2026-08-21"
+        use """
+            Implementation sequence section 11 and definition of done.
+            """
+    }
+}
+
 record jpegxl-rs.track.vardct-encoder/1 : track {
     title "VarDCT encoder (M1-M8)"
     state proposed

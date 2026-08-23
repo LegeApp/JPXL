@@ -19,6 +19,7 @@ jpxl-decode.workspace = true
 jpxl-encode = { workspace = true }
 jpxl-encode-policy = { workspace = true }
 jpxl-conformance.workspace = true
+jpxl-perceptual.workspace = true
 
 [features]
 default = ["parallel", "simd"]
@@ -27,6 +28,9 @@ simd = ["jpxl-encode/simd", "jpxl-encode-policy/simd", "jpxl-core/simd"]
 # Compatibility feature for explicitly forwarding Fast rate-preset support.
 # Policy enables it normally; Quality remains the runtime default.
 anchor-sketch = ["jpxl-encode-policy/anchor-sketch"]
+# Exposes the exhaustive-reference `quality` lossy effort on `--effort` /
+# `--lossy-preset`. Forwards to `jpxl/quality-effort`; off by default.
+quality-effort = ["jpxl/quality-effort"]
 # `jpxl compare` also reports SSIMULACRA2. Off by default so the shipped CLI
 # keeps this workspace's near-zero dependency footprint; build with
 # `--features ssimulacra2` when grading lossy encodes.

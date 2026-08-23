@@ -1,4 +1,4 @@
-//! Phase A of `sources/outside-advice.md` §8's scoping
+//! Phase A of AKR source `outside-advice-2026-08-06` §8's scoping
 //! (`jpegxl-rs.work.arch-s8-full-redesign-scoped`): a regret/agreement
 //! harness for candidate cover-selection policies ("surrogates"), proven as
 //! a no-op against the exact scorer before it is trusted for anything else.

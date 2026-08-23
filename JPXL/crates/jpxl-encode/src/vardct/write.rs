@@ -1420,24 +1420,26 @@ fn record_pass_group_tapes(
     let n_groups = usize::try_from(geometry.num_groups()).unwrap_or(0);
     let workers = executor.resources().workers_for(n_groups).max(1);
     let chunk = n_groups.div_ceil(workers);
-    let parts = executor.map_ordered(workers, |worker| {
-        let mut sink = TapeSink {
-            recorder: TokenTapeRecorder::new(&encoder_plan)?,
-            error: None,
-        };
-        let start = worker.saturating_mul(chunk).min(n_groups);
-        let end = start.saturating_add(chunk).min(n_groups);
-        let mut tapes = Vec::with_capacity(end - start);
-        for index in start..end {
-            let group = u64::try_from(index).unwrap_or(u64::MAX);
-            let (walk, varblocks) = pass_group_walk(plan, geometry, orders, group)?;
-            walk_pass_group(&walk, &varblocks, &mut sink).map_err(EncodeError::Plan)?;
-            if let Some(error) = sink.error {
-                return Err(EncodeError::from(error));
+    let parts = diagnostics::time_tape_record(|| {
+        executor.map_ordered(workers, |worker| {
+            let mut sink = TapeSink {
+                recorder: TokenTapeRecorder::new(&encoder_plan)?,
+                error: None,
+            };
+            let start = worker.saturating_mul(chunk).min(n_groups);
+            let end = start.saturating_add(chunk).min(n_groups);
+            let mut tapes = Vec::with_capacity(end - start);
+            for index in start..end {
+                let group = u64::try_from(index).unwrap_or(u64::MAX);
+                let (walk, varblocks) = pass_group_walk(plan, geometry, orders, group)?;
+                walk_pass_group(&walk, &varblocks, &mut sink).map_err(EncodeError::Plan)?;
+                if let Some(error) = sink.error {
+                    return Err(EncodeError::from(error));
+                }
+                tapes.push(sink.recorder.take_tape());
             }
-            tapes.push(sink.recorder.take_tape());
-        }
-        Ok::<_, EncodeError>((sink.recorder.into_counts(), tapes))
+            Ok::<_, EncodeError>((sink.recorder.into_counts(), tapes))
+        })
     })?;
     let mut counts: Vec<Vec<u64>> = vec![Vec::new(); encoder_plan.context_map.num_clusters()];
     let mut tapes = Vec::with_capacity(n_groups);
@@ -1451,7 +1453,12 @@ fn record_pass_group_tapes(
             "G.4",
         ));
     }
-    diagnostics::note_tape_symbols(tapes.iter().map(TokenTape::len).sum());
+    diagnostics::note_tape_stats(
+        tapes.iter().map(TokenTape::len).sum(),
+        tapes.iter().map(TokenTape::extra_len).sum(),
+        tapes.iter().map(TokenTape::byte_size).sum(),
+        tapes.iter().map(TokenTape::legacy_byte_size).sum(),
+    );
     // The per-cluster alias tables (a few hundred clusters on a photograph)
     // build on the executor; each is a pure function of its own counts.
     let tables = EntropyTables::build_from_token_counts_with(&encoder_plan, counts, |n, build| {

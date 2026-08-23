@@ -1,0 +1,34 @@
+[package]
+name = "jpxl-perceptual"
+description = "In-tree perceptual metric for the JPXL quality controller: a clean-room SSIMULACRA2 with a precomputed reference and deterministic reductions"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# Clean-room boundary (AKR `jpegxl-rs.policy.perceptual-metric-clean-room`):
+# the metric is derived from the public SSIMULACRA2 specification and
+# cross-checked against the BSD-2 rust-av crate. Nothing under `libjxl/` is a
+# derivation source. The production path has no third-party dependency; the
+# rust-av crate enters only as the `parity-oracle` test feature.
+[dependencies]
+jpxl-core = { path = "../jpxl-core", version = "0.3.0", default-features = false }
+jpxl-encode = { path = "../jpxl-encode", version = "0.3.0", optional = true, default-features = false }
+jpxl-encode-policy = { path = "../jpxl-encode-policy", version = "0.3.0", optional = true, default-features = false }
+jpxl-plan-render = { path = "../jpxl-plan-render", version = "0.3.0", optional = true }
+ssimulacra2 = { workspace = true, optional = true }
+
+[features]
+default = []
+# Implements `BandExecutor` for `jpxl_encode::EncodeExecutor`, so the metric's
+# row bands and plane items run on the encoder's ordered worker pool.
+encode-executor = ["dep:jpxl-encode"]
+# The policy layer's `PerceptualEvaluator`, implemented over the plan renderer:
+# what the facade injects into the quality controller.
+evaluator = ["encode-executor", "dep:jpxl-encode-policy", "dep:jpxl-plan-render"]
+# Test-only parity against the rust-av `ssimulacra2` crate. Never enabled by a
+# production build; `tests/parity.rs` is compiled only with this feature.
+parity-oracle = ["dep:ssimulacra2"]
+
+[lints]
+workspace = true

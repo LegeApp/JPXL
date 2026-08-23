@@ -5,6 +5,8 @@
 //! the encoder. Both are declared here at the stage boundary; no field of
 //! [`SearchBudget`] is ever read inside a kernel.
 
+use core::fmt;
+
 use jpxl_encode::vardct::ids::{GlobalScale, HfMul, QmScale, QuantLf};
 use jpxl_encode::vardct::plan::RestorationDecision;
 
@@ -74,6 +76,135 @@ impl RateTarget {
     }
 }
 
+/// A perceptual metric the quality controller can target.
+///
+/// One metric today; the enum exists so a future metric is an added variant,
+/// not a breaking change to [`PerceptualTarget`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PerceptualMetric {
+    /// SSIMULACRA 2, in this project's own calibration.
+    Ssimulacra2,
+}
+
+impl PerceptualMetric {
+    /// The frozen version string identifying this metric's exact definition.
+    ///
+    /// Bumped whenever the score a given encode achieves would change, so a
+    /// stored score is never silently compared against a different metric.
+    #[must_use]
+    pub const fn version(self) -> MetricVersion {
+        match self {
+            Self::Ssimulacra2 => MetricVersion("ssimulacra2-jpxl-1"),
+        }
+    }
+}
+
+/// A frozen identifier for one metric definition.
+///
+/// Constructed only by [`PerceptualMetric::version`]; carried in a
+/// controller's outcome so a caller can record *which* metric a score was
+/// measured against.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MetricVersion(&'static str);
+
+impl MetricVersion {
+    /// The version string.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        self.0
+    }
+}
+
+impl fmt::Display for MetricVersion {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.0)
+    }
+}
+
+/// A minimum perceptual score the encoder must meet.
+///
+/// **This is the normal contract for lossy encoding.** The caller states the
+/// visual quality floor and the controller (PR 4) spends the fewest bytes that
+/// clear it. [`RateTarget`] and [`FixedQuantizerTarget`] are the expert modes
+/// that pin a size or a quantizer instead of a quality.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PerceptualTarget {
+    /// Which metric the score is measured on.
+    pub metric: PerceptualMetric,
+    /// The minimum acceptable score, in `0.0..=100.0` (100 is mathematically
+    /// lossless).
+    pub minimum_score: f64,
+}
+
+impl PerceptualTarget {
+    /// Builds a target, rejecting a score that is not finite and in
+    /// `0.0..=100.0`.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::PolicyError::Unsupported`] if `minimum_score` is NaN, infinite,
+    /// below zero, or above 100.
+    pub fn new(metric: PerceptualMetric, minimum_score: f64) -> crate::Result<Self> {
+        if !minimum_score.is_finite() || !(0.0..=100.0).contains(&minimum_score) {
+            return Err(crate::PolicyError::Unsupported {
+                what: "perceptual minimum score must be finite and in 0..=100",
+            });
+        }
+        Ok(Self {
+            metric,
+            minimum_score,
+        })
+    }
+}
+
+/// A pinned VarDCT quantizer: the expert mode for reproducing an exact stream.
+///
+/// The three scalars are I.2/G.2.4's quantizer inputs. Unlike [`RateTarget`]
+/// and [`PerceptualTarget`], nothing is searched — the encoder emits exactly
+/// this quantizer, so it is the reproducible-fixture path, not the normal
+/// contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FixedQuantizerTarget {
+    /// I.2's `global_scale` (larger is finer and produces a bigger file).
+    pub global_scale: GlobalScale,
+    /// I.2's `quant_lf`.
+    pub quant_lf: QuantLf,
+    /// The constant per-varblock HF multiplier.
+    pub hf_mul: HfMul,
+}
+
+impl FixedQuantizerTarget {
+    /// Builds a target from raw wire values, range-checking each through its
+    /// own newtype constructor.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::PolicyError::Plan`] if any value is zero or outside its syntax
+    /// element's range.
+    pub fn new(global_scale: u32, quant_lf: u32, hf_mul: u32) -> crate::Result<Self> {
+        Ok(Self {
+            global_scale: GlobalScale::new(global_scale)?,
+            quant_lf: QuantLf::new(quant_lf)?,
+            hf_mul: HfMul::new(hf_mul)?,
+        })
+    }
+}
+
+/// One of the three ways to ask for a lossy encode.
+///
+/// [`Self::Perceptual`] is the normal contract: name the quality floor and let
+/// the encoder find the bytes. [`Self::Rate`] and [`Self::FixedQuantizer`] are
+/// expert modes that pin the size or the quantizer directly.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum LossyTarget {
+    /// Meet a minimum perceptual score (the normal contract).
+    Perceptual(PerceptualTarget),
+    /// Hit a byte or bits-per-pixel size.
+    Rate(RateTarget),
+    /// Emit an exact pinned quantizer.
+    FixedQuantizer(FixedQuantizerTarget),
+}
+
 /// How far under the target the loop may stop.
 ///
 /// The loop never exceeds the target — that is not a tolerance, it is the
@@ -129,10 +260,9 @@ impl Default for RateTolerance {
 /// [`Self::Balanced`] is the production default and [`Self::Fast`] is the
 /// lower-latency production tier. Both use the bounded two-anchor predictor
 /// (available in normal builds through the `anchor-sketch` compatibility
-/// feature), verify the selected stream exactly, and fall back to
-/// [`Self::Quality`] when they cannot satisfy their rate bands. Quality keeps
-/// the exhaustive exact search as a reference path rather than a production
-/// latency target.
+/// feature), verify the selected stream exactly, and may spend one bounded
+/// fresh-structure rescue when the anchored finalist misses. They never enter
+/// [`Self::Quality`], which remains an explicit exhaustive reference path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RateSearchPreset {
     /// Exhaustive exact rate search, preserving the highest-rate feasible
@@ -141,13 +271,13 @@ pub enum RateSearchPreset {
     /// [`Self::Balanced`].
     Quality,
     /// Two exact anchors, one predicted fast-entropy finalist, and at most one
-    /// exact correction before falling back to [`Self::Quality`].
+    /// exact correction and one bounded fresh-structure rescue sequence.
     Fast,
     /// Two exact anchors with the configured hierarchical cover and trailing
     /// HF quantizer, followed by one fast-entropy anchored finalist and at
-    /// most one exact correction before falling back to [`Self::Quality`].
-    /// This is the higher-quality speed preset; [`Self::Quality`] remains the
-    /// exhaustive reference path.
+    /// most one exact correction and one bounded fresh-structure rescue
+    /// sequence. This is the higher-quality speed preset; [`Self::Quality`]
+    /// remains the exhaustive reference path.
     #[default]
     Balanced,
 }
@@ -168,18 +298,16 @@ pub enum ChromaHfPolicy {
     /// Automatic target-rate chroma refinement.
     ///
     /// The historical name is retained as the actual enum variant for source
-    /// compatibility. Phase Q2 originally used it only for B=5 at or below
-    /// 1 bpp on Quality; Phase Q8 graduated the Quality behavior, and Phase Q9
-    /// added the production Balanced policy:
+    /// compatibility. PR 5 removed the last requested-bitrate branch, so every
+    /// preset is now a rate-independent per-preset constant:
     ///
-    /// * Balanced — X=3 and B=3 at every target (Phase Q9).
-    /// * Quality B — scale 5 at or below 1 bpp (Phase Q2); scale 4 above it
-    ///   (Phase Q8).
-    /// * Quality X — scale 3 at or below 1 bpp (Phase Q8); neutral above it.
+    /// * Balanced — X=3 and B=3 (Phase Q9).
+    /// * Quality — X=3 and B=5 (the former ≤1 bpp values; PR 5 dropped the
+    ///   `at_most_one_bpp` gate that graduated them with rate).
     /// * Fast — neutral X/B scales.
     ///
-    /// The Balanced setting improves the production path without adding a
-    /// search, pass, allocation, or content-dependent branch.
+    /// The setting improves the production path without adding a search, pass,
+    /// allocation, or content-dependent branch.
     QualityLowRateB5,
 }
 
@@ -550,7 +678,7 @@ pub enum CoverFrequencyWeight {
 /// [`Self::Nearest`] is the shipped rule: among `[0, est-1, est, est+1]`, take
 /// the smallest `|recon - target|`. It has no rate term at all, so it can spend
 /// bits on coefficients whose distortion saving does not pay for them --
-/// exactly what `sources/outside-advice.md` names.
+/// exactly what AKR source `outside-advice-2026-08-06` names.
 ///
 /// [`Self::RateDistortion`] minimises `residual_bits(q) + rd * (recon-target)^2`
 /// instead, with `rd` the same Lagrange weight `block_cost_bounded` applies to
@@ -798,13 +926,65 @@ impl EncodeRequest {
         request
     }
 
-    /// Resolves the B-channel QM scale for one concrete target and frame.
+    /// A fixed-quantizer request that emits `target`'s exact scalars.
     ///
-    /// Byte targets use the same `target_bytes * 8 <= pixels` boundary as the
-    /// bits-per-pixel spelling, so the policy does not depend on which public
-    /// target form the caller chose. Manual requests are returned verbatim.
+    /// This is [`Self::defaults`] with the three quantizer scalars replaced and
+    /// no rate [`target`](Self::target) — i.e. the milestone-2 path that emits
+    /// the quantizer verbatim, with every stable fixed-quantizer default
+    /// (legacy rate proxy, nearest quantizer, filters off) retained.
     #[must_use]
-    pub fn effective_b_qm_scale(self, width: u32, height: u32, target: RateTarget) -> QmScale {
+    pub fn for_fixed_quantizer(target: FixedQuantizerTarget) -> Self {
+        let mut request = Self::defaults();
+        request.global_scale = target.global_scale;
+        request.quant_lf = target.quant_lf;
+        request.hf_mul = target.hf_mul;
+        request.target = None;
+        request
+    }
+
+    /// The starting policy of a perceptual-quality request.
+    ///
+    /// Inherits the promoted target-rate knobs (`quant_lf` 4, AQ off, one
+    /// EPF step at uniform sharpness 7, the quantizer-donor cover weight,
+    /// trailing truncation at lambda x4, the calibrated cover rate model) as
+    /// a labelled **starting** policy — they were screened at matched bytes,
+    /// not at matched score — carries no rate target, and pins the chroma
+    /// matrices per effort so no requested-bitrate branch is reachable:
+    /// Balanced X=3/B=3, Fast neutral, Quality X=3/B=4.
+    #[must_use]
+    pub fn for_quality(preset: RateSearchPreset) -> Self {
+        let mut request = Self::for_target(RateTarget::BitsPerPixel(1.0));
+        request.target = None;
+        request.rate_preset = preset;
+        request.chroma_hf_policy = ChromaHfPolicy::Manual;
+        let (x, b) = match preset {
+            RateSearchPreset::Fast => (QmScale::NEUTRAL, QmScale::NEUTRAL),
+            RateSearchPreset::Balanced => (
+                QmScale::new(3).unwrap_or(QmScale::NEUTRAL),
+                QmScale::new(3).unwrap_or(QmScale::NEUTRAL),
+            ),
+            RateSearchPreset::Quality => (
+                QmScale::new(3).unwrap_or(QmScale::NEUTRAL),
+                QmScale::new(4).unwrap_or(QmScale::NEUTRAL),
+            ),
+        };
+        request.x_qm_scale = x;
+        request.b_qm_scale = b;
+        request
+    }
+
+    /// Resolves the B-channel QM scale for the automatic (rate-path) policy.
+    ///
+    /// The scale is a **per-preset constant** with no requested-bitrate branch:
+    /// Fast neutral, Balanced 3, Quality 5 (the former ≤1 bpp value, now the
+    /// only Quality value). Manual requests are returned verbatim.
+    ///
+    /// PR 5 removed the `target_bytes * 8 <= pixels` gate that once graduated
+    /// the exhaustive Quality preset's chroma with rate. Fast and Balanced are
+    /// unchanged and byte-identical; only the feature-gated Quality *rate*
+    /// preset's streams may move.
+    #[must_use]
+    pub fn effective_b_qm_scale(self) -> QmScale {
         if self.chroma_hf_policy == ChromaHfPolicy::Manual {
             return self.b_qm_scale;
         }
@@ -814,45 +994,30 @@ impl EncodeRequest {
             // screened photo cell's SSIMULACRA2 and passed the pooled photo and
             // scene Contract B gates without adding encoder work.
             RateSearchPreset::Balanced => QmScale::new(3).unwrap_or(QmScale::NEUTRAL),
-            RateSearchPreset::Quality if at_most_one_bpp(width, height, target) => {
-                // Phase Q2's low-rate B refinement.
-                QmScale::new(5).unwrap_or(QmScale::NEUTRAL)
-            }
-            RateSearchPreset::Quality => {
-                // Phase Q8: a gentler B at high rate, where B=5 overshot the
-                // Butteraugli 3-norm bound but the ladder was undershooting bytes.
-                QmScale::new(4).unwrap_or(QmScale::NEUTRAL)
-            }
+            // PR 5: the per-preset constant is Phase Q2's low-rate B=5, applied
+            // at every rate now that the bpp branch is gone.
+            RateSearchPreset::Quality => QmScale::new(5).unwrap_or(QmScale::NEUTRAL),
         }
     }
 
-    /// Resolves the X-channel QM scale for one concrete target and frame.
+    /// Resolves the X-channel QM scale for the automatic (rate-path) policy.
     ///
-    /// Mirrors [`Self::effective_b_qm_scale`]: under
-    /// [`ChromaHfPolicy::PresetChroma`] Balanced uses scale 3 at every rate,
-    /// while Quality uses scale 3 at or below 1 bpp and stays neutral above it.
-    /// Fast stays neutral, and a [`ChromaHfPolicy::Manual`] request takes the
+    /// Mirrors [`Self::effective_b_qm_scale`]: a per-preset constant with no
+    /// requested-bitrate branch — Fast neutral, Balanced and Quality scale 3
+    /// (the former ≤1 bpp value). A [`ChromaHfPolicy::Manual`] request takes the
     /// supplied scale verbatim.
     #[must_use]
-    pub fn effective_x_qm_scale(self, width: u32, height: u32, target: RateTarget) -> QmScale {
+    pub fn effective_x_qm_scale(self) -> QmScale {
         if self.chroma_hf_policy == ChromaHfPolicy::Manual {
             return self.x_qm_scale;
         }
         match self.rate_preset {
-            RateSearchPreset::Balanced => QmScale::new(3).unwrap_or(QmScale::NEUTRAL),
-            RateSearchPreset::Quality if at_most_one_bpp(width, height, target) => {
+            RateSearchPreset::Fast => QmScale::NEUTRAL,
+            RateSearchPreset::Balanced | RateSearchPreset::Quality => {
                 QmScale::new(3).unwrap_or(QmScale::NEUTRAL)
             }
-            RateSearchPreset::Quality | RateSearchPreset::Fast => QmScale::NEUTRAL,
         }
     }
-}
-
-/// The `target_bytes * 8 <= pixels` boundary the Quality chroma policy keys on,
-/// so the byte and bits-per-pixel spellings of one bit per pixel agree.
-fn at_most_one_bpp(width: u32, height: u32, target: RateTarget) -> bool {
-    let pixels = u64::from(width) * u64::from(height);
-    target.bytes_for(width, height).saturating_mul(8) <= pixels
 }
 
 #[cfg(test)]
@@ -965,56 +1130,31 @@ mod tests {
     }
 
     #[test]
-    fn automatic_chroma_policy_is_preset_specific_and_quality_graduates_with_rate() {
-        let low = RateTarget::BitsPerPixel(1.0);
-        let high = RateTarget::BitsPerPixel(2.0);
-        let automatic = EncodeRequest::for_target(low);
+    fn automatic_chroma_policy_is_a_per_preset_constant() {
+        // PR 5 removed the `at_most_one_bpp` gate: every preset is now a
+        // rate-independent per-preset constant, so the effective scales no
+        // longer take a target or frame size.
+        let automatic = EncodeRequest::for_target(RateTarget::BitsPerPixel(1.0));
         let b5 = QmScale::new(5).expect("Q2 scale is inside the wire range");
-        let b4 = QmScale::new(4).expect("Q8 scale is inside the wire range");
         let scale3 = QmScale::new(3).expect("Q8/Q9 scale is inside the wire range");
 
+        // Quality: the former ≤1 bpp values (X=3/B=5), now the only values.
         let mut quality = automatic;
         quality.rate_preset = RateSearchPreset::Quality;
+        assert_eq!(quality.effective_b_qm_scale(), b5);
+        assert_eq!(quality.effective_x_qm_scale(), scale3);
 
-        // At or below 1 bpp: Phase Q2's B=5 and Phase Q8's X=3.
-        assert_eq!(quality.effective_b_qm_scale(64, 64, low), b5);
-        assert_eq!(quality.effective_x_qm_scale(64, 64, low), scale3);
-        assert_eq!(
-            quality.effective_b_qm_scale(64, 64, RateTarget::Bytes(512)),
-            b5,
-            "the byte spelling of exactly one bpp uses the same policy"
-        );
-        assert_eq!(
-            quality.effective_x_qm_scale(64, 64, RateTarget::Bytes(512)),
-            scale3
-        );
+        // Balanced: conservative X=3/B=3, byte-identical to before PR 5.
+        let mut balanced = automatic;
+        balanced.rate_preset = RateSearchPreset::Balanced;
+        assert_eq!(balanced.effective_b_qm_scale(), scale3);
+        assert_eq!(balanced.effective_x_qm_scale(), scale3);
 
-        // Above 1 bpp: Phase Q8's gentler B=4, and X returns to neutral.
-        assert_eq!(
-            quality.effective_b_qm_scale(64, 64, RateTarget::Bytes(513)),
-            b4,
-            "the first byte above one bpp graduates B to the Phase Q8 scale"
-        );
-        assert_eq!(quality.effective_b_qm_scale(64, 64, high), b4);
-        assert_eq!(
-            quality.effective_x_qm_scale(64, 64, high),
-            QmScale::NEUTRAL,
-            "X refinement is confined to the low-rate band"
-        );
-
-        // Phase Q9's production Balanced policy is a rate-independent,
-        // conservative X=3/B=3. Fast remains byte-identical to Q8.
-        for target in [low, high] {
-            let mut balanced = automatic;
-            balanced.rate_preset = RateSearchPreset::Balanced;
-            assert_eq!(balanced.effective_b_qm_scale(64, 64, target), scale3);
-            assert_eq!(balanced.effective_x_qm_scale(64, 64, target), scale3);
-
-            let mut fast = automatic;
-            fast.rate_preset = RateSearchPreset::Fast;
-            assert_eq!(fast.effective_b_qm_scale(64, 64, target), QmScale::NEUTRAL);
-            assert_eq!(fast.effective_x_qm_scale(64, 64, target), QmScale::NEUTRAL);
-        }
+        // Fast: neutral, byte-identical to before PR 5.
+        let mut fast = automatic;
+        fast.rate_preset = RateSearchPreset::Fast;
+        assert_eq!(fast.effective_b_qm_scale(), QmScale::NEUTRAL);
+        assert_eq!(fast.effective_x_qm_scale(), QmScale::NEUTRAL);
 
         // An explicit research scale bypasses the automatic policy for both
         // channels.
@@ -1022,8 +1162,26 @@ mod tests {
         manual.chroma_hf_policy = ChromaHfPolicy::Manual;
         manual.b_qm_scale = QmScale::new(3).expect("research scale is legal");
         manual.x_qm_scale = QmScale::new(6).expect("research scale is legal");
-        assert_eq!(manual.effective_b_qm_scale(64, 64, high), manual.b_qm_scale);
-        assert_eq!(manual.effective_x_qm_scale(64, 64, low), manual.x_qm_scale);
+        assert_eq!(manual.effective_b_qm_scale(), manual.b_qm_scale);
+        assert_eq!(manual.effective_x_qm_scale(), manual.x_qm_scale);
+    }
+
+    #[test]
+    fn quality_path_has_no_bpp_branch() {
+        // `for_quality` pins Manual chroma and the per-preset matrices, so the
+        // effective scales are the request's own fields regardless of frame
+        // size. With `at_most_one_bpp` deleted this is mostly a compile-level
+        // fact: there is no target or size parameter left to branch on.
+        for preset in [
+            RateSearchPreset::Fast,
+            RateSearchPreset::Balanced,
+            RateSearchPreset::Quality,
+        ] {
+            let req = EncodeRequest::for_quality(preset);
+            assert_eq!(req.chroma_hf_policy, ChromaHfPolicy::Manual);
+            assert_eq!(req.effective_b_qm_scale(), req.b_qm_scale);
+            assert_eq!(req.effective_x_qm_scale(), req.x_qm_scale);
+        }
     }
 
     #[test]
@@ -1084,5 +1242,52 @@ mod tests {
                 .bytes_for(10_000),
             200
         );
+    }
+
+    #[test]
+    fn perceptual_target_validates_the_score_band() {
+        let metric = PerceptualMetric::Ssimulacra2;
+        assert!(PerceptualTarget::new(metric, 0.0).is_ok());
+        assert!(PerceptualTarget::new(metric, 85.5).is_ok());
+        assert!(PerceptualTarget::new(metric, 100.0).is_ok());
+        assert!(PerceptualTarget::new(metric, -0.1).is_err());
+        assert!(PerceptualTarget::new(metric, 100.1).is_err());
+        assert!(PerceptualTarget::new(metric, f64::NAN).is_err());
+        assert!(PerceptualTarget::new(metric, f64::INFINITY).is_err());
+    }
+
+    #[test]
+    fn the_metric_version_is_the_frozen_string() {
+        let version = PerceptualMetric::Ssimulacra2.version();
+        assert_eq!(version.as_str(), "ssimulacra2-jpxl-1");
+        assert_eq!(version.to_string(), "ssimulacra2-jpxl-1");
+    }
+
+    #[test]
+    fn fixed_quantizer_target_range_checks_each_scalar() {
+        let ok = FixedQuantizerTarget::new(32_768, 16, 1).expect("in range");
+        assert_eq!(ok.global_scale.get(), 32_768);
+        assert_eq!(ok.quant_lf.get(), 16);
+        assert_eq!(ok.hf_mul.get(), 1);
+        assert!(FixedQuantizerTarget::new(0, 16, 1).is_err());
+        assert!(FixedQuantizerTarget::new(32_768, 0, 1).is_err());
+        assert!(FixedQuantizerTarget::new(32_768, 16, 0).is_err());
+    }
+
+    #[test]
+    fn for_fixed_quantizer_sets_scalars_and_clears_the_target() {
+        let target = FixedQuantizerTarget::new(1000, 8, 3).expect("in range");
+        let request = EncodeRequest::for_fixed_quantizer(target);
+        assert_eq!(request.global_scale.get(), 1000);
+        assert_eq!(request.quant_lf.get(), 8);
+        assert_eq!(request.hf_mul.get(), 3);
+        assert_eq!(
+            request.target, None,
+            "the fixed-quantizer path has no rate loop"
+        );
+        // The stable fixed-quantizer defaults are otherwise retained.
+        assert_eq!(request.cover_rate_model, CoverRateModel::Legacy);
+        assert_eq!(request.quantizer_choice, QuantizerChoiceMode::Nearest);
+        assert!((request.lambda_scale - 1.0).abs() < f32::EPSILON);
     }
 }

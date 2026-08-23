@@ -56,6 +56,19 @@ record jpegxl-rs.observation.aq-field-is-a-net-perceptual-loss-2026-08-10/2 : ob
     author "GitHub Uploader"
 }
 
+record jpegxl-rs.observation.balanced-zero-prediction-reserve-negative-2026-08-21/1 : observation {
+    title "Balanced direct-ceiling prediction is a measured quality regression"
+    state verified
+    scope [ path "JPXL/crates/jpxl-encode-policy/src/rate.rs" ]
+    statement """
+        A three-image 1 bpp Balanced screen replaced the anchored controller's one-eighth-tolerance prediction reserve with a direct target_bytes aim. It did not spend the target more reliably: scene moved 97,985 -> 97,874 bytes and SSIMULACRA2 44.9178 -> 44.8546; mid moved 539,958 -> 534,502 bytes and 77.8529 -> 77.6385; mid2 moved 533,641 -> 533,666 bytes and 86.1767 -> 86.1803. Butteraugli and pnorm3 also worsened on the two regressions. The candidate was rejected and the existing prediction reserve retained. Diagnostic details are in .agent/scratch/quality-pass-20260821/README.md; this is not a promoted baseline.
+        """
+    observed_at git:93000916c18ea7c3215f47ee2dc6a9c83b01b4f8
+    method command
+    watches [ "JPXL/crates/jpxl-encode-policy/src/rate.rs" ]
+    review_after 2026-11-30
+}
+
 record jpegxl-rs.observation.bpg-rs-aq-precedent-2026-08-10/1 : observation {
     title "Cross-project precedent: bpg-rs spent five phases on AQ, recorded no positive payoff, and ships it off by default on every tier"
     state superseded
@@ -1746,6 +1759,84 @@ record jpegxl-rs.observation.phase5-quality-policy-screen-2026-08-11/11 : observ
     ]
 }
 
+record jpegxl-rs.observation.pqc-memory-50mp-oom-2026-08-22/1 : observation {
+    title "Perceptual encodes of 50 MP sources reach ~12 GB RSS; two concurrent measurement runs OOM-killed a 31 GB host twice"
+    state verified
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/src/quality.rs",
+        path "JPXL/crates/jpxl-perceptual/**",
+        path "JPXL/tools/codec_compare.py"
+    ]
+    statement """
+        The kernel OOM-killed jpxl twice on 2026-08-22 (12:54 anon-rss 9.9 GB; 13:28 anon-rss 11.9 GB) while two agents measured the perceptual controller concurrently on a 31 GB host without swap, taking the Claude Code session down both times. Both kills were perceptual encodes of photo-large-20260606_150624.ppm, an 8160x6120 (50 MP) locked-holdout source; three of the thirteen holdout images are that size. Peak RSS on the quality path scales at about 240 bytes per pixel (2.9 GB at 12 MP per pqc-pr4b-memory-12mp), so a 50 MP encode needs about 12 GB and cannot share the host with a release build or a second such encode. Measurement runs must serialise large encodes and cap each process with ulimit -v so a runaway fails instead of killing the session; the reduction itself (tiled scorer, plan lifetimes) remains the PR 4b follow-up.
+        """
+    observed_at git:663efe8a1723bbd784c0921440a4b9810e68b660
+    method command
+    watches [
+        "JPXL/crates/jpxl-perceptual/src/ssimulacra2.rs",
+        "JPXL/crates/jpxl-perceptual/src/reference.rs",
+        "JPXL/crates/jpxl-perceptual/src/evaluator.rs"
+    ]
+    review_after 2026-09-30
+    derived_from [
+        @jpegxl-rs.evidence.pqc-pr4b-memory-12mp-2026-08-22/1,
+        @jpegxl-rs.work.pqc-pr4-quality-navigator/1
+    ]
+}
+
+record jpegxl-rs.observation.pqc-pr4-development-split-2026-08-22/1 : observation {
+    title "PR 4 on the development split: the score floor holds in 150/150 encodes, photographs beat cjxl -e7 at matched score, synthetic text and line art trail badly, and the quality path costs ~3.5x the rate path's wall time"
+    state verified
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/src/quality.rs",
+        path "JPXL/crates/jpxl-perceptual/**",
+        path "JPXL/crates/jpxl-plan-render/**",
+        path "JPXL/tools/codec_compare.py"
+    ]
+    statement """
+        Release binary 104f4ef7 on the 15-image development split at targets 50/70/80/85/90 with 4 threads, cjxl/djxl v0.13.0 196a43d9 at -e 7 over distances 0.5..6.0: zero floor violations in 150 encodes; median |achieved - requested| 0.93 (Balanced, probes {2:3,3:19,4:17,5:36}, prices {1:7,2:68}) and 2.19 (Fast, probes {2:6,3:69}, prices {1:29,2:46}); achieved monotone in the request on every image except the 8x8 tile. Geomean bytes at matched achieved SSIMULACRA2 relative to cjxl 1.108 (Balanced) / 1.268 (Fast); per class: photo scenes BD-rate -4% to -14%, gradient-vertical -20%, grayscale and low-light noise negative, text-screenshot and line-art up to +135% (ratio up to 3.4x). Median wall ratio quality/rate at matched score 3.46x (per class: saturated 0.53, tiny 0.42, gradient 2.22, noise 2.86, scenes 3.69, text 4.21, line-art 4.36, grayscale 5.75). Tiny fixtures at or above 8x8 went through the perceptual path (one saturated_floor on the 8x8 tile at target 50 with achieved 68.4). On the 12 MP holdout photograph (timing only) Balanced --quality 85 took 12.5 s and 2.97 GB RSS for 1.29 MB at 85.06, Fast 10.1 s for 1.53 MB at 85.81, the 1 bpp rate encode 1.9 s and 1.30 GB for 1.49 MB. Raw JSONL, summaries and the report are under .agent/scratch/quality-pr4-20260822/ (kept).
+        """
+    observed_at git:23635f689884489cfb720d65b49afce1901381c6
+    method command
+    watches [
+        "JPXL/crates/jpxl-encode-policy/src/quality.rs",
+        "JPXL/crates/jpxl-encode-policy/src/quality_predictor.rs",
+        "JPXL/crates/jpxl-plan-render/src/lib.rs",
+        "JPXL/crates/jpxl-perceptual/src/**"
+    ]
+    review_after 2026-09-30
+    derived_from [
+        @jpegxl-rs.decision.perceptual-quality-contract/1,
+        @jpegxl-rs.observation.libjxl-comparison-2026-08-18/2
+    ]
+}
+
+record jpegxl-rs.observation.pqc-pr4-rate-curve-axis-audit-2026-08-23/1 : observation {
+    title "PR4's byte-neutral rate-curve conclusion mixed SSIMULACRA2 implementations and is not a like-for-like baseline"
+    state verified
+    scope [
+        path "JPXL/crates/jpxl-cli/src/main.rs",
+        path "JPXL/tools/codec_compare.py",
+        path "JPXL/tools/tests/test_codec_compare.py"
+    ]
+    statement """
+        The earlier @jpegxl-rs.evidence.pqc-pr4-holdout-byte-neutral-ss2-2026-08-22/1 interpolated rate/cjxl curves scored by the independent rust-av SSIMULACRA2 implementation at quality-controller scores produced by the in-tree f64 metric. On the corrected exact 10/13 locked-holdout replay, those metric implementations differ by as much as 6.49 points on flat or saturated content. One in-tree decoded-pair axis changes the same-effort result to a 1.0043 byte geomean and +0.71% mean per-image BD-rate for Balanced, and 0.9854 / -3.94% for Fast. A labelled 13-image sensitivity using controller scores only for the three memory-blocked xlarge quality rows gives 0.9878 / -2.59% and 0.9808 / -5.45%, but is not decoded-pair acceptance evidence. Therefore the old 0.892/0.899 conclusion must not be used as the current rate-curve claim.
+        """
+    observed_at git:628b6c7b24577e61b4e06c1d6fea428e1a155541
+    method command
+    watches [
+        "JPXL/crates/jpxl-cli/src/main.rs",
+        "JPXL/tools/codec_compare.py",
+        "JPXL/tools/tests/test_codec_compare.py"
+    ]
+    review_after 2026-11-30
+    derived_from [
+        @jpegxl-rs.evidence.pqc-pr4-holdout-byte-neutral-ss2-2026-08-22/1,
+        @jpegxl-rs.evidence.pqc-quality-rate-curve-exact-10of13-2026-08-23/1,
+        @jpegxl-rs.observation.ssimulacra2-f32-recursion-ripple-2026-08-22/1
+    ]
+}
+
 record jpegxl-rs.observation.preopt-encode-baseline-2026-08-06/1 : observation {
     title "Pre-optimization encode wall-time ladder (release jpxl bench)"
     state superseded
@@ -2263,6 +2354,23 @@ record jpegxl-rs.observation.selectivity-halves-the-damage-but-lambda-is-the-rem
             The design, the walk-verified token proof, the 28-cell screen and the lambda argument.
             """
     }
+}
+
+record jpegxl-rs.observation.ssimulacra2-f32-recursion-ripple-2026-08-22/1 : observation {
+    title "The reference SSIMULACRA2 implementations' f32 recursive Gaussian leaves a ripple that inflates near-lossless scores' error on flat content, growing with image size; the in-tree metric runs the recursion in f64"
+    state verified
+    scope [ path "JPXL/crates/jpxl-perceptual/**" ]
+    statement """
+        The Charalampidis truncated-cosine Gaussian used by SSIMULACRA2 is generated by three resonators with poles on the unit circle (feedback 2cos(omega_k) and -1), so in f32 every rounding error persists as an undamped ripple of a few 1e-6 along each row and column. The metric's edge maps rectify that ripple (max(0, .)), which raises the measured error wherever the image is nearly flat. Measured against the rust-av ssimulacra2 0.5.1 crate with the in-tree f64 recursion: synthetic flat-heavy content at score ~93 scores +0.14 above the crate at 256x192, +0.35 at 333x257, +0.73 at 640x480 and +1.07 at 1024x768, while a photograph at score ~82 differs by only 0.03 (0.27 MP), 0.09 (1.1 MP) and 0.18 (4.3 MP); at scores below 90 synthetic pairs agree within 0.13 and photographs within 0.03. With the recursion in f32 (no FMA) the in-tree metric instead scored below the crate by the same pattern. The blur itself matches the crate to 1.5e-5 (f32) or 6e-6 (f64) per sample. Decision: the in-tree metric keeps the f64 recursion (closer to the defined filter, host-independent) and its parity test pins a size-scaled tolerance (0.05 + 0.5*sqrt(MP) below score 90, 0.1 + 1.6*sqrt(MP) above; photographs 0.1 + 0.1*sqrt(MP)).
+        """
+    observed_at git:23635f689884489cfb720d65b49afce1901381c6
+    method command
+    watches [
+        "JPXL/crates/jpxl-perceptual/src/blur.rs",
+        "JPXL/crates/jpxl-perceptual/tests/parity.rs"
+    ]
+    review_after 2026-11-30
+    derived_from [ @jpegxl-rs.policy.perceptual-metric-clean-room/1 ]
 }
 
 record jpegxl-rs.observation.the-quantizer-is-the-lever-and-its-rate-proxy-is-the-defect-2026-08-12/1 : observation {

@@ -64,13 +64,20 @@
 
 pub mod analysis;
 pub mod block;
+pub mod candidate;
 pub mod csf;
 pub mod diagnostics;
 mod entropy;
+mod entropy_cost;
 pub mod error;
 pub mod field;
+pub mod policy_bank;
+pub mod quality;
+pub mod quality_features;
+pub mod quality_predictor;
 pub mod quantize;
 pub mod rate;
+pub mod reducer;
 pub mod regret;
 pub mod request;
 pub mod source;
@@ -89,6 +96,7 @@ use jpxl_encode::vardct::headers::VARDCT_GROUP_SIZE_SHIFT;
 use jpxl_encode::vardct::ids::{
     CflFactor, ClusterId, GlobalScale, HfMul, LfGroupId, PresetId, QuantLf,
 };
+use jpxl_encode::vardct::plan::PixelPlan;
 use jpxl_encode::vardct::plan::{
     CflGrid, EmissionPlan, EntropyModelPlan, EntropyPlan, FrameDecision, HfBlockContextPlan,
     HfPassEntropyPlan, HistogramPlan, HybridUintPlan, LfCorrelationDecision, LfDecision,
@@ -104,17 +112,27 @@ use quantize::{
     cfl_multiplier,
 };
 
-pub use analysis::{AnalysisAtlas, AtomGrid};
+pub use analysis::{
+    AnalysisAtlas, AnalysisAtlasV2, AtomFeatures, AtomGrid, DiagnosticAtomFeatures,
+};
 pub use diagnostics::{
     ChooseStage, EncodeDiag, last_encode_diag, reset_encode_diag, take_encode_diag,
 };
+pub use entropy_cost::{EntropyCostSink, EntropyCostView};
 pub use error::{PolicyError, Result};
 pub use field::{AqMode, AqTuning};
 
 use field::{DesiredQuantField, mul_lattice_for};
+pub use policy_bank::{PerceptualPolicy, rank_alternatives};
+pub use quality::{
+    PerceptualEvaluator, PerceptualObservation, PolicyTrial, ProbeKind, QualityBudget,
+    QualityOutcome, QualityProbe, QualityStats, QualityStatus, StructureSource,
+    search_frame_perceptual, search_frame_perceptual_with_budget, status_name,
+};
+pub use quality_features::{SourceFeatures, source_features};
 pub use rate::{
-    LadderSearch, QuantizerChoice, RateOutcome, RatePhase, RateProbeStats, RateStep, Rung,
-    search_frame,
+    LadderSearch, QuantizerChoice, RateOutcome, RatePhase, RateProbeStats, RateStatus, RateStep,
+    Rung, search_frame,
 };
 pub use request::{
     AdaptiveSharpness, ChromaHfPolicy, CoverFrequencyWeight, CoverMode, CoverRateModel,
@@ -213,6 +231,15 @@ pub(crate) enum EntropySearch {
     /// trained model; no census or entropy training is performed here.
     #[cfg(feature = "anchor-sketch")]
     Reuse,
+    /// G5 candidate used for bounded-controller navigation: natural orders,
+    /// the default context map, and at most two frame-ranked hybrid-uint
+    /// configurations per context.
+    #[cfg(feature = "g5-bounded-entropy")]
+    BoundedAnchor,
+    /// The same bounded model rebuilt at the exact finalist, separately
+    /// attributed from anchor navigation.
+    #[cfg(feature = "g5-bounded-entropy")]
+    BoundedFinal,
     /// Slice-18 alternatives with exact-price adopt gates.
     Full,
 }
@@ -224,6 +251,8 @@ impl EntropySearch {
             Self::FinalFast => true,
             #[cfg(feature = "anchor-sketch")]
             Self::Reuse => true,
+            #[cfg(feature = "g5-bounded-entropy")]
+            Self::BoundedAnchor | Self::BoundedFinal => true,
             Self::Full => false,
         }
     }
@@ -330,10 +359,11 @@ fn plan_at_on_with_workspace(
 ///
 /// Navigation captures the selected cover and CfL policy, then reuses those
 /// choices while retargeting quantizer-dependent `HfMul` values. The Fast
-/// preset deliberately captures a neutral-CfL/fixed-cover structure; the
-/// Balanced preset captures the configured hierarchical cover with CfL and
-/// uses the fast entropy model only for its anchored finalist. A bounded
-/// correction may retain that finalist structure after its exact size is known.
+/// preset deliberately captures a neutral-CfL/fixed-cover structure. Balanced
+/// captures the configured hierarchical cover with CfL, then trains at most
+/// two ranked hybrid-uint configurations at its near-target anchor and
+/// finalist. A bounded correction may retain that finalist structure and
+/// entropy model after its exact size is known.
 /// Fast-preset planning with rate-search-owned quantization storage and an
 /// explicit reusable spatial anchor.
 #[cfg(feature = "anchor-sketch")]
@@ -369,6 +399,48 @@ fn plan_at_on_anchor_with_workspace(
         capture,
         quant_workspace,
     )
+}
+
+/// The pre-entropy form of [`plan_at_on_anchor_with_workspace`]: the
+/// candidate's pixels, validated, with its geometry — what a perceptual probe
+/// renders and scores. No histogram is trained.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "internal plumbing: the same anchor-reuse bundle as \\
+              plan_at_on_anchor_with_workspace; one call chain"
+)]
+pub(crate) fn plan_pixels_on_anchor_with_workspace(
+    frame: &PreparedFrame,
+    transform_frame: &PreparedFrame,
+    atlas: &AnalysisAtlas,
+    request: &EncodeRequest,
+    quantizer: QuantizerChoice,
+    enable_cfl: bool,
+    cache: &mut CandidateForwardCache,
+    structure_tier: EntropySearch,
+    executor: Option<&jpxl_encode::EncodeExecutor>,
+    reuse: AnchorReuse<'_>,
+    capture: Option<&mut Option<StructuralAnchor>>,
+    quant_workspace: &mut QuantizationWorkspace,
+) -> Result<(
+    jpxl_encode::vardct::ValidatedPixelPlan,
+    jpxl_encode::vardct::VardctGeometry,
+)> {
+    let (pixels, geometry) = build_pixel_plan(
+        frame,
+        atlas,
+        request,
+        quantizer,
+        enable_cfl,
+        Some(transform_frame),
+        cache,
+        structure_tier,
+        executor,
+        reuse,
+        capture,
+        quant_workspace,
+    )?;
+    Ok((jpxl_encode::vardct::validate_pixels(pixels)?, geometry))
 }
 
 /// [`plan_at`] with the Slice-15 search switch exposed for regression tests.
@@ -439,6 +511,45 @@ fn plan_at_with_cfl_workspace(
     capture: Option<&mut Option<StructuralAnchor>>,
     quant_workspace: &mut QuantizationWorkspace,
 ) -> Result<ValidatedEmissionPlan> {
+    let (pixels, geometry) = build_pixel_plan(
+        frame,
+        atlas,
+        request,
+        quantizer,
+        enable_cfl,
+        transform_override,
+        cache,
+        entropy_search,
+        executor,
+        reuse,
+        capture,
+        quant_workspace,
+    )?;
+    attach_entropy(&pixels, &geometry, request, entropy_search, executor)
+}
+
+/// Everything a decoder's pixels depend on: source preparation, cover, CfL,
+/// quantization and the LF planes, assembled into a [`PixelPlan`] with the
+/// frame's geometry. No histogram is trained and no symbol is counted.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "internal plumbing: the same capability bundle plan_at_with_cfl_workspace \\
+              forwards; no cohesive sub-bundle to extract"
+)]
+fn build_pixel_plan(
+    frame: &PreparedFrame,
+    atlas: &AnalysisAtlas,
+    request: &EncodeRequest,
+    quantizer: QuantizerChoice,
+    enable_cfl: bool,
+    transform_override: Option<&PreparedFrame>,
+    cache: &mut CandidateForwardCache,
+    entropy_search: EntropySearch,
+    executor: Option<&jpxl_encode::EncodeExecutor>,
+    reuse: AnchorReuse<'_>,
+    capture: Option<&mut Option<StructuralAnchor>>,
+    quant_workspace: &mut QuantizationWorkspace,
+) -> Result<(PixelPlan, jpxl_encode::vardct::VardctGeometry)> {
     // Phase-0: one clean snapshot per plan_at (rate probes overwrite; last wins).
     diagnostics::reset_encode_diag();
     if request.restoration.epf_iters > 3 {
@@ -865,31 +976,43 @@ fn plan_at_with_cfl_workspace(
         lf_groups: lf_groups.into_boxed_slice(),
     };
 
-    // The entropy model is chosen in two steps because the census is a
-    // function of the plan: a provisional plan carries the clustering and the
-    // hybrid-uint configuration, `census_frame` walks it, and the real
-    // histograms replace the provisional ones. The walk lives in `jpxl-encode`
-    // so that the counts trained here and the symbols emitted there cannot
-    // come from two different traversals.
     let quantized_ir = QuantizedFrameIr {
         lf_groups: quantized.into_boxed_slice(),
     };
-    let provisional = EmissionPlan::new(
-        spatial,
-        quantized_ir,
+    Ok((PixelPlan::new(spatial, quantized_ir), geometry))
+}
+
+/// Trains the entropy models for a pixel plan and adopts the entropy
+/// alternatives the search tier allows, returning the writer-ready plan.
+///
+/// The entropy model is chosen in two steps because the census is a
+/// function of the plan: a provisional plan carries the clustering and the
+/// hybrid-uint configuration, `census_frame` walks it, and the real
+/// histograms replace the provisional ones. The walk lives in `jpxl-encode`
+/// so that the counts trained here and the symbols emitted there cannot
+/// come from two different traversals.
+pub(crate) fn attach_entropy(
+    pixels: &PixelPlan,
+    geometry: &jpxl_encode::vardct::VardctGeometry,
+    request: &EncodeRequest,
+    entropy_search: EntropySearch,
+    executor: Option<&jpxl_encode::EncodeExecutor>,
+) -> Result<ValidatedEmissionPlan> {
+    let provisional = EmissionPlan::from_pixels(
+        pixels,
         entropy_plan(
-            &geometry,
+            geometry,
             placeholder_histograms(),
             HfBlockContextPlan::Default,
         )?,
-        SectionLayout::for_geometry(&geometry),
+        SectionLayout::for_geometry(geometry),
     );
     // Slice 18 / 18b: train under the default I.2.2 map, then optionally
     // adopt custom coefficient orders on an exact price win (Full only).
     let with_default = diagnostics::time_stage(diagnostics::StageTimer::Entropy, || {
         train_entropy_with_orders(
             provisional.clone(),
-            &geometry,
+            geometry,
             entropy_search,
             executor,
             matches!(
@@ -917,9 +1040,9 @@ fn plan_at_with_cfl_workspace(
     if !matches!(candidate_bc, HfBlockContextPlan::Default) {
         diagnostics::note_block_context_candidate();
         let mut custom_walk = provisional.clone();
-        custom_walk.entropy = entropy_plan(&geometry, placeholder_histograms(), candidate_bc)?;
+        custom_walk.entropy = entropy_plan(geometry, placeholder_histograms(), candidate_bc)?;
         let mut with_custom = diagnostics::time_stage(diagnostics::StageTimer::Entropy, || {
-            train_entropy_with_orders(custom_walk, &geometry, EntropySearch::Full, executor, false)
+            train_entropy_with_orders(custom_walk, geometry, EntropySearch::Full, executor, false)
         })?;
         let best_size = best.exact_size(executor)?;
         let custom_size = with_custom.exact_size(executor)?;
@@ -931,7 +1054,7 @@ fn plan_at_with_cfl_workspace(
     // Slice 18d: multi-preset assignment. Needs ≥2 pass groups; changes the
     // walk's I.4 offset per group, so re-census + retrain + exact price.
     if let Some((num_presets, assignment)) = entropy::propose_presets(
-        &geometry,
+        geometry,
         best.plan().spatial.as_ref(),
         best.plan().quantized.as_ref(),
     ) {
@@ -955,7 +1078,7 @@ fn plan_at_with_cfl_workspace(
         }
         if let Ok(mut with_presets) =
             diagnostics::time_stage(diagnostics::StageTimer::Entropy, || {
-                train_entropy_with_orders(multi, &geometry, EntropySearch::Full, executor, false)
+                train_entropy_with_orders(multi, geometry, EntropySearch::Full, executor, false)
             })
         {
             let best_size = best.exact_size(executor)?;
@@ -1199,6 +1322,18 @@ fn train_entropy_for_orders(
     } else {
         census_frame(&provisional, geometry)?
     };
+    #[cfg(feature = "g5-bounded-entropy")]
+    let model = if matches!(
+        entropy_search,
+        EntropySearch::BoundedAnchor | EntropySearch::BoundedFinal
+    ) {
+        entropy::train_bounded_with_executor(&census, executor)?
+    } else if fast_hybrid_uint && entropy_search.uses_fast_entropy() {
+        entropy::train_fast_with_executor(&census, executor)?
+    } else {
+        entropy::train_with_executor(&census, executor)?
+    };
+    #[cfg(not(feature = "g5-bounded-entropy"))]
     let model = if fast_hybrid_uint && entropy_search.uses_fast_entropy() {
         entropy::train_fast_with_executor(&census, executor)?
     } else {
@@ -1452,6 +1587,13 @@ pub(crate) enum AnchorReuse<'a> {
     )]
     CoverOnly(&'a StructuralAnchor),
     /// Reuse both cover and CfL from the captured probe.
+    #[cfg_attr(
+        not(feature = "anchor-sketch"),
+        allow(
+            dead_code,
+            reason = "the two-anchor controller is disabled with anchor-sketch"
+        )
+    )]
     CoverAndCfl(&'a StructuralAnchor),
 }
 
@@ -4349,7 +4491,8 @@ fn score_channel_lanes(
     Ok(false)
 }
 
-/// S8 Phase D (`sources/outside-advice.md` §8, feature `s8-cover-prune`):
+/// S8 Phase D (AKR source `outside-advice-2026-08-06` §8, feature
+/// `s8-cover-prune`):
 /// the staged cheap lower bound Phase C's `regret::validate_candidate_prune`
 /// proved safe (zero violations, exhaustively checked over every
 /// merge-candidate node a corpus fixture produced) — checked with the
@@ -5085,8 +5228,8 @@ pub fn encode_srgb8_to_target(
     target: RateTarget,
 ) -> Result<RateOutcome> {
     let mut resolved = *request;
-    resolved.b_qm_scale = request.effective_b_qm_scale(width, height, target);
-    resolved.x_qm_scale = request.effective_x_qm_scale(width, height, target);
+    resolved.b_qm_scale = request.effective_b_qm_scale();
+    resolved.x_qm_scale = request.effective_x_qm_scale();
     // Phase 38: one worker pool for the whole encode; the source conversion
     // uses it too instead of running on the calling thread alone.
     let executor = resolved.resources.executor();
@@ -5120,8 +5263,8 @@ pub fn encode_srgb16_to_target(
 ) -> Result<RateOutcome> {
     let mut resolved = *request;
     resolved.bits_per_sample = bits_per_sample;
-    resolved.b_qm_scale = request.effective_b_qm_scale(width, height, target);
-    resolved.x_qm_scale = request.effective_x_qm_scale(width, height, target);
+    resolved.b_qm_scale = request.effective_b_qm_scale();
+    resolved.x_qm_scale = request.effective_x_qm_scale();
     let executor = resolved.resources.executor();
     let frame =
         PreparedFrame::from_srgb16_with(width, height, rgb, bits_per_sample, Some(&executor))?;

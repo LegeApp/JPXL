@@ -1,7 +1,43 @@
 [
   {
-    "added_at": "2026-08-13",
+    "added_at": "2026-08-21",
     "availability": "full",
+    "byte_len": 57302,
+    "content_hash": "sha256:ae1ed6578fa1b92c506d11ed1133245543fa35ca9c2f90a01347a13c012d9560",
+    "id": "jpxl-bridging-libjxl-gap-2026-08-21",
+    "media_type": "text/markdown",
+    "origin": "external",
+    "path": "sources/external/jpxl-bridging-libjxl-gap-2026-08-21--ae1ed657.md",
+    "scope": "JPXL/**",
+    "title": "JPXL: Guide to Bridging the Remaining Gap to libjxl"
+  },
+  {
+    "added_at": "2026-08-22",
+    "availability": "full",
+    "byte_len": 24224,
+    "content_hash": "sha256:cff3dfa779065becdb487b1c56752c5669e5aaa6238445f51033f8e9c58a5325",
+    "id": "jpxl-encoder-metric-advice-2026-08-22",
+    "media_type": "text/markdown",
+    "origin": "external",
+    "path": "sources/external/jpxl-encoder-metric-advice-2026-08-22--cff3dfa7.md",
+    "scope": "JPXL/**",
+    "title": "Outside advice: a codec-optimization perceptual metric for JPXL (JPXL-PQ / JPXL-PCost)"
+  },
+  {
+    "added_at": "2026-08-22",
+    "availability": "full",
+    "byte_len": 37908,
+    "content_hash": "sha256:dfef416bbf50cacec84bbe6f0f546995ae732c8829001b75c493dc7c91567380",
+    "id": "jpxl-ssimulacra2-quality-controller-plan-2026-08-21",
+    "media_type": "text/markdown",
+    "origin": "external",
+    "path": "sources/external/jpxl-ssimulacra2-quality-controller-plan-2026-08-21--dfef416b.md",
+    "scope": "JPXL/**",
+    "title": "JPXL SSIMULACRA2-Driven Perceptual Quality Controller Plan"
+  },
+  {
+    "added_at": "2026-08-13",
+    "availability": "metadata-only",
     "byte_len": 24121,
     "content_hash": "sha256:62242d232a35bb4b7e09f8075d825ae4e8dc67e6733b2de1232429c4b2fd9868",
     "id": "optimize-roadmap-2026-08-13",
@@ -10,5 +46,17 @@
     "path": "sources/external/optimize-roadmap-2026-08-13--62242d23.md",
     "scope": "JPXL/crates/jpxl-encode-policy/**",
     "title": "Target-rate encoder optimization roadmap"
+  },
+  {
+    "added_at": "2026-08-21",
+    "availability": "metadata-only",
+    "byte_len": 43068,
+    "content_hash": "sha256:945338a6158013cdc5aa06c3a7666a0bc62e0ff3da979de6d4d845a019e5fb8e",
+    "id": "outside-advice-2026-08-06",
+    "media_type": "text/markdown",
+    "origin": "external",
+    "path": "sources/external/outside-advice-2026-08-06--945338a6.md",
+    "scope": "JPXL/**",
+    "title": "JPXL encoder architecture outside advice"
   }
 ]

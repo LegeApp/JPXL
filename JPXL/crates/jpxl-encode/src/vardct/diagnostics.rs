@@ -44,6 +44,14 @@ pub struct WriterPhaseDiagnostics {
     /// Phase 41: HF tokens recorded on pass-group tapes (0 when the
     /// `hf-token-tape` feature is off).
     pub tape_symbols: u64,
+    /// Symbols whose hybrid-uint representation carries raw extra bits.
+    pub tape_extra_symbols: u64,
+    /// Payload bytes occupied by the active packed token tapes.
+    pub tape_payload_bytes: u64,
+    /// Equivalent payload bytes under the former four-column tape.
+    pub tape_legacy_payload_bytes: u64,
+    /// Time spent constructing token tapes, excluding entropy-table training.
+    pub tape_record_ns: u64,
 }
 
 impl WriterPhaseDiagnostics {
@@ -84,7 +92,9 @@ std::thread_local! {
             section_body_traversals: 0, lf_section_encodes: 0,
             pass_group_section_encodes: 0, executor_pool_builds: 0,
             count_emission_ns: 0, stored_emission_ns: 0,
-            executor_pool_build_ns: 0, tape_symbols: 0,
+            executor_pool_build_ns: 0, tape_symbols: 0, tape_extra_symbols: 0,
+            tape_payload_bytes: 0, tape_legacy_payload_bytes: 0,
+            tape_record_ns: 0,
         },
         full: WriterPhaseDiagnostics {
             internal_count_emissions: 0, outer_count_emissions: 0,
@@ -92,7 +102,9 @@ std::thread_local! {
             section_body_traversals: 0, lf_section_encodes: 0,
             pass_group_section_encodes: 0, executor_pool_builds: 0,
             count_emission_ns: 0, stored_emission_ns: 0,
-            executor_pool_build_ns: 0, tape_symbols: 0,
+            executor_pool_build_ns: 0, tape_symbols: 0, tape_extra_symbols: 0,
+            tape_payload_bytes: 0, tape_legacy_payload_bytes: 0,
+            tape_record_ns: 0,
         },
         other: WriterPhaseDiagnostics {
             internal_count_emissions: 0, outer_count_emissions: 0,
@@ -100,7 +112,9 @@ std::thread_local! {
             section_body_traversals: 0, lf_section_encodes: 0,
             pass_group_section_encodes: 0, executor_pool_builds: 0,
             count_emission_ns: 0, stored_emission_ns: 0,
-            executor_pool_build_ns: 0, tape_symbols: 0,
+            executor_pool_build_ns: 0, tape_symbols: 0, tape_extra_symbols: 0,
+            tape_payload_bytes: 0, tape_legacy_payload_bytes: 0,
+            tape_record_ns: 0,
         },
     }) };
 }
@@ -206,14 +220,37 @@ pub(crate) fn time_stored_emission<R>(f: impl FnOnce() -> R) -> R {
     result
 }
 
-/// Phase 41: records the number of HF tokens a frame's pass-group tapes hold.
+/// Records the symbol mix and payload size of a frame's HF token tapes.
 #[cfg_attr(not(feature = "hf-token-tape"), allow(dead_code))]
-pub(crate) fn note_tape_symbols(symbols: usize) {
+pub(crate) fn note_tape_stats(symbols: usize, extras: usize, payload: usize, legacy: usize) {
     update(|diagnostics| {
         diagnostics.tape_symbols = diagnostics
             .tape_symbols
             .saturating_add(u64::try_from(symbols).unwrap_or(u64::MAX));
+        diagnostics.tape_extra_symbols = diagnostics
+            .tape_extra_symbols
+            .saturating_add(u64::try_from(extras).unwrap_or(u64::MAX));
+        diagnostics.tape_payload_bytes = diagnostics
+            .tape_payload_bytes
+            .saturating_add(u64::try_from(payload).unwrap_or(u64::MAX));
+        diagnostics.tape_legacy_payload_bytes = diagnostics
+            .tape_legacy_payload_bytes
+            .saturating_add(u64::try_from(legacy).unwrap_or(u64::MAX));
     });
+}
+
+#[cfg_attr(not(feature = "hf-token-tape"), allow(dead_code))]
+pub(crate) fn time_tape_record<R>(f: impl FnOnce() -> R) -> R {
+    if !enabled() {
+        return f();
+    }
+    let started = Instant::now();
+    let result = f();
+    let elapsed = u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX);
+    update(|diagnostics| {
+        diagnostics.tape_record_ns = diagnostics.tape_record_ns.saturating_add(elapsed);
+    });
+    result
 }
 
 pub(crate) fn note_sections(total: usize, lf: usize, pass_groups: usize) {

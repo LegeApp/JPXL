@@ -912,6 +912,42 @@ pub struct EmissionPlan {
     pub sections: SectionLayout,
 }
 
+/// The plan before entropy: the spatial decisions and the exact integers.
+///
+/// This is everything a decoder's *pixels* depend on. Histograms, coefficient
+/// orders, presets and the section layout change how many bytes those pixels
+/// cost, never what they are, so a quality probe that only needs
+/// reconstructed samples stops here and pays for none of them. The two parts
+/// are shared via [`Arc`] exactly as in [`EmissionPlan`], so attaching entropy
+/// later (`EmissionPlan::from_pixels`) copies nothing.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PixelPlan {
+    /// The spatial decisions.
+    pub spatial: std::sync::Arc<SpatialPlan>,
+    /// The exact integers.
+    pub quantized: std::sync::Arc<QuantizedFrameIr>,
+}
+
+impl PixelPlan {
+    /// Wraps freshly built stages in new shared payloads.
+    #[must_use]
+    pub fn new(spatial: SpatialPlan, quantized: QuantizedFrameIr) -> Self {
+        Self {
+            spatial: std::sync::Arc::new(spatial),
+            quantized: std::sync::Arc::new(quantized),
+        }
+    }
+
+    /// Wraps already shared stages.
+    #[must_use]
+    pub const fn from_shared(
+        spatial: std::sync::Arc<SpatialPlan>,
+        quantized: std::sync::Arc<QuantizedFrameIr>,
+    ) -> Self {
+        Self { spatial, quantized }
+    }
+}
+
 impl EmissionPlan {
     /// Builds a plan that owns a new shared payload for `spatial` and
     /// `quantized`.
@@ -928,6 +964,26 @@ impl EmissionPlan {
             entropy,
             sections,
         }
+    }
+
+    /// Attaches entropy and sections to a pixel plan, sharing its payloads.
+    #[must_use]
+    pub fn from_pixels(pixels: &PixelPlan, entropy: EntropyPlan, sections: SectionLayout) -> Self {
+        Self {
+            spatial: std::sync::Arc::clone(&pixels.spatial),
+            quantized: std::sync::Arc::clone(&pixels.quantized),
+            entropy,
+            sections,
+        }
+    }
+
+    /// The pre-entropy part of this plan, sharing its payloads.
+    #[must_use]
+    pub fn pixels(&self) -> PixelPlan {
+        PixelPlan::from_shared(
+            std::sync::Arc::clone(&self.spatial),
+            std::sync::Arc::clone(&self.quantized),
+        )
     }
 
     /// Exclusive access to the spatial stage (COW via [`Arc::make_mut`]).

@@ -201,6 +201,31 @@ record jpegxl-rs.policy.oracle-output-format/1 : policy {
     author "GitHub Uploader"
 }
 
+record jpegxl-rs.policy.perceptual-metric-clean-room/1 : policy {
+    title "Clean-room boundary and version pinning for the in-tree perceptual metric"
+    state proposed
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/**",
+        path "JPXL/crates/jpxl-perceptual/**",
+        path "JPXL/crates/jpxl-plan-render/**"
+    ]
+    rule """
+        The in-tree metric in jpxl-perceptual is derived only from the public SSIMULACRA2 specification/README (cloudinary/ssimulacra2) and, for cross-checking, the BSD-2-Clause rust-av `ssimulacra2` crate already present as an optional measurement dependency. libjxl's tools/ssimulacra2.cc and any other file under libjxl/ are not derivation sources. The metric's defining constants (scale count, components, map families, Gaussian sigma, SSIM constants, the 108-term aggregation shape, final weights and remap) are part of the metric's public definition and may be reproduced; the implementation (blur recurrence, layout, parallel banding, reductions) is JPXL's own. jpxl-encode-policy never depends on jpxl-perceptual, jpxl-plan-render or jpxl-decode as a normal dependency; it sees only a PerceptualEvaluator trait and the facade injects the implementation. jpxl-plan-render never calls jpxl-decode; shared leaf kernels live in jpxl-core and each tree keeps its own reconstruction orchestration, guarded by parity against jpxl-decode, djxl and jxl-oxide. The rust-av crate remains a dev/test parity oracle only and never enters the production path. The metric version string, the pinned test-vector fingerprint and the measured score guard are recorded with the metric; changing any of them is an encoder-behaviour change requiring a Contract B screen.
+        """
+    rationale """
+        AGENTS.md section 2 forbids reading libjxl for architecture or constants; the metric must be auditable as independently derived. The evaluator-injection boundary keeps third-party metric code and decoder-like rendering out of the policy layer (tests/boundary.rs) and keeps encoder and decoder as peer trees over neutral crates (AGENTS.md section 6).
+        """
+    derived_from [ @jpegxl-rs.policy.clean-room-boundary/1 ]
+    source {
+        kind external
+        role constraint
+        document "jpxl-ssimulacra2-quality-controller-plan-2026-08-21"
+        use """
+            Section 3 clean-room and dependency boundary; section 4.5 evaluator trait; section 4.4 renderer must not call jpxl-decode.
+            """
+    }
+}
+
 record jpegxl-rs.policy.performance-baseline-rules/1 : policy {
     title "Promoted performance baseline rules"
     state proposed
@@ -295,7 +320,7 @@ record jpegxl-rs.policy.restoration-filter-off/1 : policy {
 
 record jpegxl-rs.policy.sources-advice-completion/1 : policy {
     title "Retain external advice under sources/; mark completion in AKR"
-    state active
+    state superseded
     scope [ all ]
     topic sources-advice
     rule """
@@ -314,6 +339,21 @@ record jpegxl-rs.policy.sources-advice-completion/1 : policy {
         large narrative files mid-implementation.
         """
     author "grok-build"
+}
+
+record jpegxl-rs.policy.sources-advice-completion/2 : policy {
+    title "Register outside advice; track adoption and completion only in AKR"
+    state active
+    scope [ all ]
+    rule """
+        External architecture and optimization advice is registered through the AKR source library and stored under sources/external with an immutable content hash. Top-level intake copies and Markdown status sidecars are removed after registration; AKR planning records are the only progress and completion surface. Do not rewrite advice into a checklist or parallel plan. A registered full source may be finalized only through the source-library workflow when its durable citations and metadata have been retained.
+        """
+    rationale """
+        Outside advice is durable source material. Living plans and completion
+        state belong in AKR so agents and views stay consistent without editing
+        large narrative files mid-implementation.
+        """
+    supersedes [ @jpegxl-rs.policy.sources-advice-completion/1 ]
 }
 
 record jpegxl-rs.policy.suspect-transcription-pipeline/1 : policy {

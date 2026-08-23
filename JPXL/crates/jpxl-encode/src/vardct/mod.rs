@@ -43,12 +43,16 @@ pub use geometry::{BlockGrid, Rect, SectionKind, VardctGeometry};
 pub use plan::{
     CflGrid, EmissionPlan, EntropyModelPlan, EntropyPlan, FrameDecision, HfBlockContextPlan,
     HfPassEntropyPlan, HistogramPlan, HybridUintPlan, LfDecision, LfGroupPlan, LfQuantPlanes,
-    OrderSet, QuantizedFrameIr, QuantizedLfGroup, QuantizerDecision, RestorationDecision,
-    SectionLayout, SharpnessGrid, SpatialPlan, VarblockCoefficients, VarblockDecision,
+    OrderSet, PixelPlan, QuantizedFrameIr, QuantizedLfGroup, QuantizerDecision,
+    RestorationDecision, SectionLayout, SharpnessGrid, SpatialPlan, VarblockCoefficients,
+    VarblockDecision,
 };
 pub use sink::{CensusSink, HfEventSink};
 pub use size::{CodestreamSizing, Emission, SectionSize};
-pub use validate::{ValidatedEmissionPlan, validate};
+pub use validate::{
+    ValidatedEmissionPlan, ValidatedPixelPlan, attach_and_validate_entropy, validate,
+    validate_pixels,
+};
 pub use walk::{OrderTables, PassGroupWalk, WalkVarblock, pre_context_count, walk_pass_group};
 pub use write::{
     census_frame, census_frame_with_executor, check_supported, emit_codestream,

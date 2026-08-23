@@ -40,9 +40,15 @@ Usage:
                                   TGA, QOI, PGM, or PPM; lossless modular by
                                   default, lossy VarDCT with --bpp
     jpxl compare <ref.ppm> <b.ppm>
-                                  Print RMSE and PSNR between two decoded PPMs
-                                  (plus SSIMULACRA2 and butteraugli, if built
-                                  with --features perceptual)
+                                  Print RMSE, PSNR, and the in-tree production
+                                  SSIMULACRA2 between two decoded PPMs (plus
+                                  independent-reference SSIMULACRA2 and
+                                  butteraugli with --features perceptual)
+    jpxl analyze-atlas <in> <out.jsonl>
+                                  Export the diagnostic AnalysisAtlasV2; this
+                                  research command does not affect encoding
+    jpxl features <in> [--json]   Print the quality controller's frame source
+                                  features as one JSON line (calibration tool)
     jpxl bench <mode> [opts]      Time one encode path (see `jpxl bench --help`)
     jpxl --help                   Show this message
     jpxl --version                Show the version
@@ -51,9 +57,11 @@ Encode options:
     --background <#RRGGBB>       Explicitly flatten a transparent input;
                                   transparent JPEG XL output is not yet encoded
     --container                   Wrap the codestream in a Part 2 container
-    --effort <1..9>               Lossless search effort (default 1 = fastest).
-                                  Higher is slower and only occasionally smaller;
-                                  every level is exact-lossless (pixels identical).
+    --effort <1..9|mode>          A digit 1..9 is the lossless Modular search
+                                  effort (default 1 = fastest); every level is
+                                  exact-lossless (pixels identical). A name
+                                  (fast|balanced) sets the lossy effort instead
+                                  — see the lossy options below.
     --group-size-shift <0..3>     Force group_dim = 128 << shift (default 2)
     --jxlp <bytes>                Split the codestream across jxlp boxes
                                   (18181-2 9.10); implies --container
@@ -65,12 +73,21 @@ Decode options:
                                   otherwise inferred from the output extension
     --background <#RRGGBB>       Flatten alpha when writing JPEG or PNM
 
-Lossy options (8- or 16-bit RGB; either one selects the VarDCT path):
-    --bpp <f>                     Target bits per pixel
-    --target-bytes <n>            Target output size in bytes
-    --lossy-preset <mode>         Rate controller: balanced (default production
-                                  path), fast (lower-latency production path),
-                                  or quality (exhaustive reference)
+Lossy options (8- or 16-bit RGB; any one selects the VarDCT path):
+    --quality [N]                 Minimum SSIMULACRA2 score to hold (0..100,
+                                  100 = lossless). Alias: --ssimulacra2. The
+                                  number is optional; omitted, it is the
+                                  effort's default (fast 70, balanced 85). This
+                                  is the normal way to ask for lossy output.
+    --lossy                       --quality with the effort's default score.
+    --effort <mode>               Lossy effort fast|balanced (search-latency
+                                  budget, also picks the --quality default), or
+                                  a digit 1..9 for lossless Modular effort.
+    --bpp <f>                     Expert mode: target bits per pixel
+    --target-bytes <n>            Expert mode: target output size in bytes
+    --global-scale <n>            Expert mode: pinned VarDCT global_scale (works
+                                  with --quant-lf); emits an exact quantizer
+    --lossy-preset <mode>         Alias for --effort: balanced (default) or fast
     --aq-mode <mode>              Per-block HF allocation: off (target-rate
                                   default), masking, uniform, fine-masking,
                                   fine-uniform, or edge-refine (Phase Q3 fields
@@ -85,13 +102,12 @@ Lossy options (8- or 16-bit RGB; either one selects the VarDCT path):
                                   secondary LF fill (target-rate default 4
                                   after Phase Q1; 8 was Phase 5G's); research
                                   control
-    --x-qm-scale <0..7>           X-channel QM exponent (Balanced defaults to 3;
-                                  Quality defaults to 3 at <=1 bpp and 2 above
-                                  it); setting it pins the manual chroma policy
-    --b-qm-scale <0..7>           B-channel QM exponent (Balanced defaults to 3;
-                                  Quality defaults to 5 at <=1 bpp and 4 above
-                                  it; Fast defaults to 2); research
-                                  chroma-allocation control
+    --x-qm-scale <0..7>           X-channel QM exponent (Fast neutral 2, Balanced
+                                  3, Quality 3; per preset, never per bitrate);
+                                  setting it pins the manual chroma policy
+    --b-qm-scale <0..7>           B-channel QM exponent (Fast neutral 2, Balanced
+                                  3, Quality 5; per preset, never per bitrate);
+                                  research chroma-allocation control
     --epf-iters <0..3>            Decoder EPF iteration count (target-rate
                                   default 1); research control
     --epf-sharpness <mode>        EPF sharpness plane: zero (fixed default),
@@ -134,10 +150,8 @@ Lossy options (8- or 16-bit RGB; either one selects the VarDCT path):
                                   (the standard's own DCT8x8 matrix as a curve);
                                   research control
 
-    There is no `--distance`. cjxl's -d targets butteraugli; JPXL has no
-    perceptual model, so its rate loop hits a *size*, not a visual quality.
-    Naming a flag --distance would promise something this encoder cannot
-    deliver. --effort is lossless-only and is ignored on the lossy path.
+    --quality is a minimum SSIMULACRA2 score (0..100, 100 = lossless), not a
+    distance: cjxl's -d targets butteraugli, a different (and inverted) scale.
 
 Exit codes:
     0  success (info: recognised as JPEG XL)
@@ -198,7 +212,8 @@ wall_ms_median, wall_ms_mad, output_bytes, fingerprint. With --diag,
 additional stage and amplification lines follow.
 
 Note: vardct-fixed still uses EncodeRequest::defaults (hierarchical cover,
-CfL, AQ) — only the rate loop is off. See sources/outside-advice.md §2.
+CfL, AQ) — only the rate loop is off. See AKR source
+outside-advice-2026-08-06 §2.
 
 This is tooling, not a baseline: AKR performance-baseline-rules govern
 promoted numbers; raw logs live under .agent/scratch/.
@@ -237,6 +252,8 @@ fn run(args: &[String]) -> u8 {
         "decode" => cmd_decode(rest),
         "encode" => cmd_encode(rest),
         "compare" => cmd_compare(rest),
+        "analyze-atlas" => cmd_analyze_atlas(rest),
+        "features" => cmd_features(rest),
         "bench" => cmd_bench(rest),
         other => {
             fail(&format!("unknown command `{other}`"));
@@ -453,6 +470,14 @@ fn cmd_encode(args: &[String]) -> u8 {
     let mut tolerance: Option<f64> = None;
     let mut background = None;
     let mut sections = false;
+    // Perceptual-quality target: outer `Some` selects the quality path, inner
+    // `Some(score)` is an explicit score, inner `None` means "use the effort's
+    // default score".
+    let mut quality: Option<Option<f64>> = None;
+    // Fixed-quantizer expert mode.
+    let mut global_scale: Option<u32> = None;
+    // Lossy effort (search-latency budget); also picks the `--quality` default.
+    let mut lossy_effort = jpxl::Effort::default();
     let mut positional: Vec<&String> = Vec::new();
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
@@ -481,6 +506,30 @@ fn cmd_encode(args: &[String]) -> u8 {
                     return EXIT_ERROR;
                 }
                 rate_target = Some(jpxl_encode_policy::RateTarget::BitsPerPixel(v));
+            }
+            "--quality" | "--ssimulacra2" => {
+                // The numeric argument is optional: consume the next token only
+                // if it parses as a score, otherwise leave it for the parser.
+                let mut peek = rest.clone();
+                match peek.next().and_then(|v| v.parse::<f64>().ok()) {
+                    Some(score) => {
+                        if !(score.is_finite() && (0.0..=100.0).contains(&score)) {
+                            fail("`--quality` needs a score in 0..=100 (100 = lossless)");
+                            return EXIT_ERROR;
+                        }
+                        quality = Some(Some(score));
+                        rest = peek;
+                    }
+                    None => quality = Some(None),
+                }
+            }
+            "--lossy" => quality = Some(None),
+            "--global-scale" => {
+                let Some(value) = rest.next().and_then(|v| v.parse::<u32>().ok()) else {
+                    fail("`--global-scale` needs a positive representable integer");
+                    return EXIT_ERROR;
+                };
+                global_scale = Some(value);
             }
             // Perceptual bit-allocation sweep knobs (lossy only). These shape
             // the adaptive-quantization field: how hard it reacts to activity,
@@ -764,29 +813,44 @@ fn cmd_encode(args: &[String]) -> u8 {
             }
             "--lossy-preset" => {
                 let Some(value) = rest.next() else {
-                    fail("`--lossy-preset` needs one of: quality, balanced, fast");
+                    fail("`--lossy-preset` needs one of: balanced, fast");
                     return EXIT_ERROR;
                 };
-                rate_preset = Some(match value.as_str() {
-                    "quality" => jpxl_encode_policy::RateSearchPreset::Quality,
-                    "balanced" => jpxl_encode_policy::RateSearchPreset::Balanced,
-                    "fast" => jpxl_encode_policy::RateSearchPreset::Fast,
-                    _ => {
-                        fail("`--lossy-preset` needs one of: quality, balanced, fast");
+                match parse_lossy_effort(value.as_str()) {
+                    Some((effort, preset)) => {
+                        lossy_effort = effort;
+                        rate_preset = Some(preset);
+                    }
+                    None => {
+                        fail("`--lossy-preset` needs one of: balanced, fast");
                         return EXIT_ERROR;
                     }
-                });
+                }
             }
             "--effort" => {
-                let Some(level) = rest.next().and_then(|v| v.parse::<u8>().ok()) else {
-                    fail("`--effort` needs an integer in 1..=9");
+                let Some(value) = rest.next() else {
+                    fail("`--effort` needs fast, balanced, or an integer in 1..=9");
                     return EXIT_ERROR;
                 };
-                match jpxl_encode::Effort::new(level) {
-                    Ok(effort) => options.effort = effort,
-                    Err(_) => {
-                        fail("`--effort` needs an integer in 1..=9");
-                        return EXIT_ERROR;
+                match parse_lossy_effort(value.as_str()) {
+                    Some((effort, preset)) => {
+                        // A name sets the lossy effort (and its rate preset).
+                        lossy_effort = effort;
+                        rate_preset = Some(preset);
+                    }
+                    None => {
+                        // Otherwise a digit is the lossless Modular effort.
+                        match value
+                            .parse::<u8>()
+                            .ok()
+                            .and_then(|level| jpxl_encode::Effort::new(level).ok())
+                        {
+                            Some(effort) => options.effort = effort,
+                            None => {
+                                fail("`--effort` needs fast, balanced, or an integer in 1..=9");
+                                return EXIT_ERROR;
+                            }
+                        }
                     }
                 }
             }
@@ -843,56 +907,92 @@ fn cmd_encode(args: &[String]) -> u8 {
         }
     };
 
-    // A rate target selects the lossy VarDCT path; without one this stays the
+    // Exactly one lossy target: --quality (the normal contract), --bpp /
+    // --target-bytes (a size), or --global-scale (a pinned quantizer).
+    let selectors = u8::from(quality.is_some())
+        + u8::from(rate_target.is_some())
+        + u8::from(global_scale.is_some());
+    if selectors > 1 {
+        fail("choose one lossy target: --quality, --bpp/--target-bytes, or --global-scale");
+        return EXIT_ERROR;
+    }
+
+    // A lossy target selects the VarDCT path; without one this stays the
     // lossless modular encoder it has always been.
     let mut lossy: Option<LossyReport> = None;
-    let encoded = match rate_target {
-        Some(target) => {
-            match encode_lossy_to_target(
-                &image,
-                target,
-                LossyOverrides {
-                    aq_mode,
-                    aq_tuning,
-                    fixed_quant_lf,
-                    x_qm_scale,
-                    b_qm_scale,
-                    epf_iters,
-                    epf_sharpness,
-                    cover_size_penalty,
-                    cover_frequency_weight,
-                    cover_rate_model,
-                    quantizer_choice,
-                    lambda_scale,
-                    dead_zone_scale,
-                    zero_token_bits,
-                    tolerance,
-                    rate_preset,
-                },
-            ) {
-                Ok(report) => {
-                    let bytes = report.codestream.clone();
-                    lossy = Some(report);
-                    bytes
-                }
-                Err(err) => {
-                    fail(&format!("{input}: {err}"));
-                    return EXIT_ERROR;
-                }
+    let mut perceptual_line: Option<String> = None;
+    let mut mode_label: Option<String> = None;
+    let encoded = if let Some(explicit) = quality {
+        let score = explicit.unwrap_or_else(|| lossy_effort.default_score());
+        match encode_quality(&image, score, &options, lossy_effort) {
+            Ok((bytes, line, mode)) => {
+                perceptual_line = Some(line);
+                mode_label = Some(mode);
+                bytes
+            }
+            Err(err) => {
+                fail(&format!("{input}: {err}"));
+                return EXIT_ERROR;
             }
         }
-        None => match jpxl_encode::encode(&image, &options) {
+    } else if let Some(gs) = global_scale {
+        match encode_global_scale(&image, gs, fixed_quant_lf, &options) {
+            Ok((bytes, mode)) => {
+                mode_label = Some(mode);
+                bytes
+            }
+            Err(err) => {
+                fail(&format!("{input}: {err}"));
+                return EXIT_ERROR;
+            }
+        }
+    } else if let Some(target) = rate_target {
+        match encode_lossy_to_target(
+            &image,
+            target,
+            LossyOverrides {
+                aq_mode,
+                aq_tuning,
+                fixed_quant_lf,
+                x_qm_scale,
+                b_qm_scale,
+                epf_iters,
+                epf_sharpness,
+                cover_size_penalty,
+                cover_frequency_weight,
+                cover_rate_model,
+                quantizer_choice,
+                lambda_scale,
+                dead_zone_scale,
+                zero_token_bits,
+                tolerance,
+                rate_preset,
+            },
+        ) {
+            Ok(report) => {
+                let bytes =
+                    wrap_for_output(report.codestream.clone(), image.bits_per_sample(), &options);
+                lossy = Some(report);
+                bytes
+            }
+            Err(err) => {
+                fail(&format!("{input}: {err}"));
+                return EXIT_ERROR;
+            }
+        }
+    } else {
+        match jpxl_encode::encode(&image, &options) {
             Ok(encoded) => encoded,
             Err(err) => {
                 fail(&format!("{input}: {err}"));
                 return EXIT_ERROR;
             }
-        },
+        }
     };
 
     match write_path(output, &encoded) {
         Ok(()) => {
-            let mode = match rate_target {
+            let mode = mode_label.clone().unwrap_or_else(|| match rate_target {
                 Some(jpxl_encode_policy::RateTarget::BitsPerPixel(b)) => {
                     format!("lossy VarDCT, target {b} bpp")
                 }
@@ -900,7 +1000,7 @@ fn cmd_encode(args: &[String]) -> u8 {
                     format!("lossy VarDCT, target {n} bytes")
                 }
                 None => format!("lossless modular, effort {}", options.effort.level()),
-            };
+            });
             status_line(
                 output,
                 &format!(
@@ -912,6 +1012,11 @@ fn cmd_encode(args: &[String]) -> u8 {
                     encoded.len()
                 ),
             );
+            // After a perceptual encode, one machine-readable line of the
+            // controller's decision.
+            if let Some(line) = &perceptual_line {
+                status_line(output, line);
+            }
             // A missed rate target is not a failure — the loop's contract is
             // "never over" — but it is silent unless said out loud, and the two
             // reasons for it want opposite responses. Saturated means the
@@ -930,8 +1035,13 @@ fn cmd_encode(args: &[String]) -> u8 {
                     status_line(
                         output,
                         &format!(
-                            "  anchor: fallbacks={} first_finalist_bytes={} correction_bytes={}                          fast_prices={} full_prices={}",
+                            "  controller: status={:?} fallbacks={} fresh_rescues={} \
+                             rescue_prices={} first_finalist_bytes={} correction_bytes={} \
+                             fast_prices={} full_prices={}",
+                            report.status,
                             report.stats.anchor_fallbacks,
+                            report.stats.fresh_structure_rescues,
+                            report.stats.rescue_prices,
                             report.stats.anchor_first_finalist_bytes,
                             report.stats.anchor_correction_bytes,
                             report.stats.fast_prices,
@@ -966,12 +1076,24 @@ fn cmd_encode(args: &[String]) -> u8 {
                         let f = (miss as f64) * 100.0 / (report.target_bytes as f64);
                         f
                     };
-                    let why = if report.saturated {
-                        "ladder saturated: the finest quantizer is still under target, \
-                         so no extra search budget can close this"
-                    } else {
-                        "search ended short of target with budget spent, not at the \
-                         ladder's limit"
+                    let why = match report.status {
+                        jpxl_encode_policy::RateStatus::SaturatedTop => {
+                            "ladder saturated: the finest quantizer is still under target, \
+                             so no extra search budget can close this"
+                        }
+                        jpxl_encode_policy::RateStatus::UnderTargetAdjacentRungs => {
+                            "adjacent priced rungs straddle the target"
+                        }
+                        jpxl_encode_policy::RateStatus::UnderTargetWorkCap
+                        | jpxl_encode_policy::RateStatus::RescuedFreshStructure => {
+                            "the bounded production controller reached its work cap"
+                        }
+                        jpxl_encode_policy::RateStatus::ExhaustiveReference => {
+                            "the exhaustive Quality reference ended outside its band"
+                        }
+                        jpxl_encode_policy::RateStatus::InsideBand => {
+                            "the selected stream is inside the requested band"
+                        }
                     };
                     status_line(
                         output,
@@ -998,12 +1120,68 @@ fn cmd_encode(args: &[String]) -> u8 {
 /// a Python or numpy dependency: encode at a rate, decode, compare. Prints
 /// `rmse=<f> psnr_db=<f>`, or `psnr_db=inf` when the images are identical.
 ///
-/// Built with `--features perceptual`, also prints `ssimulacra2=<f>`
-/// (higher is better, 100 = identical) and `butteraugli=<f>` with its
-/// `butteraugli_pnorm3` (lower is better, 0 = identical; `butteraugli` is the
-/// distance `cjxl -d` targets). Those are the numbers to rank lossy encoders
-/// on — PSNR is printed because it is always available, not because it is
-/// right.
+/// Always prints `ssimulacra2_jpxl=<f>`, the production metric used by the
+/// score-targeted encoder. Built with `--features perceptual`, also prints the
+/// independent rust-av reference as `ssimulacra2=<f>` (higher is better, 100 =
+/// identical) and `butteraugli=<f>` with its `butteraugli_pnorm3` (lower is
+/// better, 0 = identical; `butteraugli` is the distance `cjxl -d` targets).
+/// PSNR is printed because it is always available, not because it is the
+/// quality axis.
+fn in_tree_ssimulacra2_score(
+    reference: &jpxl_conformance::metrics::Image,
+    candidate: &jpxl_conformance::metrics::Image,
+) -> Option<f64> {
+    if !reference.same_shape(candidate) {
+        return None;
+    }
+
+    fn linear_planes(image: &jpxl_conformance::metrics::Image) -> [Vec<f32>; 3] {
+        let pixel_count = image.samples.len() / 3;
+        let mut red = Vec::with_capacity(pixel_count);
+        let mut green = Vec::with_capacity(pixel_count);
+        let mut blue = Vec::with_capacity(pixel_count);
+        let scale = f32::from(image.max_value);
+        let linear = |sample: u16| {
+            let value = f32::from(sample) / scale;
+            if value <= 0.040_45 {
+                value / 12.92
+            } else {
+                ((value + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        for pixel in image.samples.chunks_exact(3) {
+            if let [r, g, b] = pixel {
+                red.push(linear(*r));
+                green.push(linear(*g));
+                blue.push(linear(*b));
+            }
+        }
+        [red, green, blue]
+    }
+
+    let [reference_r, reference_g, reference_b] = linear_planes(reference);
+    let [candidate_r, candidate_g, candidate_b] = linear_planes(candidate);
+    let reference_view = jpxl_perceptual::LinearRgbView::new(
+        reference.w,
+        reference.h,
+        &reference_r,
+        &reference_g,
+        &reference_b,
+    )
+    .ok()?;
+    let candidate_view = jpxl_perceptual::LinearRgbView::new(
+        candidate.w,
+        candidate.h,
+        &candidate_r,
+        &candidate_g,
+        &candidate_b,
+    )
+    .ok()?;
+    jpxl_perceptual::score_pair(reference_view, candidate_view)
+        .ok()
+        .map(|result| result.score)
+}
+
 fn cmd_compare(args: &[String]) -> u8 {
     let [a_path, b_path] = args else {
         fail("`compare` takes two PPM paths (reference, then decoded)");
@@ -1043,17 +1221,22 @@ fn cmd_compare(args: &[String]) -> u8 {
         return EXIT_ERROR;
     };
 
-    // Only the perceptual blocks below append to this, so with both features
-    // off it is never mutated.
-    #[cfg_attr(
-        not(any(feature = "ssimulacra2", feature = "butteraugli")),
-        allow(unused_mut, reason = "appended to only under the perceptual features")
-    )]
     let mut line = if db.is_infinite() {
         "rmse=0 psnr_db=inf".to_owned()
     } else {
         format!("rmse={err:.6} psnr_db={db:.4}")
     };
+
+    match in_tree_ssimulacra2_score(a, b) {
+        Some(score) => line.push_str(&format!(
+            " ssimulacra2_jpxl={score:.6} ssimulacra2_jpxl_version={}",
+            jpxl_perceptual::METRIC_VERSION
+        )),
+        None => line.push_str(&format!(
+            " ssimulacra2_jpxl=n/a ssimulacra2_jpxl_version={}",
+            jpxl_perceptual::METRIC_VERSION
+        )),
+    }
 
     // The perceptual metrics are the ones to rank lossy encoders on; PSNR is
     // here because it is always available. When they disagree with PSNR,
@@ -1309,7 +1492,8 @@ fn cmd_bench(args: &[String]) -> u8 {
                             println!(
                                 "rate_diag=fast_prices={} full_prices={} \
                                  structural_builds={} sketch_probes={} \
-                                 exact_candidates={} anchor_fallbacks={} \
+                                 exact_candidates={} anchor_fallbacks={} fresh_rescues={} \
+                                 rescue_prices={} \
                                  anchor_first_finalist_bytes={} \
                                  anchor_correction_bytes={} \
                                  dct_cache_hits={} dct_cache_misses={} \
@@ -1321,6 +1505,8 @@ fn cmd_bench(args: &[String]) -> u8 {
                                 s.sketch_probes,
                                 s.exact_candidates,
                                 s.anchor_fallbacks,
+                                s.fresh_structure_rescues,
+                                s.rescue_prices,
                                 s.anchor_first_finalist_bytes,
                                 s.anchor_correction_bytes,
                                 s.dct_cache_hits,
@@ -1446,7 +1632,9 @@ fn print_writer_phase(
     println!(
         "{label}=internal_counts={} outer_counts={} other_counts={} stores={} \
          section_traversals={} lf_sections={} pass_group_sections={} pool_builds={} \
-         count_ms={:.1} store_ms={:.1} pool_build_ms={:.1} tape_symbols={}",
+         count_ms={:.1} store_ms={:.1} pool_build_ms={:.1} tape_symbols={} \
+         tape_extra_symbols={} tape_payload_bytes={} tape_legacy_payload_bytes={} \
+         tape_record_ms={:.1}",
         phase.internal_count_emissions,
         phase.outer_count_emissions,
         phase.other_count_emissions,
@@ -1459,6 +1647,10 @@ fn print_writer_phase(
         ns_ms(phase.stored_emission_ns),
         ns_ms(phase.executor_pool_build_ns),
         phase.tape_symbols,
+        phase.tape_extra_symbols,
+        phase.tape_payload_bytes,
+        phase.tape_legacy_payload_bytes,
+        ns_ms(phase.tape_record_ns),
     );
 }
 
@@ -1498,14 +1690,16 @@ impl RateTraceStats {
                 RatePhase::Bisect => out.bisect += 1,
                 RatePhase::Fill => out.fill += 1,
                 RatePhase::LfFill => out.lf_fill += 1,
-                RatePhase::Final => out.final_prices += 1,
+                RatePhase::Final | RatePhase::Rescue => out.final_prices += 1,
             }
         }
 
         let fast_best = outcome
             .trace
             .iter()
-            .filter(|step| step.phase != RatePhase::Final && step.feasible)
+            .filter(|step| {
+                !matches!(step.phase, RatePhase::Final | RatePhase::Rescue) && step.feasible
+            })
             .max_by_key(|step| (step.bytes, step.quantizer.rung));
         out.fast_best_rung = fast_best.map(|step| step.quantizer.rung.get());
         out.fast_best_quant_lf = fast_best.map(|step| step.quantizer.quant_lf.get());
@@ -1514,7 +1708,7 @@ impl RateTraceStats {
                 .trace
                 .iter()
                 .filter(|step| {
-                    step.phase != RatePhase::Final
+                    !matches!(step.phase, RatePhase::Final | RatePhase::Rescue)
                         && !step.feasible
                         && step.quantizer.rung > best.quantizer.rung
                 })
@@ -1524,7 +1718,7 @@ impl RateTraceStats {
         let full_start = outcome
             .trace
             .iter()
-            .find(|step| step.phase == RatePhase::Final);
+            .find(|step| matches!(step.phase, RatePhase::Final | RatePhase::Rescue));
         out.full_start_rung = full_start.map(|step| step.quantizer.rung.get());
         out.full_start_quant_lf = full_start.map(|step| step.quantizer.quant_lf.get());
         out
@@ -1780,9 +1974,8 @@ struct LossyReport {
     target_bytes: u64,
     achieved: u64,
     allowed_undershoot: u64,
-    /// The ladder ran out of rungs — the target is finer than the quantizer can
-    /// express. More search budget cannot help.
-    saturated: bool,
+    /// Explicit terminal state of the target-rate controller.
+    status: jpxl_encode_policy::RateStatus,
     fast_prices: u32,
     full_prices: u32,
     /// Every priced candidate, for the `JPXL_RATE_TRACE` research dump.
@@ -1838,6 +2031,179 @@ fn dump_cover_map(plan: &jpxl_encode::vardct::ValidatedEmissionPlan, path: &str)
     if let Err(err) = std::fs::write(path, pgm) {
         eprintln!("cover dump failed: {err}");
     }
+}
+
+/// `jpxl analyze-atlas <input> <output.jsonl>`: export diagnostic features.
+fn cmd_analyze_atlas(args: &[String]) -> u8 {
+    let [input, output] = args else {
+        fail("`analyze-atlas` takes an input raster and an output JSONL path");
+        return EXIT_ERROR;
+    };
+    let bytes = match read_path(input) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            fail(&format!("{input}: {error}"));
+            return EXIT_ERROR;
+        }
+    };
+    let image = match image_io::decode_input(&bytes, None) {
+        Ok(image) => image,
+        Err(error) => {
+            fail(&format!("{input}: {error}"));
+            return EXIT_ERROR;
+        }
+    };
+    let frame = match analysis_frame(&image) {
+        Ok(frame) => frame,
+        Err(error) => {
+            fail(&error);
+            return EXIT_ERROR;
+        }
+    };
+    let atlas = jpxl_encode_policy::AnalysisAtlasV2::analyze(&frame);
+    let file = match std::fs::File::create(output) {
+        Ok(file) => file,
+        Err(error) => {
+            fail(&format!("{output}: {error}"));
+            return EXIT_ERROR;
+        }
+    };
+    let mut writer = std::io::BufWriter::new(file);
+    let grid = atlas.grid();
+    if writeln!(
+        writer,
+        "{{\"schema\":\"jpxl.analysis-atlas/1\",\"kind\":\"header\",\"width\":{},\"height\":{},\"grid_width\":{},\"grid_height\":{},\"atom_bytes\":{},\"total_bytes\":{}}}",
+        image.width(),
+        image.height(),
+        grid.width,
+        grid.height,
+        core::mem::size_of::<jpxl_encode_policy::DiagnosticAtomFeatures>()
+            + core::mem::size_of::<jpxl_encode_policy::AtomFeatures>(),
+        atlas.byte_size(),
+    )
+    .is_err()
+    {
+        fail(&format!("{output}: cannot write atlas header"));
+        return EXIT_ERROR;
+    }
+    for (index, (base, diagnostic)) in atlas.base().atoms().iter().zip(atlas.atoms()).enumerate() {
+        let Ok(index) = u32::try_from(index) else {
+            fail("analysis atlas has too many atoms to address");
+            return EXIT_ERROR;
+        };
+        let atom_x = index % grid.width;
+        let atom_y = index / grid.width;
+        if writeln!(
+            writer,
+            "{{\"schema\":\"jpxl.analysis-atlas/1\",\"kind\":\"atom\",\"x\":{atom_x},\"y\":{atom_y},\"mean_xyb\":{:?},\"variance_xyb\":{:?},\"gradient_energy_xyb\":{:?},\"gradient_cross_xyb\":{:?},\"laplacian_energy_xyb\":{:?},\"plane_residual_xyb\":{:?},\"noise_mad_xyb\":{:?},\"dynamic_range_xyb\":{:?},\"covariance_xyb\":{:?},\"orientation_coherence_y\":{},\"flat_side_asymmetry_y\":{}}}",
+            base.mean_xyb,
+            base.variance_xyb,
+            diagnostic.gradient_energy_xyb,
+            diagnostic.gradient_cross_xyb,
+            diagnostic.laplacian_energy_xyb,
+            diagnostic.plane_residual_xyb,
+            diagnostic.noise_mad_xyb,
+            diagnostic.dynamic_range_xyb,
+            diagnostic.covariance_xyb,
+            diagnostic.orientation_coherence_y,
+            diagnostic.flat_side_asymmetry_y,
+        )
+        .is_err()
+        {
+            fail(&format!("{output}: cannot write atlas atom"));
+            return EXIT_ERROR;
+        }
+    }
+    if writer.flush().is_err() {
+        fail(&format!("{output}: cannot finish atlas export"));
+        return EXIT_ERROR;
+    }
+    status_line(
+        output,
+        &format!(
+            "{output}: {}x{} atoms, {} feature bytes",
+            grid.width,
+            grid.height,
+            atlas.byte_size()
+        ),
+    );
+    EXIT_OK
+}
+
+/// `jpxl features <input> [--json]`: print the quality controller's frame
+/// source features as one JSON line, for the initial-rung calibration tooling.
+fn cmd_features(args: &[String]) -> u8 {
+    let input = match args {
+        [input] => input,
+        [input, flag] | [flag, input] if flag == "--json" => input,
+        _ => {
+            fail("`features` takes an input raster and an optional `--json` flag");
+            return EXIT_ERROR;
+        }
+    };
+    let bytes = match read_path(input) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            fail(&format!("{input}: {error}"));
+            return EXIT_ERROR;
+        }
+    };
+    let image = match image_io::decode_input(&bytes, None) {
+        Ok(image) => image,
+        Err(error) => {
+            fail(&format!("{input}: {error}"));
+            return EXIT_ERROR;
+        }
+    };
+    let frame = match analysis_frame(&image) {
+        Ok(frame) => frame,
+        Err(error) => {
+            fail(&error);
+            return EXIT_ERROR;
+        }
+    };
+    let atlas = jpxl_encode_policy::AnalysisAtlas::analyze(&frame);
+    let features = jpxl_encode_policy::quality_features::source_features(
+        &atlas,
+        image.width(),
+        image.height(),
+        frame.is_grayscale(),
+    );
+    println!("{}", features.to_json());
+    EXIT_OK
+}
+
+fn analysis_frame(image: &jpxl_encode::Image) -> Result<jpxl_encode_policy::PreparedFrame, String> {
+    let planes = image.planes();
+    let mut rgb = Vec::with_capacity(planes.first().map(Vec::len).unwrap_or(0).saturating_mul(3));
+    match planes {
+        [gray] => {
+            for &sample in gray {
+                let value = u16::try_from(sample)
+                    .map_err(|_| "analysis input contains a negative sample".to_owned())?;
+                rgb.extend_from_slice(&[value; 3]);
+            }
+        }
+        [red, green, blue] => {
+            for index in 0..red.len() {
+                for plane in [red, green, blue] {
+                    let sample = plane.get(index).copied().unwrap_or(0);
+                    rgb.push(
+                        u16::try_from(sample)
+                            .map_err(|_| "analysis input contains a negative sample".to_owned())?,
+                    );
+                }
+            }
+        }
+        _ => return Err("analysis input must have one or three colour channels".to_owned()),
+    }
+    jpxl_encode_policy::PreparedFrame::from_srgb16(
+        image.width(),
+        image.height(),
+        &rgb,
+        image.bits_per_sample(),
+    )
+    .map_err(|error| error.to_string())
 }
 
 /// Research controls that override the production target-rate policy.
@@ -1972,7 +2338,7 @@ fn encode_lossy_to_target(
             .rate_preset
             .tolerance(request.tolerance)
             .bytes_for(outcome.target),
-        saturated: outcome.saturated,
+        status: outcome.status,
         fast_prices: outcome.stats.fast_prices,
         full_prices: outcome.stats.full_prices,
         stats: outcome.stats,
@@ -1982,6 +2348,203 @@ fn encode_lossy_to_target(
         codestream: outcome.codestream,
     })
     .map_err(|e| e.to_string())
+}
+
+/// Maps a lossy effort name to its facade effort and rate-search preset.
+///
+/// `quality` is only a name when the `quality-effort` feature forwards the
+/// exhaustive-reference effort; otherwise it is rejected like any other
+/// non-name.
+fn parse_lossy_effort(name: &str) -> Option<(jpxl::Effort, jpxl_encode_policy::RateSearchPreset)> {
+    match name {
+        "fast" => Some((
+            jpxl::Effort::Fast,
+            jpxl_encode_policy::RateSearchPreset::Fast,
+        )),
+        "balanced" => Some((
+            jpxl::Effort::Balanced,
+            jpxl_encode_policy::RateSearchPreset::Balanced,
+        )),
+        #[cfg(feature = "quality-effort")]
+        "quality" => Some((
+            jpxl::Effort::Quality,
+            jpxl_encode_policy::RateSearchPreset::Quality,
+        )),
+        _ => None,
+    }
+}
+
+/// The lower-case name of a lossy effort, for the perceptual report line.
+fn effort_name(effort: jpxl::Effort) -> &'static str {
+    match effort {
+        jpxl::Effort::Fast => "fast",
+        jpxl::Effort::Balanced => "balanced",
+        #[cfg(feature = "quality-effort")]
+        jpxl::Effort::Quality => "quality",
+    }
+}
+
+/// The snake-case wire name of a perceptual controller status.
+fn perceptual_status_str(status: jpxl::PerceptualStatus) -> &'static str {
+    match status {
+        jpxl::PerceptualStatus::Met => "met",
+        jpxl::PerceptualStatus::MetAdjacentRungs => "met_adjacent_rungs",
+        jpxl::PerceptualStatus::MetWorkCap => "met_work_cap",
+        jpxl::PerceptualStatus::SaturatedFloor => "saturated_floor",
+        jpxl::PerceptualStatus::SaturatedTop => "saturated_top",
+        jpxl::PerceptualStatus::UnderTargetWorkCap => "under_target_work_cap",
+        jpxl::PerceptualStatus::RescuedFreshStructure => "rescued_fresh_structure",
+        jpxl::PerceptualStatus::RoutedToLossless => "routed_to_lossless",
+        jpxl::PerceptualStatus::UnsupportedTooSmall => "unsupported_too_small",
+    }
+}
+
+/// The single machine-readable line printed after a perceptual encode.
+fn format_perceptual_line(outcome: &jpxl::PerceptualOutcome, effort: &str) -> String {
+    let achieved = outcome
+        .achieved_score
+        .map_or_else(|| "n/a".to_owned(), |score| format!("{score:.4}"));
+    format!(
+        "quality_target={:.4} achieved={achieved} bytes={} metric={} effort={effort} \
+         probes={} prices={} status={}",
+        outcome.requested_score,
+        outcome.exact_bytes,
+        outcome.metric_version,
+        outcome.probes,
+        outcome.prices,
+        perceptual_status_str(outcome.status),
+    )
+}
+
+/// Builds an interleaved RGB `u16` buffer from a three-channel image.
+///
+/// Returns `(width, height, bits_per_sample, interleaved_rgb)`.
+fn image_to_rgb16(image: &jpxl_encode::Image) -> Result<(u32, u32, u32, Vec<u16>), String> {
+    if image.num_channels() != 3 {
+        return Err(format!(
+            "lossy encoding needs RGB input; this is {} channel(s) at {} bits",
+            image.num_channels(),
+            image.bits_per_sample()
+        ));
+    }
+    let planes = image.planes();
+    let (Some(r), Some(g), Some(b)) = (planes.first(), planes.get(1), planes.get(2)) else {
+        return Err("lossy encoding needs three colour planes".to_owned());
+    };
+    let bits_per_sample = image.bits_per_sample();
+    let max = if bits_per_sample >= 16 {
+        i32::from(u16::MAX)
+    } else {
+        i32::try_from((1u32 << bits_per_sample) - 1).unwrap_or(i32::MAX)
+    };
+    let mut rgb = Vec::with_capacity(r.len().saturating_mul(3));
+    for i in 0..r.len() {
+        for plane in [r, g, b] {
+            let v = plane.get(i).copied().unwrap_or(0).clamp(0, max);
+            rgb.push(u16::try_from(v).unwrap_or(0));
+        }
+    }
+    Ok((image.width(), image.height(), bits_per_sample, rgb))
+}
+
+/// The `--quality` path: a minimum-SSIMULACRA2 encode through the facade.
+///
+/// Returns the codestream, the perceptual report line, and the summary mode
+/// string. A score of 100 routes to the lossless encoder; anything lower runs
+/// the quality controller.
+fn encode_quality(
+    image: &jpxl_encode::Image,
+    score: f64,
+    options: &jpxl_encode::EncodeOptions,
+    effort: jpxl::Effort,
+) -> Result<(Vec<u8>, String, String), String> {
+    let (width, height, bits_per_sample, rgb) = image_to_rgb16(image)?;
+    let encoder = jpxl::Encoder::new()
+        .with_resources(options.resources)
+        .with_container(options.container)
+        .with_jxlp_fragment_size(options.jxlp_fragment_size)
+        .with_effort(effort)
+        .with_ssimulacra2_score(score)
+        .map_err(|error| error.to_string())?;
+    match encoder.encode_rgb16_reported(width, height, bits_per_sample, &rgb) {
+        Ok((bytes, jpxl::EncodeReport::Perceptual(outcome))) => {
+            let line = format_perceptual_line(&outcome, effort_name(effort));
+            // `JPXL_QUALITY_TRACE=<path>` appends the controller's
+            // `jpxl.quality-trace/1` record, the harness's and the
+            // predictor calibration's input.
+            if let (Some(path), Some(trace)) = (
+                std::env::var_os("JPXL_QUALITY_TRACE"),
+                outcome.trace_json.as_deref(),
+            ) {
+                use std::io::Write as _;
+                let appended = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&path)
+                    .and_then(|mut file| writeln!(file, "{trace}"));
+                if let Err(error) = appended {
+                    eprintln!("warning: could not write JPXL_QUALITY_TRACE: {error}");
+                }
+            }
+            let mode = format!("lossy VarDCT (perceptual), ssimulacra2>={score:.4}");
+            Ok((bytes, line, mode))
+        }
+        Ok(_) => Err("perceptual encode produced an unexpected report".to_owned()),
+        Err(jpxl::Error::Unsupported(what)) => Err(format!("ssimulacra2>={score:.4}: {what}")),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+/// Wraps a lossy codestream the way [`jpxl_encode::encode`] wraps a lossless
+/// one, so `--container` and `--jxlp` reach the VarDCT paths too.
+///
+/// 18181-2 9.3 with Annex M of Part 1: a >8-bit image needs the extended
+/// level, which is why this takes the depth rather than assuming one.
+fn wrap_for_output(
+    codestream: Vec<u8>,
+    bits_per_sample: u32,
+    options: &jpxl_encode::EncodeOptions,
+) -> Vec<u8> {
+    if !options.container && options.jxlp_fragment_size.is_none() {
+        return codestream;
+    }
+    let level = if bits_per_sample > 8 {
+        jpxl_encode::container::EXTENDED_LEVEL
+    } else {
+        jpxl_encode::container::DEFAULT_LEVEL
+    };
+    match options.jxlp_fragment_size {
+        Some(size) => jpxl_encode::container::wrap_fragmented(&codestream, level, size),
+        None => jpxl_encode::container::wrap(&codestream, level),
+    }
+}
+
+/// The `--global-scale` path: a fixed-quantizer VarDCT encode.
+///
+/// Honours `--quant-lf`; the HF multiplier stays at the request default.
+fn encode_global_scale(
+    image: &jpxl_encode::Image,
+    global_scale: u32,
+    quant_lf: Option<u32>,
+    options: &jpxl_encode::EncodeOptions,
+) -> Result<(Vec<u8>, String), String> {
+    let (width, height, bits_per_sample, rgb) = image_to_rgb16(image)?;
+    let defaults = jpxl_encode_policy::EncodeRequest::defaults();
+    let quant_lf = quant_lf.unwrap_or_else(|| defaults.quant_lf.get());
+    let target = jpxl_encode_policy::request::FixedQuantizerTarget::new(
+        global_scale,
+        quant_lf,
+        defaults.hf_mul.get(),
+    )
+    .map_err(|error| error.to_string())?;
+    let mut request = jpxl_encode_policy::EncodeRequest::for_fixed_quantizer(target);
+    request.resources = options.resources;
+    let bytes =
+        jpxl_encode_policy::encode_srgb16_vardct(width, height, &rgb, bits_per_sample, &request)
+            .map_err(|error| error.to_string())?;
+    let bytes = wrap_for_output(bytes, bits_per_sample, options);
+    let mode = format!("lossy VarDCT (fixed quantizer), global_scale {global_scale}");
+    Ok((bytes, mode))
 }
 
 /// `encode --sections`: where the bytes of a lossy codestream went, by
@@ -2258,6 +2821,41 @@ mod cli_tests {
     }
 
     #[test]
+    fn decoded_pair_metric_is_the_in_tree_production_score() {
+        let (width, height) = (32u32, 32u32);
+        let mut samples = Vec::with_capacity(32 * 32 * 3);
+        for y in 0..32u16 {
+            for x in 0..32u16 {
+                samples.extend_from_slice(&[
+                    x.saturating_mul(8),
+                    y.saturating_mul(8),
+                    x.saturating_add(y).saturating_mul(4),
+                ]);
+            }
+        }
+        let reference = jpxl_conformance::metrics::Image {
+            w: width,
+            h: height,
+            channels: 3,
+            max_value: 255,
+            samples,
+        };
+        assert_eq!(
+            in_tree_ssimulacra2_score(&reference, &reference),
+            Some(100.0)
+        );
+
+        let mut distorted = reference.clone();
+        for pixel in distorted.samples.chunks_exact_mut(3) {
+            if let [_, _, blue] = pixel {
+                *blue = blue.saturating_add(8).min(255);
+            }
+        }
+        let distorted_score = in_tree_ssimulacra2_score(&reference, &distorted).expect("score");
+        assert!(distorted_score < 100.0);
+    }
+
+    #[test]
     fn png_to_jxl_to_png_is_lossless() {
         let temp = temp_dir();
         std::fs::create_dir_all(&temp).expect("temp directory");
@@ -2287,6 +2885,42 @@ mod cli_tests {
 
         let roundtrip = image::open(&output).expect("open output PNG").into_rgb8();
         assert_eq!(roundtrip.into_raw(), original);
+
+        if temp.starts_with(std::env::temp_dir()) {
+            std::fs::remove_dir_all(&temp).expect("remove isolated test directory");
+        }
+    }
+
+    #[test]
+    fn analyze_atlas_exports_header_and_raster_order_atoms() {
+        let temp = temp_dir();
+        std::fs::create_dir_all(&temp).expect("temp directory");
+        let input = temp.join("input.png");
+        let output = temp.join("atlas.jsonl");
+        let original = vec![128u8; 9 * 10 * 3];
+        let dynamic = DynamicImage::ImageRgb8(
+            ImageBuffer::<Rgb<u8>, _>::from_raw(9, 10, original).expect("shape"),
+        );
+        dynamic
+            .save_with_format(&input, ImageFormat::Png)
+            .expect("write input PNG");
+
+        let args = vec![
+            "analyze-atlas".to_owned(),
+            input.to_string_lossy().into_owned(),
+            output.to_string_lossy().into_owned(),
+        ];
+        assert_eq!(run(&args), EXIT_OK);
+        let text = std::fs::read_to_string(&output).expect("read atlas");
+        let rows: Vec<&str> = text.lines().collect();
+        assert_eq!(rows.len(), 5);
+        let header = rows.first().expect("header");
+        assert!(header.contains("\"schema\":\"jpxl.analysis-atlas/1\""));
+        assert!(header.contains("\"grid_width\":2"));
+        assert!(header.contains("\"grid_height\":2"));
+        assert!(header.contains("\"atom_bytes\":128"));
+        assert!(rows.get(1).expect("first atom").contains("\"x\":0,\"y\":0"));
+        assert!(rows.get(4).expect("last atom").contains("\"x\":1,\"y\":1"));
 
         if temp.starts_with(std::env::temp_dir()) {
             std::fs::remove_dir_all(&temp).expect("remove isolated test directory");
