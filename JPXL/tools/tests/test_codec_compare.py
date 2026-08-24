@@ -239,7 +239,7 @@ class CodecCompareTests(unittest.TestCase):
                 json.dumps({"schema": "other/1"}) + "\n"
                 + json.dumps(
                     {
-                        "schema": codec_compare.QUALITY_TRACE_SCHEMA,
+                        "schema": codec_compare.QUALITY_TRACE_SCHEMAS[0],
                         "requested_score": 85.0,
                         "achieved_score": 85.1,
                         "wall_by_phase": {

@@ -163,10 +163,21 @@ class RegistryTests(unittest.TestCase):
             )
 
     def test_split_and_class_counts_are_stable(self):
+        # 2026-08-24: the one-shot program's coverage expansion added nine
+        # calibration/development fixtures (noise-lowlight and grayscale from
+        # more captures; second text/UI/hatch/sky families). The locked
+        # holdout is frozen at 13.
         by_split = Counter(f.split for f in self.fixtures)
-        self.assertEqual(by_split["calibration"], 19)
-        self.assertEqual(by_split["development"], 15)
+        self.assertEqual(by_split["calibration"], 24)
+        self.assertEqual(by_split["development"], 19)
         self.assertEqual(by_split["holdout"], 13)
+
+    def test_families_never_cross_splits(self):
+        by_family = defaultdict(set)
+        for fx in self.fixtures:
+            by_family[mqgf.family_fields(fx)["family_id"]].add(fx.split)
+        leaking = {fam: s for fam, s in by_family.items() if len(s) > 1}
+        self.assertEqual(leaking, {}, "image families must stay in one split")
 
 
 if __name__ == "__main__":

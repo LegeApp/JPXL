@@ -40,6 +40,8 @@ import argparse
 import hashlib
 import io
 import json
+import os
+import re
 import struct
 import sys
 import zlib
@@ -500,6 +502,12 @@ def registry() -> list[Fixture]:
     fx.append(_synth("text-screenshot-holdout-1600x900", "text-screenshot", "holdout",
                      "synthetic/text-screenshot", lambda: build_text(1600, 900, 19001, dark=False),
                      19001, "Holdout paragraphs on white, fresh seed"))
+    fx.append(_synth("text-screenshot-white2-1280x800", "text-screenshot", "calibration",
+                     "synthetic/text-screenshot", lambda: build_text(1280, 800, 1005, dark=False),
+                     1005, "Second white-background paragraph layout, fresh seed"))
+    fx.append(_synth("text-screenshot-ui2-1600x1000", "text-screenshot", "development",
+                     "synthetic/text-screenshot", lambda: build_text_ui(1600, 1000, 1006),
+                     1006, "Second UI mock layout, fresh seed (UI class in both splits)"))
 
     # ---- line-art (synthetic) ---------------------------------------------- #
     fx.append(_synth("line-art-aa-shapes-1024x1024", "line-art", "calibration",
@@ -517,6 +525,9 @@ def registry() -> list[Fixture]:
     fx.append(_synth("line-art-holdout-900x900", "line-art", "holdout",
                      "synthetic/line-art", lambda: build_line_art(900, 900, 29001, anti_alias=True),
                      29001, "Holdout anti-aliased vector shapes, fresh seed"))
+    fx.append(_synth("line-art-hatch2-640x640", "line-art", "development",
+                     "synthetic/line-art", lambda: build_hatch(640, 640, 2005),
+                     2005, "Second hatch-pattern layout, fresh seed (hatch in both splits)"))
 
     # ---- gradient (synthetic) ---------------------------------------------- #
     fx.append(_synth("gradient-horizontal-1024x512", "gradient", "calibration",
@@ -537,6 +548,12 @@ def registry() -> list[Fixture]:
     fx.append(_synth("gradient-holdout-radial-700x700", "gradient", "holdout",
                      "synthetic/gradient", lambda: build_gradient(700, 700, "radial", 39001),
                      39001, "Holdout radial ramp, fresh seed"))
+    fx.append(_synth("gradient-sky-noise2-1024x512", "gradient", "calibration",
+                     "synthetic/gradient", lambda: build_gradient(1024, 512, "sky", 3006),
+                     3006, "Second sky-like noisy gradient, fresh seed (banding stress in both splits)"))
+    fx.append(_synth("gradient-sky-noise3-800x600", "gradient", "development",
+                     "synthetic/gradient", lambda: build_gradient(800, 600, "sky", 3007),
+                     3007, "Third sky-like noisy gradient, fresh seed"))
 
     # ---- saturated (synthetic + one photo crop) ---------------------------- #
     fx.append(_synth("saturated-primaries-hard-512x512", "saturated", "calibration",
@@ -580,7 +597,8 @@ def registry() -> list[Fixture]:
         "64x64 crop at (x=1200,y=900), sRGB 8-bit"))
     _ = tiny_sizes  # documented full set (7x7,8x8,16x16,33x20,64x64) spread across splits
 
-    # ---- noise-lowlight (derived, development scene only) ------------------- #
+    # ---- noise-lowlight (derived; one family per capture, split follows the
+    # capture so the class exists in both calibration and development) ------- #
     fx.append(_derived(
         "noise-lowlight-184356-1024x768", "noise-lowlight", "development",
         "derived/noise-lowlight",
@@ -588,6 +606,27 @@ def registry() -> list[Fixture]:
         "test-set/20240502_184356.png",
         "linear-light x0.25 darken, then seeded Poisson(scale=500)+Gaussian(sigma=0.006) noise, re-encode sRGB 8-bit",
         seed=5001))
+    fx.append(_derived(
+        "noise-lowlight-151356-1024x768", "noise-lowlight", "calibration",
+        "derived/noise-lowlight",
+        lambda: build_lowlight(load_rgb("test-set/20240502_151356.png"), 5002),
+        "test-set/20240502_151356.png",
+        "linear-light x0.25 darken, then seeded Poisson(scale=500)+Gaussian(sigma=0.006) noise, re-encode sRGB 8-bit",
+        seed=5002))
+    fx.append(_derived(
+        "noise-lowlight-105759-1024x768", "noise-lowlight", "development",
+        "derived/noise-lowlight",
+        lambda: build_lowlight(load_rgb("test-set/20240503_105759.png"), 5003),
+        "test-set/20240503_105759.png",
+        "linear-light x0.25 darken, then seeded Poisson(scale=500)+Gaussian(sigma=0.006) noise, re-encode sRGB 8-bit",
+        seed=5003))
+    fx.append(_derived(
+        "noise-lowlight-110934-1024x768", "noise-lowlight", "calibration",
+        "derived/noise-lowlight",
+        lambda: build_lowlight(load_rgb("test-set/20240501_110934.png"), 5004),
+        "test-set/20240501_110934.png",
+        "linear-light x0.25 darken, then seeded Poisson(scale=500)+Gaussian(sigma=0.006) noise, re-encode sRGB 8-bit",
+        seed=5004))
 
     # ---- grayscale (derived) ----------------------------------------------- #
     fx.append(_derived(
@@ -595,6 +634,12 @@ def registry() -> list[Fixture]:
         "derived/grayscale",
         lambda: build_grayscale(load_rgb("test-set/20240502_192515.png")),
         "test-set/20240502_192515.png",
+        "Rec.709 linear-light luma, re-encode sRGB, replicated to R=G=B"))
+    fx.append(_derived(
+        "grayscale-scene-151800-1024x768", "grayscale", "calibration",
+        "derived/grayscale",
+        lambda: build_grayscale(load_rgb("test-set/20240502_151800.png")),
+        "test-set/20240502_151800.png",
         "Rec.709 linear-light luma, re-encode sRGB, replicated to R=G=B"))
     fx.append(_derived(
         "grayscale-photo-203230-crop-1024x1024", "grayscale", "calibration",
@@ -683,9 +728,43 @@ def sidecar_for(fx: Fixture, ppm_sha: str, png_sha: str | None) -> dict[str, Any
     return doc
 
 
+CAPTURE_STEM_RE = re.compile(r"(20\d{6}_\d{6})")
+
+
+def source_capture_id(fx: Fixture) -> str | None:
+    """The camera-capture stem a fixture ultimately comes from, or ``None``.
+
+    Parsed from the parent path's basename (``20260606_203230_4mp.png`` and
+    ``20260606_203230_result.png`` are one capture), so every crop, resolution
+    and colour variant of one photograph shares the id.
+    """
+    if fx.parent is None:
+        return None
+    m = CAPTURE_STEM_RE.search(os.path.basename(fx.parent["path"]))
+    return m.group(1) if m else None
+
+
+def family_fields(fx: Fixture) -> dict[str, Any]:
+    """The split-hygiene fields of one fixture.
+
+    ``family_id`` groups every derivative of one independent source: the
+    capture stem for photographic sources and their derivatives, the fixture's
+    own id for synthetic fixtures (fresh seeds are independent families by
+    design). All members of a family must share one split — ``cmd_build``
+    enforces it — so training/holdout separation is mechanically auditable.
+    """
+    capture = source_capture_id(fx)
+    return {
+        "family_id": capture if capture is not None else fx.fixture_id,
+        "variant_id": fx.fixture_id,
+        "generator_family": fx.klass if fx.kind in ("synthetic", "derived") else None,
+        "source_capture_id": capture,
+    }
+
+
 def manifest_entry(fx: Fixture, ppm_sha: str) -> dict[str, Any]:
     w, h, depth = fx.dims()
-    return {
+    entry = {
         "id": fx.fixture_id,
         "path": fx.ppm_rel(),
         "sha256": ppm_sha,
@@ -698,6 +777,8 @@ def manifest_entry(fx: Fixture, ppm_sha: str) -> dict[str, Any]:
         "provenance": fx.provenance,
         "sidecar": fx.sidecar_rel(),
     }
+    entry.update(family_fields(fx))
+    return entry
 
 
 def realise(fx: Fixture) -> tuple[bytes, bytes | None]:
@@ -720,6 +801,16 @@ def cmd_build(check: bool) -> int:
     dupes = {i for i in ids if ids.count(i) > 1}
     if dupes:
         print(f"ERROR: duplicate fixture ids: {sorted(dupes)}", file=sys.stderr)
+        return 2
+    # Family split-hygiene guard: every derivative of one source must stay in
+    # one split, or family leakage silently flatters any model trained on the
+    # calibration/development splits.
+    family_splits: dict[str, set[str]] = {}
+    for f in fixtures:
+        family_splits.setdefault(family_fields(f)["family_id"], set()).add(f.split)
+    leaking = {fam: sorted(s) for fam, s in family_splits.items() if len(s) > 1}
+    if leaking:
+        print(f"ERROR: image families cross splits: {leaking}", file=sys.stderr)
         return 2
 
     manifest_images: list[dict[str, Any]] = []

@@ -28,22 +28,29 @@ A jpxl **quality** curve row adds:
 
 `jpxl encode --quality Q [--effort fast|balanced] --threads N in.ppm out.jxl`
 selects the perceptual VarDCT path with a minimum SSIMULACRA2 score `Q`
-(0..100; 100 = lossless) and prints exactly one line:
+(0..100; 100 = lossless) and, on success, prints exactly one line:
 
 ```
 quality_target=85.0000 achieved=85.1372 bytes=412883 metric=ssimulacra2-jpxl-1 effort=balanced probes=3 prices=2 status=met
 ```
 
 `status` is one of: `met`, `met_adjacent_rungs`, `met_work_cap`,
-`saturated_floor`, `saturated_top`, `rescued_fresh_structure`,
-`routed_to_lossless`, `unsupported_too_small`.
+`saturated_floor`, `saturated_top`, `under_target_work_cap`,
+`rescued_fresh_structure`, `routed_to_lossless`, `fallback_lossless`,
+`unsupported_too_small`.
 
-When `JPXL_QUALITY_TRACE=<path>` is set, a `jpxl.quality-trace/1` JSONL file is
-written. The harness sets this per curve point (under the work dir) unless
+The score is a hard floor by default: an encode whose bounded search cannot
+verify `Q` exits 1 with `quality target not met` on stderr and writes no
+output file. The harness therefore passes `--quality-fallback best-effort`,
+which emits the finest verified under-target stream with its true
+`saturated_top` / `under_target_work_cap` status so a curve point is always
+measurable (`--quality-fallback lossless` instead emits a lossless stream as
+`fallback_lossless`).
+
+When `JPXL_QUALITY_TRACE=<path>` is set, a `jpxl.quality-trace/2` JSONL file is
+written (also for a refused encode — the failed search is still calibration
+input). The harness sets this per curve point (under the work dir) unless
 `--no-quality-trace` is given, and merges `wall_by_phase` into the record.
-
-> Note: targets below 100 currently error from the binary ("perceptual quality
-> targets land in PR 4"). `--quality 100` runs live (status `routed_to_lossless`).
 
 ## Subcommands
 
