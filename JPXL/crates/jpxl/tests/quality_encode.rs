@@ -13,7 +13,10 @@
     clippy::cast_sign_loss
 )]
 
-use jpxl::{Decoder, Effort, EncodeReport, Encoder, PerceptualStatus};
+use jpxl::{
+    Decoder, Effort, EncodeReport, Encoder, Error, PerceptualStatus, QualityFallback,
+    QualityMissKind,
+};
 use jpxl_perceptual::{LinearRgbView, score_pair};
 
 struct Rng(u32);
@@ -147,7 +150,7 @@ fn every_effort_meets_every_target_and_reports_the_score_the_file_has() {
                 outcome
                     .trace_json
                     .as_deref()
-                    .is_some_and(|t| t.starts_with("{\"schema\":\"jpxl.quality-trace/1\""))
+                    .is_some_and(|t| t.starts_with("{\"schema\":\"jpxl.quality-trace/2\""))
             );
             let independent = rescore(w, h, &rgb, &bytes);
             assert!(
@@ -228,6 +231,128 @@ fn tiny_frames_and_a_perfect_score_route_to_lossless() {
     assert_eq!(
         bytes,
         Encoder::new().lossless().encode_rgb8(64, 64, &rgb).unwrap()
+    );
+}
+
+/// The hard floor at the facade: a target the bounded Fast search cannot
+/// verify is refused by default with [`Error::TargetNotMet`] and emits
+/// nothing; the two fallbacks are explicit and say what they did. The 64x64
+/// gradient tops out near 99.13 on this metric, so 99.5 is a deterministic
+/// miss.
+#[test]
+fn an_unmet_target_refuses_by_default_and_falls_back_only_on_request() {
+    let (w, h) = (64u32, 64u32);
+    let rgb = synthetic(w, h, 11);
+    let encoder = || {
+        Encoder::new()
+            .with_ssimulacra2_score(99.5)
+            .unwrap()
+            .with_effort(Effort::Fast)
+            .with_threads(1)
+            .unwrap()
+    };
+
+    // Default: refuse, with the miss fully described.
+    let refused = encoder().encode_rgb8_reported(w, h, &rgb);
+    let miss = match refused {
+        Err(Error::TargetNotMet(miss)) => miss,
+        other => panic!("expected TargetNotMet, got {other:?}"),
+    };
+    assert_eq!(miss.kind, QualityMissKind::LadderSaturated);
+    assert!((miss.requested_score - 99.5).abs() < f64::EPSILON);
+    assert!(miss.best_score < 99.5, "{}", miss.best_score);
+    assert!(miss.probes >= 1 && miss.probes <= 4, "{}", miss.probes);
+    assert!(
+        miss.trace_json
+            .as_deref()
+            .is_some_and(|t| t.starts_with("{\"schema\":\"jpxl.quality-trace/2\""))
+    );
+
+    // Lossless fallback: the floor holds (achieved 100), the status says how,
+    // and the bytes are exactly the lossless encoder's.
+    let (bytes, report) = encoder()
+        .with_quality_fallback(QualityFallback::Lossless)
+        .encode_rgb8_reported(w, h, &rgb)
+        .unwrap();
+    let outcome = perceptual(&report);
+    assert_eq!(outcome.status, PerceptualStatus::FallbackLossless);
+    assert_eq!(outcome.achieved_score, Some(100.0));
+    assert_eq!(outcome.probes, miss.probes);
+    assert_eq!(
+        bytes,
+        Encoder::new().lossless().encode_rgb8(w, h, &rgb).unwrap()
+    );
+
+    // Best effort: the under-target stream is emitted, but only with its
+    // true score and an explicit saturation status.
+    let (bytes, report) = encoder()
+        .with_quality_fallback(QualityFallback::BestEffort)
+        .encode_rgb8_reported(w, h, &rgb)
+        .unwrap();
+    let outcome = perceptual(&report);
+    assert_eq!(outcome.status, PerceptualStatus::SaturatedTop);
+    assert!(outcome.saturated);
+    let achieved = outcome.achieved_score.expect("a measured score");
+    assert!((achieved - miss.best_score).abs() < f64::EPSILON);
+    let independent = rescore(w, h, &rgb, &bytes);
+    assert!((independent - achieved).abs() < 1e-6);
+}
+
+/// PR 4 wall measurement: the *in-search* cost of the transform summary,
+/// which shares the cover's forward cache (unlike the standalone
+/// `jpxl features --transform-summary` path, which pays for a throwaway
+/// DCT8 pass). Ignored by default — run explicitly on a quiet machine:
+/// `cargo test -p jpxl --profile fast-debug --test quality_encode
+/// transform_shadow_wall -- --ignored --nocapture`.
+#[test]
+#[ignore = "timing measurement; run on a quiet machine"]
+fn transform_shadow_wall_delta() {
+    use jpxl_encode_policy::request::{PerceptualMetric, PerceptualTarget};
+    use jpxl_encode_policy::{
+        AnalysisAtlas, EncodeRequest, PreparedFrame, QualityBudget, RateSearchPreset,
+        search_frame_perceptual_with_budget,
+    };
+    use jpxl_perceptual::PlanRenderEvaluator;
+
+    let (w, h) = (2400u32, 1800u32);
+    let rgb = synthetic(w, h, 21);
+    let request = EncodeRequest::for_quality(RateSearchPreset::Balanced);
+    let executor = request.resources.executor();
+    let target = PerceptualTarget::new(PerceptualMetric::Ssimulacra2, 85.0).unwrap();
+    let base = QualityBudget::for_preset(RateSearchPreset::Balanced);
+
+    let measure = |transform_shadow: bool| {
+        let mut best = f64::INFINITY;
+        for _ in 0..3 {
+            let frame = PreparedFrame::from_srgb8_with(w, h, &rgb, Some(&executor)).unwrap();
+            let atlas = AnalysisAtlas::analyze(&frame);
+            let mut ev = PlanRenderEvaluator::from_srgb8(w, h, &rgb, &executor).unwrap();
+            let start = std::time::Instant::now();
+            let outcome = search_frame_perceptual_with_budget(
+                &frame,
+                &atlas,
+                &request,
+                target,
+                &mut ev,
+                &executor,
+                QualityBudget {
+                    transform_shadow,
+                    ..base
+                },
+            )
+            .unwrap();
+            assert!(outcome.achieved_score >= 85.0);
+            best = best.min(start.elapsed().as_secs_f64());
+        }
+        best
+    };
+
+    let off = measure(false);
+    let on = measure(true);
+    eprintln!(
+        "transform_shadow off: {off:.3}s, on: {on:.3}s, delta {:+.3}s ({:+.1}% of the search)",
+        on - off,
+        (on - off) / off * 100.0
     );
 }
 

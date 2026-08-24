@@ -28,6 +28,9 @@ simd = ["jpxl-encode/simd", "jpxl-encode-policy/simd", "jpxl-core/simd"]
 # Compatibility feature for explicitly forwarding Fast rate-preset support.
 # Policy enables it normally; Quality remains the runtime default.
 anchor-sketch = ["jpxl-encode-policy/anchor-sketch"]
+# One-shot program PR 5: forwards the policy crate's feature-gated
+# common-case one-shot start to the binary, for promotion A/B runs.
+one-shot-controller = ["jpxl-encode-policy/one-shot-controller"]
 # Exposes the exhaustive-reference `quality` lossy effort on `--effort` /
 # `--lossy-preset`. Forwards to `jpxl/quality-effort`; off by default.
 quality-effort = ["jpxl/quality-effort"]

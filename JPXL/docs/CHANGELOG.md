@@ -13,6 +13,45 @@ Format: [Keep a Changelog](https://keepachangelog.com/), semantic versioning.
 
 ## Unreleased
 
+- 2026-08-25 — The one-shot crossing predictor is now the default `--quality`
+  controller seed: a generated transparent model (`qpv2-st-1`, source +
+  DCT8-summary features, trained on 130 image families) picks the first
+  fresh plan — its risk-adjusted candidate when confident, its median when
+  uncertain — and the bounded navigator continues under the same probe/price
+  caps with canonical verification before every emission, so the hard score
+  floor is unchanged. Promotion A/B on 441 never-tuned holdout cells: zero
+  floor violations on either arm, byte geomean 0.997 (locked 13-image
+  holdout) and 0.990 (50 painting families), reconstructions −18% and wall
+  −16% on the paintings, 12 MP anchor wall −21%. Known bounded regressions:
+  sub-kilobyte saturated fixtures (worst +131 bytes) and target-95 cells
+  (≤1.12× with higher achieved scores). Build `jpxl-encode-policy` without
+  default features for the legacy table-seeded controller.
+- 2026-08-24 — Quality trace schema is now `jpxl.quality-trace/2`: adds a
+  whole-search `work` block (pixel plans, reconstructions, metric
+  evaluations, entropy trainings, emissions — policy trials and the reducer
+  included), a shadow `prediction` block (null until a generated crossing
+  model is present), and a `transform_features` block (null unless the
+  research budget asked for it). `/1` traces stay readable by the harness.
+  New calibration tooling: `jpxl quality-ladder` (fresh production-policy
+  pixel plans at pinned effective scales, canonically scored, optionally
+  exact-priced, as JSONL), `jpxl features --transform-summary` (DCT8-derived
+  transform features), and `tools/quality_oracle_labels.py` /
+  `tools/quality_predictor_v2.py` (oracle-label sweeps over the full
+  effective ladder and the trained crossing predictor). The quality-corpus
+  manifest gains `family_id`/`variant_id`/`generator_family`/
+  `source_capture_id`, and the fixture generator fails if any image family
+  crosses a split.
+- 2026-08-24 — The `--quality` score is now a hard floor at the public
+  surface: an encode whose bounded search cannot verify the requested score
+  fails (`quality target not met` on stderr, exit 1, no output file) instead
+  of writing an under-target stream with exit 0. `--quality-fallback
+  lossless` emits a mathematically lossless stream instead
+  (`status=fallback_lossless`); `--quality-fallback best-effort` emits the
+  finest verified under-target stream with its true `saturated_top` /
+  `under_target_work_cap` status (the previous behavior, now explicit). The
+  `jpxl` facade gained `Error::TargetNotMet(QualityMiss)`, `QualityFallback`,
+  and `Encoder::with_quality_fallback`; a refused encode still appends its
+  `JPXL_QUALITY_TRACE` record, and every met-path stream is byte-identical.
 - 2026-08-22 — Lossy encoding now leads with quality: `jpxl encode --quality
   [N]` (alias `--ssimulacra2`, `--lossy`) sets a minimum SSIMULACRA2 score
   (0..100, 100 = lossless); `--bpp`, `--target-bytes`, and the new

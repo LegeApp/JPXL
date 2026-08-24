@@ -9,10 +9,15 @@
 //!
 //! [`Encoder::with_ssimulacra2_score`] is the normal way to ask for lossy
 //! output: name the minimum perceptual quality and let the encoder find the
-//! bytes. [`Encoder::with_target_bpp`] / [`Encoder::with_target_bytes`] (an
-//! exact size) and [`Encoder::with_global_scale`] (a pinned quantizer) are
-//! expert modes. Exactly one lossy target may be set; call
-//! [`Encoder::lossless`] to reset before choosing another.
+//! bytes. The score is a hard floor: a successful perceptual encode has had
+//! its actual reconstruction canonically scored at or above the request.
+//! When the bounded controller cannot verify such a stream, the encode fails
+//! with [`Error::TargetNotMet`] unless [`Encoder::with_quality_fallback`]
+//! opted into an explicit fallback. [`Encoder::with_target_bpp`] /
+//! [`Encoder::with_target_bytes`] (an exact size) and
+//! [`Encoder::with_global_scale`] (a pinned quantizer) are expert modes.
+//! Exactly one lossy target may be set; call [`Encoder::lossless`] to reset
+//! before choosing another.
 //!
 //! # Lossless RGB
 //!
@@ -68,6 +73,14 @@ pub enum Error {
     /// honoured in a later release, so callers can special-case it rather than
     /// treat it as their own bug.
     Unsupported(&'static str),
+    /// A perceptual encode whose bounded controller stopped without any
+    /// stream canonically verified at the requested minimum score, while the
+    /// encoder was left at [`QualityFallback::Refuse`] (the default).
+    ///
+    /// Nothing was emitted. The carried [`QualityMiss`] says how close the
+    /// search got and why it stopped; [`Encoder::with_quality_fallback`]
+    /// selects what to emit instead of failing.
+    TargetNotMet(QualityMiss),
 }
 
 impl fmt::Display for Error {
@@ -77,6 +90,19 @@ impl fmt::Display for Error {
             Self::Encode(error) => write!(f, "encode failed: {error}"),
             Self::Policy(error) => write!(f, "encode policy failed: {error}"),
             Self::InvalidOption(message) | Self::Unsupported(message) => f.write_str(message),
+            Self::TargetNotMet(miss) => {
+                let why = match miss.kind {
+                    QualityMissKind::LadderSaturated => "even the finest quantizer",
+                    QualityMissKind::WorkBudgetExhausted => "the probe budget's best candidate",
+                };
+                write!(
+                    f,
+                    "quality target not met: {why} verified {:.4}, below the requested \
+                     minimum {:.4} ({}); nothing was written — choose a quality fallback \
+                     to emit anyway",
+                    miss.best_score, miss.requested_score, miss.metric_version,
+                )
+            }
         }
     }
 }
@@ -87,7 +113,7 @@ impl std::error::Error for Error {
             Self::Decode(error) => Some(error),
             Self::Encode(error) => Some(error),
             Self::Policy(error) => Some(error),
-            Self::InvalidOption(_) | Self::Unsupported(_) => None,
+            Self::InvalidOption(_) | Self::Unsupported(_) | Self::TargetNotMet(_) => None,
         }
     }
 }
@@ -203,6 +229,64 @@ pub struct RateSummary {
     pub full_prices: u32,
 }
 
+/// What a perceptual encode emits when the bounded controller stops without
+/// any stream canonically verified at the requested minimum score.
+///
+/// The score is a hard floor: an under-target stream is never an ordinary
+/// success. [`Self::Refuse`] (the default) turns such an encode into
+/// [`Error::TargetNotMet`]; the two alternatives are explicit contracts a
+/// caller opts into with [`Encoder::with_quality_fallback`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum QualityFallback {
+    /// Fail with [`Error::TargetNotMet`] and emit nothing. The default.
+    #[default]
+    Refuse,
+    /// Emit a mathematically lossless stream instead, at the encoder's
+    /// lossless effort, reported as [`PerceptualStatus::FallbackLossless`].
+    /// The floor holds (lossless trivially meets any score) at whatever byte
+    /// cost lossless carries — often far more than the lossy request implied.
+    Lossless,
+    /// Emit the finest canonically verified under-target stream, reported by
+    /// [`PerceptualStatus::SaturatedTop`] or
+    /// [`PerceptualStatus::UnderTargetWorkCap`] with its true
+    /// `achieved_score`. This knowingly weakens the floor for this encode;
+    /// the report says so explicitly.
+    BestEffort,
+}
+
+/// Why a refused perceptual encode could not verify the requested score.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QualityMissKind {
+    /// Even the quantizer ladder's finest rung scored below the request: the
+    /// lossy path cannot reach this score on this image.
+    LadderSaturated,
+    /// The effort's bounded probe budget ran out before any candidate met
+    /// the request; a finer candidate may exist but was never verified.
+    WorkBudgetExhausted,
+}
+
+/// What a refused perceptual encode verified before it stopped, carried by
+/// [`Error::TargetNotMet`].
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct QualityMiss {
+    /// Why the search stopped short.
+    pub kind: QualityMissKind,
+    /// The minimum score the caller asked for.
+    pub requested_score: f64,
+    /// The canonical score of the finest verified candidate — the closest
+    /// the bounded search got to the request.
+    pub best_score: f64,
+    /// The metric definition the scores are on.
+    pub metric_version: MetricVersion,
+    /// How many candidate streams were scored.
+    pub probes: u32,
+    /// How many exact writer prices were paid.
+    pub prices: u32,
+    /// The controller's `jpxl.quality-trace/2` record.
+    pub trace_json: Option<String>,
+}
+
 /// Why a perceptual encode stopped where it did: the quality controller's
 /// terminal state, or one of the two routes that bypass it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -215,15 +299,23 @@ pub enum PerceptualStatus {
     MetWorkCap,
     /// The coarsest quantizer already exceeds the score (a floor).
     SaturatedFloor,
-    /// The finest quantizer still misses the score (a ceiling).
+    /// The finest quantizer still misses the score (a ceiling). Reported only
+    /// under [`QualityFallback::BestEffort`]; the default refuses instead
+    /// with [`Error::TargetNotMet`].
     SaturatedTop,
     /// The bounded controller ran out of probes before any candidate met the
     /// score; the emitted stream's `achieved_score` is below the request.
+    /// Reported only under [`QualityFallback::BestEffort`]; the default
+    /// refuses instead with [`Error::TargetNotMet`].
     UnderTargetWorkCap,
     /// A bounded fresh-structure rescue supplied the selected stream.
     RescuedFreshStructure,
     /// A score of 100 was satisfied by the mathematically lossless path.
     RoutedToLossless,
+    /// The bounded lossy controller could not verify the requested score and
+    /// [`QualityFallback::Lossless`] emitted a mathematically lossless stream
+    /// in its place. `probes`/`prices` count the failed lossy search.
+    FallbackLossless,
     /// The frame is too small for the perceptual path to apply.
     UnsupportedTooSmall,
 }
@@ -247,7 +339,7 @@ pub struct PerceptualOutcome {
     pub prices: u32,
     /// Whether the quantizer ladder ran out of rungs.
     pub saturated: bool,
-    /// The controller's `jpxl.quality-trace/1` record, when a search ran.
+    /// The controller's `jpxl.quality-trace/2` record, when a search ran.
     pub trace_json: Option<String>,
 }
 
@@ -293,6 +385,7 @@ pub struct Encoder {
     resources: jpxl_encode::EncodeResources,
     container: bool,
     jxlp_fragment_size: Option<usize>,
+    quality_fallback: QualityFallback,
 }
 
 impl Default for Encoder {
@@ -304,6 +397,7 @@ impl Default for Encoder {
             resources: jpxl_encode::EncodeResources::default(),
             container: false,
             jxlp_fragment_size: None,
+            quality_fallback: QualityFallback::Refuse,
         }
     }
 }
@@ -377,7 +471,11 @@ impl Encoder {
     /// contract).
     ///
     /// A score of 100 means mathematically lossless. The score must be finite
-    /// and in `0.0..=100.0`.
+    /// and in `0.0..=100.0`. The score is a hard floor: when the bounded
+    /// controller cannot canonically verify a stream at or above it, the
+    /// encode fails with [`Error::TargetNotMet`] unless
+    /// [`with_quality_fallback`](Self::with_quality_fallback) chose an
+    /// explicit fallback.
     pub fn with_ssimulacra2_score(self, score: f64) -> Result<Self> {
         let target = PerceptualTarget::new(PerceptualMetric::Ssimulacra2, score)
             .map_err(|_| Error::InvalidOption("ssimulacra2 score must be finite and in 0..=100"))?;
@@ -426,6 +524,18 @@ impl Encoder {
     #[must_use]
     pub const fn with_effort(mut self, effort: Effort) -> Self {
         self.effort = effort;
+        self
+    }
+
+    /// Choose what a perceptual encode emits when its bounded controller
+    /// cannot verify a stream at the requested minimum score.
+    ///
+    /// The default is [`QualityFallback::Refuse`]: such an encode fails with
+    /// [`Error::TargetNotMet`] rather than returning under-target bytes as a
+    /// success.
+    #[must_use]
+    pub const fn with_quality_fallback(mut self, fallback: QualityFallback) -> Self {
+        self.quality_fallback = fallback;
         self
     }
 
@@ -621,8 +731,15 @@ impl Encoder {
     where
         F: FnOnce() -> Result<Vec<u8>>,
     {
-        let routed = |status: PerceptualStatus| -> Result<(Vec<u8>, EncodeReport)> {
-            let bytes = lossless()?;
+        // A lossless stream trivially meets any score, so every lossless
+        // route reports `achieved_score` 100; `probes`/`prices` are those of
+        // whatever lossy search ran first (zero on the two early routes).
+        let routed = |bytes: Vec<u8>,
+                      status: PerceptualStatus,
+                      probes: u32,
+                      prices: u32,
+                      trace_json: Option<String>|
+         -> (Vec<u8>, EncodeReport) {
             let exact = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
             let outcome = PerceptualOutcome {
                 requested_score: target.minimum_score,
@@ -630,21 +747,33 @@ impl Encoder {
                 exact_bytes: exact,
                 metric_version: target.metric.version(),
                 status,
-                probes: 0,
-                prices: 0,
+                probes,
+                prices,
                 saturated: false,
-                trace_json: None,
+                trace_json,
             };
-            Ok((bytes, EncodeReport::Perceptual(outcome)))
+            (bytes, EncodeReport::Perceptual(outcome))
         };
         // `minimum_score` is validated into `0.0..=100.0`, so `>= 100.0` is the
         // exact-lossless request.
         if target.minimum_score >= 100.0 {
-            return routed(PerceptualStatus::RoutedToLossless);
+            return Ok(routed(
+                lossless()?,
+                PerceptualStatus::RoutedToLossless,
+                0,
+                0,
+                None,
+            ));
         }
         let (width, height, bits) = source.dimensions();
         if width < jpxl_perceptual::MIN_DIMENSION || height < jpxl_perceptual::MIN_DIMENSION {
-            return routed(PerceptualStatus::UnsupportedTooSmall);
+            return Ok(routed(
+                lossless()?,
+                PerceptualStatus::UnsupportedTooSmall,
+                0,
+                0,
+                None,
+            ));
         }
 
         let mut request = jpxl_encode_policy::EncodeRequest::for_quality(self.effort.into());
@@ -705,6 +834,40 @@ impl Encoder {
             Effort::Quality => "quality",
         };
         let trace_json = Some(outcome.trace_json(effort_name));
+
+        // The hard floor: a stream the controller verified below the request
+        // is never an ordinary success. What happens instead is the encoder's
+        // [`QualityFallback`]; only `BestEffort` proceeds to emit it.
+        if matches!(
+            outcome.status,
+            jpxl_encode_policy::QualityStatus::SaturatedTop
+                | jpxl_encode_policy::QualityStatus::UnderTargetWorkCap
+        ) {
+            match self.quality_fallback {
+                QualityFallback::Refuse => {
+                    return Err(Error::TargetNotMet(QualityMiss {
+                        kind: quality_miss_kind(outcome.status),
+                        requested_score: target.minimum_score,
+                        best_score: outcome.achieved_score,
+                        metric_version: target.metric.version(),
+                        probes: outcome.stats.pixel_probes,
+                        prices: outcome.stats.exact_prices,
+                        trace_json,
+                    }));
+                }
+                QualityFallback::Lossless => {
+                    return Ok(routed(
+                        lossless()?,
+                        PerceptualStatus::FallbackLossless,
+                        outcome.stats.pixel_probes,
+                        outcome.stats.exact_prices,
+                        trace_json,
+                    ));
+                }
+                QualityFallback::BestEffort => {}
+            }
+        }
+
         let bytes = self.wrap_lossy(outcome.codestream, bits);
         let report = PerceptualOutcome {
             requested_score: target.minimum_score,
@@ -784,6 +947,19 @@ impl Encoder {
             Some(size) => jpxl_encode::container::wrap_fragmented(&codestream, level, size),
             None => jpxl_encode::container::wrap(&codestream, level),
         }
+    }
+}
+
+/// Which [`QualityMissKind`] an under-target terminal status names.
+///
+/// Only [`QualityStatus::SaturatedTop`](jpxl_encode_policy::QualityStatus) and
+/// [`QualityStatus::UnderTargetWorkCap`](jpxl_encode_policy::QualityStatus)
+/// are misses; every other status carries a verified at-or-above-target
+/// stream and never reaches this mapping.
+const fn quality_miss_kind(status: jpxl_encode_policy::QualityStatus) -> QualityMissKind {
+    match status {
+        jpxl_encode_policy::QualityStatus::SaturatedTop => QualityMissKind::LadderSaturated,
+        _ => QualityMissKind::WorkBudgetExhausted,
     }
 }
 

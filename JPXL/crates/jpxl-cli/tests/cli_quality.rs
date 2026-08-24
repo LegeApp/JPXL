@@ -121,6 +121,106 @@ fn conflicting_targets_rejected() {
     assert!(stderr.contains("one lossy target"), "{stderr}");
 }
 
+/// The 64x64 gradient tops out below 99.5 on this metric, so `--quality
+/// 99.5 --effort fast` is a deterministic miss. Without a fallback the CLI
+/// must fail, exit 1, and leave no output file behind.
+#[test]
+fn an_unmet_quality_refuses_by_default_and_writes_nothing() {
+    let (input, output) = fixture("quality_refused", 64, 64);
+    let out = encode(
+        &input,
+        &output,
+        &["--effort", "fast", "--quality", "99.5", "--threads", "1"],
+    );
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("quality target not met"),
+        "the refusal names itself: {stderr}"
+    );
+    assert!(
+        !output.exists(),
+        "a refused encode must not create the output file"
+    );
+}
+
+#[test]
+fn quality_fallback_lossless_emits_and_says_so() {
+    let (input, output) = fixture("quality_fb_lossless", 64, 64);
+    let out = encode(
+        &input,
+        &output,
+        &[
+            "--effort",
+            "fast",
+            "--quality",
+            "99.5",
+            "--quality-fallback",
+            "lossless",
+            "--threads",
+            "1",
+        ],
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("status=fallback_lossless") && stdout.contains("achieved=100.0000"),
+        "the fallback is reported: {stdout}"
+    );
+    assert!(output.exists() && output.metadata().map(|m| m.len()).unwrap_or(0) > 0);
+    let info = run(&["info", output.to_str().expect("utf8 path")]);
+    assert_eq!(info.status.code(), Some(0), "output is a JPEG XL stream");
+}
+
+#[test]
+fn quality_fallback_best_effort_emits_the_under_target_stream() {
+    let (input, output) = fixture("quality_fb_best_effort", 64, 64);
+    let out = encode(
+        &input,
+        &output,
+        &[
+            "--effort",
+            "fast",
+            "--quality",
+            "99.5",
+            "--quality-fallback",
+            "best-effort",
+            "--threads",
+            "1",
+        ],
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("status=saturated_top"),
+        "the true terminal status is reported: {stdout}"
+    );
+    assert!(output.exists() && output.metadata().map(|m| m.len()).unwrap_or(0) > 0);
+}
+
+#[test]
+fn a_bad_quality_fallback_value_is_rejected() {
+    let (input, output) = fixture("quality_fb_bad", 64, 64);
+    let out = encode(
+        &input,
+        &output,
+        &["--quality", "--quality-fallback", "nope"],
+    );
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("`--quality-fallback` needs"), "{stderr}");
+}
+
 #[test]
 fn global_scale_encodes() {
     let (input, output) = fixture("global_scale", 64, 64);

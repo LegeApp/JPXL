@@ -139,7 +139,7 @@ a viewer would see it.
   `under_target_work_cap`, `saturated_floor`, `routed_to_lossless` (score 100)
   and `unsupported_too_small` (below the metric's 8×8 floor). Setting
   `JPXL_QUALITY_TRACE=<path>` appends a machine-readable
-  `jpxl.quality-trace/1` record per encode: source features, the predicted
+  `jpxl.quality-trace/2` record per encode: source features, the predicted
   rung, every probe's quantizer/score/bytes, and wall time by phase.
 - **Determinism.** The same input produces the same codestream across worker
   counts: the metric reduces fixed-size row bands in fixed order, the renderer
