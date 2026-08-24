@@ -1759,6 +1759,26 @@ record jpegxl-rs.observation.phase5-quality-policy-screen-2026-08-11/11 : observ
     ]
 }
 
+record jpegxl-rs.observation.pqc-large-frame-render-parallel-2026-08-25/1 : observation {
+    title "Parallelizing the serial varblock render and linearization cut 12 MP quality wall 21%; ratio 3.11x -> 2.46x on the measuring host"
+    state verified
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/src/quality.rs",
+        path "JPXL/crates/jpxl-perceptual/src/evaluator.rs",
+        path "JPXL/crates/jpxl-plan-render/**"
+    ]
+    statement """
+        Per-probe phase attribution on the locked 12 MP anchor (fast-debug, comparing 1-thread vs 8-thread walls to identify serial stages) showed the reference side of SSIMULACRA2 already precomputed once per search (PrecomputedReference with ReferenceRetention::Moments at <=24 MP); the serial per-probe stages were varblock reconstruction (500-730 ms; a 12 MP frame is one LF group, so group-level parallelism contributed nothing) and transfer-curve linearization (105-180 ms). After banding both over the EncodeExecutor (map_ordered varblock chunks of 2048 with serial disjoint scatter; banded LUT lookup), varblocks measure ~235 ms and linearize ~18 ms; per-probe render+metric fell ~1.3 s to ~0.77 s. Release wall on the anchor at 8 threads: 4.923 s -> 3.906 s (-21%), matched-rate ratio 3.11x -> 2.46x on this host (the recorded 6.31x/8.02x baselines were another host/state; the relative move is the reliable signal). Byte-identical streams on six image/target cells, identical canonical scores, cross-thread determinism at threads 1/4/8 in both profiles, peak working set unchanged at 1,899 MB, all touched-crate gates green. Remaining per-probe residual is co-dominated by the still-serial varblock sample scatter (~part of 235 ms) and the already-parallel metric (~380 ms); the largest further headroom is score-changing (navigate on a reduced pyramid or downscaled reconstruction, full-resolution only for final verification), which requires a Contract B promotion A/B.
+        """
+    observed_at git:9c6e64a2f146e2805af9124a9bd061d7bebce763
+    method command
+    watches [
+        "JPXL/crates/jpxl-plan-render/src/lib.rs",
+        "JPXL/crates/jpxl-perceptual/src/evaluator.rs"
+    ]
+    author "GitHub Uploader"
+}
+
 record jpegxl-rs.observation.pqc-memory-50mp-oom-2026-08-22/1 : observation {
     title "Perceptual encodes of 50 MP sources reach ~12 GB RSS; two concurrent measurement runs OOM-killed a 31 GB host twice"
     state verified
