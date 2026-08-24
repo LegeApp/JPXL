@@ -19,7 +19,7 @@ jpxl-entropy.workspace = true
 wide = { workspace = true, optional = true }
 
 [features]
-default = ["parallel", "simd", "anchor-sketch", "g5-bounded-entropy"]
+default = ["parallel", "simd", "anchor-sketch", "g5-bounded-entropy", "one-shot-controller"]
 parallel = ["jpxl-encode/parallel"]
 # Leaf SIMD for HF quantize choose (and transitive DCT/Gaborish).
 simd = ["dep:wide", "jpxl-encode/simd", "jpxl-core/simd"]
@@ -31,6 +31,16 @@ anchor-sketch = []
 # alternative ranked from the near-target anchor and finalist censuses. The
 # feature remains explicit as a byte-identical-off control after promotion.
 g5-bounded-entropy = []
+# One-shot program PR 5: the common-case one-shot start — the generated
+# crossing model's risk-adjusted candidate (or, when uncertain, its median)
+# becomes the first fresh plan and its slope prior steers the first
+# correction, with the exact navigator continuing under the same total caps
+# and canonical verification before every emission. Default since the
+# 2026-08-24 promotion A/B: zero floor violations on 441 never-tuned
+# holdout cells, byte geomean 0.997/0.990 vs the previous default, and
+# fewer reconstructions. Build without default features for the legacy
+# table-seeded controller.
+one-shot-controller = []
 # S8 Phase D (AKR source `outside-advice-2026-08-06` §8;
 # `jpegxl-rs.work.arch-s8-full-redesign-scoped`):
 # the Phase C-validated (zero safety violations, exhaustively checked)

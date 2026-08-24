@@ -79,6 +79,66 @@ impl SourceFeatures {
     }
 }
 
+/// Compact quantizer-independent transform features of one frame (the
+/// one-shot program's PR 4 summary).
+///
+/// Reduced from the aligned DCT8x8 coefficients of the shared candidate
+/// forward cache — the same bank the cover search reads — in fixed LF-group
+/// then block-raster order, so the values are deterministic across worker
+/// counts and the prefilled coefficients are reused, never recomputed, by
+/// the later pixel plan.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TransformFeatureSummary {
+    /// 8x8 blocks reduced.
+    pub blocks: u64,
+    /// `ln(mean per-block Y AC energy + eps)`.
+    pub ln_ac_y_mean: f64,
+    /// Median of per-block `ln(Y AC energy + eps)` (fixed-bin histogram).
+    pub ln_ac_y_q50: f64,
+    /// 90th percentile of per-block `ln(Y AC energy + eps)`.
+    pub ln_ac_y_q90: f64,
+    /// 99th percentile of per-block `ln(Y AC energy + eps)`.
+    pub ln_ac_y_q99: f64,
+    /// Frame high-band over low-band Y AC energy (radial split at
+    /// `row+col <= 2` / `max(row,col) >= 4`).
+    pub high_low_ratio: f64,
+    /// `|row - col|` energy asymmetry of the Y AC cells, in `0..=1`.
+    pub directional_asymmetry: f64,
+    /// Chroma (X+B) over Y AC energy.
+    pub chroma_ac_ratio: f64,
+    /// Fraction of Y AC cells with `|coefficient| < 1e-3`.
+    pub near_zero_frac_1e3: f64,
+    /// Fraction of Y AC cells with `|coefficient| < 1e-2`.
+    pub near_zero_frac_1e2: f64,
+    /// Variance of the per-block Y DC coefficient.
+    pub dc_variance_y: f64,
+}
+
+impl TransformFeatureSummary {
+    /// A one-line JSON object, for the CLI, the trace and the calibration
+    /// tooling.
+    #[must_use]
+    pub fn to_json(&self) -> String {
+        format!(
+            "{{\"blocks\":{},\"ln_ac_y_mean\":{},\"ln_ac_y_q50\":{},\"ln_ac_y_q90\":{},\
+             \"ln_ac_y_q99\":{},\"high_low_ratio\":{},\"directional_asymmetry\":{},\
+             \"chroma_ac_ratio\":{},\"near_zero_frac_1e3\":{},\"near_zero_frac_1e2\":{},\
+             \"dc_variance_y\":{}}}",
+            self.blocks,
+            self.ln_ac_y_mean,
+            self.ln_ac_y_q50,
+            self.ln_ac_y_q90,
+            self.ln_ac_y_q99,
+            self.high_low_ratio,
+            self.directional_asymmetry,
+            self.chroma_ac_ratio,
+            self.near_zero_frac_1e3,
+            self.near_zero_frac_1e2,
+            self.dc_variance_y,
+        )
+    }
+}
+
 /// The quantile of `values` at fraction `q` in `0..=1`: the element at
 /// `floor((n - 1) q)` of the ascending total order. `0.0` for an empty slice.
 #[must_use]

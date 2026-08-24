@@ -139,6 +139,23 @@ impl<'a> CandidateSearchContext<'a> {
         )
     }
 
+    /// Reduces the frame's aligned DCT8x8 candidates into the one-shot
+    /// program's [`TransformFeatureSummary`](crate::quality_features::TransformFeatureSummary),
+    /// filling this context's shared forward cache so the later pixel plans
+    /// read the same warm entries (PR 4). Quantizer-independent: safe to call
+    /// before any quantizer choice exists.
+    pub(crate) fn prepare_quality_transform_summary(
+        &mut self,
+        request: &EncodeRequest,
+    ) -> Result<crate::quality_features::TransformFeatureSummary> {
+        crate::quality_transform_summary(
+            self.transform_frame,
+            request,
+            &mut self.fwd_cache,
+            Some(self.executor),
+        )
+    }
+
     /// Trains entropy for already planned pixels and returns the writer-ready
     /// plan. Pixels are untouched: the candidate's score is unchanged.
     pub(crate) fn attach_entropy(

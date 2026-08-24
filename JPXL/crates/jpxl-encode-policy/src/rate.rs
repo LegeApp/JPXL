@@ -700,14 +700,14 @@ fn cold_step(current: Rung, up: bool) -> Rung {
 /// lower segment. Interpolating on the index therefore aims badly across that
 /// kink — which is exactly where high-rate targets live. This quantity is
 /// smooth and strictly increasing across the whole ladder.
-pub(crate) fn effective_scale(rung: Rung) -> u64 {
+pub fn effective_scale(rung: Rung) -> u64 {
     let (scale, mul) = rung_fields(rung);
     u64::from(scale) * u64::from(mul)
 }
 
 /// The inverse of [`effective_scale`], rounded down to the finest
 /// representable rung whose effective scale does not exceed `scale`.
-pub(crate) fn rung_for_effective_scale(scale: u64) -> Rung {
+pub fn rung_for_effective_scale(scale: u64) -> Rung {
     let max = u64::from(MAX_GLOBAL_SCALE);
     if scale <= max {
         return Rung::new(u32::try_from(scale.saturating_sub(1)).unwrap_or(u32::MAX));
