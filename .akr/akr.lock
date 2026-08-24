@@ -5,7 +5,7 @@ build {
     tool "akr 0.3.3"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:377fb8449ddf3ac504a763abea14fcf7f25536d7dc0bdb6602bfc741e7e6ecf2"
+    source_graph "sha256:55e79d09551a4c24e5d889fe846ff51f9fe0154a11423475bc7554fc025ffcfd"
 }
 
 source ".akr/project.akr" {
@@ -69,7 +69,7 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:d600b7004dc0e391df7ff439352cb971f3092bd7a7da12e74a1904d70179fe70"
+    hash "sha256:3127d3f9ad02fca3ff0a3eb6a82a805c839de5489cfc1fb7706d29eb4b8ad4ae"
     records 183
 }
 

@@ -6790,7 +6790,6 @@ record jpegxl-rs.work.jpeg-bitstream-recompression/1 : work {
         path "JPXL/crates/jpxl-cli/**",
         path "JPXL/crates/jpxl-decode/**",
         path "JPXL/crates/jpxl-encode/**",
-        path "JPXL/crates/jpxl-jpeg/**",
         path "JPXL/crates/jpxl/**",
         path "JPXL/docs/jpeg-recompression-plan.md"
     ]
