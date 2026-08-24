@@ -6786,18 +6786,55 @@ record jpegxl-rs.work.jpeg-bitstream-recompression/1 : work {
     title "Lossless JPEG bitstream recompression: carry JPEG1 coefficients into JPEG XL directly instead of decode-and-reencode"
     state proposed
     scope [
+        path "JPXL/crates/jpxl-bitstream/**",
         path "JPXL/crates/jpxl-cli/**",
+        path "JPXL/crates/jpxl-decode/**",
         path "JPXL/crates/jpxl-encode/**",
-        path "JPXL/crates/jpxl/**"
+        path "JPXL/crates/jpxl-jpeg/**",
+        path "JPXL/crates/jpxl/**",
+        path "JPXL/docs/jpeg-recompression-plan.md"
     ]
     intent """
-        Support the JPEG XL standard's lossless JPEG recompression path: take an existing JPEG1 bitstream, carry its DCT coefficients and reconstruction metadata into a JPEG XL stream directly (bit-exact reconstructible), instead of the current decode-to-pixels-and-reencode route. The user's collections are dominated by JPEG sources (about 5,200 of 5,378 files in the 2026-08-24 art folder), where direct recompression is both smaller and faithful to the original bitstream, while pixel re-encoding is generational loss or byte expansion.
+        Support the JPEG XL standard's lossless JPEG recompression path: take an existing JPEG1 bitstream, carry its DCT coefficients in a YCbCr 8x8-only VarDCT frame plus the jbrd JPEG Bitstream Reconstruction Data box (18181-2 s9.11 + Annex A), so the byte-exact original JPEG is reconstructible from the .jxl alone. The user's collections are dominated by JPEG sources (about 5,200 of 5,378 files in the 2026-08-24 art folder), where direct recompression is both smaller and faithful to the original bitstream, while pixel re-encoding is generational loss or byte expansion.
         """
     note """
-        User-requested 2026-08-24 while supplying the painting corpus: 'if jpxl doesn't support the direct conversion that is technically possible, it should'. Today `jpxl encode in.jpg` decodes the JPEG to pixels and encodes those (lossy or lossless on decoded pixels). Direct recompression is a substantial clean-room feature: JPEG1 entropy decode to coefficients, the VarDCT coefficient carriage and reconstruction-metadata boxes per 18181, and a bit-exact JPEG reconstruction check as the acceptance test. Scoping and standard-clause mapping needed before implementation planning.
+        Plan written 2026-08-25: JPXL/docs/jpeg-recompression-plan.md. Five phases, each separately gated: A) new clean-room `jpxl-jpeg` crate, a 10918-1 coefficient-level codec self-gated by serialize(parse(x))==x over >=500 archive JPEGs plus typed refusal of arithmetic/hierarchical/12-bit/lossless modes; B) coefficient carriage into a YCbCr+jpeg_upsampling VarDCT frame with RAW dequant matrices, gated by exact coefficient round-trip through our own decoder's new coefficient-export surface; C) jbrd writer + Annex A reconstructor, gated by byte-exact original JPEG from the .jxl alone and geomean size reduction reported; D) CLI/facade surface (encode auto-detects compatible JPEGs, decode reconstructs when jbrd present); E) black-box interop with cjxl/djxl both directions. Encoder prerequisites verified: jpxl-encode currently writes only xyb_encoded frames (no do_YCbCr, no jpeg_upsampling, no RAW quant signalling); jpxl-decode already decodes YCbCr+jpeg_upsampling. Open questions in the plan s5: LF/DC bijectivity proof (highest risk), CfL/filter signalling exactness, OCR-scrambled Table 11-18 field distributions to verify against the original scan, 10918-1 source acquisition before Phase A entropy work, Brotli dependency decision, level-5 check.
         """
+    acceptance {
+        check phase-a-jpeg-codec-roundtrip {
+            statement """
+                jpxl-jpeg serialize(parse(x)) is byte-identical to x over >=500 deterministically sampled archive JPEGs covering baseline, progressive, 4:4:4/4:2:0/4:2:2, greyscale, restart intervals, Exif/ICC/XMP and trailing garbage; arithmetic-coded, hierarchical, 12-bit and lossless JPEG inputs are refused with a typed error.
+                """
+            method command
+        }
+        check phase-b-coefficient-carriage {
+            statement """
+                Every JPEG quantized DCT coefficient round-trips exactly through jpxl encode to a YCbCr VarDCT frame and jpxl-decode's coefficient export, on the Phase A corpus, at multiple worker counts.
+                """
+            method command
+        }
+        check phase-c-bit-exact-reconstruction {
+            statement """
+                The original JPEG is reconstructed byte-exactly from the .jxl file alone (codestream + jbrd, 18181-2 Annex A) on the Phase A corpus, and the .jxl is smaller than the source JPEG on >=95% of it.
+                """
+            method command
+        }
+        check phase-e-oracle-interop {
+            statement """
+                djxl reconstructs our recompressed .jxl to the byte-exact original, and we reconstruct cjxl --lossless_jpeg=1 output byte-exactly, on a 50-image sample, treating both oracles as black boxes.
+                """
+            method command
+        }
+    }
     part_of [ @jpegxl-rs.track.vardct-encoder/1 ]
-    author "GitHub Uploader"
+    source {
+        kind internal
+        role origin
+        path "JPXL/docs/jpeg-recompression-plan.md"
+        use """
+            The implementation plan this record tracks: architecture (new jpxl-jpeg crate, container work in jpxl-bitstream, no policy involvement), phase gates, and open questions.
+            """
+    }
 }
 
 record jpegxl-rs.work.native-windows-quality-tooling/1 : work {
