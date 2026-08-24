@@ -291,6 +291,18 @@ record jpegxl-rs.papercut.knowledge-propose-exposes-topic-for-every/1 : papercut
     created_at 2026-08-23
 }
 
+record jpegxl-rs.papercut.knowledge-propose-s-generic-slots-schema-does/1 : papercut {
+    title "knowledge.propose's generic `slots` schema does not expose that an…"
+    state verified
+    statement """
+        knowledge.propose's generic `slots` schema does not expose that an observation's `method` must be one of manual/command/instrumented/observation. V-022 said to add `method`; supplying explanatory prose then produced dozens of parser diagnostics before the enum expectation appeared.
+        """
+    observed_at git:41a2e3f20631e000954b9ea76612c70f1847e745
+    about "akr"
+    author "codex"
+    created_at 2026-08-24
+}
+
 record jpegxl-rs.papercut.knowledge-propose-says-observation-requires/1 : papercut {
     title "knowledge.propose says observation requires statement and observed_at,…"
     state verified
@@ -382,6 +394,17 @@ record jpegxl-rs.papercut.the-frozen-pqc-holdout-reducer-scripts-and/1 : papercu
     about "project measurement harness"
     author "codex"
     created_at 2026-08-22
+}
+
+record jpegxl-rs.papercut.the-frozen-pr7-holdout-parser-assumed/1 : papercut {
+    title "The frozen PR7 holdout parser assumed `ssimulacra2` immediately…"
+    state verified
+    statement """
+        The frozen PR7 holdout parser assumed `ssimulacra2` immediately followed `psnr_db`; the current compare line inserts `ssimulacra2_jpxl` and its version first, so an otherwise successful 12 MP resumed cell was needlessly rerun. Parse named fields independently or share the checked-in compare parser.
+        """
+    observed_at git:41a2e3f20631e000954b9ea76612c70f1847e745
+    author "codex"
+    created_at 2026-08-24
 }
 
 record jpegxl-rs.papercut.the-installed-akr-0-3-1-rejected-four-existing/1 : papercut {

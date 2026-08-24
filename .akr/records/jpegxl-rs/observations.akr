@@ -1784,6 +1784,48 @@ record jpegxl-rs.observation.pqc-memory-50mp-oom-2026-08-22/1 : observation {
     ]
 }
 
+record jpegxl-rs.observation.pqc-one-shot-gate-fails-on-corpus-coverage-2026-08-24/1 : observation {
+    title "The one-shot falsification screen fails on corpus coverage, not on the design: transform features halve the error, the tail is two under-represented classes"
+    state superseded
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/src/quality_prediction.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/quality_predictor_v2.rs",
+        path "JPXL/tools/quality_oracle_labels.py",
+        path "JPXL/tools/quality_predictor_v2.py"
+    ]
+    statement """
+        On the expanded 56-image / 38-family corpus with production-endpoint oracle labels (fresh Balanced pixel plans over the complete effective ladder; zero censored rows even at target 95, so the old predictor's 81-94% high-target saturation was an artifact of its HfMul=1 ladder cap), the memo's pre-PR5 falsification screen fails: best leave-one-family-out median |ln(predicted/oracle crossing)| is 0.220 with p90 0.805 (bounds: quick p90<=0.45; production median<=0.10, p90<=0.30). Three findings shape the path forward. (1) Transform-domain features materially help, as the memo predicted: source-only p90 1.28 vs source+transform 0.81, median 0.42 vs 0.22, first-or-one-correction success 1.00. (2) The failure is class coverage, not model form: photo, photo-scene, text-screenshot, noise-lowlight, line-art and grayscale classes sit at held-out p90 0.36-0.67 (near or past the quick bound), while saturated (p90 3.58) and sky-noise gradient (p90 4.07) dominate the tail - both effectively class-held-out because their families carry near-unique content. (3) The fallback discipline works: with honest intervals the simulated controller routes 99% of requests to the exact path, keeping bytes at 1.0016x but eliminating the wall win (expected reconstructions 3.98 vs the current median 4). Per the memo, production controller work stops here until the corpus grows (>=25 independent families per critical class; saturated and banding-stress content first); the PR5 mechanism exists behind the off-by-default `one-shot-controller` cargo feature and remains inert without a gate-passing model.
+        """
+    observed_at git:41a2e3f20631e000954b9ea76612c70f1847e745
+    method command
+    watches [
+        "JPXL/crates/jpxl-encode-policy/src/quality_predictor_v2.rs",
+        "JPXL/tools/quality_predictor_v2.py",
+        "test-set/quality-corpus.json"
+    ]
+    derived_from [ @jpegxl-rs.work.pqc-one-shot-controller ]
+    verified_by [ @jpegxl-rs.evidence.pqc-one-shot-falsification-screen-2026-08-24 ]
+    author "GitHub Uploader"
+}
+
+record jpegxl-rs.observation.pqc-one-shot-gate-fails-on-corpus-coverage-2026-08-24/2 : observation {
+    title "The one-shot falsification screen fails on corpus coverage, not on the design: transform features halve the error, the tail is two under-represented classes"
+    state verified
+    scope [ path "JPXL/crates/jpxl-encode-policy/src/**", path "JPXL/tools/**" ]
+    statement """
+        On the expanded 56-image / 38-family corpus with production-endpoint oracle labels (fresh Balanced pixel plans over the complete effective ladder; zero censored rows even at target 95, so the old predictor's 81-94% high-target saturation was an artifact of its HfMul=1 ladder cap), the memo's pre-PR5 falsification screen fails: best leave-one-family-out median |ln(predicted/oracle crossing)| is 0.220 with p90 0.805 (bounds: quick p90<=0.45; production median<=0.10, p90<=0.30). Three findings shape the path forward. (1) Transform-domain features materially help, as the memo predicted: source-only p90 1.28 vs source+transform 0.81, median 0.42 vs 0.22, first-or-one-correction success 1.00. (2) The failure is class coverage, not model form: photo, photo-scene, text-screenshot, noise-lowlight, line-art and grayscale classes sit at held-out p90 0.36-0.67 (near or past the quick bound), while saturated (p90 3.58) and sky-noise gradient (p90 4.07) dominate the tail - both effectively class-held-out because their families carry near-unique content. (3) The fallback discipline works: with honest intervals the simulated controller routes 99% of requests to the exact path, keeping bytes at 1.0016x but eliminating the wall win (expected reconstructions 3.98 vs the current median 4). Per the memo, production controller work stops here until the corpus grows (>=25 independent families per critical class; saturated and banding-stress content first); the PR5 mechanism exists behind the off-by-default `one-shot-controller` cargo feature and remains inert without a gate-passing model.
+        """
+    observed_at git:41a2e3f20631e000954b9ea76612c70f1847e745
+    method command
+    watches [ "JPXL/crates/jpxl-encode-policy/src/quality_predictor*.rs", "JPXL/tools/*.py" ]
+    derived_from [ @jpegxl-rs.work.pqc-one-shot-controller ]
+    supersedes [
+        @jpegxl-rs.observation.pqc-one-shot-gate-fails-on-corpus-coverage-2026-08-24/1
+    ]
+    verified_by [ @jpegxl-rs.evidence.pqc-one-shot-falsification-screen-2026-08-24 ]
+    author "GitHub Uploader"
+}
+
 record jpegxl-rs.observation.pqc-pr4-development-split-2026-08-22/1 : observation {
     title "PR 4 on the development split: the score floor holds in 150/150 encodes, photographs beat cjxl -e7 at matched score, synthetic text and line art trail badly, and the quality path costs ~3.5x the rate path's wall time"
     state verified
@@ -1834,6 +1876,36 @@ record jpegxl-rs.observation.pqc-pr4-rate-curve-axis-audit-2026-08-23/1 : observ
         @jpegxl-rs.evidence.pqc-pr4-holdout-byte-neutral-ss2-2026-08-22/1,
         @jpegxl-rs.evidence.pqc-quality-rate-curve-exact-10of13-2026-08-23/1,
         @jpegxl-rs.observation.ssimulacra2-f32-recursion-ripple-2026-08-22/1
+    ]
+}
+
+record jpegxl-rs.observation.pqc-pr7-full-holdout-quality-rejected-2026-08-24/1 : observation {
+    title "Full PR7 holdout closes the OOM tail and rejects Quality promotion"
+    state verified
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/src/policy_bank.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/quality.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/reducer.rs",
+        path "JPXL/crates/jpxl-perceptual/src/**"
+    ]
+    statement """
+        The current low-memory implementation completed the 27 formerly missing Quality cells and 26 companion Balanced rows, closing all 91 cells per effort on the 13-image locked holdout. The terminal reducer is safe and bounded (zero floor/decoder failures, at most six evaluations, final/before bytes geomean 0.991552), but public Quality promotion is rejected: matched-score bytes pass overall at 0.958292, while Contract B fails at Butteraugli mean ratio 1.047881 and worst pnorm3 ratio 1.868818. The added cells make the diagnosis sharper rather than reversing it: photos are nearly byte-neutral at 0.991367 and pass the BA/pnorm3 guards; non-photo byte wins coexist with saturated/tiny/text guard losses. Keep Quality feature-gated and keep its policy bank/reducer out of Fast and Balanced; a future promotion attempt needs a different quality policy or metric guidance, not relaxation of the gate.
+        """
+    observed_at git:41a2e3f20631e000954b9ea76612c70f1847e745
+    method command
+    watches [
+        "JPXL/crates/jpxl-encode-policy/src/quality.rs",
+        "JPXL/crates/jpxl-encode-policy/src/policy_bank.rs",
+        "JPXL/crates/jpxl-encode-policy/src/reducer.rs",
+        "JPXL/crates/jpxl-perceptual/src/**"
+    ]
+    derived_from [
+        @jpegxl-rs.evidence.pqc-pr7-quality-promotion-rejected-2026-08-22/1,
+        @jpegxl-rs.evidence.pqc-pr7-reducer-holdout-partial-2026-08-22/1
+    ]
+    verified_by [
+        @jpegxl-rs.evidence.pqc-pr7-holdout-complete-2026-08-24/1,
+        @jpegxl-rs.evidence.pqc-pr7-quality-promotion-full-2026-08-24/1
     ]
 }
 

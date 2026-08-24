@@ -435,6 +435,35 @@ record jpegxl-rs.decision.perceptual-quality-contract/1 : decision {
     }
 }
 
+record jpegxl-rs.decision.quality-miss-fallback-semantics/1 : decision {
+    title "An under-target perceptual result is refused at the facade by default; lossless and best-effort are explicit opt-in fallbacks"
+    state proposed
+    scope [
+        path "JPXL/crates/jpxl-cli/**",
+        path "JPXL/crates/jpxl-encode-policy/src/quality.rs",
+        path "JPXL/crates/jpxl/**"
+    ]
+    decision """
+        An under-target perceptual result is never an ordinary success at the public facade. When the bounded controller stops at SaturatedTop or UnderTargetWorkCap, the default is to refuse: Encoder returns Error::TargetNotMet carrying a QualityMiss (kind LadderSaturated | WorkBudgetExhausted, requested and best verified scores, probe/price counts, metric version, quality trace), and the CLI exits 1 without creating the output file. Two explicit fallbacks exist via Encoder::with_quality_fallback / --quality-fallback: Lossless emits a mathematically lossless stream reported as PerceptualStatus::FallbackLossless with achieved score 100, and BestEffort emits the finest canonically verified under-target stream under its true status and score. SaturatedFloor remains a success. The policy layer (search_frame_perceptual) still returns every terminal status with bytes; the facade owns the refusal. The rescue probe stays one probe beyond the navigation cap and is documented as an observable per-solve maximum of pixel_probes + 1; folding it inside the cap is a deliberate search-policy change that would require the standing Contract B screen.
+        """
+    context """
+        The 2026-08-24 one-shot advisor memo's first code finding, verified against quality.rs, jpxl/src/lib.rs and jpxl-cli/src/main.rs: the facade wrapped SaturatedTop and UnderTargetWorkCap outcomes as Ok and the CLI wrote the output file and exited 0, so a scripted caller checking only the exit code received a silently under-target stream — incompatible with the hard-floor reading of the perceptual-quality contract. The completed 91-cell locked holdout contains no under-target cells, so refusing changes no canonical-sweep behavior.
+        """
+    consequences """
+        Met, MetAdjacentRungs, MetWorkCap, SaturatedFloor and RescuedFreshStructure outputs stay byte-identical. The public API adds Error::TargetNotMet, QualityMiss, QualityMissKind, QualityFallback, PerceptualStatus::FallbackLossless and Encoder::with_quality_fallback; the CLI adds --quality-fallback lossless|best-effort. A refused encode still appends its jpxl.quality-trace/1 record to JPXL_QUALITY_TRACE so failed searches remain calibration input. Facade, policy-layer and CLI tests now pin the miss path, which previously had no coverage anywhere.
+        """
+    implements [ @jpegxl-rs.decision.perceptual-quality-contract/1 ]
+    author "GitHub Uploader"
+    source {
+        kind external
+        role origin
+        document "jpxl-one-shot-quality-controller-memo-2026-08-24"
+        use """
+            Adopted the memo's PR 0 contract repair: refusal by default, explicit lossless/best-effort fallback modes, structured failure payload, CLI exit-1 with no output file, and public miss-path tests.
+            """
+    }
+}
+
 record jpegxl-rs.decision.quant-bias-defaults/1 : decision {
     title "quant_bias defaults are 1 minus x"
     state proposed

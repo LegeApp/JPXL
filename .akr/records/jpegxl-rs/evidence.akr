@@ -5093,6 +5093,45 @@ record jpegxl-rs.evidence.pqc-low-memory-xlarge-identity-2026-08-23/1 : evidence
         """
 }
 
+record jpegxl-rs.evidence.pqc-one-shot-falsification-screen-2026-08-24/1 : evidence {
+    title "One-shot falsification screen: fails on corpus coverage, transform features validated"
+    state verified
+    result fail
+    method command
+    observed_at git:41a2e3f20631e000954b9ea76612c70f1847e745
+    command "python JPXL/tools/quality_predictor_v2.py train --labels oracle-labels.jsonl --feature-sets table2 source source+transform --transform-features transform-features.json --sweep-dir oracle-sweeps --ridge-grid 0.03 0.3 3.0"
+    summary """
+        The memo's pre-PR5 falsification screen fails on the expanded 38-family corpus: best model (pooled quantile regression, source+transform features, ridge 3.0) reaches leave-one-family-out median |ln err| 0.220 and p90 0.805 vs the quick-screen p90<=0.45 and production median<=0.10/p90<=0.30 bounds. First-plan success 0.88 and simulated common-case bytes 1.0016 pass their checks, and first-or-one-correction success is 1.00, but the honest uncertainty intervals route 99% of requests to the exact controller (expected reconstructions 3.98, no wall win). Tail is concentrated in saturated (p90 3.58) and sky-noise gradient (p90 4.07) classes - single-content-family coverage - while photo/scene/text/noise/line-art/grayscale sit at p90 0.36-0.67. Standalone transform-summary cost on the 12 MP anchor is 21.9% of a matched-rate encode (fails the 5% bolt-on gate; in-search shared-cache marginal cost unmeasured). Report kept in .agent/scratch/one-shot-qpv2-20260824/qpv2-report.json.
+        """
+    author "GitHub Uploader"
+}
+
+record jpegxl-rs.evidence.pqc-one-shot-pr1-5-gates-2026-08-24/1 : evidence {
+    title "One-shot PR 1-5 implementation: all workspace gates pass"
+    state verified
+    result pass
+    method command
+    observed_at git:41a2e3f20631e000954b9ea76612c70f1847e745
+    command "cargo test --workspace && cargo test -p jpxl-encode-policy --features one-shot-controller && cargo clippy --workspace --all-targets [--features one-shot-controller] && cargo fmt --all --check && python -m unittest discover -s JPXL/tools/tests && python JPXL/tools/make-quality-guard-fixtures.py build --check"
+    summary """
+        The one-shot program's PR 1-5 implementation passes every workspace gate: full test suite green (71 suites) in the default build and 155 policy tests under the one-shot-controller feature (including the PR 5 routing test and the trace/2 assertions), clippy clean in both configurations, formatting clean, 75 Python tool tests green (trainer, oracle-label, fixture-generator suites), and the fixture generator's check mode reproduces all 56 corpus PPMs byte-identically with the family split-hygiene guard passing. Default-build behavior is unchanged: the shadow predictor only logs, and the one-shot start is compiled out.
+        """
+    author "GitHub Uploader"
+}
+
+record jpegxl-rs.evidence.pqc-one-shot-promotion-ab-2026-08-25/1 : evidence {
+    title "One-shot promotion A/B: floor held, bytes and work strictly better in aggregate"
+    state verified
+    result pass
+    method command
+    observed_at git:41a2e3f20631e000954b9ea76612c70f1847e745
+    command "python JPXL/tools/one_shot_promotion_ab.py --manifest test-set/quality-corpus.json --splits holdout ... ; python JPXL/tools/one_shot_promotion_ab.py --manifest test-set/ext-polart-manifest.json --splits ext-holdout ..."
+    summary """
+        Promotion A/B of the one-shot-controller build against the default controller, interleaved on the same machine. Locked 13-image holdout (91 cells): zero floor violations both arms, byte geomean 0.99744 (bound 1.007), wall geomean 0.989, reconstructions 348 vs 339; worst cells are three sub-kilobyte saturated fixtures (max ratio 1.51 = +131 bytes absolute). Never-tuned ext-holdout paintings (50 families, 350 cells): zero floor violations, byte geomean 0.99018, reconstructions 1287 to 1056 (-18%), wall geomean 0.838, worst cell 1.117 at target 95 with a higher achieved score. Achieved-score dips above the floor exist in both arms (1 default, 2 one-shot) - a pre-existing bounded-search artifact, no hard inversion below target anywhere. Wall anchors at q85 vs matched-rate: 4.3 MP 1.36x both arms; 12 MP 8.02x default vs 6.31x one-shot (metric/render remains the dominant residual, as the memo predicted). Raw rows kept in .agent/scratch/one-shot-qpv2-20260824/ (ab-locked-holdout.json, ab-ext-holdout.json).
+        """
+    author "GitHub Uploader"
+}
+
 record jpegxl-rs.evidence.pqc-pr0-corpus-manifest-2026-08-22/1 : evidence {
     title "The generator reproduces 47 fixtures (47 PPM + 29 PNG + 47 JSON provenance sidecars, idempotent sha256) and the jpxl.codec-corpus/1 manifest test-set/quality-corpus.json (gitignored) validates; splits are calibration 19, development 15, holdout 13 with no source family in two splits; classes text-screenshot 5, line-art 5, gradient 6, saturated 4, tiny 6, noise-lowlight 1, grayscale 2, photo-scene 7, photo 11. 14 generator unit tests pass."
     state verified
@@ -5104,6 +5143,19 @@ record jpegxl-rs.evidence.pqc-pr0-corpus-manifest-2026-08-22/1 : evidence {
     summary """
         The generator reproduces 47 fixtures (47 PPM + 29 PNG + 47 JSON provenance sidecars, idempotent sha256) and the jpxl.codec-corpus/1 manifest test-set/quality-corpus.json (gitignored) validates; splits are calibration 19, development 15, holdout 13 with no source family in two splits; classes text-screenshot 5, line-art 5, gradient 6, saturated 4, tiny 6, noise-lowlight 1, grayscale 2, photo-scene 7, photo 11. 14 generator unit tests pass.
         """
+}
+
+record jpegxl-rs.evidence.pqc-pr0-hard-floor-tests-2026-08-24/1 : evidence {
+    title "PR0 hard floor: targeted miss-path tests pass"
+    state verified
+    result pass
+    method command
+    observed_at git:41a2e3f20631e000954b9ea76612c70f1847e745
+    command "cargo test -p jpxl-encode-policy running_out_of_probes && cargo test -p jpxl --test quality_encode && cargo test -p jpxl-cli --test cli_quality"
+    summary """
+        New miss-path tests all pass: policy-layer UnderTargetWorkCap with rescue accounting (pixel_probes 1 + 1 rescue), facade refuse/lossless/best-effort on the deterministic 64x64 gradient miss at 99.5 Fast (TargetNotMet with LadderSaturated, FallbackLossless bytes equal to the lossless encoder's, best-effort re-scored independently), and 8/8 CLI quality tests including exit-1-with-no-output-file refusal and --quality-fallback validation.
+        """
+    author "GitHub Uploader"
 }
 
 record jpegxl-rs.evidence.pqc-pr0-predictor-table-2026-08-22/1 : evidence {
@@ -5128,6 +5180,19 @@ record jpegxl-rs.evidence.pqc-pr0-sources-registered-2026-08-22/1 : evidence {
     summary """
         Both advice documents are registered under sources/external with content hashes (jpxl-ssimulacra2-quality-controller-plan-2026-08-21 dfef416b, jpxl-encoder-metric-advice-2026-08-22 cff3dfa7); the intake copies were removed and catalog.json updated.
         """
+}
+
+record jpegxl-rs.evidence.pqc-pr0-workspace-gates-2026-08-24/1 : evidence {
+    title "PR0 hard floor: workspace and tools gates pass"
+    state verified
+    result pass
+    method command
+    observed_at git:41a2e3f20631e000954b9ea76612c70f1847e745
+    command "cargo test --workspace && cargo test --workspace --profile fast-debug && cargo clippy --workspace --all-targets && cargo fmt --all --check && python -m unittest discover -s JPXL/tools/tests"
+    summary """
+        Workspace gates pass after the hard-floor change: full test suite green in both debug and fast-debug profiles (zero failures), clippy emits no warnings, formatting is clean, and the 46 Python tool tests pass (codec_compare now opts into --quality-fallback best-effort so curve points on an unmet target stay measurable).
+        """
+    author "GitHub Uploader"
 }
 
 record jpegxl-rs.evidence.pqc-pr1-api-semantics-2026-08-22/1 : evidence {
@@ -5430,6 +5495,18 @@ record jpegxl-rs.evidence.pqc-pr7-balanced-single-shot-2026-08-22/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.pqc-pr7-closure-workspace-gates-2026-08-24/1 : evidence {
+    title "PR7 holdout closure workspace and feature gates pass"
+    state verified
+    result pass
+    method command
+    observed_at git:41a2e3f20631e000954b9ea76612c70f1847e745
+    command "cd JPXL && cargo build --workspace; cargo test --workspace --release; cargo clippy --workspace --all-targets -- -D warnings; cargo fmt --all --check; cargo test -p jpxl-cli --release --features quality-effort,perceptual"
+    summary """
+        Workspace build, full release suite, strict Clippy, formatting, and the quality-effort+perceptual feature-enabled CLI release tests all pass after the policy note and regression-test update.
+        """
+}
+
 record jpegxl-rs.evidence.pqc-pr7-dev-split-2026-08-22/1 : evidence {
     title "Development split, Balanced with the reducer on versus off: bytes geomean 0.9825 at target 70 (photos 0.9903, min 0.888) and 0.9912 at 85 (photos 0.9886, min 0.9835); zero floor violations in 30 cells (the reduced stream is kept only when its exact size is smaller and every accepted batch is re-scored canonically); at most 6 evaluations; wall geomean 1.53x / 1.63x. Bytes down at matched-or-better score with bounded work, but the wall exceeds Balanced's +25% budget, so the reducer ships default-off on Balanced (BALANCED_DEFAULT_REDUCER = None) and on for the feature-gated Quality effort; the locked-holdout gate is still to be measured."
     state verified
@@ -5439,6 +5516,52 @@ record jpegxl-rs.evidence.pqc-pr7-dev-split-2026-08-22/1 : evidence {
     command ".agent/scratch/pr7-20260822/measure.py: jpxl-base vs jpxl-reducer (BALANCED_DEFAULT_REDUCER forced to ReducerLimits::QUALITY for the build), --quality {70,85} --effort balanced --threads 4, 15 development images, serial, RLIMIT_AS 12 GB"
     summary """
         Development split, Balanced with the reducer on versus off: bytes geomean 0.9825 at target 70 (photos 0.9903, min 0.888) and 0.9912 at 85 (photos 0.9886, min 0.9835); zero floor violations in 30 cells (the reduced stream is kept only when its exact size is smaller and every accepted batch is re-scored canonically); at most 6 evaluations; wall geomean 1.53x / 1.63x. Bytes down at matched-or-better score with bounded work, but the wall exceeds Balanced's +25% budget, so the reducer ships default-off on Balanced (BALANCED_DEFAULT_REDUCER = None) and on for the feature-gated Quality effort; the locked-holdout gate is still to be measured.
+        """
+}
+
+record jpegxl-rs.evidence.pqc-pr7-holdout-complete-2026-08-24/1 : evidence {
+    title "Full PR7 locked-holdout Quality/reducer sweep completes after low-memory changes"
+    state verified
+    result pass
+    method command
+    observed_at git:41a2e3f20631e000954b9ea76612c70f1847e745
+    command "python3 .agent/scratch/pr7-holdout-closure-20260824/resume_holdout.py && python3 .agent/scratch/pr7-holdout-closure-20260824/analyze.py"
+    summary """
+        Combined historical checkpoints with 53 resumed rows to close 91/91 Quality and 91/91 Balanced cells on all 13 locked holdout images. All 182 successful rows had zero canonical-floor and decoder failures; reducer work stayed at <=6 evaluations, saved 263,266 exact bytes total, and produced 0.991552 final/before geomean. The formerly blocked 50 MP Quality rows completed serially under a 12 GiB cap; worst measured peak was 11,163,372 KiB. Kept report: .agent/scratch/pr7-holdout-closure-20260824/report.json (SHA-256 fd78df93...f282e).
+        """
+}
+
+record jpegxl-rs.evidence.pqc-pr7-policy-gating-test-2026-08-24/1 : evidence {
+    title "Production budgets keep rejected Quality-only work disabled"
+    state verified
+    result pass
+    method command
+    observed_at git:41a2e3f20631e000954b9ea76612c70f1847e745
+    command "cd JPXL && cargo test -p jpxl-encode-policy --profile fast-debug production_budgets_keep_quality_only_work_disabled"
+    summary """
+        The new policy regression test passes and proves Fast/Balanced default budgets retain zero policy trials and no reducer while the feature-gated Quality budget retains its bank and terminal reducer.
+        """
+}
+
+record jpegxl-rs.evidence.pqc-pr7-promotion-disposition-2026-08-24/1 : evidence {
+    title "Full Contract B result is dispositioned without weakening the public gate"
+    state verified
+    result pass
+    method observation
+    observed_at git:41a2e3f20631e000954b9ea76612c70f1847e745
+    summary """
+        The full 79-cell common-score report was evaluated against the standing Quality promotion conditions. Overall matched bytes pass at 0.958292, but Butteraugli mean 1.047881 and worst pnorm3 1.868818 fail their 1.02/1.05 limits, so the existing quality-effort feature gate remains in force. No search-policy change is justified; the source note now records the completed gate and a regression test pins Quality-only work out of Fast/Balanced.
+        """
+}
+
+record jpegxl-rs.evidence.pqc-pr7-quality-promotion-full-2026-08-24/1 : evidence {
+    title "Full locked holdout rejects public Quality promotion under Contract B"
+    state verified
+    result fail
+    method observation
+    observed_at git:41a2e3f20631e000954b9ea76612c70f1847e745
+    summary """
+        Across 79 common-score cells, Quality/Balanced bytes pass at 0.958292 geomean, but Butteraugli mean ratio is 1.047881 (>1.02) and worst pnorm3 ratio is 1.868818 (>1.05), so Contract B fails. Photos are nearly byte-neutral at 0.991367 with BA mean 1.000790 and worst pnorm3 1.042495; non-photo savings drive the aggregate while saturated, tiny, and text cells drive the guard failure. Quality remains feature-gated.
         """
 }
 
@@ -5464,6 +5587,19 @@ record jpegxl-rs.evidence.pqc-pr7-reducer-holdout-partial-2026-08-22/1 : evidenc
     command "python .agent/scratch/pr7-holdout-20260822/analyze_partial.py"
     summary """
         Across 64 completed Quality cells the reducer had zero canonical floor violations, at most 6 evaluations, saved 147845 exact bytes total, and produced a 0.98925 final/before geomean (0.98626 on 50 eligible cells). The reducer-off decoded guard baseline and 27 remaining Quality cells were not run; reducer-gate remains open and is deferred with no more Quality testing requested.
+        """
+    author "GitHub Uploader"
+}
+
+record jpegxl-rs.evidence.pqc-qpv2-expanded-corpus-gate-2026-08-25/1 : evidence {
+    title "Expanded-corpus qpv2 model: blind holdout hits production p90; transform features win"
+    state verified
+    result pass
+    method command
+    observed_at git:41a2e3f20631e000954b9ea76612c70f1847e745
+    command "python JPXL/tools/quality_corpus_extend.py --source-dir \"D:\\Pol Desktop\\Pol Art Folder 08-24-2017\" --name ext-polart --max-images 220; quality_oracle_labels.py sweep (2h budget); quality_predictor_v2.py train --feature-sets table2 source source+transform"
+    summary """
+        Corpus expanded with 211 independent painting families from the user's collection (104 calibration / 57 development / 50 never-tuned ext-holdout, deterministic split by family hash, originals untouched); 103 swept within the 2-hour budget for 994 total label rows (zero censored). Retrained pooled model, 10-fold family-grouped CV: source+transform wins (CV median 0.121 / p90 0.461 vs source-only 0.176/0.595); blind never-tuned ext-holdout: median 0.113, p90 0.258 (production p90 bound met), p99 0.478, first-plan 0.925, first-or-one-correction 1.00. Remaining CV tail is entirely the saturated (p90 3.58) and sky-noise gradient classes, still effectively class-held-out. Emitted runtime model qpv2-st-1 (19 features: 9 source + 10 DCT8-summary); the in-search transform summary measured -3.9% wall at 4.3 MP (shares the cover's cache; standalone 7.8% after parallelizing the fill from 21.9% serial). Artifacts in .agent/scratch/one-shot-qpv2-20260824/.
         """
     author "GitHub Uploader"
 }
