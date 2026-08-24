@@ -267,6 +267,36 @@ impl RenderedFrame {
         }
         self.planes
     }
+
+    /// [`Self::into_linear_rgb_at_depth`] with the per-sample transfer-curve
+    /// lookup banded over `executor`'s workers.
+    ///
+    /// The lookup is an independent per-sample map, so each fixed row band is
+    /// converted on its own and the output is identical to the serial form at
+    /// any worker count. This is the large-frame scoring path, where the
+    /// 36-million-sample round trip is otherwise a serial tail on every probe.
+    #[must_use]
+    pub fn into_linear_rgb_at_depth_with(
+        mut self,
+        bits: u32,
+        executor: &EncodeExecutor,
+    ) -> [Vec<f32>; NUM_CHANNELS] {
+        let max = Self::full_scale(bits);
+        let lut = Self::linear_lut(bits, max);
+        let width = usize::try_from(self.width).unwrap_or(usize::MAX).max(1);
+        let bands = row_bands(&mut self.planes, width);
+        run_items(Some(executor), bands.len(), &|index| {
+            let Some((_, mut slices)) = bands.take(index) else {
+                return;
+            };
+            for plane in slices.iter_mut() {
+                for value in plane.iter_mut() {
+                    *value = Self::linear_sample(*value, max, &lut);
+                }
+            }
+        });
+        self.planes
+    }
 }
 
 /// Wall time of one render's stages, in milliseconds.
@@ -428,23 +458,51 @@ impl PlanRenderer {
             // I.5.2 + I.6 (LF): dequantize the three planes, then borrow
             // chroma from luma with the frame-wide LF factors.
             let lf = lf_planes(ir, &lf_mul, spatial.lf.extra_precision, (k_x_lf, k_b_lf))?;
-            let lf_at = |c: usize, bx: u32, by: u32| -> f32 {
-                if bx >= blocks.width || by >= blocks.height {
-                    return 0.0;
-                }
-                let idx = usize::try_from(u64::from(by) * u64::from(blocks.width) + u64::from(bx))
-                    .unwrap_or(usize::MAX);
-                lf.get(c).and_then(|p| p.get(idx)).copied().unwrap_or(0.0)
-            };
 
-            for (vb, coeffs) in group.blocks.iter().zip(ir.coefficients.iter()) {
+            // Warm the dequantization-matrix cache for every transform this
+            // group uses, so the per-varblock render below reads it through a
+            // shared immutable borrow and needs no `&mut self`.
+            for vb in group.blocks.iter() {
+                self.matrices_for(vb.transform)?;
+            }
+            let matrices_cache = &self.cache;
+            let epf_params = &self.epf_params;
+
+            // I.5.3, I.6, I.8, I.9 and J.4.3 for one varblock, producing its
+            // placed samples and sigma writes without touching shared frame
+            // state. A varblock is a pure function of its own inputs, so this
+            // is byte-for-byte the serial render regardless of worker count.
+            let render_one = |i: usize| -> Result<RenderedVarblock> {
+                let vb = group
+                    .blocks
+                    .get(i)
+                    .ok_or(RenderError::Unsupported("a varblock index past the group"))?;
+                let coeffs = ir
+                    .coefficients
+                    .get(i)
+                    .ok_or(RenderError::Unsupported("a varblock with no coefficients"))?;
+                let lf_at = |c: usize, bx: u32, by: u32| -> f32 {
+                    if bx >= blocks.width || by >= blocks.height {
+                        return 0.0;
+                    }
+                    let idx =
+                        usize::try_from(u64::from(by) * u64::from(blocks.width) + u64::from(bx))
+                            .unwrap_or(usize::MAX);
+                    lf.get(c).and_then(|p| p.get(idx)).copied().unwrap_or(0.0)
+                };
+
                 let transform = vb.transform;
                 let (bx, by) = (vb.origin.bx(), vb.origin.by());
                 let hf_mul = vb.hf_mul.get();
                 let mul = hf_multiplier(global_scale, hf_mul);
 
                 // I.5.3: dequantize all three channels.
-                let matrices = self.matrices_for(transform)?;
+                let matrices = matrices_cache
+                    .get(transform.dequant_matrix_index())
+                    .and_then(Option::as_ref)
+                    .ok_or(RenderError::Unsupported(
+                        "a dequantization matrix that was not warmed",
+                    ))?;
                 let (rows, cols) = (transform.coeff_rows(), transform.coeff_cols());
                 let mut coeff: [CoeffMatrix; NUM_CHANNELS] =
                     core::array::from_fn(|_| CoeffMatrix::zeros(rows, cols));
@@ -503,37 +561,21 @@ impl PlanRenderer {
                     matrix.write_llf(&llf_from_lf(transform, &lf_rect));
                 }
 
-                // I.9: samples, placed at the varblock's frame position.
+                // I.9: samples, at the varblock's frame position (placed later).
                 let x0 = rect.x0 + bx * 8;
                 let y0 = rect.y0 + by * 8;
-                for (c, matrix) in coeff.iter().enumerate() {
-                    let block = transform.samples_from_coefficients(matrix);
-                    let Some(plane) = planes.get_mut(c) else {
-                        continue;
-                    };
-                    for row in 0..block.rows() {
-                        let fy = y0.saturating_add(narrow(row));
-                        if fy >= height {
-                            continue;
-                        }
-                        for col in 0..block.cols() {
-                            let fx = x0.saturating_add(narrow(col));
-                            if fx >= width {
-                                continue;
-                            }
-                            let idx =
-                                usize::try_from(u64::from(fy) * u64::from(width) + u64::from(fx))
-                                    .unwrap_or(usize::MAX);
-                            if let Some(slot) = plane.get_mut(idx) {
-                                *slot = block.at(col, row);
-                            }
-                        }
-                    }
-                }
+                let samples: [SampleBlock; NUM_CHANNELS] = core::array::from_fn(|c| {
+                    coeff.get(c).map_or_else(
+                        || SampleBlock::zeros(transform.sample_rows(), transform.sample_cols()),
+                        |matrix| transform.samples_from_coefficients(matrix),
+                    )
+                });
 
                 // J.4.3: sigma per 8x8 block of the varblock, from `mul` and
-                // the block's own `Sharpness`.
+                // the block's own `Sharpness`, as (frame-block index, value).
                 let sharpness = group.sharpness.values();
+                let mut sigma_writes: Vec<(usize, f32)> =
+                    Vec::with_capacity(block_rows * block_cols);
                 for dy in 0..block_rows {
                     for dx in 0..block_cols {
                         let (sbx, sby) =
@@ -551,11 +593,63 @@ impl PlanRenderer {
                         if fbx >= blocks_x || fby >= blocks_y {
                             continue;
                         }
-                        if let Some(slot) = sigma.get_mut(fby * blocks_x + fbx) {
-                            *slot = vardct_sigma(mul, s, &self.epf_params);
+                        sigma_writes.push((fby * blocks_x + fbx, vardct_sigma(mul, s, epf_params)));
+                    }
+                }
+
+                Ok(RenderedVarblock {
+                    x0,
+                    y0,
+                    samples,
+                    sigma: sigma_writes,
+                })
+            };
+
+            // Render varblocks in bounded, order-preserving chunks: each chunk's
+            // per-varblock compute (dequant, CfL, LLF, inverse transform) runs
+            // across the executor, then its results are scattered into the frame
+            // serially. Every varblock owns a disjoint frame region, so the
+            // placed pixels are identical to a serial render; chunking keeps the
+            // transient per-chunk buffers small rather than holding one buffer
+            // per varblock at once.
+            let n = group.blocks.len().min(ir.coefficients.len());
+            let mut start = 0usize;
+            while start < n {
+                let end = (start + VARBLOCK_CHUNK).min(n);
+                let rendered =
+                    render_varblock_chunk(executor, end - start, &|k| render_one(start + k))?;
+                for rv in &rendered {
+                    for (c, block) in rv.samples.iter().enumerate() {
+                        let Some(plane) = planes.get_mut(c) else {
+                            continue;
+                        };
+                        for row in 0..block.rows() {
+                            let fy = rv.y0.saturating_add(narrow(row));
+                            if fy >= height {
+                                continue;
+                            }
+                            for col in 0..block.cols() {
+                                let fx = rv.x0.saturating_add(narrow(col));
+                                if fx >= width {
+                                    continue;
+                                }
+                                let idx = usize::try_from(
+                                    u64::from(fy) * u64::from(width) + u64::from(fx),
+                                )
+                                .unwrap_or(usize::MAX);
+                                if let Some(slot) = plane.get_mut(idx) {
+                                    *slot = block.at(col, row);
+                                }
+                            }
+                        }
+                    }
+                    for &(idx, value) in &rv.sigma {
+                        if let Some(slot) = sigma.get_mut(idx) {
+                            *slot = value;
                         }
                     }
                 }
+                start = end;
             }
         }
 
@@ -729,6 +823,47 @@ fn row_bands(planes: &mut [Vec<f32>; NUM_CHANNELS], width: usize) -> RowBands<'_
         .map(|(i, ((a, b), c))| std::sync::Mutex::new(Some((i * BAND_ROWS, [a, b, c]))))
         .collect();
     RowBands { items }
+}
+
+/// One varblock's reconstruction result, produced off to the side so the
+/// per-varblock compute can run across the executor and be scattered into the
+/// frame afterwards.
+struct RenderedVarblock {
+    /// Frame x of the varblock's top-left sample.
+    x0: u32,
+    /// Frame y of the varblock's top-left sample.
+    y0: u32,
+    /// The placed samples, one block per channel.
+    samples: [SampleBlock; NUM_CHANNELS],
+    /// J.4.3 sigma writes as `(frame-block index, value)`.
+    sigma: Vec<(usize, f32)>,
+}
+
+/// Varblocks rendered per parallel chunk before their results are scattered.
+///
+/// A chunk holds at most this many [`RenderedVarblock`] results at once, so the
+/// transient sample storage stays a few megabytes rather than a whole frame's
+/// worth, while still giving the executor enough work per chunk to keep every
+/// worker busy on a large frame.
+const VARBLOCK_CHUNK: usize = 2048;
+
+/// Renders `n` varblocks through `f`, across `executor` when present (results
+/// in index order, so worker count cannot change them), serially otherwise.
+fn render_varblock_chunk(
+    executor: Option<&EncodeExecutor>,
+    n: usize,
+    f: &(dyn Fn(usize) -> Result<RenderedVarblock> + Sync),
+) -> Result<Vec<RenderedVarblock>> {
+    match executor {
+        Some(executor) => executor.map_ordered(n, f),
+        None => {
+            let mut out = Vec::with_capacity(n);
+            for i in 0..n {
+                out.push(f(i)?);
+            }
+            Ok(out)
+        }
+    }
 }
 
 /// Runs `items` independent closures on `executor` (serially without one).

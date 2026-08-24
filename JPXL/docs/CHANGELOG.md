@@ -13,6 +13,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/), semantic versioning.
 
 ## Unreleased
 
+- 2026-08-25 — Large-frame `--quality` probes are faster: the varblock
+  reconstruction and the transfer-curve linearization — previously serial
+  on every probe — now run banded across the worker pool with byte-identical
+  output at any thread count. On the locked 12 MP anchor at 8 threads the
+  quality-mode wall drops 21 % (release), with peak memory and every emitted
+  stream unchanged.
 - 2026-08-25 — The one-shot crossing predictor is now the default `--quality`
   controller seed: a generated transparent model (`qpv2-st-1`, source +
   DCT8-summary features, trained on 130 image families) picks the first

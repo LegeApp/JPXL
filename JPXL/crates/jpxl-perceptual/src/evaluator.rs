@@ -202,7 +202,7 @@ impl PerceptualEvaluator for PlanRenderEvaluator<'_> {
         // needed for this score. Exact finalists are rebuilt deterministically
         // by the policy if this rung survives navigation.
         drop(candidate);
-        let linear = frame.into_linear_rgb_at_depth(self.bits_per_sample);
+        let linear = frame.into_linear_rgb_at_depth_with(self.bits_per_sample, self.executor);
         let result = self
             .metric
             .score_owned(&self.reference, width, height, linear, self.executor)
