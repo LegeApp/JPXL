@@ -5,8 +5,7 @@ build {
     tool "akr 0.3.3"
     grammar "0.1"
     vocabulary "0.2"
-    commit git:b6913f7b217b64d4d33d358e59b5060e8d7796b8
-    source_graph "sha256:30546cc5534a77086da577a50522e7178dea87561649cc48bd29bbec56746c56"
+    source_graph "sha256:ef95ff5110be9aeb247bd9805fd425acc01148ef91bb9ca4e8c9dd0c7efb3f8c"
 }
 
 source ".akr/project.akr" {
@@ -45,8 +44,8 @@ source ".akr/records/jpegxl-rs/observations.akr" {
 }
 
 source ".akr/records/jpegxl-rs/papercuts.akr" {
-    hash "sha256:eddba95b51f812c3fd53a9f47eb9a815b2f7cfbb86a193656d689b82d2ce5928"
-    records 44
+    hash "sha256:67544526475808e1e8a7942cfca73f711ae32087567db85bfe38e42c6c80d094"
+    records 45
 }
 
 source ".akr/records/jpegxl-rs/policies.akr" {
@@ -7246,6 +7245,11 @@ seal @jpegxl-rs.papercut.a-full-13-image-curve-run-was-oom-killed-on-the/1 {
 seal @jpegxl-rs.papercut.a-harmless-scratch-setup-command-was-rejected/1 {
     state verified
     hash "sha256:02b2818aed32aa725a64082233cdf17902c2e392312d3bf0efc844f9c7a82fca"
+}
+
+seal @jpegxl-rs.papercut.a-work-revision-that-cites-already-committed/1 {
+    state verified
+    hash "sha256:a9a46c3accb9e5662018b6c51e6963c46227779915fccdfbad4ed2760c7cb5b9"
 }
 
 seal @jpegxl-rs.papercut.after-a-temporary-comparison-worktree-restored/1 {

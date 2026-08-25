@@ -37,6 +37,18 @@ record jpegxl-rs.papercut.a-harmless-scratch-setup-command-was-rejected/1 : pape
     created_at 2026-08-18
 }
 
+record jpegxl-rs.papercut.a-work-revision-that-cites-already-committed/1 : papercut {
+    title "A work revision that cites already-committed evidence in verified_by…"
+    state verified
+    statement """
+        A work revision that cites already-committed evidence in verified_by lands "not satisfied - predates the last change" unless the evidence rows are committed in the very same commit as the revision (the current-together grace); revising a record in a later .akr-only commit therefore un-satisfies checks whose measurements are still perfectly valid, and there is no way to re-land unchanged evidence. Retargeting a check citation onto fresh evidence needs either an observed_at at-or-after the revision commit (chicken-and-egg) or duplicated evidence records. Hit while pointing pqc-usable-efforts-cost's workspace-gates check at the 2026-08-25 gates evidence; repaired by dropping the revision commit.
+        """
+    observed_at git:7f7c6d1433906f0f6751af94b2903cd3e3f80f72
+    about "akr"
+    author "claude"
+    created_at 2026-08-25
+}
+
 record jpegxl-rs.papercut.after-a-temporary-comparison-worktree-restored/1 : papercut {
     title "After a temporary comparison worktree restored a modified source with…"
     state verified
