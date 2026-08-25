@@ -158,18 +158,13 @@ impl PerceptualEvaluator for PlanRenderEvaluator<'_> {
         &mut self,
         candidate: &ValidatedPixelPlan,
     ) -> jpxl_encode_policy::Result<PerceptualObservation> {
-        let frame = self
+        let (width, height, linear) = self
             .renderer
-            .render_with(candidate, self.executor)
+            .render_linear_at_depth_with(candidate, self.bits_per_sample, self.executor)
             .map_err(|_| PolicyError::Unsupported {
                 what: "a candidate plan the renderer could not reconstruct",
             })?;
-        let (width, height) = (frame.width(), frame.height());
-        frame.linear_rgb_at_depth_into(self.bits_per_sample, &mut self.linear);
-        // The rendered frame is no longer needed — only its linearised planes
-        // are scored — so release it before the metric allocates its scratch,
-        // keeping both from being resident at once.
-        drop(frame);
+        self.linear = linear;
         let [r, g, b] = &self.linear;
         let view =
             LinearRgbView::new(width, height, r, g, b).map_err(|_| PolicyError::Unsupported {
@@ -196,18 +191,16 @@ impl PerceptualEvaluator for PlanRenderEvaluator<'_> {
             return Ok((observation, Some(candidate)));
         }
 
-        let frame = self
+        let (width, height, linear) = self
             .renderer
-            .render_with(&candidate, self.executor)
+            .render_linear_at_depth_with(&candidate, self.bits_per_sample, self.executor)
             .map_err(|_| PolicyError::Unsupported {
                 what: "a candidate plan the renderer could not reconstruct",
             })?;
-        let (width, height) = (frame.width(), frame.height());
         // Once reconstruction is complete, the coefficient payload is not
         // needed for this score. Exact finalists are rebuilt deterministically
         // by the policy if this rung survives navigation.
         drop(candidate);
-        let linear = frame.into_linear_rgb_at_depth_with(self.bits_per_sample, self.executor);
         let result = self
             .metric
             .score_owned(&self.reference, width, height, linear, self.executor)

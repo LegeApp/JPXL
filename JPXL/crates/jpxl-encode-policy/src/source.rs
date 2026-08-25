@@ -384,6 +384,14 @@ impl PreparedFrame {
         let max = f32::from(u16::MAX).min(((1u32 << bits_per_sample) - 1) as f32);
         let divisor = if max > 0.0 { max } else { 1.0 };
 
+        // One transfer-curve evaluation per representable sample value, not
+        // per sample: each entry is exactly the `srgb_to_linear(v / divisor)`
+        // the per-sample path evaluated (dividing, per the note above), so the
+        // planes are bit-identical to it.
+        let lut: Vec<f32> = (0..=u32::from(u16::MAX))
+            .map(|v| jpxl_core::color::srgb_to_linear(v as f32 / divisor))
+            .collect();
+
         let convert_band = |src: &[u16], r: &mut [f32], g: &mut [f32], b: &mut [f32]| -> bool {
             let mut grayscale = true;
             for (((px, rs), gs), bs) in src
@@ -398,9 +406,9 @@ impl PreparedFrame {
                     px.get(2).copied().unwrap_or(0),
                 );
                 grayscale &= cr == cg && cg == cb;
-                *rs = jpxl_core::color::srgb_to_linear(f32::from(cr) / divisor);
-                *gs = jpxl_core::color::srgb_to_linear(f32::from(cg) / divisor);
-                *bs = jpxl_core::color::srgb_to_linear(f32::from(cb) / divisor);
+                *rs = lut.get(usize::from(cr)).copied().unwrap_or(0.0);
+                *gs = lut.get(usize::from(cg)).copied().unwrap_or(0.0);
+                *bs = lut.get(usize::from(cb)).copied().unwrap_or(0.0);
             }
             linear_srgb_to_xyb_planes(r, g, b);
             grayscale
