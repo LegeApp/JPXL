@@ -5,7 +5,7 @@ build {
     tool "akr 0.3.3"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:11b87518a2e357f90ab0354254cb1ca3fef23f1be56d7cd245257f95d636a6a5"
+    source_graph "sha256:c5469183a640fdfb5dd28a9a6034632a0c2f9e378d5469f0dd6a6c1dd597d679"
 }
 
 source ".akr/project.akr" {
@@ -44,8 +44,8 @@ source ".akr/records/jpegxl-rs/observations.akr" {
 }
 
 source ".akr/records/jpegxl-rs/papercuts.akr" {
-    hash "sha256:67544526475808e1e8a7942cfca73f711ae32087567db85bfe38e42c6c80d094"
-    records 45
+    hash "sha256:5ef7b252be9748a1505f9d11324b9fd25a192c507f59db7e4ce0011ea745cf5d"
+    records 46
 }
 
 source ".akr/records/jpegxl-rs/policies.akr" {
@@ -7382,6 +7382,11 @@ seal @jpegxl-rs.papercut.jpxl-bench-fingerprints-outputs-with-fnv-1a-64/1 {
 seal @jpegxl-rs.papercut.knowledge-complete-s-cited-evidence-gets-its/1 {
     state verified
     hash "sha256:a6ec1e870934aaba989ff74eb2303653d98e95bbcd0fd31ee51ce413de0e2a46"
+}
+
+seal @jpegxl-rs.papercut.knowledge-get-with-detail-canonical-on-jpegxl/1 {
+    state verified
+    hash "sha256:963859e4ca865daa4b566ce5dcee87f04cd6329e871cf488e0b82b09d58fa0ed"
 }
 
 seal @jpegxl-rs.papercut.knowledge-propose-documents-observation/1 {

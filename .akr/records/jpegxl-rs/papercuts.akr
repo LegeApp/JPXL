@@ -279,6 +279,18 @@ record jpegxl-rs.papercut.knowledge-complete-s-cited-evidence-gets-its/1 : paper
     created_at 2026-08-07
 }
 
+record jpegxl-rs.papercut.knowledge-get-with-detail-canonical-on-jpegxl/1 : papercut {
+    title "knowledge.get with detail canonical on…"
+    state verified
+    statement """
+        knowledge.get with detail canonical on jpegxl-rs.work.pqc-usable-efforts-cost/7 truncated at the tool's token cap and the suggested continuation (detail summary) cannot return the acceptance block's source text either, so reproducing checks verbatim for a revision required reading .akr/records/jpegxl-rs/work.akr by hand. A continuation or an acceptance-only detail level would remove the need to touch the records directory.
+        """
+    observed_at git:4bbb629fd4dc8bcf3cd33199b2d4aefdad39e351
+    about "akr"
+    author "claude"
+    created_at 2026-08-25
+}
+
 record jpegxl-rs.papercut.knowledge-propose-documents-observation/1 : papercut {
     title "knowledge.propose documents observation observed_at as required but…"
     state verified
