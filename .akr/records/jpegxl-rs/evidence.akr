@@ -5142,6 +5142,54 @@ record jpegxl-rs.evidence.pqc-memory-12mp-2026-08-25/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.pqc-metric-cuts-memory-12mp-2026-08-25/1 : evidence {
+    title "Metric-cuts 12 MP memory: peak 2,008,188 KiB under the 2 GiB ceiling"
+    state verified
+    result pass
+    method command
+    observed_at git:c0253b3134674f9223100ccd992fca59815161a0
+    command "python3 .agent/scratch/pqc-metric-cuts-20260825/rss_12mp.py"
+    summary """
+        Balanced q85 on the locked 12 MP anchor after the exact metric-path cost cuts: peak RSS 2,007,068-2,008,188 KiB over three serialized capped runs, under the 2,097,152 KiB ceiling and down from 2,043,056 before the cuts; output bytes unchanged (1,315,649). Report in kept scratch pqc-metric-cuts-20260825/rss-12mp.json.
+        """
+}
+
+record jpegxl-rs.evidence.pqc-metric-cuts-production-identity-2026-08-25/1 : evidence {
+    title "Metric-cuts production identity: 52/52 matrix and 6/6 pre-change A/B byte-identical"
+    state verified
+    result pass
+    method command
+    observed_at git:c0253b3134674f9223100ccd992fca59815161a0
+    command "python3 .agent/scratch/pqc-metric-cuts-20260825/identity_scatter.py"
+    summary """
+        After the exact metric-path cost cuts, the full locked production-identity matrix is 52/52 byte-identical (threads 1/4, AVX2 on/off), and a 6-cell A/B against the pre-change reference binary (worktree build of 1fc3ca7) is byte-identical across threads 1/4/8 and AVX2 off; reports in kept scratch pqc-metric-cuts-20260825 (identity-scatter-summary.json, identity-ab.json).
+        """
+}
+
+record jpegxl-rs.evidence.pqc-metric-cuts-wall-anchors-2026-08-25/1 : evidence {
+    title "Metric-cuts wall anchors: ratios cut ~9-19 percent, 2.0x target still unmet"
+    state verified
+    result fail
+    method command
+    observed_at git:c0253b3134674f9223100ccd992fca59815161a0
+    command "python3 .agent/scratch/pqc-metric-cuts-20260825/wall_scatter.py"
+    summary """
+        Interleaved matched-score timing after the exact metric-path cost cuts (standing recipe, load_1m 1.8-4.5): quality/rate 3.40x at 4 threads and 2.76x at 8 on the 4.3 MP anchor, 5.07x and 3.50x on 12 MP, from 3.87x/3.22x and 5.42x/4.25x before the cuts (that run at load 5.2-7.7; the ratio columns are the load-robust comparison). Quality medians 1.33/1.17 s (4.3 MP) and 3.65/2.62 s (12 MP). The 2.0x wall-anchors target remains unmet on both anchors. Report in kept scratch pqc-metric-cuts-20260825/wall-scatter.json.
+        """
+}
+
+record jpegxl-rs.evidence.pqc-metric-cuts-workspace-gates-2026-08-25/1 : evidence {
+    title "Metric-cuts workspace gates: fmt, clippy -D warnings, release tests all pass"
+    state verified
+    result pass
+    method command
+    observed_at git:c0253b3134674f9223100ccd992fca59815161a0
+    command "cd JPXL && set -o pipefail && cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace --release"
+    summary """
+        One strictly chained run at the metric-cuts tree: cargo fmt --all --check, clippy --workspace --all-targets -D warnings, and the release workspace test suite (76 test groups) all pass, exit 0.
+        """
+}
+
 record jpegxl-rs.evidence.pqc-one-shot-falsification-screen-2026-08-24/1 : evidence {
     title "One-shot falsification screen: fails on corpus coverage, transform features validated"
     state verified
