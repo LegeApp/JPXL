@@ -26,7 +26,8 @@
 //! Each output is computed from its row (or column) alone, so any partition
 //! into rows or column strips gives bit-identical results; the horizontal
 //! pass runs its rows in fixed bands on the executor and the vertical pass
-//! walks column strips on the calling thread.
+//! runs its column strips there too, each strip writing its own disjoint
+//! columns of the output in place.
 
 use crate::bands::{BAND_ROWS, band_of, mutable_bands};
 use crate::executor::BandExecutor;
@@ -126,7 +127,8 @@ impl Blur {
         if width == 0 || height == 0 {
             return;
         }
-        self.temp.clear();
+        // The horizontal pass writes every temp sample, so a reused temp needs
+        // no re-zeroing; resize only grows (zeroed) or truncates.
         self.temp.resize(width * height, 0.0);
         let band_len = width.saturating_mul(BAND_ROWS);
         let bands = mutable_bands(vec![self.temp.as_mut_slice()], band_len);
@@ -137,29 +139,13 @@ impl Blur {
             let Some(out_band) = outs.pop() else {
                 return;
             };
-            let mut padded = Vec::new();
-            match input {
-                BlurInput::Plane(input) => {
-                    let in_band = band_of(input, index, band_len);
-                    for (row_in, row_out) in in_band
-                        .chunks_exact(width)
-                        .zip(out_band.chunks_exact_mut(width))
-                    {
-                        horizontal_row(row_in, row_out, &mut padded);
-                    }
-                }
+            let band_input = match input {
+                BlurInput::Plane(input) => BlurInput::Plane(band_of(input, index, band_len)),
                 BlurInput::Product(a, b) => {
-                    let a_band = band_of(a, index, band_len);
-                    let b_band = band_of(b, index, band_len);
-                    for ((a_row, b_row), row_out) in a_band
-                        .chunks_exact(width)
-                        .zip(b_band.chunks_exact(width))
-                        .zip(out_band.chunks_exact_mut(width))
-                    {
-                        horizontal_product_row(a_row, b_row, row_out, &mut padded);
-                    }
+                    BlurInput::Product(band_of(a, index, band_len), band_of(b, index, band_len))
                 }
-            }
+            };
+            horizontal_band(band_input, out_band, width);
         });
         vertical_pass(&self.temp, output, width, height, executor);
     }
@@ -187,6 +173,193 @@ fn step(sum: f32, prev: &mut [f64; 3], prev2: &mut [f64; 3]) -> f32 {
 /// (`n - N - 1` at `n = 1 - N`) is addressable: `2N`.
 const LEFT_PAD: usize = 2 * RADIUS_USIZE;
 const RADIUS_USIZE: usize = 5;
+
+/// Rows processed together in the horizontal pass: each is one independent
+/// recursion lane (the row analogue of the vertical pass's column lanes), so
+/// the compiler vectorises the lane loop.
+const ROW_LANES: usize = 4;
+
+/// Horizontal pass over one band: groups of [`ROW_LANES`] rows through the
+/// lane recursion, remainder rows through the scalar one. Every row's output
+/// depends on that row alone and the lane arithmetic is exactly [`step`]'s,
+/// so the grouping cannot change a value. Dispatched to an AVX2 build where
+/// the host supports it.
+fn horizontal_band(input: BlurInput<'_>, out_band: &mut [f32], width: usize) {
+    #[cfg(target_arch = "x86_64")]
+    if jpxl_core::cpu::has_avx2() {
+        // SAFETY: `horizontal_band_avx2` only requires that the host support
+        // AVX2, which `has_avx2` has just confirmed.
+        #[allow(unsafe_code)]
+        unsafe {
+            horizontal_band_avx2(input, out_band, width);
+        }
+        return;
+    }
+    horizontal_band_impl(input, out_band, width);
+}
+
+/// [`horizontal_band`] compiled for AVX2.
+///
+/// Calling it is `unsafe` unless the host supports AVX2 (see
+/// [`jpxl_core::cpu::has_avx2`]); that is the whole contract.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2,fma")]
+fn horizontal_band_avx2(input: BlurInput<'_>, out_band: &mut [f32], width: usize) {
+    horizontal_band_impl(input, out_band, width);
+}
+
+#[inline(always)]
+fn horizontal_band_impl(input: BlurInput<'_>, out_band: &mut [f32], width: usize) {
+    if width == 0 {
+        return;
+    }
+    let group = width * ROW_LANES;
+    let mut padded_t = Vec::new();
+    let mut padded = Vec::new();
+    match input {
+        BlurInput::Plane(in_band) => {
+            let mut ins = in_band.chunks_exact(group);
+            let mut outs = out_band.chunks_exact_mut(group);
+            for (rows_in, rows_out) in ins.by_ref().zip(outs.by_ref()) {
+                build_padded_lanes(BlurInput::Plane(rows_in), width, &mut padded_t);
+                horizontal_padded_lanes(rows_out, width, &padded_t);
+            }
+            for (row_in, row_out) in ins
+                .remainder()
+                .chunks_exact(width)
+                .zip(outs.into_remainder().chunks_exact_mut(width))
+            {
+                horizontal_row(row_in, row_out, &mut padded);
+            }
+        }
+        BlurInput::Product(a, b) => {
+            let mut a_groups = a.chunks_exact(group);
+            let mut b_groups = b.chunks_exact(group);
+            let mut outs = out_band.chunks_exact_mut(group);
+            for ((a_rows, b_rows), rows_out) in
+                a_groups.by_ref().zip(b_groups.by_ref()).zip(outs.by_ref())
+            {
+                build_padded_lanes(BlurInput::Product(a_rows, b_rows), width, &mut padded_t);
+                horizontal_padded_lanes(rows_out, width, &padded_t);
+            }
+            for ((a_row, b_row), row_out) in a_groups
+                .remainder()
+                .chunks_exact(width)
+                .zip(b_groups.remainder().chunks_exact(width))
+                .zip(outs.into_remainder().chunks_exact_mut(width))
+            {
+                horizontal_product_row(a_row, b_row, row_out, &mut padded);
+            }
+        }
+    }
+}
+
+/// Builds the lane-interleaved padded rows: sample `x` of lane `r` sits at
+/// `(LEFT_PAD + x) * ROW_LANES + r`, so each recursion step loads one
+/// contiguous [`ROW_LANES`]-wide window. The pads stay zero from the first
+/// allocation and the body is fully overwritten, exactly as the scalar
+/// padded row is. Product lanes round `a * b` into `f32` here, exactly as
+/// [`horizontal_product_row`] does.
+#[inline(always)]
+fn build_padded_lanes(input: BlurInput<'_>, width: usize, padded_t: &mut Vec<f32>) {
+    let n = (width + 3 * RADIUS_USIZE) * ROW_LANES;
+    if padded_t.len() != n {
+        padded_t.clear();
+        padded_t.resize(n, 0.0);
+    }
+    let Some(body) = padded_t.get_mut(LEFT_PAD * ROW_LANES..(LEFT_PAD + width) * ROW_LANES) else {
+        return;
+    };
+    match input {
+        BlurInput::Plane(rows) => {
+            for (r, row) in rows.chunks_exact(width).enumerate() {
+                for (slot, &v) in body.iter_mut().skip(r).step_by(ROW_LANES).zip(row) {
+                    *slot = v;
+                }
+            }
+        }
+        BlurInput::Product(a, b) => {
+            for (r, (a_row, b_row)) in a.chunks_exact(width).zip(b.chunks_exact(width)).enumerate()
+            {
+                for ((slot, &av), &bv) in body
+                    .iter_mut()
+                    .skip(r)
+                    .step_by(ROW_LANES)
+                    .zip(a_row)
+                    .zip(b_row)
+                {
+                    *slot = av * bv;
+                }
+            }
+        }
+    }
+}
+
+/// The recursion over [`ROW_LANES`] padded rows at once: the same warm-up and
+/// the same per-sample [`pole_step`] arithmetic as [`horizontal_padded`],
+/// lane-parallel across the rows.
+#[inline(always)]
+fn horizontal_padded_lanes(out: &mut [f32], width: usize, padded_t: &[f32]) {
+    let mut prev = [[0.0f64; ROW_LANES]; 3];
+    let mut prev2 = [[0.0f64; ROW_LANES]; 3];
+    let warm = RADIUS_USIZE - 1;
+    let lane_sum = |i: usize| -> [f64; ROW_LANES] {
+        let mut sum = [0.0f64; ROW_LANES];
+        let l = padded_t.get(i * ROW_LANES..(i + 1) * ROW_LANES);
+        let r = padded_t.get((i + LEFT_PAD) * ROW_LANES..(i + LEFT_PAD + 1) * ROW_LANES);
+        if let (Some(l), Some(r)) = (l, r) {
+            for ((s, &lv), &rv) in sum.iter_mut().zip(l).zip(r) {
+                *s = f64::from(lv + rv);
+            }
+        }
+        sum
+    };
+    for i in 0..warm {
+        step_lanes(lane_sum(i), &mut prev, &mut prev2);
+    }
+    let mut rows = out.chunks_exact_mut(width);
+    let (Some(o0), Some(o1), Some(o2), Some(o3)) =
+        (rows.next(), rows.next(), rows.next(), rows.next())
+    else {
+        return;
+    };
+    for ((((s0, s1), s2), s3), n) in o0
+        .iter_mut()
+        .zip(o1.iter_mut())
+        .zip(o2.iter_mut())
+        .zip(o3.iter_mut())
+        .zip(0..width)
+    {
+        let [v0, v1, v2, v3] = step_lanes(lane_sum(n + warm), &mut prev, &mut prev2);
+        *s0 = v0;
+        *s1 = v1;
+        *s2 = v2;
+        *s3 = v3;
+    }
+}
+
+/// One three-component recursion step over [`ROW_LANES`] independent lanes.
+/// Per lane this is exactly [`step`]: the same expression order, the same
+/// `o1 + o3 + o5` summation, one `f32` rounding of the summed output.
+#[allow(clippy::cast_possible_truncation)]
+#[inline(always)]
+fn step_lanes(
+    sum: [f64; ROW_LANES],
+    prev: &mut [[f64; ROW_LANES]; 3],
+    prev2: &mut [[f64; ROW_LANES]; 3],
+) -> [f32; ROW_LANES] {
+    let [p1, p3, p5] = prev;
+    let [q1, q3, q5] = prev2;
+    let mut acc = [0.0f64; ROW_LANES];
+    pole_step(&sum, p1, q1, &mut acc, MUL_IN[0], MUL_PREV[0], true);
+    pole_step(&sum, p3, q3, &mut acc, MUL_IN[1], MUL_PREV[1], false);
+    pole_step(&sum, p5, q5, &mut acc, MUL_IN[2], MUL_PREV[2], false);
+    let mut out = [0.0f32; ROW_LANES];
+    for (o, &a) in out.iter_mut().zip(&acc) {
+        *o = a as f32;
+    }
+    out
+}
 
 /// Horizontal recursive pass over one row, through a zero-padded copy so the
 /// window reads are plain slice walks with no per-sample bounds branch.
@@ -236,8 +409,11 @@ fn horizontal_padded(output: &mut [f32], padded: &[f32]) {
 /// executor item writing its own buffer.
 const STRIP: usize = 64;
 
-/// Vertical recursive pass over every column, strips in parallel, then one
-/// ordered scatter into the row-major output.
+/// Vertical recursive pass over every column, strips in parallel, each strip
+/// writing its own disjoint column range of the row-major output directly.
+/// The arithmetic per column is untouched — only the destination addressing
+/// changed from a per-strip buffer plus scatter to in-place row windows — so
+/// the output is bit-identical to the former scatter form.
 fn vertical_pass(
     input: &[f32],
     output: &mut [f32],
@@ -246,29 +422,53 @@ fn vertical_pass(
     executor: &dyn BandExecutor,
 ) {
     let strips = width.div_ceil(STRIP);
-    let buffers: Vec<std::sync::Mutex<Vec<f32>>> = (0..strips)
-        .map(|_| std::sync::Mutex::new(Vec::new()))
-        .collect();
+    let out = DisjointColumns::new(output);
     executor.run(strips, &|index| {
         let x0 = index * STRIP;
         let cols = (width - x0).min(STRIP);
-        let mut buffer = vec![0.0f32; cols * height];
-        vertical_strip(input, &mut buffer, width, height, x0, cols);
-        if let Some(slot) = buffers.get(index)
-            && let Ok(mut guard) = slot.lock()
-        {
-            *guard = buffer;
-        }
+        vertical_strip(input, &out, width, height, x0, cols);
     });
-    for (index, slot) in buffers.into_iter().enumerate() {
-        let buffer = slot.into_inner().unwrap_or_default();
-        let x0 = index * STRIP;
-        let cols = (width - x0).min(STRIP);
-        for (y, src) in buffer.chunks_exact(cols).enumerate() {
-            if let Some(dst) = output.get_mut(y * width + x0..y * width + x0 + cols) {
-                dst.copy_from_slice(src);
-            }
+}
+
+/// A row-major plane shared across strip workers, each writing row windows of
+/// a column range no other worker touches.
+struct DisjointColumns {
+    ptr: *mut f32,
+    len: usize,
+}
+
+// SAFETY: every worker writes only row windows of its own `x0 .. x0 + cols`
+// column range, and the strip ranges partition the columns, so no element is
+// ever aliased by two workers.
+#[allow(unsafe_code)]
+unsafe impl Sync for DisjointColumns {}
+
+impl DisjointColumns {
+    fn new(plane: &mut [f32]) -> Self {
+        Self {
+            ptr: plane.as_mut_ptr(),
+            len: plane.len(),
         }
+    }
+
+    /// The `cols` samples starting at `offset`, as one mutable row window;
+    /// `None` when the window leaves the plane.
+    ///
+    /// # Safety
+    ///
+    /// No other thread may read or write this window for the returned
+    /// borrow's lifetime; the strip partition guarantees that here.
+    // The `&self`-to-`&mut` shape is the point of the type: it is a manual
+    // interior-mutability cell whose disjointness contract lives in `unsafe`.
+    #[allow(unsafe_code, clippy::mut_from_ref)]
+    unsafe fn window(&self, offset: usize, cols: usize) -> Option<&mut [f32]> {
+        let end = offset.checked_add(cols)?;
+        if end > self.len {
+            return None;
+        }
+        // SAFETY: the range is in bounds (checked above) and unaliased (the
+        // caller's contract).
+        Some(unsafe { core::slice::from_raw_parts_mut(self.ptr.add(offset), cols) })
     }
 }
 
@@ -353,12 +553,12 @@ fn vertical_row(top: &[f32], bottom: &[f32], state: &mut StripState, out: Option
     }
 }
 
-/// Vertical pass over columns `x0 .. x0 + cols` of `input`, writing the
-/// strip row-major (`cols` per row) into `strip_out`. Dispatched to an AVX2
-/// build where the host supports it.
+/// Vertical pass over columns `x0 .. x0 + cols` of `input`, writing each
+/// row's window of `out` in place. Dispatched to an AVX2 build where the host
+/// supports it.
 fn vertical_strip(
     input: &[f32],
-    strip_out: &mut [f32],
+    out: &DisjointColumns,
     width: usize,
     height: usize,
     x0: usize,
@@ -370,11 +570,11 @@ fn vertical_strip(
         // AVX2, which `has_avx2` has just confirmed.
         #[allow(unsafe_code)]
         unsafe {
-            vertical_strip_avx2(input, strip_out, width, height, x0, cols);
+            vertical_strip_avx2(input, out, width, height, x0, cols);
         }
         return;
     }
-    vertical_strip_impl(input, strip_out, width, height, x0, cols);
+    vertical_strip_impl(input, out, width, height, x0, cols);
 }
 
 /// [`vertical_strip`] compiled for AVX2.
@@ -385,19 +585,19 @@ fn vertical_strip(
 #[target_feature(enable = "avx2,fma")]
 fn vertical_strip_avx2(
     input: &[f32],
-    strip_out: &mut [f32],
+    out: &DisjointColumns,
     width: usize,
     height: usize,
     x0: usize,
     cols: usize,
 ) {
-    vertical_strip_impl(input, strip_out, width, height, x0, cols);
+    vertical_strip_impl(input, out, width, height, x0, cols);
 }
 
 #[inline(always)]
 fn vertical_strip_impl(
     input: &[f32],
-    strip_out: &mut [f32],
+    out: &DisjointColumns,
     width: usize,
     height: usize,
     x0: usize,
@@ -419,9 +619,12 @@ fn vertical_strip_impl(
     while n < h {
         let top = row(n - RADIUS - 1);
         let bottom = row(n + RADIUS - 1);
+        // SAFETY: this strip's `x0 .. x0 + cols` columns are its own — see
+        // `DisjointColumns` — and row `n` is in bounds for `0 <= n < h`.
+        #[allow(unsafe_code)]
         let out_row = usize::try_from(n)
             .ok()
-            .and_then(|n| strip_out.get_mut(n * cols..n * cols + cols));
+            .and_then(|n| unsafe { out.window(n * width + x0, cols) });
         vertical_row(top, bottom, &mut state, out_row);
         n += 1;
     }
@@ -464,14 +667,9 @@ mod tests {
             horizontal_row(row_in, row_out, &mut padded);
         }
         let mut strips = vec![0.0f32; w * h];
-        let mut left = vec![0.0f32; 50 * h];
-        let mut right = vec![0.0f32; 50 * h];
-        vertical_strip(&temp, &mut left, w, h, 0, 50);
-        vertical_strip(&temp, &mut right, w, h, 50, 50);
-        for y in 0..h {
-            strips[y * w..y * w + 50].copy_from_slice(&left[y * 50..y * 50 + 50]);
-            strips[y * w + 50..y * w + 100].copy_from_slice(&right[y * 50..y * 50 + 50]);
-        }
+        let out = DisjointColumns::new(&mut strips);
+        vertical_strip(&temp, &out, w, h, 0, 50);
+        vertical_strip(&temp, &out, w, h, 50, 50);
         assert_eq!(whole, strips);
     }
 

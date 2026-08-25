@@ -103,8 +103,13 @@ impl<'e> PlanRenderEvaluator<'e> {
         executor: &'e EncodeExecutor,
     ) -> Result<Self, EvaluatorError> {
         let max = f32::from(u16::MAX).min(((1u32 << bits_per_sample.clamp(1, 16)) - 1) as f32);
+        // The sample domain is u16, so the per-sample transfer function is a
+        // table of the same expression evaluated once per distinct value.
+        let lut: Vec<f32> = (0..=u32::from(u16::MAX))
+            .map(|v| jpxl_core::color::srgb_to_linear(v as f32 / max))
+            .collect();
         let planes = deinterleave(rgb.chunks_exact(3), |v| {
-            jpxl_core::color::srgb_to_linear(f32::from(v) / max)
+            lut.get(usize::from(v)).copied().unwrap_or(0.0)
         });
         Self::from_linear_planes(width, height, planes, bits_per_sample, executor)
     }
@@ -229,7 +234,12 @@ fn deinterleave<'a, T: Copy + 'a>(
     pixels: impl Iterator<Item = &'a [T]>,
     convert: impl Fn(T) -> f32,
 ) -> [Vec<f32>; 3] {
-    let mut planes: [Vec<f32>; 3] = [Vec::new(), Vec::new(), Vec::new()];
+    let hint = pixels.size_hint().0;
+    let mut planes: [Vec<f32>; 3] = [
+        Vec::with_capacity(hint),
+        Vec::with_capacity(hint),
+        Vec::with_capacity(hint),
+    ];
     for px in pixels {
         for (plane, &v) in planes.iter_mut().zip(px) {
             plane.push(convert(v));

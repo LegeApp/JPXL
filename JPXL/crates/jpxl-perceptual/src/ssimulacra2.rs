@@ -223,14 +223,15 @@ impl Ssimulacra2 {
         low_memory: bool,
     ) -> [ChannelTerms; 3] {
         let pixels = width * height;
+        // The blurs below write every sample of these planes before the pool
+        // reads them, so a reused plane needs no re-zeroing; resize only grows
+        // (zeroed) or truncates.
         for buf in [&mut self.mu2, &mut self.s22, &mut self.s12] {
-            buf.clear();
             buf.resize(pixels, 0.0);
         }
         let recompute_reference = retention == ReferenceRetention::PlanesOnly;
         if recompute_reference {
             for buf in [&mut self.ref_mu, &mut self.ref_s11] {
-                buf.clear();
                 buf.resize(pixels, 0.0);
             }
         }
