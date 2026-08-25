@@ -165,12 +165,27 @@ class RegistryTests(unittest.TestCase):
     def test_split_and_class_counts_are_stable(self):
         # 2026-08-24: the one-shot program's coverage expansion added nine
         # calibration/development fixtures (noise-lowlight and grayscale from
-        # more captures; second text/UI/hatch/sky families). The locked
-        # holdout is frozen at 13.
+        # more captures; second text/UI/hatch/sky families).
+        # 2026-08-25: the saturated/gradient corpus-gap closure (memo §10, >=25
+        # source families per critical class) added 22 saturated and 17
+        # gradient synthetic families across all three splits: +15 calibration,
+        # +13 development, +7 holdout.
         by_split = Counter(f.split for f in self.fixtures)
-        self.assertEqual(by_split["calibration"], 24)
-        self.assertEqual(by_split["development"], 19)
-        self.assertEqual(by_split["holdout"], 13)
+        self.assertEqual(by_split["calibration"], 43)
+        self.assertEqual(by_split["development"], 32)
+        self.assertEqual(by_split["holdout"], 20)
+
+    def test_critical_classes_have_25_families(self):
+        # memo §10: saturated and gradient/banding-stress each need >= 25
+        # distinct source families. Synthetic families key on fixture id.
+        by_class_families: dict[str, set] = defaultdict(set)
+        for fx in self.fixtures:
+            by_class_families[fx.klass].add(mqgf.family_fields(fx)["family_id"])
+        for klass in ("saturated", "gradient"):
+            self.assertGreaterEqual(
+                len(by_class_families[klass]), 25,
+                f"{klass} has only {len(by_class_families[klass])} families",
+            )
 
     def test_families_never_cross_splits(self):
         by_family = defaultdict(set)
