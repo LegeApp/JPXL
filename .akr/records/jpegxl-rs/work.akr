@@ -8270,7 +8270,7 @@ record jpegxl-rs.work.pqc-usable-efforts-cost/7 : work {
 
 record jpegxl-rs.work.pqc-usable-efforts-cost/8 : work {
     title "PQC usable efforts: reduce Fast/Balanced wall time and peak memory"
-    state active
+    state superseded
     scope [
         path "JPXL/crates/jpxl-encode-policy/src/quality.rs",
         path "JPXL/crates/jpxl-perceptual/src/**",
@@ -8319,6 +8319,70 @@ record jpegxl-rs.work.pqc-usable-efforts-cost/8 : work {
     part_of [ @jpegxl-rs.track.perceptual-quality-controller/1 ]
     supersedes [ @jpegxl-rs.work.pqc-usable-efforts-cost/7 ]
     supported_by [
+        @jpegxl-rs.evidence.pqc-low-memory-wall-anchors-2026-08-23/1,
+        @jpegxl-rs.evidence.pqc-metric-cuts-wall-anchors-2026-08-25/1,
+        @jpegxl-rs.evidence.pqc-pr4-holdout-wall-reported-2026-08-22/1,
+        @jpegxl-rs.evidence.pqc-pr4b-memory-12mp-2026-08-22/1,
+        @jpegxl-rs.evidence.pqc-pr4b-probe-speed-2026-08-22/1,
+        @jpegxl-rs.observation.pqc-large-frame-render-parallel-2026-08-25,
+        @jpegxl-rs.observation.pqc-wall-quiet-host-attribution-2026-08-25
+    ]
+}
+
+record jpegxl-rs.work.pqc-usable-efforts-cost/9 : work {
+    title "PQC usable efforts: reduce Fast/Balanced wall time and peak memory"
+    state active
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/src/quality.rs",
+        path "JPXL/crates/jpxl-perceptual/src/**",
+        path "JPXL/crates/jpxl-plan-render/src/**",
+        path "JPXL/crates/jpxl/src/lib.rs"
+    ]
+    intent """
+        Profile and reduce the production Fast and Balanced perceptual path's full-frame render/metric allocation and rescue-probe cost. Work only on usable efforts: do not spend measurement time on the feature-gated Quality reference effort. Pure scorer, renderer, and lifetime changes must preserve Fast/Balanced codestream bytes; any deliberate search-policy change requires the standing Contract B screen.
+        """
+    note """
+        2026-08-25 direction (a), second round (commit c23bc00), now guided by a real cycle profile after the operator enabled perf: __powf_fma was 5.4% of cycles (a per-sample sRGB encode in the probe render whose result the quantizer immediately consumed, plus the 16-bit prep transfer), and the two-step linearize pass another ~3%. The probe render now produces depth-quantized linear planes directly: levels come from thresholds bisected over the f32 bit lattice against the actual linear_to_srgb->scale->round->clamp composition, guide-table accelerated and cached per bit depth; from_srgb16_with uses a 65536-entry transfer table. Exact: 6/6 A/B vs the pre-change binary, 52/52 locked matrix, a dedicated classifier-equivalence unit test. Quiet-host 12 MP 8-thread quality wall 2.39-2.53 s (2.62 s before the fusion, ~3.99 s before the day's first round). Interleaved ratios across the day: 4.3 MP 3.87x -> 3.40x -> 3.06x (4t) and 3.22x -> 2.76x -> 2.50x (8t); 12 MP 5.42x -> 5.07x -> 4.65x (4t); the round-2 12 MP 8t schedule cell was load-polluted (see the scratch README). Remaining hot leaves by cycle share: blur ~24%, EPF ~10%, pool ~7% (order-locked f64 summation, not vectorisable exactly), XYB convert ~7%, plan-phase quantize ~6%. The 4.3 MP 8-thread anchor now sits at 2.50x; the 2.0x target on both anchors still cannot be met by exact cuts alone (12 MP fixed costs dominate), so the live directions remain (a) further exact cuts with visibly diminishing headroom, (b) Contract-B-screened reduced-resolution navigation, (c) an operator renegotiation of the target; the check stays open rather than weakened unilaterally.
+        """
+    acceptance {
+        check memory-12mp {
+            statement """
+                Balanced q85 on the locked 12 MP anchor peaks at no more than 2.0 GB RSS, with the measurement serialized and process-capped.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.pqc-fused-render-memory-12mp-2026-08-25/1 ]
+        }
+        check production-identity {
+            statement """
+                Pure scorer/renderer/lifetime changes leave Fast and Balanced codestreams byte-identical across the locked identity cells, threads 1/4, and AVX2 on/off; any search-policy change instead passes the standing Contract B gate.
+                """
+            method command
+            command "python3 .agent/scratch/pqc-metric-cuts-20260825/identity_scatter.py"
+            verified_by [
+                @jpegxl-rs.evidence.pqc-fused-render-production-identity-2026-08-25/1
+            ]
+        }
+        check wall-anchors {
+            statement """
+                At matched achieved SSIMULACRA2, Balanced end-to-end wall is no more than 2.0x the rate path on both the 4.3 MP and 12 MP anchors; phase timings identify any remaining gap.
+                """
+            method observation
+        }
+        check workspace-gates {
+            statement """
+                The workspace release tests, clippy, and formatting gates pass.
+                """
+            method command
+            command "cd JPXL && cargo test --workspace --release && cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all --check"
+            verified_by [ @jpegxl-rs.evidence.pqc-fused-render-workspace-gates-2026-08-25/1 ]
+        }
+    }
+    depends_on [ @jpegxl-rs.work.pqc-pr4-quality-navigator/1 ]
+    implements [ @jpegxl-rs.decision.perceptual-quality-contract/1 ]
+    part_of [ @jpegxl-rs.track.perceptual-quality-controller/1 ]
+    supersedes [ @jpegxl-rs.work.pqc-usable-efforts-cost/8 ]
+    supported_by [
+        @jpegxl-rs.evidence.pqc-fused-render-wall-anchors-2026-08-25/1,
         @jpegxl-rs.evidence.pqc-low-memory-wall-anchors-2026-08-23/1,
         @jpegxl-rs.evidence.pqc-metric-cuts-wall-anchors-2026-08-25/1,
         @jpegxl-rs.evidence.pqc-pr4-holdout-wall-reported-2026-08-22/1,

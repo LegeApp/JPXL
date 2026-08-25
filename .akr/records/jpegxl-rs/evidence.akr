@@ -5072,6 +5072,54 @@ record jpegxl-rs.evidence.phase9-quant-scheduling-speed-2026-08-15/1 : evidence 
         """
 }
 
+record jpegxl-rs.evidence.pqc-fused-render-memory-12mp-2026-08-25/1 : evidence {
+    title "Fused-render 12 MP memory: peak 2,008,408 KiB under the 2 GiB ceiling"
+    state verified
+    result pass
+    method command
+    observed_at git:c23bc009ae6cd1a288e1922a60fe534dc711324c
+    command "python3 .agent/scratch/pqc-metric-cuts-20260825/rss_12mp.py"
+    summary """
+        Balanced q85 on the locked 12 MP anchor after the fused render: peak RSS 2,007,060-2,008,408 KiB over three serialized capped runs, under the 2,097,152 KiB ceiling; output bytes unchanged (1,315,649). Report in kept scratch pqc-metric-cuts-20260825/rss-12mp.json.
+        """
+}
+
+record jpegxl-rs.evidence.pqc-fused-render-production-identity-2026-08-25/1 : evidence {
+    title "Fused-render production identity: 52/52 matrix and 6/6 pre-change A/B byte-identical"
+    state verified
+    result pass
+    method command
+    observed_at git:c23bc009ae6cd1a288e1922a60fe534dc711324c
+    command "python3 .agent/scratch/pqc-metric-cuts-20260825/identity_scatter.py"
+    summary """
+        After the fused depth-quantized probe render, the full locked production-identity matrix is 52/52 byte-identical (threads 1/4, AVX2 on/off) and the 6-cell A/B against the pre-change 1fc3ca7 reference binary is byte-identical across threads 1/4/8 and AVX2 off; the classifier's per-sample equivalence with encode-then-round-trip is additionally pinned by the fused_depth_levels_match_the_srgb_round_trip unit test. Reports in kept scratch pqc-metric-cuts-20260825 (round 2; round-1 reports preserved as *-round1).
+        """
+}
+
+record jpegxl-rs.evidence.pqc-fused-render-wall-anchors-2026-08-25/1 : evidence {
+    title "Fused-render wall anchors: 4.3 MP at 2.50x (8t), 2.0x target still unmet"
+    state verified
+    result fail
+    method command
+    observed_at git:c23bc009ae6cd1a288e1922a60fe534dc711324c
+    command "python3 .agent/scratch/pqc-metric-cuts-20260825/wall_scatter.py"
+    summary """
+        Interleaved matched-score timing after the fused render: quality/rate 3.06x at 4 threads (load_1m 1.6-1.9) and 2.50x at 8 (load 4.0-4.2) on the 4.3 MP anchor; 4.65x at 4 threads on 12 MP (load 1.9-3.7); the 12 MP 8-thread schedule cell read 3.54x under ambient load 4.0-5.4 and is not representative — quiet manual 12 MP 8-thread quality runs measured 2.39-2.53 s against the schedule's 2.79 s median. Down from 3.40x/2.76x and 5.07x/3.50x before the fusion the same day. The 2.0x wall-anchors target remains unmet on both anchors. Report in kept scratch pqc-metric-cuts-20260825/wall-scatter.json (round 1 preserved as wall-scatter-round1.json).
+        """
+}
+
+record jpegxl-rs.evidence.pqc-fused-render-workspace-gates-2026-08-25/1 : evidence {
+    title "Fused-render workspace gates: fmt, clippy -D warnings, release tests all pass"
+    state verified
+    result pass
+    method command
+    observed_at git:c23bc009ae6cd1a288e1922a60fe534dc711324c
+    command "cd JPXL && set -o pipefail && cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace --release"
+    summary """
+        One strictly chained run at the fused-render tree: cargo fmt --all --check, clippy --workspace --all-targets -D warnings, and the release workspace test suite (76 test groups) all pass, exit 0.
+        """
+}
+
 record jpegxl-rs.evidence.pqc-low-memory-12mp-2026-08-23/1 : evidence {
     title "Low-memory Balanced q85 path meets the 12 MP two-GiB RSS ceiling"
     state verified
