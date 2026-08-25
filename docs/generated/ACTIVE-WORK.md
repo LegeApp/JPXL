@@ -53,14 +53,14 @@ Adopt the 2026-08-24 advisor memo's common-case one-shot design to close the ope
 
 Profile and reduce the production Fast and Balanced perceptual path's full-frame render/metric allocation and rescue-probe cost. Work only on usable efforts: do not spend measurement time on the feature-gated Quality reference effort. Pure scorer, renderer, and lifetime changes must preserve Fast/Balanced codestream bytes; any deliberate search-policy change requires the standing Contract B screen.
 
-**Acceptance** — 3 of 4 satisfied
+**Acceptance** — 2 of 4 satisfied
 
 | Check | Method | Verdict |
 | --- | --- | --- |
 | `memory-12mp` | observation | **satisfied** by `@jpegxl-rs.evidence.pqc-memory-12mp-2026-08-25/1` |
 | `production-identity` | command | **satisfied** by `@jpegxl-rs.evidence.pqc-scatter-production-identity-2026-08-25/1` |
 | `wall-anchors` | observation | not satisfied — no evidence |
-| `workspace-gates` | command | **satisfied** by `@jpegxl-rs.evidence.pqc-low-memory-workspace-gates-2026-08-23/1` |
+| `workspace-gates` | command | not satisfied — `@jpegxl-rs.evidence.pqc-low-memory-workspace-gates-2026-08-23/1` predates the last change |
 
 > **At risk** at depth 1 via `supported_by` → `@jpegxl-rs.observation.pqc-large-frame-render-parallel-2026-08-25/1` (stale: `watches "JPXL/crates/jpxl-plan-render/src/lib.rs"` was matched by `b0c128c7`, which touched `JPXL/crates/jpxl-plan-render/src/lib.rs`.). See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#pqc-usable-efforts-reduce-fastbalanced-wall-time-and-peak-memory).
 
