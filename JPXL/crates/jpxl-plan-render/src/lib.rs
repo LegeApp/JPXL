@@ -607,42 +607,79 @@ impl PlanRenderer {
 
             // Render varblocks in bounded, order-preserving chunks: each chunk's
             // per-varblock compute (dequant, CfL, LLF, inverse transform) runs
-            // across the executor, then its results are scattered into the frame
-            // serially. Every varblock owns a disjoint frame region, so the
-            // placed pixels are identical to a serial render; chunking keeps the
-            // transient per-chunk buffers small rather than holding one buffer
-            // per varblock at once.
+            // across the executor, then its samples are scattered band-parallel:
+            // every worker owns a disjoint [`BAND_ROWS`]-row band and writes
+            // only the varblock rows that fall inside it. Each sample belongs
+            // to exactly one varblock and exactly one band, so the placed
+            // pixels are identical to a serial render at any worker count;
+            // chunking keeps the transient per-chunk buffers small rather than
+            // holding one buffer per varblock at once. Sigma writes are a few
+            // hundredths of the sample volume and stay serial.
             let n = group.blocks.len().min(ir.coefficients.len());
             let mut start = 0usize;
             while start < n {
                 let end = (start + VARBLOCK_CHUNK).min(n);
                 let rendered =
                     render_varblock_chunk(executor, end - start, &|k| render_one(start + k))?;
-                for rv in &rendered {
-                    for (c, block) in rv.samples.iter().enumerate() {
-                        let Some(plane) = planes.get_mut(c) else {
+                // Bucket each varblock into the (at most two, since a varblock
+                // is at most 32 rows tall) bands its rows intersect, preserving
+                // chunk order within a bucket.
+                let bands = row_bands(&mut planes, dims.width);
+                let mut buckets: Vec<Vec<usize>> = vec![Vec::new(); bands.len()];
+                for (k, rv) in rendered.iter().enumerate() {
+                    let rows = rv.samples.iter().map(|b| b.rows()).max().unwrap_or(0);
+                    if rows == 0 {
+                        continue;
+                    }
+                    let top = usize::try_from(rv.y0).unwrap_or(usize::MAX);
+                    let bottom = top.saturating_add(rows - 1);
+                    let last_band = buckets.len().saturating_sub(1);
+                    for band in
+                        (top / BAND_ROWS).min(last_band)..=(bottom / BAND_ROWS).min(last_band)
+                    {
+                        if let Some(bucket) = buckets.get_mut(band) {
+                            bucket.push(k);
+                        }
+                    }
+                }
+                run_items(executor, bands.len(), &|index| {
+                    let Some((row0, mut slices)) = bands.take(index) else {
+                        return;
+                    };
+                    let Some(bucket) = buckets.get(index) else {
+                        return;
+                    };
+                    let band_rows = slices.first().map_or(0, |s| s.len()) / dims.width.max(1);
+                    for &k in bucket {
+                        let Some(rv) = rendered.get(k) else {
                             continue;
                         };
-                        for row in 0..block.rows() {
-                            let fy = rv.y0.saturating_add(narrow(row));
-                            if fy >= height {
+                        let x0 = usize::try_from(rv.x0).unwrap_or(usize::MAX);
+                        let y0 = usize::try_from(rv.y0).unwrap_or(usize::MAX);
+                        for (c, block) in rv.samples.iter().enumerate() {
+                            let Some(plane) = slices.get_mut(c) else {
                                 continue;
-                            }
-                            for col in 0..block.cols() {
-                                let fx = rv.x0.saturating_add(narrow(col));
-                                if fx >= width {
+                            };
+                            for row in 0..block.rows() {
+                                let fy = y0.saturating_add(row);
+                                if fy < row0 || fy >= row0.saturating_add(band_rows) {
                                     continue;
                                 }
-                                let idx = usize::try_from(
-                                    u64::from(fy) * u64::from(width) + u64::from(fx),
-                                )
-                                .unwrap_or(usize::MAX);
-                                if let Some(slot) = plane.get_mut(idx) {
-                                    *slot = block.at(col, row);
+                                let base = (fy - row0).saturating_mul(dims.width);
+                                for col in 0..block.cols() {
+                                    let fx = x0.saturating_add(col);
+                                    if fx >= dims.width {
+                                        continue;
+                                    }
+                                    if let Some(slot) = plane.get_mut(base.saturating_add(fx)) {
+                                        *slot = block.at(col, row);
+                                    }
                                 }
                             }
                         }
                     }
+                });
+                for rv in &rendered {
                     for &(idx, value) in &rv.sigma {
                         if let Some(slot) = sigma.get_mut(idx) {
                             *slot = value;
