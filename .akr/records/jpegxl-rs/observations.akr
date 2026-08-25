@@ -1929,6 +1929,26 @@ record jpegxl-rs.observation.pqc-pr7-full-holdout-quality-rejected-2026-08-24/1 
     ]
 }
 
+record jpegxl-rs.observation.pqc-wall-quiet-host-attribution-2026-08-25/1 : observation {
+    title "Quiet-host wall anchors: 12 MP 5.42x (4t) / 4.25x (8t); the quality path's fixed costs alone sit near 2x, so the 2.0x target is unreachable by search improvements"
+    state verified
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/src/quality.rs",
+        path "JPXL/crates/jpxl-perceptual/src/**",
+        path "JPXL/crates/jpxl-plan-render/src/**"
+    ]
+    statement """
+        Interleaved matched-score timing (wall_current.py recipe: one warm-up per kind, 10-run schedule, 5 GiB address-space cap, host state per run) on a quiet host with the current release binary: 4.3 MP anchor quality/rate 2.021/0.521 s = 3.88x at 4 threads and 1.824/0.566 s = 3.22x at 8; 12 MP anchor 5.464/1.007 s = 5.42x at 4 threads and 3.988/0.938 s = 4.25x at 8. The 4-thread rate median (1.007 s) reproduces the 2026-08-23 baseline exactly, so the comparable quiet-host series at 12 MP/4t is 8.00x (2026-08-23) -> 5.42x (after the one-shot promotion cut probes 5->3); the 2.46x recorded on 2026-08-25 divided by an inflated ~1.59 s rate denominator measured under load and is not comparable. Phase attribution (12 MP, 8 threads): plan 366 ms, render_metric 1985 ms (three pixel probes at 642-697 ms each), entropy 79 ms, emit 99 ms, two exact prices 89 ms each; ~1.4 s of the 3.99 s wall is outside the controller (source PPM load, metric reference precompute, feature extraction, output IO). Consequence: the quality path's fixed costs excluding all scored probes (~1.83 s at 8 threads) are already 1.95x the rate path, and a perfect single-probe controller would land near 2.7x, so the wall-anchors 2.0x acceptance cannot be met by search improvements alone; it requires reducing per-pixel render+metric cost ~2-3x (score-identity risk) or renegotiating the target. Separately, the band-parallel varblock scatter is exact but wall-neutral at the 12 MP anchor: render_metric 2043/2168 ms (pre-change binary) vs 2107/2057 ms (post), and the 4 MP varblock stage is 45 ms at 4 threads in both trees, so the earlier ~50-100 ms/probe scatter estimate was high. Raw runs, traces, and comparisons are in the kept scratch entry pqc-scatter-20260825 (wall-scatter.json, trace-*.jsonl).
+        """
+    observed_at git:b0c128c785d7524c6002eb34ca7ebd990b24bf1e
+    method command
+    watches [
+        "JPXL/crates/jpxl-plan-render/src/lib.rs",
+        "JPXL/crates/jpxl-perceptual/src/**",
+        "JPXL/crates/jpxl-encode-policy/src/quality.rs"
+    ]
+}
+
 record jpegxl-rs.observation.preopt-encode-baseline-2026-08-06/1 : observation {
     title "Pre-optimization encode wall-time ladder (release jpxl bench)"
     state superseded
@@ -2334,6 +2354,19 @@ record jpegxl-rs.observation.q6-zero-run-term-explains-dct8-residual-only-2026-0
     supersedes [
         @jpegxl-rs.observation.q6-zero-run-term-explains-dct8-residual-only-2026-08-18/1
     ]
+}
+
+record jpegxl-rs.observation.quality-corpus-critical-class-families-2026-08-25/1 : observation {
+    title "Quality-corpus generator now provides 26 saturated and 25 gradient/banding families; locked holdout fixtures byte-unchanged"
+    state verified
+    scope [ path "JPXL/tools/make-quality-guard-fixtures.py", path "test-set/**" ]
+    statement """
+        The synthetic quality-guard generator was extended with distinct deterministic content processes so the two critical classes named by the one-shot memo's section 10 now meet its >=25-families floor: saturated 4 -> 26 and gradient/banding-stress 8 -> 25 (each synthetic fixture is its own family). The corpus grew 56 -> 95 fixtures (calibration 43, development 32, holdout 20); the split audit reports no family in more than one split, regeneration is sha256-idempotent on a second run, codec_compare.py manifest-check validates all 95 images, and 16 generator unit tests pass (including a new >=25-families gate). All 13 fixtures pinned by the locked PR4-closure holdout manifest are byte-unchanged, so prior identity and rate-curve evidence remains comparable. SSIMULACRA2 oracle-label sweeps over the new families were deliberately not run; they are the remaining step before the model can be retrained on this coverage.
+        """
+    observed_at git:6e13305b647024c4fe4a1eabcef36560cd586a26
+    method command
+    watches [ "JPXL/tools/make-quality-guard-fixtures.py" ]
+    derived_from [ @jpegxl-rs.work.pqc-one-shot-controller ]
 }
 
 record jpegxl-rs.observation.quantizer-normalised-distortion-is-the-lever-2026-08-12/1 : observation {
