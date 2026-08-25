@@ -1,0 +1,15 @@
+[package]
+name = "jpxl-jpeg"
+description = "Clean-room ISO/IEC 10918-1 (JPEG1) coefficient-level codec: parse a JPEG bitstream into typed structures and re-emit it byte-for-byte"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# Phase A is a self-contained 10918-1 codec: it deliberately depends on
+# nothing in the workspace so all JPEG-1 subtleties are isolated before any
+# JPEG XL codestream work (see JPXL/docs/jpeg-recompression-plan.md §3).
+[dependencies]
+
+[lints]
+workspace = true

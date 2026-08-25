@@ -1,0 +1,5 @@
+fixture: trailing_garbage.jpg
+origin: synthesised by tests/fixtures/generate.py (original content)
+license: CC0-1.0 / public domain (no third-party image used)
+sha256: aa55e7e2147339bfb7d64d33bdfe35a273d055915db0d7083e8ef0e3d9982bcc
+regenerate: base_444.jpg with literal trailing bytes appended after EOI

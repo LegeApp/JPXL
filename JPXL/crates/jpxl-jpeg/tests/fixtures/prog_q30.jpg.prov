@@ -1,0 +1,5 @@
+fixture: prog_q30.jpg
+origin: synthesised by tests/fixtures/generate.py (original content)
+license: CC0-1.0 / public domain (no third-party image used)
+sha256: 8d81d5e4f2698388af0eb6854a27c49c19b85c9a6cb0d53ac57693e3b03c18c8
+regenerate: cjpeg -quality 30 -progressive -sample 2x2

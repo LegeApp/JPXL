@@ -1,0 +1,5 @@
+fixture: base_q20.jpg
+origin: synthesised by tests/fixtures/generate.py (original content)
+license: CC0-1.0 / public domain (no third-party image used)
+sha256: fb65f1e9094878e38581a6c828040c0dcec7ea9d32e954c72d235604f7514d7d
+regenerate: cjpeg -quality 20 -sample 2x2

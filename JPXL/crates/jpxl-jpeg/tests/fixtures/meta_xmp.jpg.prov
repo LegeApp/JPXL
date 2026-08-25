@@ -1,0 +1,5 @@
+fixture: meta_xmp.jpg
+origin: synthesised by tests/fixtures/generate.py (original content)
+license: CC0-1.0 / public domain (no third-party image used)
+sha256: 6beeb6cba6d460af850d0103d3210e64765d670a87dbda5c5617deec8c482d83
+regenerate: Pillow img.save(quality=88, subsampling=2, xmp=<XMP packet>)

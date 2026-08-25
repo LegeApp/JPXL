@@ -1,0 +1,5 @@
+fixture: refuse_arithmetic.jpg
+origin: synthesised by tests/fixtures/generate.py (original content)
+license: CC0-1.0 / public domain (no third-party image used)
+sha256: 2b41fb4ffef97ad0f978e0d4aa2cff0abc7abdfde1104692e4159199f6e7a989
+regenerate: cjpeg -quality 85 -arithmetic -sample 2x2

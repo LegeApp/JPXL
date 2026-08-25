@@ -5,6 +5,7 @@ members = [
     "crates/jpxl-bitstream",
     "crates/jpxl-core",
     "crates/jpxl-entropy",
+    "crates/jpxl-jpeg",
     "crates/jpxl-decode",
     "crates/jpxl-encode",
     "crates/jpxl-encode-policy",

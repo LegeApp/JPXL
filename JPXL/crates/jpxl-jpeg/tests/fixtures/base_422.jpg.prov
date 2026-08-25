@@ -1,0 +1,5 @@
+fixture: base_422.jpg
+origin: synthesised by tests/fixtures/generate.py (original content)
+license: CC0-1.0 / public domain (no third-party image used)
+sha256: ed4231510da7db2dbcbd4f28ffdffc36952134ea0530ca6fdfb9adf87d259da5
+regenerate: cjpeg -quality 85 -sample 2x1

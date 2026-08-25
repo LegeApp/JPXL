@@ -1,0 +1,5 @@
+fixture: meta_exif_icc.jpg
+origin: synthesised by tests/fixtures/generate.py (original content)
+license: CC0-1.0 / public domain (no third-party image used)
+sha256: 63f9972564aada07559d2c3c5fc15e94d6e09f3d39b076defe5ce34de38ccf1b
+regenerate: Pillow img.save(quality=88, subsampling=0, exif=..., icc_profile=sRGB)

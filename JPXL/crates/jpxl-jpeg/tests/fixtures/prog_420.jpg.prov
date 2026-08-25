@@ -1,0 +1,5 @@
+fixture: prog_420.jpg
+origin: synthesised by tests/fixtures/generate.py (original content)
+license: CC0-1.0 / public domain (no third-party image used)
+sha256: 56a386d62f8f0102020db6c11d2ba97fc93f3f775a4653744b7057a08f02a159
+regenerate: cjpeg -quality 85 -progressive -sample 2x2

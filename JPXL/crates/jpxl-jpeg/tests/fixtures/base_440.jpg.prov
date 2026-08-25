@@ -1,0 +1,5 @@
+fixture: base_440.jpg
+origin: synthesised by tests/fixtures/generate.py (original content)
+license: CC0-1.0 / public domain (no third-party image used)
+sha256: 4c081c88785200558d5e3440d67bfc667434795ee01f6c46e86e974795fe02d0
+regenerate: cjpeg -quality 85 -sample 1x2
