@@ -1,6 +1,22 @@
 akr 0.1
 project jpegxl-rs
 
+record jpegxl-rs.evidence.avx2-pooling-bit-identity-2026-08-26/1 : evidence {
+    title "jpegxl-rs.evidence.avx2-pooling-bit-identity-2026-08-26"
+    state verified
+    result pass
+    method command
+    observed_at git:d2a54b5486b90fd4808e9bb77c67eea6bbd9f010
+    command "cargo test -p jpxl-perceptual; cmp on full A/B encodes vs HEAD-baseline build"
+    summary """
+        accumulate_band's avx2+fma clone is byte-identical to the scalar
+        walk: the lane test covers remainder lengths 0,1,7,8,9,64,250,
+        and full quality-path encodes of the canonical images compare
+        equal with cmp against a pre-change baseline binary. Wall-clock
+        on the 12 MP quality path improved about 5-8% at 4 threads.
+        """
+}
+
 record jpegxl-rs.evidence.bench-vs-libjxl-reproducible-2026-08-25/1 : evidence {
     title "One documented command compares JPXL and native cjxl/djxl on the same inputs with recorded provenance"
     state verified
@@ -5069,6 +5085,27 @@ record jpegxl-rs.evidence.phase9-quant-scheduling-speed-2026-08-15/1 : evidence 
     observed_at git:b713d1e6c8b8ddec111f471b5293bccf601ef924
     summary """
         On the pinned unseen 12 MP photo, finer deterministic quantization scheduling reduced the three-pair thin median 3.80% and the freshly retrained PGO median 0.78% with three of three PGO paired wins; fresh sampling attributes 18.91% to the still-hot quantization closure with exact folded/event period sums and zero lost samples.
+        """
+}
+
+record jpegxl-rs.evidence.pipeline-metadata-seam-2026-08-26/1 : evidence {
+    title "jpegxl-rs.evidence.pipeline-metadata-seam-2026-08-26"
+    state verified
+    result pass
+    method command
+    observed_at git:05733e9b32cec8e460e552fea5f01c20c87ca941
+    command "cargo test --workspace (jpxl facade + jpxl-encode suites)"
+    summary """
+        The metadata seam is verified end to end at this commit: an
+        appended Exif box round-trips through the decoder's box walk
+        with the codestream untouched; with_exif rejects payloads
+        without a TIFF byte-order header; all four ColourSpace values
+        round-trip through the decoder's ColourEncoding parse; a
+        greyscale image rejects non-sRGB signalling; lossy VarDCT
+        returns a typed Unsupported for non-sRGB input. Cross-repo, a
+        real 25 MB Samsung DNG's 574-byte TIFF blob survived
+        raw-autotune develop, JPXL encode, openarc archive and extract
+        byte-identically (recorded on the openarc ledger).
         """
 }
 

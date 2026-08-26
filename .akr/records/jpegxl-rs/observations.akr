@@ -1091,6 +1091,22 @@ record jpegxl-rs.observation.patches-k3/1 : observation {
     }
 }
 
+record jpegxl-rs.observation.pgo-gain-remeasured-2026-08-26/1 : observation {
+    title "PGO gain re-measured at 2-8%; Phase 8.5 magnitudes are historical"
+    state verified
+    statement """
+        Re-measured at this commit, the combined release-final (fat LTO)
+        plus PGO cycle gains only 2-8% over the thin-LTO release profile on
+        the canonical training and unseen images. The Phase 8.5 PGO
+        magnitudes recorded around 2026-08-14 (36-53%) predate the
+        Opt-F..P rounds and the 2026-08-25 fused probe-render work and no
+        longer describe HEAD; treat them as historical, and re-verify
+        before citing PGO as a major lever.
+        """
+    observed_at git:b1f7196c325cce789620b87a0907bf594c82a73b
+    method command
+}
+
 record jpegxl-rs.observation.phase0-diag-12mp-2026-08-06/1 : observation {
     title "Phase-0 measured multiplicity at 4000x3000 (threads 1 vs auto)"
     state verified

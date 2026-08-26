@@ -5,7 +5,7 @@ build {
     tool "akr 0.3.3"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:e56b9a85583615d94e1fab8b121fb543a4e24563fe57c169a07ccbb4dcc093fd"
+    source_graph "sha256:2e53454b4abc5a2e7803995f3fb00745b536d02f33e33c9607223cdf0dd3935b"
 }
 
 source ".akr/project.akr" {
@@ -29,8 +29,8 @@ source ".akr/records/jpegxl-rs/decisions.akr" {
 }
 
 source ".akr/records/jpegxl-rs/evidence.akr" {
-    hash "sha256:813cdfbde0f67cee547fafce86d7716f2c2913795bb0cc58298b25607d9c5b4b"
-    records 564
+    hash "sha256:d04e0b11af4cc93647f60cb756ed981f01a093d4ab3969445c4eba15fd4f7aaf"
+    records 566
 }
 
 source ".akr/records/jpegxl-rs/milestones.akr" {
@@ -39,8 +39,8 @@ source ".akr/records/jpegxl-rs/milestones.akr" {
 }
 
 source ".akr/records/jpegxl-rs/observations.akr" {
-    hash "sha256:09c16275005d4cbfe0b8df4b7b0e4719496adf50211ea286a29a63e0e064a3ab"
-    records 101
+    hash "sha256:45603a70e136457f806013a2f0575d352fb4098e7ec538e3fdf6faad32bbe005"
+    records 102
 }
 
 source ".akr/records/jpegxl-rs/papercuts.akr" {
@@ -3877,6 +3877,11 @@ seal @jpegxl-rs.decision.ssimulacra2-is-the-primary-promotion-metric/1 {
     hash "sha256:9aa847d339b8d732eb49a5f6bbd48a6c4e41819fd3824400c8c4681d7b4f8549"
 }
 
+seal @jpegxl-rs.evidence.avx2-pooling-bit-identity-2026-08-26/1 {
+    state verified
+    hash "sha256:3cdec63fc9c4af853f3e0245c9ad125c5ba23ce1b0fdf612aca20fa4f0d8d42b"
+}
+
 seal @jpegxl-rs.evidence.bench-vs-libjxl-reproducible-2026-08-25/1 {
     state verified
     hash "sha256:a24dfed6aab83df6837b4ebe83c0a2bf6aa28a646df346c2b6f84175fe267b3b"
@@ -5972,6 +5977,11 @@ seal @jpegxl-rs.evidence.phase9-quant-scheduling-speed-2026-08-15/1 {
     hash "sha256:cb264f0ebd981e140e9b4a3dac7845d50ea72489e8117e6198a957e436099375"
 }
 
+seal @jpegxl-rs.evidence.pipeline-metadata-seam-2026-08-26/1 {
+    state verified
+    hash "sha256:9ef1d7916672b5d8b3592497a750aabda8126af95eeb51d7b4c6fd506d114edf"
+}
+
 seal @jpegxl-rs.evidence.pqc-fused-render-memory-12mp-2026-08-25/1 {
     state verified
     hash "sha256:53234a275fac57eb5ceb155e3b7a7aa1ffb3a402518f3c84fc2862f0e9bd5c24"
@@ -7010,6 +7020,11 @@ seal @jpegxl-rs.observation.one-frequency-curve-fits-all-squares-2026-08-12/1 {
 seal @jpegxl-rs.observation.patches-k3/1 {
     state verified
     hash "sha256:bca247170ce59df488ca3e70fa061470da5f680454af775bd9bdbb99364ff5f7"
+}
+
+seal @jpegxl-rs.observation.pgo-gain-remeasured-2026-08-26/1 {
+    state verified
+    hash "sha256:a52cc8346a8a844e0a336c7d0502b6d08803fa7c8b89d2e6e78f2fdadfb9d467"
 }
 
 seal @jpegxl-rs.observation.phase0-diag-12mp-2026-08-06/1 {
