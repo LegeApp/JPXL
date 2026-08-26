@@ -76,6 +76,7 @@ use modular::{ModularSource, Plane, Rect};
 use section::SectionStore;
 
 pub use error::{EncodeError, Result};
+pub use headers::ColourSpace;
 pub use lossless::Effort;
 pub use resources::{EncodeExecutor, EncodeResources, ParallelAxis};
 
@@ -152,12 +153,12 @@ impl Image {
     /// # Errors
     ///
     /// As [`Image::new`].
-    pub fn from_interleaved(
+    pub fn from_interleaved<S: Copy + Into<i32>>(
         width: u32,
         height: u32,
         channels: usize,
         bits_per_sample: u32,
-        samples: &[u16],
+        samples: &[S],
     ) -> Result<Self> {
         if channels == 0 {
             return Err(EncodeError::unsupported(
@@ -174,7 +175,7 @@ impl Image {
         let planes: Vec<Plane> = (0..channels)
             .map(|c| {
                 (0..per_plane)
-                    .map(|i| samples.get(i * channels + c).map_or(0, |&s| i32::from(s)))
+                    .map(|i| samples.get(i * channels + c).map_or(0, |&s| s.into()))
                     .collect()
             })
             .collect();
@@ -251,6 +252,13 @@ pub struct EncodeOptions {
     /// Every level is exact-lossless, so this changes only the byte count and
     /// the encode time, never the decoded pixels.
     pub effort: Effort,
+    /// The colour space the caller's samples are in, signalled declaratively
+    /// in the image header (18181-1 E.2). Default: sRGB, the Table E.1
+    /// `all_default` bundle.
+    ///
+    /// The Modular path stores samples untouched, so this changes only how a
+    /// colour-managed viewer interprets them — never the decoded values.
+    pub colour_space: headers::ColourSpace,
     /// Measurement escape hatch: override individual levers of the search
     /// budget [`EncodeOptions::effort`] would have selected.
     ///
@@ -402,7 +410,13 @@ fn encode_codestream(image: &Image, options: &EncodeOptions) -> Result<Vec<u8>> 
     } else {
         source_planes
     };
-    encode_codestream_with_plan_resources(image, &planes, &plan, options.resources)
+    encode_codestream_with_plan_resources(
+        image,
+        &planes,
+        &plan,
+        options.resources,
+        options.colour_space,
+    )
 }
 
 /// Emits the codestream a validated plan describes.
@@ -418,10 +432,17 @@ pub fn encode_codestream_with_plan(
     planes: &[Plane],
     plan: &ValidatedLosslessPlan,
 ) -> Result<Vec<u8>> {
-    encode_codestream_with_plan_resources(image, planes, plan, EncodeResources::serial())
+    encode_codestream_with_plan_resources(
+        image,
+        planes,
+        plan,
+        EncodeResources::serial(),
+        ColourSpace::Srgb,
+    )
 }
 
-/// As [`encode_codestream_with_plan`], with an explicit resource policy.
+/// As [`encode_codestream_with_plan`], with an explicit resource policy and
+/// an explicit declarative colour space.
 ///
 /// # Errors
 ///
@@ -431,6 +452,7 @@ pub fn encode_codestream_with_plan_resources(
     planes: &[Plane],
     plan: &ValidatedLosslessPlan,
     resources: EncodeResources,
+    colour_space: ColourSpace,
 ) -> Result<Vec<u8>> {
     let (width, height) = (image.width(), image.height());
     let plan = plan.plan();
@@ -456,7 +478,7 @@ pub fn encode_codestream_with_plan_resources(
     let mut w = BitWriter::new();
     headers::write_signature(&mut w)?;
     headers::write_size_header(&mut w, width, height)?;
-    headers::write_metadata(&mut w, image.shape(), image.bits_per_sample())?;
+    headers::write_metadata(&mut w, image.shape(), image.bits_per_sample(), colour_space)?;
 
     // F.1: every frame starts on a byte boundary.
     w.zero_pad_to_byte();

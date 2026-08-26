@@ -7137,6 +7137,24 @@ record jpegxl-rs.work.optional-semantic-guidance-consumer/1 : work {
     part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
 }
 
+record jpegxl-rs.work.pipeline-metadata-seam/1 : work {
+    title "EXIF box and colour-space signalling for the archive pipeline"
+    state proposed
+    intent """
+        Give the archive pipeline the two metadata seams it needs from the
+        encoder: a Part 2 Exif container box exposed as Encoder::with_exif
+        (validated raw-TIFF payload, container implied), and declarative
+        colour-space signalling (sRGB, linear sRGB, Display P3, Rec.2020)
+        through the Annex E ColourEncoding bundle on the lossless Modular
+        path, with lossy VarDCT rejecting non-sRGB input by typed error
+        because XYB and the metric are defined on sRGB. Downstream,
+        raw-autotune supplies the TIFF blob and colour tag and openarc
+        routes them through archiving; the contract is a bare TIFF blob,
+        never an APP1 wrapper.
+        """
+    implements [ @jpegxl-rs.requirement.general-use-integration-surface ]
+}
+
 record jpegxl-rs.work.pqc-one-shot-controller/1 : work {
     title "One-shot program: shadow-first common-case one-shot quality controller"
     state superseded

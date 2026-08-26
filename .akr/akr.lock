@@ -5,7 +5,7 @@ build {
     tool "akr 0.3.3"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:cd475cd59072daec056b7dd990d7a577cabe3bed751c45724d18b3e51111151d"
+    source_graph "sha256:e56b9a85583615d94e1fab8b121fb543a4e24563fe57c169a07ccbb4dcc093fd"
 }
 
 source ".akr/project.akr" {
@@ -69,8 +69,8 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:163d9779bd261b63cb9e07a2cdb04966a47cfdbbad121251c8011321bd900037"
-    records 187
+    hash "sha256:52e69b5b86d843ee9caaa7a2fa2e7915a828b1c8a206aa8883b5ddb07f69cd6e"
+    records 188
 }
 
 resolution @jpegxl-rs.decision.encoder-architecture-phases/1 {
@@ -3695,6 +3695,12 @@ resolution @jpegxl-rs.work.opt-v2-rate-work-sharing/2 {
     slot part_of
     to @jpegxl-rs.milestone.m-opt-vardct-rate/1
     hash "sha256:f7733beff3d25a93a7ba717c5686463ca7c969d91eae48dbaacfeefae835d73d"
+}
+
+resolution @jpegxl-rs.work.pipeline-metadata-seam/1 {
+    slot implements
+    to @jpegxl-rs.requirement.general-use-integration-surface/2
+    hash "sha256:540f9f8226b27b8fc64b62502f583996d474e374cc34a10e79b6b77706b3b17f"
 }
 
 resolution @jpegxl-rs.work.pqc-one-shot-controller/1 {

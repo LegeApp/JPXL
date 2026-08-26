@@ -45,6 +45,7 @@ use std::fmt;
 pub use jpxl_core::limits::Limits;
 pub use jpxl_decode::decode::FloatPlane;
 pub use jpxl_decode::{DecodedImage, Plane};
+pub use jpxl_encode::ColourSpace;
 pub use jpxl_encode_policy::RateStatus;
 pub use jpxl_encode_policy::request::MetricVersion;
 
@@ -377,7 +378,7 @@ enum Mode {
 /// contract), [`with_target_bpp`](Self::with_target_bpp) /
 /// [`with_target_bytes`](Self::with_target_bytes), or
 /// [`with_global_scale`](Self::with_global_scale).
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Encoder {
     mode: Mode,
     lossless_effort: jpxl_encode::Effort,
@@ -386,6 +387,8 @@ pub struct Encoder {
     container: bool,
     jxlp_fragment_size: Option<usize>,
     quality_fallback: QualityFallback,
+    colour_space: ColourSpace,
+    exif: Option<Vec<u8>>,
 }
 
 impl Default for Encoder {
@@ -398,6 +401,8 @@ impl Default for Encoder {
             container: false,
             jxlp_fragment_size: None,
             quality_fallback: QualityFallback::Refuse,
+            colour_space: ColourSpace::Srgb,
+            exif: None,
         }
     }
 }
@@ -579,6 +584,44 @@ impl Encoder {
         self
     }
 
+    /// Declare the colour space of the samples handed to the encoder
+    /// (default: sRGB), signalled declaratively in the image header.
+    ///
+    /// The lossless Modular path stores samples untouched, so this changes
+    /// only how a colour-managed viewer interprets them. The lossy VarDCT
+    /// path is defined on sRGB input — its XYB transform and its perceptual
+    /// metric assume it — so a lossy encode of a non-sRGB colour space fails
+    /// with [`Error::Unsupported`] rather than mis-tagging the pixels.
+    #[must_use]
+    pub fn with_colour_space(mut self, colour_space: ColourSpace) -> Self {
+        self.colour_space = colour_space;
+        self
+    }
+
+    /// Attach an Exif metadata block, carried in a Part 2 `Exif` box.
+    ///
+    /// `exif` must be the raw Exif/TIFF payload as JEITA CP-3451E defines it,
+    /// beginning with the TIFF byte-order header (`II*\0` or `MM\0*`) — the
+    /// same bytes a camera stores after the `Exif\0\0` marker of a JPEG
+    /// `APP1` segment, without that marker. Implies
+    /// [`with_container`](Self::with_container): metadata boxes have nowhere
+    /// to live outside a container.
+    ///
+    /// Per 18181-2 9.5 the codestream's own fields (dimensions, orientation)
+    /// take precedence over Exif equivalents at decode time.
+    pub fn with_exif(mut self, exif: Vec<u8>) -> Result<Self> {
+        if !matches!(
+            exif.first_chunk(),
+            Some([0x49, 0x49, 0x2A, 0x00] | [0x4D, 0x4D, 0x00, 0x2A])
+        ) {
+            return Err(Error::InvalidOption(
+                "the Exif payload must begin with a TIFF byte-order header (II*\\0 or MM\\0*)",
+            ));
+        }
+        self.exif = Some(exif);
+        Ok(self)
+    }
+
     /// Encode interleaved 8-bit sRGB samples.
     pub fn encode_rgb8(&self, width: u32, height: u32, rgb: &[u8]) -> Result<Vec<u8>> {
         Ok(self.encode_rgb8_reported(width, height, rgb)?.0)
@@ -591,10 +634,10 @@ impl Encoder {
         height: u32,
         rgb: &[u8],
     ) -> Result<(Vec<u8>, EncodeReport)> {
+        self.require_srgb_for_lossy()?;
         match self.mode {
             Mode::Lossless => {
-                let samples: Vec<u16> = rgb.iter().map(|&sample| u16::from(sample)).collect();
-                let bytes = self.encode_lossless(width, height, 3, 8, &samples)?;
+                let bytes = self.encode_lossless(width, height, 3, 8, rgb)?;
                 Ok((bytes, EncodeReport::Lossless))
             }
             Mode::Lossy(LossyTarget::Rate(target)) => {
@@ -604,23 +647,20 @@ impl Encoder {
                     width, height, rgb, &request, target,
                 )?;
                 let report = EncodeReport::Rate(rate_summary(&outcome));
-                let bytes = self.wrap_lossy(outcome.codestream, 8);
+                let bytes = self.finish(outcome.codestream, 8);
                 Ok((bytes, report))
             }
             Mode::Lossy(LossyTarget::Perceptual(target)) => self.perceptual_encode(
                 target,
                 PerceptualSource::Rgb8 { width, height, rgb },
-                || {
-                    let samples: Vec<u16> = rgb.iter().map(|&sample| u16::from(sample)).collect();
-                    self.encode_lossless(width, height, 3, 8, &samples)
-                },
+                || self.encode_lossless(width, height, 3, 8, rgb),
             ),
             Mode::Lossy(LossyTarget::FixedQuantizer(fixed)) => {
                 let mut request = jpxl_encode_policy::EncodeRequest::for_fixed_quantizer(fixed);
                 request.resources = self.resources;
                 request.bits_per_sample = 8;
                 let bytes = jpxl_encode_policy::encode_srgb8_vardct(width, height, rgb, &request)?;
-                let wrapped = self.wrap_lossy(bytes, 8);
+                let wrapped = self.finish(bytes, 8);
                 let count = u64::try_from(wrapped.len()).unwrap_or(u64::MAX);
                 Ok((wrapped, EncodeReport::FixedQuantizer { bytes: count }))
             }
@@ -648,6 +688,7 @@ impl Encoder {
         bits_per_sample: u32,
         rgb: &[u16],
     ) -> Result<(Vec<u8>, EncodeReport)> {
+        self.require_srgb_for_lossy()?;
         match self.mode {
             Mode::Lossless => {
                 let bytes = self.encode_lossless(width, height, 3, bits_per_sample, rgb)?;
@@ -664,7 +705,7 @@ impl Encoder {
                     target,
                 )?;
                 let report = EncodeReport::Rate(rate_summary(&outcome));
-                let bytes = self.wrap_lossy(outcome.codestream, bits_per_sample);
+                let bytes = self.finish(outcome.codestream, bits_per_sample);
                 Ok((bytes, report))
             }
             Mode::Lossy(LossyTarget::Perceptual(target)) => self.perceptual_encode(
@@ -687,7 +728,7 @@ impl Encoder {
                     bits_per_sample,
                     &request,
                 )?;
-                let wrapped = self.wrap_lossy(bytes, bits_per_sample);
+                let wrapped = self.finish(bytes, bits_per_sample);
                 let count = u64::try_from(wrapped.len()).unwrap_or(u64::MAX);
                 Ok((wrapped, EncodeReport::FixedQuantizer { bytes: count }))
             }
@@ -699,8 +740,12 @@ impl Encoder {
     /// The current VarDCT policy is RGB-only, so a lossy encoder returns a
     /// clear error instead of silently expanding greyscale to RGB.
     pub fn encode_gray8(&self, width: u32, height: u32, gray: &[u8]) -> Result<Vec<u8>> {
-        let samples: Vec<u16> = gray.iter().map(|&sample| u16::from(sample)).collect();
-        self.encode_gray16(width, height, 8, &samples)
+        if matches!(self.mode, Mode::Lossy(_)) {
+            return Err(Error::InvalidOption(
+                "lossy VarDCT currently requires RGB input; use lossless mode for greyscale",
+            ));
+        }
+        self.encode_lossless(width, height, 1, 8, gray)
     }
 
     /// Encode high-precision greyscale samples losslessly.
@@ -868,7 +913,7 @@ impl Encoder {
             }
         }
 
-        let bytes = self.wrap_lossy(outcome.codestream, bits);
+        let bytes = self.finish(outcome.codestream, bits);
         let report = PerceptualOutcome {
             requested_score: target.minimum_score,
             achieved_score: Some(outcome.achieved_score),
@@ -899,13 +944,13 @@ impl Encoder {
         Ok((bytes, EncodeReport::Perceptual(report)))
     }
 
-    fn encode_lossless(
+    fn encode_lossless<S: Copy + Into<i32>>(
         &self,
         width: u32,
         height: u32,
         channels: usize,
         bits_per_sample: u32,
-        samples: &[u16],
+        samples: &[S],
     ) -> Result<Vec<u8>> {
         let image = jpxl_encode::Image::from_interleaved(
             width,
@@ -914,14 +959,18 @@ impl Encoder {
             bits_per_sample,
             samples,
         )?;
+        // Ask for the naked codestream and wrap in `finish`, so the
+        // container logic (including the Exif box) lives in one place for
+        // the lossless and lossy paths alike.
         let options = jpxl_encode::EncodeOptions {
-            container: self.container,
-            jxlp_fragment_size: self.jxlp_fragment_size,
+            container: false,
+            jxlp_fragment_size: None,
             resources: self.resources,
             effort: self.lossless_effort,
+            colour_space: self.colour_space,
             ..jpxl_encode::EncodeOptions::default()
         };
-        Ok(jpxl_encode::encode(&image, &options)?)
+        Ok(self.finish(jpxl_encode::encode(&image, &options)?, bits_per_sample))
     }
 
     fn lossy_request(
@@ -934,8 +983,11 @@ impl Encoder {
         request
     }
 
-    fn wrap_lossy(&self, codestream: Vec<u8>, bits_per_sample: u32) -> Vec<u8> {
-        if !self.container && self.jxlp_fragment_size.is_none() {
+    /// Wraps a finished codestream per the encoder's container options: a
+    /// container when asked for (or implied by a `jxlp` fragment size or an
+    /// Exif payload), with the Exif box appended after the codestream boxes.
+    fn finish(&self, codestream: Vec<u8>, bits_per_sample: u32) -> Vec<u8> {
+        if !self.container && self.jxlp_fragment_size.is_none() && self.exif.is_none() {
             return codestream;
         }
         let level = if bits_per_sample > 8 {
@@ -943,10 +995,26 @@ impl Encoder {
         } else {
             jpxl_encode::container::DEFAULT_LEVEL
         };
-        match self.jxlp_fragment_size {
+        let mut file = match self.jxlp_fragment_size {
             Some(size) => jpxl_encode::container::wrap_fragmented(&codestream, level, size),
             None => jpxl_encode::container::wrap(&codestream, level),
+        };
+        if let Some(ref exif) = self.exif {
+            jpxl_encode::container::append_exif(&mut file, exif);
         }
+        file
+    }
+
+    /// The lossy VarDCT pipeline is defined on sRGB input: its XYB transform
+    /// and its perceptual metric assume it, so anything else must be encoded
+    /// losslessly rather than mis-tagged.
+    const fn require_srgb_for_lossy(&self) -> Result<()> {
+        if matches!(self.mode, Mode::Lossy(_)) && !matches!(self.colour_space, ColourSpace::Srgb) {
+            return Err(Error::Unsupported(
+                "lossy VarDCT is defined on sRGB input; encode other colour spaces losslessly",
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -1000,6 +1068,78 @@ mod tests {
             .expect("encode");
         let decoded = Decoder::new().decode(&encoded).expect("decode");
         assert_eq!(decoded.interleaved_colour(), gray);
+    }
+
+    /// The archive-pipeline claim: an Exif payload attached at the facade
+    /// comes back byte-identical from the decoder's box walk, on both the
+    /// lossless and the lossy path, and implies the container.
+    #[test]
+    fn an_exif_payload_survives_encode_to_the_decoders_box_walk() {
+        let mut exif = vec![0x4D, 0x4D, 0x00, 0x2A];
+        exif.extend((0..32u32).map(|i| (i % 5) as u8));
+
+        let (width, height) = (64u32, 64u32);
+        let rgb = gradient_rgb8(width, height);
+        for encoded in [
+            Encoder::new()
+                .with_exif(exif.clone())
+                .expect("valid payload")
+                .encode_rgb8(width, height, &rgb)
+                .expect("lossless encode"),
+            Encoder::new()
+                .with_target_bytes(2_048)
+                .expect("target")
+                .with_effort(Effort::Fast)
+                .with_threads(1)
+                .expect("threads")
+                .with_exif(exif.clone())
+                .expect("valid payload")
+                .encode_rgb8(width, height, &rgb)
+                .expect("lossy encode"),
+        ] {
+            assert!(jpxl_decode::container::is_container(&encoded));
+            let mut guard =
+                jpxl_core::limits::AllocGuard::new(&jpxl_core::limits::Limits::relaxed());
+            let tree = jpxl_decode::container::BoxTree::parse(&encoded, &mut guard).expect("boxes");
+            tree.validate().expect("conforming");
+            let boxes = tree.exif().expect("well-formed Exif");
+            assert_eq!(boxes.len(), 1);
+            let first = boxes.first().expect("length asserted above");
+            assert_eq!(first.payload, &exif[..]);
+            decode(&encoded).expect("still decodes");
+        }
+    }
+
+    #[test]
+    fn a_payload_without_a_tiff_header_is_rejected() {
+        assert!(Encoder::new().with_exif(vec![]).is_err());
+        assert!(
+            Encoder::new()
+                .with_exif(vec![0xFF, 0xD8, 0xFF, 0xE1])
+                .is_err()
+        );
+    }
+
+    /// A non-sRGB colour space is signalled on the lossless path and refused
+    /// (not mis-tagged) on the lossy path.
+    #[test]
+    fn colour_space_signalling_and_the_lossy_guard() {
+        let rgb: Vec<u16> = (0..4 * 4 * 3u16).map(|i| i * 512).collect();
+        let encoded = Encoder::new()
+            .with_colour_space(ColourSpace::Rec2020)
+            .encode_rgb16(4, 4, 16, &rgb)
+            .expect("lossless rec2020");
+        let decoded = decode(&encoded).expect("decode");
+        assert_eq!(decoded.interleaved_colour(), rgb);
+
+        let lossy = Encoder::new()
+            .with_target_bytes(2_048)
+            .expect("target")
+            .with_colour_space(ColourSpace::Rec2020);
+        assert!(matches!(
+            lossy.encode_rgb16(4, 4, 16, &rgb),
+            Err(Error::Unsupported(_))
+        ));
     }
 
     #[test]
@@ -1062,6 +1202,7 @@ mod tests {
 
         for wrapped in [
             encoder
+                .clone()
                 .with_container(true)
                 .encode_rgb8(width, height, &rgb)
                 .expect("container encode"),
