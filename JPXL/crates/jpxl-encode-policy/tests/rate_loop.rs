@@ -158,8 +158,10 @@ fn target_rate_is_byte_identical_across_executor_widths() {
         serial.stats.candidate_cache_entries,
         parallel.stats.candidate_cache_entries
     );
-    assert_eq!(serial.stats.candidate_allocations, 3);
-    assert_eq!(parallel.stats.candidate_allocations, 3);
+    // Fast's fixed DCT8x8 cover reserves one bank per LF group, not the
+    // three-family hierarchical set.
+    assert_eq!(serial.stats.candidate_allocations, 1);
+    assert_eq!(parallel.stats.candidate_allocations, 1);
     #[cfg(feature = "anchor-sketch")]
     for outcome in [&serial, &parallel] {
         assert_eq!(outcome.status, RateStatus::RescuedFreshStructure);
@@ -206,6 +208,7 @@ fn balanced_anchor_is_exact_and_decodable() {
     assert!(outcome.stats.structural_builds <= 2);
     assert!(outcome.stats.full_prices <= 4);
     assert!(outcome.stats.exact_candidates <= 6);
+    assert_eq!(outcome.stats.candidate_allocations, 3);
 }
 
 #[cfg(feature = "anchor-sketch")]

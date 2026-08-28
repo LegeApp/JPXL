@@ -619,9 +619,19 @@ fn build_pixel_plan(
         } else {
             request.quantizer_choice
         };
-    let fast_fixed_cover =
-        request.rate_preset == RateSearchPreset::Fast && entropy_search.uses_fast_entropy();
-    let quantizer_transforms = if fast_fixed_cover {
+    // Fast navigation is deliberately allowed a cheaper structural policy.
+    // Fixed 8x8 blocks avoid the hierarchical cover's transform-bank scoring
+    // throughout Fast navigation and finalist planning. The Quality request
+    // keeps its configured mode. This is a preset-only trade: no Quality/Full
+    // plan can enter this arm because those requests do not carry
+    // `RateSearchPreset::Fast` here.
+    let cover_mode =
+        if request.rate_preset == RateSearchPreset::Fast && entropy_search.uses_fast_entropy() {
+            CoverMode::FixedDct8x8
+        } else {
+            request.budget.cover_mode
+        };
+    let quantizer_transforms = if cover_mode == CoverMode::FixedDct8x8 {
         &FAST_TRANSFORMS[..]
     } else {
         &SQUARE_TRANSFORMS[..]
@@ -641,20 +651,12 @@ fn build_pixel_plan(
     .with_dead_zone_scale(request.dead_zone_scale)
     .with_zero_token_bits(request.zero_token_bits)
     .with_rate_model(request.cover_rate_model);
-    cache.prepare(&geometry)?;
-
-    // Fast navigation is deliberately allowed a cheaper structural policy.
-    // Fixed 8x8 blocks avoid the hierarchical cover's transform-bank scoring
-    // throughout Fast navigation and finalist planning. The Quality request
-    // keeps its configured mode. This is a preset-only trade: no Quality/Full
-    // plan can enter this arm because those requests do not carry
-    // `RateSearchPreset::Fast` here.
-    let cover_mode =
-        if request.rate_preset == RateSearchPreset::Fast && entropy_search.uses_fast_entropy() {
-            CoverMode::FixedDct8x8
-        } else {
-            request.budget.cover_mode
-        };
+    // Reserve only the square families this search will score, on the request
+    // thread, before cover fans out. Fast's fixed DCT8x8 cover never touches
+    // DCT16/DCT32, and pre-creating those banks reserved two empty full-grid
+    // coefficient arenas per LF group (about two thirds of the forward-cache
+    // commit on the production Fast path).
+    cache.prepare_families(&geometry, quantizer_transforms)?;
 
     // The cover is selected before chroma-from-luma is estimated: the estimate
     // regresses over the coefficients of the *selected* transforms, so the
@@ -2413,19 +2415,30 @@ impl CandidateGroupBank {
     fn new(
         rect: jpxl_encode::vardct::Rect,
         blocks: jpxl_encode::vardct::BlockGrid,
+        families: &[TransformType],
     ) -> Result<Self> {
-        // Reserve all large coefficient arenas on the request thread before
-        // planning fans out. That keeps their allocator ownership stable
-        // across warm-up and timed rate probes instead of stranding an arena
-        // in whichever worker happened to encounter a transform family first.
+        // Reserve the families this search will score on the request thread
+        // before planning fans out. That keeps their allocator ownership
+        // stable across warm-up and timed rate probes instead of stranding an
+        // arena in whichever worker first encountered a transform. Families
+        // that this cover never scores stay `None`; `get_or_insert` can still
+        // create one later if a rescue rebuilds structure with a wider set.
+        let mut banks = [None, None, None];
+        for &transform in families {
+            let Some(index) = Self::family(transform) else {
+                continue;
+            };
+            let Some(slot) = banks.get_mut(index) else {
+                continue;
+            };
+            if slot.is_none() {
+                *slot = Some(DenseForwardBank::new(blocks, transform)?);
+            }
+        }
         Ok(Self {
             rect,
             blocks,
-            banks: [
-                Some(DenseForwardBank::new(blocks, TransformType::Dct8x8)?),
-                Some(DenseForwardBank::new(blocks, TransformType::Dct16x16)?),
-                Some(DenseForwardBank::new(blocks, TransformType::Dct32x32)?),
-            ],
+            banks,
             cover_complete: false,
             complete_hits: std::sync::atomic::AtomicU64::new(0),
         })
@@ -2585,6 +2598,14 @@ impl CandidateForwardCache {
     }
 
     fn prepare(&mut self, geometry: &VardctGeometry) -> Result<()> {
+        self.prepare_families(geometry, &SQUARE_TRANSFORMS)
+    }
+
+    fn prepare_families(
+        &mut self,
+        geometry: &VardctGeometry,
+        families: &[TransformType],
+    ) -> Result<()> {
         if !self.groups.is_empty() {
             if self.groups.len() == usize::try_from(geometry.num_lf_groups()).unwrap_or(usize::MAX)
             {
@@ -2606,7 +2627,7 @@ impl CandidateForwardCache {
                     what: "an LF group outside the frame's block grid",
                 })?;
             groups.push(std::sync::RwLock::new(CandidateGroupBank::new(
-                rect, blocks,
+                rect, blocks, families,
             )?));
         }
         self.groups = groups;
@@ -3119,6 +3140,34 @@ fn set_lf(
     if let Some(slot) = planes.get_mut(channel).and_then(|p| p.get_mut(index)) {
         *slot = value;
     }
+}
+
+/// Merges a chunk's group-grid LF planes into the group reduction.
+///
+/// Chunks of one LF group cover disjoint varblocks, and unwritten cells stay
+/// zero, so adding plane-wise is the same as scattering each patch. The add
+/// is the vectorisable merge; overlapping non-zero writes would wrap in
+/// debug and are a cover bug.
+fn add_lf_planes(
+    dest: &mut [Vec<i32>; NUM_CHANNELS],
+    src: &[Vec<i32>; NUM_CHANNELS],
+) -> Result<()> {
+    for channel in 0..NUM_CHANNELS {
+        let (Some(d), Some(s)) = (dest.get_mut(channel), src.get(channel)) else {
+            return Err(PolicyError::Unsupported {
+                what: "a missing LF plane while merging a quantization chunk",
+            });
+        };
+        if d.len() != s.len() {
+            return Err(PolicyError::Unsupported {
+                what: "a quantization chunk whose LF plane size changed",
+            });
+        }
+        for (slot, &value) in d.iter_mut().zip(s.iter()) {
+            *slot += value;
+        }
+    }
+    Ok(())
 }
 
 /// Phase 7.1's estimate of what one interior-zero coefficient token costs.
@@ -3984,11 +4033,17 @@ fn coefficient_arena_capacity(varblocks: &[VarblockDecision]) -> usize {
 /// mutating coefficients that an earlier plan can still observe.
 struct QuantizationWorkspace {
     arenas: Vec<Arc<[i32]>>,
+    /// Per-chunk LF planes in group-grid layout, returned after each probe's
+    /// reduction so the next sequential quantizer does not re-reserve them.
+    chunk_lf: Vec<[Vec<i32>; NUM_CHANNELS]>,
 }
 
 impl QuantizationWorkspace {
     fn new() -> Self {
-        Self { arenas: Vec::new() }
+        Self {
+            arenas: Vec::new(),
+            chunk_lf: Vec::new(),
+        }
     }
 
     fn take_arena(&mut self, slot: usize, capacity: usize) -> Arc<[i32]> {
@@ -4009,6 +4064,33 @@ impl QuantizationWorkspace {
         }
         if let Some(destination) = self.arenas.get_mut(slot) {
             *destination = arena;
+        }
+    }
+
+    fn take_chunk_lf(&mut self, slot: usize, capacity: usize) -> [Vec<i32>; NUM_CHANNELS] {
+        if self.chunk_lf.len() <= slot {
+            self.chunk_lf.resize_with(slot.saturating_add(1), || {
+                core::array::from_fn(|_| Vec::new())
+            });
+        }
+        let mut planes = core::array::from_fn(|_| Vec::new());
+        if let Some(stored) = self.chunk_lf.get_mut(slot) {
+            std::mem::swap(&mut planes, stored);
+        }
+        for plane in &mut planes {
+            if plane.len() != capacity {
+                plane.clear();
+                plane.resize(capacity, 0);
+            } else {
+                plane.fill(0);
+            }
+        }
+        planes
+    }
+
+    fn put_chunk_lf(&mut self, slot: usize, planes: [Vec<i32>; NUM_CHANNELS]) {
+        if let Some(stored) = self.chunk_lf.get_mut(slot) {
+            *stored = planes;
         }
     }
 }
@@ -4104,20 +4186,22 @@ fn quantization_chunks(groups: &[PlannedGroup], workers: usize) -> Vec<QuantChun
 /// request thread before the executor starts it.
 struct QuantChunkWorkspace {
     lf_values: [Vec<i32>; NUM_CHANNELS],
+    lf_width: u32,
     arena: std::sync::Arc<[i32]>,
     starts: Vec<[usize; NUM_CHANNELS]>,
     coefficients: Vec<VarblockCoefficients>,
 }
 
 impl QuantChunkWorkspace {
-    fn new(varblocks: &[VarblockDecision], arena: Arc<[i32]>) -> Self {
-        let mut lf_cap = 0usize;
-        for vb in varblocks {
-            let n = vb.transform.block_dims().0;
-            lf_cap = lf_cap.saturating_add(n.saturating_mul(n));
-        }
+    fn new(
+        varblocks: &[VarblockDecision],
+        arena: Arc<[i32]>,
+        lf_values: [Vec<i32>; NUM_CHANNELS],
+        lf_width: u32,
+    ) -> Self {
         Self {
-            lf_values: core::array::from_fn(|_| Vec::with_capacity(lf_cap)),
+            lf_values,
+            lf_width,
             arena,
             starts: Vec::with_capacity(varblocks.len()),
             coefficients: Vec::with_capacity(varblocks.len()),
@@ -4154,12 +4238,26 @@ fn quantize_groups_parallel(
         .iter()
         .enumerate()
         .map(|(index, chunk)| {
-            let varblocks = groups
+            let (blocks, varblocks) = groups
                 .get(chunk.group)
-                .and_then(|(_, _, _, varblocks)| varblocks.get(chunk.start..chunk.end))
-                .unwrap_or(&[]);
+                .map(|(_, blocks, _, varblocks)| (*blocks, varblocks.get(chunk.start..chunk.end)))
+                .unwrap_or((
+                    jpxl_encode::vardct::BlockGrid {
+                        width: 0,
+                        height: 0,
+                    },
+                    None,
+                ));
+            let varblocks = varblocks.unwrap_or(&[]);
             let arena = quant_workspace.take_arena(index, coefficient_arena_capacity(varblocks));
-            std::sync::Mutex::new(Some(QuantChunkWorkspace::new(varblocks, arena)))
+            let lf_cells = usize::try_from(blocks.area()).unwrap_or(0);
+            let lf_values = quant_workspace.take_chunk_lf(index, lf_cells);
+            std::sync::Mutex::new(Some(QuantChunkWorkspace::new(
+                varblocks,
+                arena,
+                lf_values,
+                blocks.width,
+            )))
         })
         .collect();
     let quantize_one = |index: usize| {
@@ -4227,7 +4325,7 @@ fn quantize_groups_parallel(
         .collect();
     for (index, (chunk, quantized)) in chunks.iter().copied().zip(quantized_chunks).enumerate() {
         quant_workspace.put_arena(index, quantized.arena);
-        let (_, blocks, _, group_varblocks) =
+        let (_, _, _, group_varblocks) =
             groups.get(chunk.group).ok_or(PolicyError::Unsupported {
                 what: "a missing planned LF group during chunk reduction",
             })?;
@@ -4247,46 +4345,9 @@ fn quantize_groups_parallel(
             .ok_or(PolicyError::Unsupported {
                 what: "a missing LF-group quantization reduction",
             })?;
-        let mut lf_cursor = 0usize;
-        for vb in varblocks {
-            let n = vb.transform.block_dims().0;
-            let cells = n.saturating_mul(n);
-            let lf_end = lf_cursor
-                .checked_add(cells)
-                .ok_or(PolicyError::Unsupported {
-                    what: "a quantized LF patch range overflow",
-                })?;
-            for channel in 0..NUM_CHANNELS {
-                let values = quantized
-                    .lf_values
-                    .get(channel)
-                    .and_then(|plane| plane.get(lf_cursor..lf_end))
-                    .ok_or(PolicyError::Unsupported {
-                        what: "a quantized LF patch shorter than its varblock",
-                    })?;
-                for (index, value) in values.iter().copied().enumerate() {
-                    set_lf(
-                        &mut builder.lf_planes,
-                        channel,
-                        vb.origin.bx() + u32::try_from(index % n).unwrap_or(0),
-                        vb.origin.by() + u32::try_from(index / n).unwrap_or(0),
-                        blocks.width,
-                        value,
-                    );
-                }
-            }
-            lf_cursor = lf_end;
-        }
-        if quantized
-            .lf_values
-            .iter()
-            .any(|plane| plane.len() != lf_cursor)
-        {
-            return Err(PolicyError::Unsupported {
-                what: "a quantized chunk with trailing LF patch values",
-            });
-        }
+        add_lf_planes(&mut builder.lf_planes, &quantized.lf_values)?;
         builder.coefficients.extend(quantized.coefficients);
+        quant_workspace.put_chunk_lf(index, quantized.lf_values);
     }
 
     groups
@@ -4343,7 +4404,9 @@ fn quantize_chunk(
             })?;
         let (bx, by) = (vb.origin.bx(), vb.origin.by());
         let factors = varblock_cfl(correlation, cfl, bx, by);
-        let lf_values = &mut workspace.lf_values;
+        let lf_planes = &mut workspace.lf_values;
+        let lf_width = workspace.lf_width;
+        let n = transform.block_dims().0;
         quantize_square_varblock(
             &fwd.coeffs,
             transform,
@@ -4352,10 +4415,15 @@ fn quantize_chunk(
             factors,
             &mut tscratch,
             &mut qscratch,
-            |channel, _index, value| {
-                if let Some(plane) = lf_values.get_mut(channel) {
-                    plane.push(value);
-                }
+            |channel, idx, value| {
+                set_lf(
+                    lf_planes,
+                    channel,
+                    bx + u32::try_from(idx % n).unwrap_or(0),
+                    by + u32::try_from(idx / n).unwrap_or(0),
+                    lf_width,
+                    value,
+                );
             },
             slot,
             hf_quants.truncate_trailing,

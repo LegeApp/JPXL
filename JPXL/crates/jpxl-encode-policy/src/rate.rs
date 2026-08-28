@@ -418,7 +418,7 @@ pub struct RateProbeStats {
     pub candidate_cache_entries: u64,
     /// Retained f32 coefficient payload, excluding collection metadata.
     pub candidate_payload_bytes: u64,
-    /// Dense coefficient-arena allocations (one per populated transform bank).
+    /// Dense coefficient-arena allocations (one per reserved transform bank).
     pub candidate_allocations: u64,
     /// Cover/CfL builds on the bounded anchored path.
     pub structural_builds: u32,

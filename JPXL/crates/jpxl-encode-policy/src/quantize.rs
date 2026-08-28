@@ -613,11 +613,12 @@ impl HfQuantizer {
 
     /// Phase-2: quantize a contiguous coefficient lane (one channel of one
     /// varblock) into `out`, skipping LLF cells when `skip_llf` is set.
-    /// Each row's HF span goes through [`Self::choose_run`] (Phase 36; before
-    /// that, [`Self::choose_lane4`] batches with scalar tails), so batches
-    /// never cross the top-left LLF boundary.
     ///
-    /// Same integer rules as [`Self::choose`], applied cell-by-cell.
+    /// The top-left `n_blocks × n_blocks` LLF is still handled per row so a
+    /// run never crosses that boundary. Every remaining row is one contiguous
+    /// HF rectangle in coefficient order, so it is one [`Self::choose_run`]
+    /// (Phase 36's AVX2 8-wide kernel, padded tail) instead of one call per
+    /// row. Same integer rules as [`Self::choose`], applied cell-by-cell.
     ///
     /// # Errors
     ///
@@ -661,14 +662,16 @@ impl HfQuantizer {
                 what: "a zero-width HF coefficient lane",
             });
         }
-        for row_start in (0..cells).step_by(side) {
-            let row = row_start / side;
+        // Rows that contain the LLF prefix. Remaining rows are a contiguous
+        // HF rectangle (`first_cell = n_blocks * side`) and share one run.
+        let llf_rows = if skip_llf { n_blocks } else { 0 };
+        for row in 0..llf_rows {
+            let row_start = row.saturating_mul(side);
+            if row_start >= cells {
+                break;
+            }
             let row_end = row_start.saturating_add(side).min(cells);
-            let first_hf = if skip_llf && row < n_blocks {
-                row_start.saturating_add(n_blocks).min(row_end)
-            } else {
-                row_start
-            };
+            let first_hf = row_start.saturating_add(n_blocks).min(row_end);
             if let Some(llf) = out.get_mut(row_start..first_hf) {
                 llf.fill(0);
             }
@@ -679,9 +682,6 @@ impl HfQuantizer {
                     *slot = self.reconstruct(0, channel, row_start + offset);
                 }
             }
-            // Phase 36: the whole HF span of the row goes through the run
-            // kernel (vector chunks plus a padded final chunk), which is
-            // cell-for-cell identical to the scalar `choose` loop it replaces.
             let (Some(targets), Some(slots)) = (
                 coeffs.get(first_hf..row_end),
                 out.get_mut(first_hf..row_end),
@@ -692,6 +692,17 @@ impl HfQuantizer {
                 .as_deref_mut()
                 .and_then(|r| r.get_mut(first_hf..row_end));
             self.choose_run(channel, first_hf, targets, slots, recon_row)?;
+        }
+        let bulk_start = llf_rows.saturating_mul(side);
+        if bulk_start < cells {
+            let (Some(targets), Some(slots)) = (
+                coeffs.get(bulk_start..cells),
+                out.get_mut(bulk_start..cells),
+            ) else {
+                return Ok(());
+            };
+            let recon_bulk = recon_out.and_then(|r| r.get_mut(bulk_start..cells));
+            self.choose_run(channel, bulk_start, targets, slots, recon_bulk)?;
         }
         Ok(())
     }
@@ -1852,10 +1863,45 @@ mod tests {
                     })
                     .collect::<Result<_>>()
                     .expect("scalar reference");
+                let expected_recon: Vec<u32> = expected
+                    .iter()
+                    .enumerate()
+                    .map(|(cell, &qi)| q.reconstruct(qi, channel, cell).to_bits())
+                    .collect();
                 let mut actual = vec![i32::MIN; cells];
-                q.quantize_lane(channel, &coeffs, &mut actual, side, n, true)
-                    .expect("lane quantization");
+                let mut recon = vec![f32::NAN; cells];
+                q.quantize_lane_with_recon(
+                    channel,
+                    &coeffs,
+                    &mut actual,
+                    Some(&mut recon),
+                    side,
+                    n,
+                    true,
+                )
+                .expect("lane quantization");
                 assert_eq!(actual, expected, "{transform:?} channel {channel}");
+                let actual_recon: Vec<u32> = recon.iter().map(|v| v.to_bits()).collect();
+                assert_eq!(
+                    actual_recon, expected_recon,
+                    "{transform:?} channel {channel} recon"
+                );
+
+                // skip_llf = false: the whole lane is one HF run, including
+                // the top-left cells that skip_llf would have forced to zero.
+                let expected_full: Vec<i32> = coeffs
+                    .iter()
+                    .enumerate()
+                    .map(|(cell, &target)| q.choose(target, channel, cell))
+                    .collect::<Result<_>>()
+                    .expect("full-lane scalar reference");
+                let mut actual_full = vec![i32::MIN; cells];
+                q.quantize_lane(channel, &coeffs, &mut actual_full, side, n, false)
+                    .expect("full-lane quantization");
+                assert_eq!(
+                    actual_full, expected_full,
+                    "{transform:?} channel {channel} skip_llf=false"
+                );
             }
         }
     }
