@@ -1,0 +1,5 @@
+fixture: prog_444.jpg
+origin: synthesised by tests/fixtures/generate.py (original content)
+license: CC0-1.0 / public domain (no third-party image used)
+sha256: f19b6f578043f336808342fde14acce074206eff50284a7a4e6e03e989eba1b7
+regenerate: cjpeg -quality 85 -progressive -sample 1x1

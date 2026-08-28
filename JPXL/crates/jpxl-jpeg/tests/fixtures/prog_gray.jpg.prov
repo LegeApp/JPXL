@@ -1,0 +1,5 @@
+fixture: prog_gray.jpg
+origin: synthesised by tests/fixtures/generate.py (original content)
+license: CC0-1.0 / public domain (no third-party image used)
+sha256: a865c757ef16dbc30281a7a81bd2be40f189564559664fec6bb7d1ebbda24a45
+regenerate: cjpeg -quality 85 -progressive -grayscale

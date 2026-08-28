@@ -11,7 +11,13 @@ license.workspace = true
 # over `jpxl-encode`'s plan types, and its parity against `jpxl-decode`,
 # `djxl` and `jxl-oxide` is proved by tests, not by sharing code.
 [dependencies]
-jpxl-core = { path = "../jpxl-core", version = "0.3.0", default-features = false }
+# `simd` is named explicitly: plan rendering sits on the quality path's
+# hottest loops, and without it a consumer that builds this crate outside the
+# full workspace (where `jpxl-encode` happens to unify the feature back on)
+# would silently get the scalar DCT kernels.
+jpxl-core = { path = "../jpxl-core", version = "0.3.0", default-features = false, features = [
+    "simd",
+] }
 jpxl-encode = { path = "../jpxl-encode", version = "0.3.0", default-features = false }
 
 [dev-dependencies]

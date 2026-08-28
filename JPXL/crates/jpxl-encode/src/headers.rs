@@ -78,10 +78,20 @@ const ENUM_SPEC: U32Spec = U32Spec::new([
     },
 ]);
 
+/// Table E.3 `ColourSpace`: `kRGB`, the bundle default.
+const COLOUR_SPACE_RGB: u32 = 0;
 /// Table E.3 `ColourSpace`: `kGrey`.
 const COLOUR_SPACE_GREY: u32 = 1;
 /// Table E.4 `WhitePoint`: `kD65`, the bundle default.
 const WHITE_POINT_D65: u32 = 1;
+/// Table E.5 `Primaries`: `kSRGB`, the bundle default.
+const PRIMARIES_SRGB: u32 = 1;
+/// Table E.5 `Primaries`: ITU-R BT.2100-2 (the Rec.2020 gamut).
+const PRIMARIES_2100: u32 = 9;
+/// Table E.5 `Primaries`: SMPTE ST 428-1 (P3).
+const PRIMARIES_P3: u32 = 11;
+/// Table E.6 `TransferFunction`: gamma exponent 1.
+const TRANSFER_FUNCTION_LINEAR: u32 = 8;
 /// Table E.6 `TransferFunction`: `kSrgb`, the bundle default.
 const TRANSFER_FUNCTION_SRGB: u32 = 13;
 /// Table E.8 `RenderingIntent`: `kRelative`, the bundle default.
@@ -147,14 +157,59 @@ impl ColourShape {
     }
 }
 
+/// The colour space the caller's samples are in, signalled declaratively in
+/// the `ColourEncoding` bundle (18181-1 E.2).
+///
+/// The Modular path stores samples untouched, so this is a pure header claim:
+/// it changes how a colour-managed viewer interprets the decoded samples and
+/// nothing else. Every variant is a named row combination of Tables E.3–E.8 —
+/// D65 white point and relative-colorimetric intent throughout, which is what
+/// every real capture pipeline this encoder feeds produces.
+///
+/// The XYB-encoded VarDCT path is not covered by this enum: its forward
+/// transform and its perceptual metric are defined on sRGB input, so the
+/// policy layer rejects a non-sRGB lossy request instead of mis-tagging it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum ColourSpace {
+    /// IEC 61966-2-1 sRGB — the Table E.1 `all_default` bundle.
+    #[default]
+    Srgb,
+    /// sRGB primaries with a linear transfer function (gamma 1).
+    LinearSrgb,
+    /// Display P3: SMPTE ST 428-1 primaries, D65, the sRGB transfer function.
+    DisplayP3,
+    /// Rec.2020 gamut: ITU-R BT.2100-2 primaries, D65, the sRGB transfer
+    /// function (the shape a "rec2020 working space" still image carries).
+    Rec2020,
+}
+
+impl ColourSpace {
+    /// `(primaries, transfer_function)` Table E.5/E.6 rows for an RGB image.
+    const fn rgb_rows(self) -> (u32, u32) {
+        match self {
+            Self::Srgb => (PRIMARIES_SRGB, TRANSFER_FUNCTION_SRGB),
+            Self::LinearSrgb => (PRIMARIES_SRGB, TRANSFER_FUNCTION_LINEAR),
+            Self::DisplayP3 => (PRIMARIES_P3, TRANSFER_FUNCTION_SRGB),
+            Self::Rec2020 => (PRIMARIES_2100, TRANSFER_FUNCTION_SRGB),
+        }
+    }
+}
+
 /// Writes an `ImageMetadata` bundle describing a non-XYB integer still image
 /// (18181-1 D.3, Table D.3).
 ///
 /// # Errors
 ///
-/// [`EncodeError::Unsupported`] if `bits_per_sample` is outside the 1..=16
-/// range this encoder handles, or a bit writer error.
-pub fn write_metadata(w: &mut BitWriter, shape: ColourShape, bits_per_sample: u32) -> Result<()> {
+/// [`EncodeError::Unsupported`] for a greyscale image in a non-sRGB colour
+/// space, [`EncodeError::ValueOutOfRange`] if `bits_per_sample` is outside
+/// the 1..=16 range this encoder handles, or a bit writer error.
+pub fn write_metadata(
+    w: &mut BitWriter,
+    shape: ColourShape,
+    bits_per_sample: u32,
+    colour: ColourSpace,
+) -> Result<()> {
     if bits_per_sample == 0 || bits_per_sample > 16 {
         return Err(EncodeError::ValueOutOfRange {
             what: "bits_per_sample",
@@ -174,7 +229,7 @@ pub fn write_metadata(w: &mut BitWriter, shape: ColourShape, bits_per_sample: u3
     w.write_u32(&NUM_EXTRA_SPEC, 0)?; // no extra channels
     w.write_bool(false); // xyb_encoded: samples are stored as-is
 
-    write_colour_encoding(w, shape)?;
+    write_colour_encoding(w, shape, colour)?;
 
     // tone_mapping is guarded by extra_fields, which is false.
     w.write_u64(0)?; // extensions (B.3)
@@ -190,29 +245,56 @@ pub fn write_metadata(w: &mut BitWriter, shape: ColourShape, bits_per_sample: u3
 ///
 /// Only through the bit writer.
 pub fn write_grey8_metadata(w: &mut BitWriter) -> Result<()> {
-    write_metadata(w, ColourShape::Grey, 8)
+    write_metadata(w, ColourShape::Grey, 8, ColourSpace::Srgb)
 }
 
 /// Writes a `ColourEncoding` bundle (18181-1 E.2, Table E.1).
 ///
 /// The Table E.1 defaults are exactly sRGB: `want_icc` false, `kRGB`, `kD65`,
-/// `kSRGB` primaries, the sRGB transfer function and `kRelative`. An RGB image
-/// is therefore one `all_default` bit. `kGrey` differs from the default, so
-/// the greyscale form is written out — with `has_primaries` false, which skips
-/// the primaries rows but not the white point.
-fn write_colour_encoding(w: &mut BitWriter, shape: ColourShape) -> Result<()> {
-    if shape == ColourShape::Rgb {
+/// `kSRGB` primaries, the sRGB transfer function and `kRelative`. An sRGB RGB
+/// image is therefore one `all_default` bit. Every other case writes the
+/// bundle out: `kGrey` with `has_primaries` false (which skips the primaries
+/// rows but not the white point), and a non-default RGB colour space with the
+/// primaries and transfer-function rows of [`ColourSpace::rgb_rows`].
+///
+/// # Errors
+///
+/// [`EncodeError::Unsupported`] for a greyscale image in a non-sRGB colour
+/// space — a combination nothing feeds this encoder — or a bit writer error.
+fn write_colour_encoding(w: &mut BitWriter, shape: ColourShape, colour: ColourSpace) -> Result<()> {
+    if shape == ColourShape::Grey {
+        if colour != ColourSpace::Srgb {
+            return Err(EncodeError::unsupported(
+                "a greyscale image can only be signalled as sRGB",
+                "E.2",
+            ));
+        }
+        w.write_bool(false); // all_default (the default is kRGB)
+        w.write_bool(false); // want_icc
+        w.write_u32(&ENUM_SPEC, COLOUR_SPACE_GREY)?;
+        w.write_u32(&ENUM_SPEC, WHITE_POINT_D65)?;
+        // primaries / red / green / blue: skipped for kGrey.
+        // CustomTransferFunction (Table E.7).
+        w.write_bool(false); // have_gamma
+        w.write_u32(&ENUM_SPEC, TRANSFER_FUNCTION_SRGB)?;
+        w.write_u32(&ENUM_SPEC, RENDERING_INTENT_RELATIVE)?;
+        return Ok(());
+    }
+    if colour == ColourSpace::Srgb {
         w.write_bool(true); // all_default
         return Ok(());
     }
-    w.write_bool(false); // all_default (the default is kRGB)
+    let (primaries, transfer) = colour.rgb_rows();
+    w.write_bool(false); // all_default
     w.write_bool(false); // want_icc
-    w.write_u32(&ENUM_SPEC, COLOUR_SPACE_GREY)?;
+    w.write_u32(&ENUM_SPEC, COLOUR_SPACE_RGB)?;
     w.write_u32(&ENUM_SPEC, WHITE_POINT_D65)?;
-    // primaries / red / green / blue: skipped for kGrey.
+    // white: skipped, the white point is not kCustom.
+    w.write_u32(&ENUM_SPEC, primaries)?;
+    // red / green / blue: skipped, the primaries are not kCustom.
     // CustomTransferFunction (Table E.7).
     w.write_bool(false); // have_gamma
-    w.write_u32(&ENUM_SPEC, TRANSFER_FUNCTION_SRGB)?;
+    w.write_u32(&ENUM_SPEC, transfer)?;
     w.write_u32(&ENUM_SPEC, RENDERING_INTENT_RELATIVE)?;
     Ok(())
 }
@@ -225,10 +307,20 @@ mod tests {
     use jpxl_decode::headers::decode_image_headers;
 
     fn headers(width: u32, height: u32, shape: ColourShape, bits: u32) -> Vec<u8> {
+        headers_in(width, height, shape, bits, ColourSpace::Srgb)
+    }
+
+    fn headers_in(
+        width: u32,
+        height: u32,
+        shape: ColourShape,
+        bits: u32,
+        colour: ColourSpace,
+    ) -> Vec<u8> {
         let mut w = BitWriter::new();
         write_signature(&mut w).expect("signature");
         write_size_header(&mut w, width, height).expect("size");
-        write_metadata(&mut w, shape, bits).expect("metadata");
+        write_metadata(&mut w, shape, bits, colour).expect("metadata");
         w.zero_pad_to_byte();
         w.into_bytes()
     }
@@ -270,7 +362,7 @@ mod tests {
                 let mut w = BitWriter::new();
                 write_signature(&mut w).expect("signature");
                 write_size_header(&mut w, 64, 64).expect("size");
-                write_metadata(&mut w, shape, bits).expect("metadata");
+                write_metadata(&mut w, shape, bits, ColourSpace::Srgb).expect("metadata");
                 let written = w.bit_len();
                 w.zero_pad_to_byte();
                 let bytes = w.into_bytes();
@@ -282,15 +374,64 @@ mod tests {
         }
     }
 
+    /// Each declarative colour space comes back from the decoder as the
+    /// Table E.5/E.6 rows it names, with the header ending exactly where the
+    /// writer says — the bit count is what catches a wrong E.1 conditional.
+    #[test]
+    fn non_default_colour_spaces_round_trip_through_the_decoder() {
+        use jpxl_decode::headers::colour::CustomTransferFunction;
+        use jpxl_decode::headers::enums::{Primaries, TransferFunction, WhitePoint};
+
+        for (colour, primaries, tf) in [
+            (
+                ColourSpace::LinearSrgb,
+                Primaries::KSrgb,
+                TransferFunction::KLinear,
+            ),
+            (
+                ColourSpace::DisplayP3,
+                Primaries::KP3,
+                TransferFunction::KSrgb,
+            ),
+            (
+                ColourSpace::Rec2020,
+                Primaries::K2100,
+                TransferFunction::KSrgb,
+            ),
+        ] {
+            let bytes = headers_in(64, 64, ColourShape::Rgb, 16, colour);
+            let mut r = BitReader::new(&bytes);
+            let parsed = decode_image_headers(&mut r, &Limits::default())
+                .unwrap_or_else(|e| panic!("{colour:?}: {e}"));
+
+            let ce = parsed.metadata.colour_encoding;
+            assert!(!ce.all_default, "{colour:?}");
+            assert!(!ce.want_icc, "{colour:?}");
+            assert!(!ce.is_grey(), "{colour:?}");
+            assert_eq!(ce.white_point, WhitePoint::KD65, "{colour:?}");
+            assert_eq!(ce.primaries, primaries, "{colour:?}");
+            assert_eq!(ce.tf, CustomTransferFunction::Enumerated(tf), "{colour:?}");
+        }
+    }
+
+    #[test]
+    fn a_greyscale_image_rejects_a_non_srgb_colour_space() {
+        let mut w = BitWriter::new();
+        assert!(matches!(
+            write_metadata(&mut w, ColourShape::Grey, 8, ColourSpace::Rec2020),
+            Err(EncodeError::Unsupported { .. })
+        ));
+    }
+
     #[test]
     fn an_unrepresentable_bit_depth_is_rejected() {
         let mut w = BitWriter::new();
         assert!(matches!(
-            write_metadata(&mut w, ColourShape::Grey, 0),
+            write_metadata(&mut w, ColourShape::Grey, 0, ColourSpace::Srgb),
             Err(EncodeError::ValueOutOfRange { .. })
         ));
         assert!(matches!(
-            write_metadata(&mut w, ColourShape::Grey, 17),
+            write_metadata(&mut w, ColourShape::Grey, 17, ColourSpace::Srgb),
             Err(EncodeError::ValueOutOfRange { .. })
         ));
     }

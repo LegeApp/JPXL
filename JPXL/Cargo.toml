@@ -5,6 +5,7 @@ members = [
     "crates/jpxl-bitstream",
     "crates/jpxl-core",
     "crates/jpxl-entropy",
+    "crates/jpxl-jpeg",
     "crates/jpxl-decode",
     "crates/jpxl-encode",
     "crates/jpxl-encode-policy",
@@ -74,6 +75,16 @@ cast_possible_truncation = "warn"
 debug = true
 lto = "thin"
 codegen-units = 1
+
+# The shipping profile: `release` plus full (fat) LTO. Build it through
+# `tools/build-release-final.sh`, which wraps it in the measured PGO cycle
+# (instrument → train on the canonical test-set images → rebuild with the
+# profile); PGO alone was measured at -36.65% wall on 2400x1800 and -53.48%
+# on 4000x3000 target-rate encodes. `release` (thin LTO) remains the profile
+# for benchmarks and promoted timings so historical numbers stay comparable.
+[profile.release-final]
+inherits = "release"
+lto = "fat"
 
 # Optimised like `release` but built for iteration speed: no LTO, sixteen
 # codegen units, incremental, and with debug assertions and overflow checks

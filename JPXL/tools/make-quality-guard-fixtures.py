@@ -40,6 +40,8 @@ import argparse
 import hashlib
 import io
 import json
+import os
+import re
 import struct
 import sys
 import zlib
@@ -171,6 +173,29 @@ def linear_to_srgb(x: np.ndarray) -> np.ndarray:
 
 def to_u8(x: np.ndarray) -> np.ndarray:
     return np.clip(np.rint(x), 0, 255).astype(np.uint8)
+
+
+def hsv_to_rgb(h: np.ndarray, s: np.ndarray, v: np.ndarray) -> np.ndarray:
+    """Vectorised HSV->RGB (all inputs/outputs in [0, 1]); deterministic.
+
+    Broadcasts scalar ``s``/``v`` against an array ``h``; returns an ``...x3``
+    float array. Hand-rolled (no colorsys loop, no third-party colour dep) so
+    the raster stays bit-identical across environments.
+    """
+    h = np.mod(np.asarray(h, dtype=np.float64), 1.0)
+    s = np.asarray(s, dtype=np.float64) * np.ones_like(h)
+    v = np.asarray(v, dtype=np.float64) * np.ones_like(h)
+    i = np.floor(h * 6.0).astype(np.int64)
+    f = h * 6.0 - i
+    p = v * (1.0 - s)
+    q = v * (1.0 - f * s)
+    t = v * (1.0 - (1.0 - f) * s)
+    i = np.mod(i, 6)
+    cond = [i == k for k in range(6)]
+    r = np.select(cond, [v, q, p, p, t, v])
+    g = np.select(cond, [t, v, v, q, p, p])
+    b = np.select(cond, [p, p, t, v, v, q])
+    return np.stack([r, g, b], axis=-1)
 
 
 def load_rgb(rel_path: str) -> np.ndarray:
@@ -422,6 +447,289 @@ def build_saturated(width: int, height: int, seed: int, soft: bool) -> np.ndarra
     return arr
 
 
+# --------------------------------------------------------------------------- #
+# Saturated content builders (banding/clipping-stress coverage; memo §10). Each
+# function is a distinct content *process* — not one generator re-seeded — so a
+# fresh fixture id is a genuinely independent source family.
+# --------------------------------------------------------------------------- #
+
+
+def build_sat_hue_wheel(width: int, height: int, seed: int, sectors: int) -> np.ndarray:
+    """Fully-saturated angular pie: hue quantised into ``sectors`` hard slices."""
+    yy, xx = np.mgrid[0:height, 0:width].astype(np.float64)
+    cx, cy = (width - 1) / 2.0, (height - 1) / 2.0
+    ang = (np.arctan2(yy - cy, xx - cx) / (2 * np.pi)) % 1.0
+    hue = np.floor(ang * sectors) / sectors
+    rgb = hsv_to_rgb(hue, np.ones_like(hue), np.ones_like(hue))
+    _ = seed
+    return to_u8(rgb * 255.0)
+
+
+def build_sat_hue_bands(width: int, height: int, seed: int, angle_deg: float, bands: int) -> np.ndarray:
+    """Angled stripes cycling through fully-saturated hues (sharp band edges)."""
+    yy, xx = np.mgrid[0:height, 0:width].astype(np.float64)
+    theta = np.deg2rad(angle_deg)
+    proj = xx * np.cos(theta) + yy * np.sin(theta)
+    t = (proj - proj.min()) / max(1e-9, proj.max() - proj.min())
+    hue = np.floor(t * bands) / bands
+    rgb = hsv_to_rgb(hue, np.ones_like(hue), np.ones_like(hue))
+    _ = seed
+    return to_u8(rgb * 255.0)
+
+
+def build_sat_chroma_ramp(width: int, height: int, seed: int, hue: float, axis: str) -> np.ndarray:
+    """Neutral-to-fully-saturated chroma ramp along one axis (near-clipping end)."""
+    yy, xx = np.mgrid[0:height, 0:width].astype(np.float64)
+    if axis == "h":
+        t = xx / max(1, width - 1)
+    elif axis == "v":
+        t = yy / max(1, height - 1)
+    else:  # diagonal
+        t = (xx + yy) / max(1, (width - 1) + (height - 1))
+    rgb = hsv_to_rgb(np.full_like(t, hue), t, np.ones_like(t))
+    _ = seed
+    return to_u8(rgb * 255.0)
+
+
+def build_sat_texture_edges(width: int, height: int, seed: int, cell: int) -> np.ndarray:
+    """High-frequency saturated checkerboard of complementary hues + hard blocks."""
+    rng = np.random.default_rng(seed)
+    yy, xx = np.mgrid[0:height, 0:width]
+    checker = ((xx // cell) + (yy // cell)) % 2
+    h0 = float(rng.random())
+    h1 = (h0 + 0.5) % 1.0
+    ones = np.ones((height, width))
+    a = hsv_to_rgb(np.full((height, width), h0), ones, ones)
+    b = hsv_to_rgb(np.full((height, width), h1), ones, ones)
+    rgb = np.where(checker[..., None] == 0, a, b)
+    for _ in range(6):
+        x0 = int(rng.integers(0, max(1, width - cell)))
+        y0 = int(rng.integers(0, max(1, height - cell)))
+        w = int(rng.integers(cell, cell * 3))
+        hh = int(rng.integers(cell, cell * 3))
+        col = hsv_to_rgb(np.array(float(rng.random())), np.array(1.0), np.array(1.0))
+        rgb[y0 : y0 + hh, x0 : x0 + w] = col
+    return to_u8(rgb * 255.0)
+
+
+def build_sat_noise(width: int, height: int, seed: int) -> np.ndarray:
+    """Per-pixel random fully-saturated hue (saturated high-entropy texture)."""
+    rng = np.random.default_rng(seed)
+    hue = rng.random((height, width))
+    ones = np.ones((height, width))
+    rgb = hsv_to_rgb(hue, ones, ones)
+    return to_u8(rgb * 255.0)
+
+
+def build_sat_solid_tile(width: int, height: int, color: tuple[int, int, int]) -> np.ndarray:
+    """A single saturated colour — trivially compresses to a sub-kilobyte stream."""
+    arr = np.empty((height, width, 3), dtype=np.uint8)
+    arr[:, :] = color
+    return arr
+
+
+def build_sat_block_tile(width: int, height: int, colors: list[tuple[int, int, int]]) -> np.ndarray:
+    """A few saturated colour blocks (still near-trivially / sub-kilobyte codeable)."""
+    arr = np.zeros((height, width, 3), dtype=np.uint8)
+    n = len(colors)
+    cols = 2
+    rows = (n + 1) // 2
+    cw, ch = width // cols, height // rows
+    for idx, color in enumerate(colors):
+        r, c = divmod(idx, cols)
+        y1 = (r + 1) * ch if r < rows - 1 else height
+        x1 = (c + 1) * cw if c < cols - 1 else width
+        arr[r * ch : y1, c * cw : x1] = color
+    return arr
+
+
+def build_sat_rings(width: int, height: int, seed: int, ring_count: int) -> np.ndarray:
+    """Concentric fully-saturated rings, hue stepped by radius (hard ring edges)."""
+    yy, xx = np.mgrid[0:height, 0:width].astype(np.float64)
+    cx, cy = (width - 1) / 2.0, (height - 1) / 2.0
+    d = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2)
+    ring = np.floor((d / max(1e-9, d.max())) * ring_count).astype(np.int64)
+    hue = (ring / max(1, ring_count)) % 1.0
+    rgb = hsv_to_rgb(hue, np.ones_like(d), np.ones_like(d))
+    _ = seed
+    return to_u8(rgb * 255.0)
+
+
+def build_sat_out_of_gamut(width: int, height: int, seed: int) -> np.ndarray:
+    """Channels swung well beyond [0,1] then hard-clipped: broad clipped plateaus."""
+    rng = np.random.default_rng(seed)
+    yy, xx = np.mgrid[0:height, 0:width].astype(np.float64)
+    tx = xx / max(1, width - 1)
+    ty = yy / max(1, height - 1)
+    phase = float(rng.random())
+    r = 2.2 * np.sin(2 * np.pi * (tx + 0.05 * phase))
+    g = 2.2 * np.cos(2 * np.pi * ty)
+    b = 2.2 * np.sin(2 * np.pi * (tx + ty))
+    rgb = np.clip(np.stack([r, g, b], axis=-1), 0.0, 1.0)
+    return to_u8(rgb * 255.0)
+
+
+def build_sat_voronoi(width: int, height: int, seed: int, cells: int) -> np.ndarray:
+    """Voronoi partition, each cell a random fully-saturated hue with hard seams."""
+    rng = np.random.default_rng(seed)
+    pts = rng.random((cells, 2)) * np.array([width, height])
+    hues = rng.random(cells)
+    yy, xx = np.mgrid[0:height, 0:width].astype(np.float64)
+    best = np.zeros((height, width), dtype=np.int64)
+    bestd = np.full((height, width), np.inf)
+    for i in range(cells):
+        d = (xx - pts[i, 0]) ** 2 + (yy - pts[i, 1]) ** 2
+        m = d < bestd
+        best[m] = i
+        bestd[m] = d[m]
+    hue = hues[best]
+    rgb = hsv_to_rgb(hue, np.ones_like(hue), np.ones_like(hue))
+    return to_u8(rgb * 255.0)
+
+
+# --------------------------------------------------------------------------- #
+# Gradient / banding-stress builders (memo §10). Distinct processes: angled
+# linear ramps, shallow luma/chroma sweeps, dithered ramps, radial sky glows,
+# multi-stop, bilinear, conic and diamond fields.
+# --------------------------------------------------------------------------- #
+
+
+def build_grad_angled(
+    width: int, height: int, seed: int, angle_deg: float,
+    c0: tuple[float, float, float], c1: tuple[float, float, float],
+) -> np.ndarray:
+    """Two-colour linear ramp at an arbitrary angle."""
+    yy, xx = np.mgrid[0:height, 0:width].astype(np.float64)
+    theta = np.deg2rad(angle_deg)
+    proj = xx * np.cos(theta) + yy * np.sin(theta)
+    t = (proj - proj.min()) / max(1e-9, proj.max() - proj.min())
+    a = np.asarray(c0, dtype=np.float64)
+    b = np.asarray(c1, dtype=np.float64)
+    rgb = (1 - t)[..., None] * a + t[..., None] * b
+    _ = seed
+    return to_u8(rgb * 255.0)
+
+
+def build_grad_luma_shallow(
+    width: int, height: int, seed: int, base: float, span: float, angle_deg: float
+) -> np.ndarray:
+    """Grayscale ramp over a narrow code-value span (severe banding stress)."""
+    yy, xx = np.mgrid[0:height, 0:width].astype(np.float64)
+    theta = np.deg2rad(angle_deg)
+    proj = xx * np.cos(theta) + yy * np.sin(theta)
+    t = (proj - proj.min()) / max(1e-9, proj.max() - proj.min())
+    g = to_u8(base + span * t)
+    _ = seed
+    return np.repeat(g[..., None], 3, axis=2)
+
+
+def build_grad_chroma_shallow(
+    width: int, height: int, seed: int, hue: float, angle_deg: float
+) -> np.ndarray:
+    """Constant-luma, shallow saturation sweep — chroma banding stress."""
+    yy, xx = np.mgrid[0:height, 0:width].astype(np.float64)
+    theta = np.deg2rad(angle_deg)
+    proj = xx * np.cos(theta) + yy * np.sin(theta)
+    t = (proj - proj.min()) / max(1e-9, proj.max() - proj.min())
+    sat = 0.06 + 0.10 * t
+    rgb = hsv_to_rgb(np.full_like(t, hue), sat, np.full_like(t, 0.65))
+    _ = seed
+    return to_u8(rgb * 255.0)
+
+
+def build_grad_dither(width: int, height: int, seed: int, angle_deg: float, amp: float) -> np.ndarray:
+    """Smooth ramp plus seeded additive dither noise."""
+    rng = np.random.default_rng(seed)
+    yy, xx = np.mgrid[0:height, 0:width].astype(np.float64)
+    theta = np.deg2rad(angle_deg)
+    proj = xx * np.cos(theta) + yy * np.sin(theta)
+    t = (proj - proj.min()) / max(1e-9, proj.max() - proj.min())
+    base = 0.30 + 0.30 * t
+    noise = rng.normal(0.0, amp / 255.0, size=(height, width))
+    v = base + noise
+    rgb = np.clip(np.stack([v, v, v * 0.98], axis=-1), 0.0, 1.0)
+    return to_u8(rgb * 255.0)
+
+
+def build_grad_radial_sky(
+    width: int, height: int, seed: int, cx_frac: float, cy_frac: float
+) -> np.ndarray:
+    """Off-centre warm-to-cool radial sky glow with faint seeded noise."""
+    rng = np.random.default_rng(seed)
+    yy, xx = np.mgrid[0:height, 0:width].astype(np.float64)
+    cx, cy = cx_frac * width, cy_frac * height
+    d = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2)
+    t = d / max(1e-9, d.max())
+    r = 0.95 - 0.55 * t
+    g = 0.85 - 0.30 * t
+    b = 0.60 + 0.35 * t
+    noise = rng.normal(0.0, 1.0 / 255.0, size=(height, width))
+    rgb = np.clip(np.stack([r + noise, g + noise, b + noise], axis=-1), 0.0, 1.0)
+    return to_u8(rgb * 255.0)
+
+
+def build_grad_sunset_multistop(width: int, height: int, seed: int, angle_deg: float) -> np.ndarray:
+    """Five-stop sunset gradient along an angle (piecewise-linear colour stops)."""
+    yy, xx = np.mgrid[0:height, 0:width].astype(np.float64)
+    theta = np.deg2rad(angle_deg)
+    proj = xx * np.cos(theta) + yy * np.sin(theta)
+    t = (proj - proj.min()) / max(1e-9, proj.max() - proj.min())
+    stops_t = np.array([0.0, 0.3, 0.55, 0.75, 1.0])
+    stops_c = np.array([
+        [0.05, 0.05, 0.20],
+        [0.35, 0.10, 0.30],
+        [0.85, 0.35, 0.25],
+        [0.98, 0.70, 0.35],
+        [1.00, 0.92, 0.70],
+    ])
+    r = np.interp(t, stops_t, stops_c[:, 0])
+    g = np.interp(t, stops_t, stops_c[:, 1])
+    b = np.interp(t, stops_t, stops_c[:, 2])
+    rgb = np.stack([r, g, b], axis=-1)
+    _ = seed
+    return to_u8(rgb * 255.0)
+
+
+def build_grad_bilinear(
+    width: int, height: int, seed: int,
+    corners: list[tuple[float, float, float]],
+) -> np.ndarray:
+    """Four-corner bilinear colour interpolation."""
+    yy, xx = np.mgrid[0:height, 0:width].astype(np.float64)
+    u = xx / max(1, width - 1)
+    v = yy / max(1, height - 1)
+    tl, tr, bl, br = (np.asarray(c, dtype=np.float64) for c in corners)
+    top = (1 - u)[..., None] * tl + u[..., None] * tr
+    bot = (1 - u)[..., None] * bl + u[..., None] * br
+    rgb = (1 - v)[..., None] * top + v[..., None] * bot
+    _ = seed
+    return to_u8(rgb * 255.0)
+
+
+def build_grad_conic(width: int, height: int, seed: int) -> np.ndarray:
+    """Low-saturation conic (angular) hue sweep — a gentle pastel chroma gradient."""
+    yy, xx = np.mgrid[0:height, 0:width].astype(np.float64)
+    cx, cy = (width - 1) / 2.0, (height - 1) / 2.0
+    ang = (np.arctan2(yy - cy, xx - cx) / (2 * np.pi)) % 1.0
+    rgb = hsv_to_rgb(ang, np.full_like(ang, 0.25), np.full_like(ang, 0.85))
+    _ = seed
+    return to_u8(rgb * 255.0)
+
+
+def build_grad_diamond(width: int, height: int, seed: int) -> np.ndarray:
+    """L1 (diamond) distance gradient from centre."""
+    yy, xx = np.mgrid[0:height, 0:width].astype(np.float64)
+    cx, cy = (width - 1) / 2.0, (height - 1) / 2.0
+    d = np.abs(xx - cx) + np.abs(yy - cy)
+    t = d / max(1e-9, d.max())
+    r = 0.20 + 0.70 * t
+    g = 0.60 - 0.20 * t
+    b = 0.80 - 0.55 * t
+    rgb = np.clip(np.stack([r, g, b], axis=-1), 0.0, 1.0)
+    _ = seed
+    return to_u8(rgb * 255.0)
+
+
 def crop(arr: np.ndarray, w: int, h: int, ox: int, oy: int) -> np.ndarray:
     H, W, _ = arr.shape
     ox = max(0, min(ox, W - w))
@@ -500,6 +808,12 @@ def registry() -> list[Fixture]:
     fx.append(_synth("text-screenshot-holdout-1600x900", "text-screenshot", "holdout",
                      "synthetic/text-screenshot", lambda: build_text(1600, 900, 19001, dark=False),
                      19001, "Holdout paragraphs on white, fresh seed"))
+    fx.append(_synth("text-screenshot-white2-1280x800", "text-screenshot", "calibration",
+                     "synthetic/text-screenshot", lambda: build_text(1280, 800, 1005, dark=False),
+                     1005, "Second white-background paragraph layout, fresh seed"))
+    fx.append(_synth("text-screenshot-ui2-1600x1000", "text-screenshot", "development",
+                     "synthetic/text-screenshot", lambda: build_text_ui(1600, 1000, 1006),
+                     1006, "Second UI mock layout, fresh seed (UI class in both splits)"))
 
     # ---- line-art (synthetic) ---------------------------------------------- #
     fx.append(_synth("line-art-aa-shapes-1024x1024", "line-art", "calibration",
@@ -517,6 +831,9 @@ def registry() -> list[Fixture]:
     fx.append(_synth("line-art-holdout-900x900", "line-art", "holdout",
                      "synthetic/line-art", lambda: build_line_art(900, 900, 29001, anti_alias=True),
                      29001, "Holdout anti-aliased vector shapes, fresh seed"))
+    fx.append(_synth("line-art-hatch2-640x640", "line-art", "development",
+                     "synthetic/line-art", lambda: build_hatch(640, 640, 2005),
+                     2005, "Second hatch-pattern layout, fresh seed (hatch in both splits)"))
 
     # ---- gradient (synthetic) ---------------------------------------------- #
     fx.append(_synth("gradient-horizontal-1024x512", "gradient", "calibration",
@@ -537,6 +854,95 @@ def registry() -> list[Fixture]:
     fx.append(_synth("gradient-holdout-radial-700x700", "gradient", "holdout",
                      "synthetic/gradient", lambda: build_gradient(700, 700, "radial", 39001),
                      39001, "Holdout radial ramp, fresh seed"))
+    fx.append(_synth("gradient-sky-noise2-1024x512", "gradient", "calibration",
+                     "synthetic/gradient", lambda: build_gradient(1024, 512, "sky", 3006),
+                     3006, "Second sky-like noisy gradient, fresh seed (banding stress in both splits)"))
+    fx.append(_synth("gradient-sky-noise3-800x600", "gradient", "development",
+                     "synthetic/gradient", lambda: build_gradient(800, 600, "sky", 3007),
+                     3007, "Third sky-like noisy gradient, fresh seed"))
+
+    # ---- gradient/banding-stress coverage expansion (memo §10): distinct
+    # generating processes, each a fresh family. ------------------------------ #
+    # Angled two-colour linear ramps.
+    fx.append(_synth("gradient-angled-30-1024x512", "gradient", "calibration",
+                     "synthetic/gradient",
+                     lambda: build_grad_angled(1024, 512, 3100, 30.0, (0.05, 0.10, 0.35), (0.95, 0.80, 0.30)),
+                     3100, "Two-colour linear ramp at 30 degrees"))
+    fx.append(_synth("gradient-angled-75-800x600", "gradient", "development",
+                     "synthetic/gradient",
+                     lambda: build_grad_angled(800, 600, 3101, 75.0, (0.10, 0.30, 0.15), (0.90, 0.40, 0.70)),
+                     3101, "Two-colour linear ramp at 75 degrees"))
+    fx.append(_synth("gradient-angled-150-holdout-640x640", "gradient", "holdout",
+                     "synthetic/gradient",
+                     lambda: build_grad_angled(640, 640, 39100, 150.0, (0.20, 0.20, 0.60), (0.85, 0.85, 0.20)),
+                     39100, "Holdout two-colour linear ramp at 150 degrees, fresh seed"))
+    # Shallow luma ramps over a narrow code-value span (banding stress).
+    fx.append(_synth("gradient-luma-shallow-h-1024x512", "gradient", "calibration",
+                     "synthetic/gradient",
+                     lambda: build_grad_luma_shallow(1024, 512, 3102, 96.0, 16.0, 0.0),
+                     3102, "Horizontal grayscale ramp over 16 code values (banding stress)"))
+    fx.append(_synth("gradient-luma-shallow-v-800x600", "gradient", "development",
+                     "synthetic/gradient",
+                     lambda: build_grad_luma_shallow(800, 600, 3103, 40.0, 24.0, 90.0),
+                     3103, "Vertical grayscale ramp over 24 code values (banding stress)"))
+    # Shallow chroma sweeps (constant luma).
+    fx.append(_synth("gradient-chroma-shallow-red-1024x512", "gradient", "calibration",
+                     "synthetic/gradient",
+                     lambda: build_grad_chroma_shallow(1024, 512, 3104, 0.02, 0.0),
+                     3104, "Shallow horizontal red-chroma sweep at constant luma"))
+    fx.append(_synth("gradient-chroma-shallow-blue-800x600", "gradient", "development",
+                     "synthetic/gradient",
+                     lambda: build_grad_chroma_shallow(800, 600, 3105, 0.62, 90.0),
+                     3105, "Shallow vertical blue-chroma sweep at constant luma"))
+    fx.append(_synth("gradient-chroma-shallow-green-holdout-640x640", "gradient", "holdout",
+                     "synthetic/gradient",
+                     lambda: build_grad_chroma_shallow(640, 640, 39101, 0.33, 45.0),
+                     39101, "Holdout shallow diagonal green-chroma sweep, fresh seed"))
+    # Dithered ramps.
+    fx.append(_synth("gradient-dither-lowamp-1024x512", "gradient", "calibration",
+                     "synthetic/gradient",
+                     lambda: build_grad_dither(1024, 512, 3106, 0.0, 1.0),
+                     3106, "Smooth horizontal ramp plus low-amplitude seeded dither"))
+    fx.append(_synth("gradient-dither-highamp-800x600", "gradient", "development",
+                     "synthetic/gradient",
+                     lambda: build_grad_dither(800, 600, 3107, 60.0, 4.0),
+                     3107, "Angled ramp plus higher-amplitude seeded dither"))
+    # Radial sky glows.
+    fx.append(_synth("gradient-radial-sky-glow-1024x768", "gradient", "calibration",
+                     "synthetic/gradient",
+                     lambda: build_grad_radial_sky(1024, 768, 3108, 0.5, 0.15),
+                     3108, "Centred warm-to-cool radial sky glow with faint noise"))
+    fx.append(_synth("gradient-radial-sky-offcenter-800x600", "gradient", "development",
+                     "synthetic/gradient",
+                     lambda: build_grad_radial_sky(800, 600, 3109, 0.2, 0.8),
+                     3109, "Off-centre radial sky glow with faint noise"))
+    # Multi-stop sunset.
+    fx.append(_synth("gradient-sunset-multistop-1024x512", "gradient", "calibration",
+                     "synthetic/gradient",
+                     lambda: build_grad_sunset_multistop(1024, 512, 3110, 90.0),
+                     3110, "Five-stop vertical sunset gradient"))
+    # Bilinear four-corner fields.
+    fx.append(_synth("gradient-bilinear-768x768", "gradient", "calibration",
+                     "synthetic/gradient",
+                     lambda: build_grad_bilinear(768, 768, 3111, [
+                         (0.10, 0.20, 0.60), (0.80, 0.30, 0.20),
+                         (0.20, 0.70, 0.30), (0.90, 0.85, 0.40)]),
+                     3111, "Four-corner bilinear colour field"))
+    fx.append(_synth("gradient-bilinear-holdout-640x640", "gradient", "holdout",
+                     "synthetic/gradient",
+                     lambda: build_grad_bilinear(640, 640, 39102, [
+                         (0.60, 0.10, 0.40), (0.20, 0.60, 0.70),
+                         (0.80, 0.80, 0.20), (0.10, 0.30, 0.55)]),
+                     39102, "Holdout four-corner bilinear colour field, fresh seed"))
+    # Conic and diamond fields.
+    fx.append(_synth("gradient-conic-720x720", "gradient", "calibration",
+                     "synthetic/gradient",
+                     lambda: build_grad_conic(720, 720, 3112),
+                     3112, "Low-saturation conic (angular) pastel hue sweep"))
+    fx.append(_synth("gradient-diamond-768x768", "gradient", "development",
+                     "synthetic/gradient",
+                     lambda: build_grad_diamond(768, 768, 3113),
+                     3113, "L1 diamond-distance colour gradient from centre"))
 
     # ---- saturated (synthetic + one photo crop) ---------------------------- #
     fx.append(_synth("saturated-primaries-hard-512x512", "saturated", "calibration",
@@ -555,6 +961,84 @@ def registry() -> list[Fixture]:
         lambda: crop(load_rgb("test-set/test-set-4mp/20260606_203230_4mp.png"), 512, 512, 900, 700),
         "test-set/test-set-4mp/20260606_203230_4mp.png",
         "centre-ish 512x512 crop at (x=900,y=700), sRGB 8-bit, no resampling"))
+
+    # ---- saturated coverage expansion (memo §10): distinct saturated/clipping
+    # content processes, each a fresh family. --------------------------------- #
+    # Quantised hue wheels.
+    fx.append(_synth("saturated-hue-wheel-512x512", "saturated", "calibration",
+                     "synthetic/saturated", lambda: build_sat_hue_wheel(512, 512, 4100, 8),
+                     4100, "Fully-saturated 8-sector angular hue wheel (hard slice edges)"))
+    fx.append(_synth("saturated-hue-wheel-fine-384x384", "saturated", "development",
+                     "synthetic/saturated", lambda: build_sat_hue_wheel(384, 384, 4101, 16),
+                     4101, "Fully-saturated 16-sector angular hue wheel"))
+    fx.append(_synth("saturated-hue-wheel-holdout-320x320", "saturated", "holdout",
+                     "synthetic/saturated", lambda: build_sat_hue_wheel(320, 320, 49100, 12),
+                     49100, "Holdout 12-sector fully-saturated hue wheel, fresh seed"))
+    # Angled saturated hue bands.
+    fx.append(_synth("saturated-hue-bands-0deg-512x512", "saturated", "calibration",
+                     "synthetic/saturated", lambda: build_sat_hue_bands(512, 512, 4102, 0.0, 12),
+                     4102, "Vertical fully-saturated hue bands (12 hues, hard edges)"))
+    fx.append(_synth("saturated-hue-bands-45deg-512x512", "saturated", "development",
+                     "synthetic/saturated", lambda: build_sat_hue_bands(512, 512, 4103, 45.0, 12),
+                     4103, "Diagonal fully-saturated hue bands (12 hues)"))
+    fx.append(_synth("saturated-hue-bands-90deg-448x448", "saturated", "calibration",
+                     "synthetic/saturated", lambda: build_sat_hue_bands(448, 448, 4104, 90.0, 16),
+                     4104, "Horizontal fully-saturated hue bands (16 hues)"))
+    # Neutral-to-saturated chroma ramps (near-clipping end).
+    fx.append(_synth("saturated-chroma-ramp-red-h-512x512", "saturated", "calibration",
+                     "synthetic/saturated", lambda: build_sat_chroma_ramp(512, 512, 4105, 0.0, "h"),
+                     4105, "Horizontal gray-to-full-red chroma ramp (near-clipping)"))
+    fx.append(_synth("saturated-chroma-ramp-blue-v-512x512", "saturated", "development",
+                     "synthetic/saturated", lambda: build_sat_chroma_ramp(512, 512, 4106, 0.62, "v"),
+                     4106, "Vertical gray-to-full-blue chroma ramp (near-clipping)"))
+    fx.append(_synth("saturated-chroma-ramp-green-diag-holdout-320x320", "saturated", "holdout",
+                     "synthetic/saturated", lambda: build_sat_chroma_ramp(320, 320, 49101, 0.33, "d"),
+                     49101, "Holdout diagonal gray-to-full-green chroma ramp, fresh seed"))
+    # Saturated high-frequency texture and per-pixel noise.
+    fx.append(_synth("saturated-texture-checker-512x512", "saturated", "calibration",
+                     "synthetic/saturated", lambda: build_sat_texture_edges(512, 512, 4107, 16),
+                     4107, "Complementary saturated checkerboard (16px cells) plus hard blocks"))
+    fx.append(_synth("saturated-texture-fine-384x384", "saturated", "development",
+                     "synthetic/saturated", lambda: build_sat_texture_edges(384, 384, 4108, 6),
+                     4108, "Fine complementary saturated checkerboard (6px cells)"))
+    fx.append(_synth("saturated-noise-hue-384x384", "saturated", "calibration",
+                     "synthetic/saturated", lambda: build_sat_noise(384, 384, 4109),
+                     4109, "Per-pixel random fully-saturated hue (high-entropy texture)"))
+    fx.append(_synth("saturated-noise-hue-holdout-320x320", "saturated", "holdout",
+                     "synthetic/saturated", lambda: build_sat_noise(320, 320, 49102),
+                     49102, "Holdout per-pixel random saturated hue, fresh seed"))
+    # Sub-kilobyte-encodable saturated tiles (solid / few-block).
+    fx.append(_synth("saturated-solid-red-256x256", "saturated", "calibration",
+                     "synthetic/saturated", lambda: build_sat_solid_tile(256, 256, (255, 0, 0)),
+                     4110, "Solid pure red tile (sub-kilobyte-encodable saturated fixture)"))
+    fx.append(_synth("saturated-solid-cyan-256x256", "saturated", "development",
+                     "synthetic/saturated", lambda: build_sat_solid_tile(256, 256, (0, 255, 255)),
+                     4111, "Solid pure cyan tile (sub-kilobyte-encodable saturated fixture)"))
+    fx.append(_synth("saturated-solid-magenta-288x288", "saturated", "calibration",
+                     "synthetic/saturated", lambda: build_sat_solid_tile(288, 288, (255, 0, 255)),
+                     4112, "Solid pure magenta tile (sub-kilobyte-encodable saturated fixture)"))
+    fx.append(_synth("saturated-block-holdout-256x256", "saturated", "holdout",
+                     "synthetic/saturated", lambda: build_sat_block_tile(256, 256, [
+                         (255, 255, 0), (0, 0, 255), (0, 255, 0), (255, 0, 0)]),
+                     4113, "Four-block saturated tile (near-trivially codeable), holdout"))
+    # Concentric saturated rings.
+    fx.append(_synth("saturated-rings-512x512", "saturated", "calibration",
+                     "synthetic/saturated", lambda: build_sat_rings(512, 512, 4114, 10),
+                     4114, "Concentric fully-saturated rings (hue stepped by radius)"))
+    fx.append(_synth("saturated-rings-400x400", "saturated", "development",
+                     "synthetic/saturated", lambda: build_sat_rings(400, 400, 4115, 16),
+                     4115, "Concentric fully-saturated rings, finer ring spacing"))
+    # Out-of-gamut hard-clip plateaus.
+    fx.append(_synth("saturated-out-of-gamut-512x512", "saturated", "calibration",
+                     "synthetic/saturated", lambda: build_sat_out_of_gamut(512, 512, 4116),
+                     4116, "Channels swung beyond [0,1] then hard-clipped (broad clipped plateaus)"))
+    fx.append(_synth("saturated-out-of-gamut-448x448", "saturated", "development",
+                     "synthetic/saturated", lambda: build_sat_out_of_gamut(448, 448, 4117),
+                     4117, "Second out-of-gamut hard-clip field, fresh seed"))
+    # Saturated Voronoi partition.
+    fx.append(_synth("saturated-voronoi-512x512", "saturated", "calibration",
+                     "synthetic/saturated", lambda: build_sat_voronoi(512, 512, 4118, 28),
+                     4118, "28-cell saturated Voronoi partition (hard cell seams)"))
 
     # ---- gradient/line-art done; tiny crops (exempt from 256x256) ---------- #
     tiny_sizes = [(7, 7), (8, 8), (16, 16), (33, 20), (64, 64)]
@@ -580,7 +1064,8 @@ def registry() -> list[Fixture]:
         "64x64 crop at (x=1200,y=900), sRGB 8-bit"))
     _ = tiny_sizes  # documented full set (7x7,8x8,16x16,33x20,64x64) spread across splits
 
-    # ---- noise-lowlight (derived, development scene only) ------------------- #
+    # ---- noise-lowlight (derived; one family per capture, split follows the
+    # capture so the class exists in both calibration and development) ------- #
     fx.append(_derived(
         "noise-lowlight-184356-1024x768", "noise-lowlight", "development",
         "derived/noise-lowlight",
@@ -588,6 +1073,27 @@ def registry() -> list[Fixture]:
         "test-set/20240502_184356.png",
         "linear-light x0.25 darken, then seeded Poisson(scale=500)+Gaussian(sigma=0.006) noise, re-encode sRGB 8-bit",
         seed=5001))
+    fx.append(_derived(
+        "noise-lowlight-151356-1024x768", "noise-lowlight", "calibration",
+        "derived/noise-lowlight",
+        lambda: build_lowlight(load_rgb("test-set/20240502_151356.png"), 5002),
+        "test-set/20240502_151356.png",
+        "linear-light x0.25 darken, then seeded Poisson(scale=500)+Gaussian(sigma=0.006) noise, re-encode sRGB 8-bit",
+        seed=5002))
+    fx.append(_derived(
+        "noise-lowlight-105759-1024x768", "noise-lowlight", "development",
+        "derived/noise-lowlight",
+        lambda: build_lowlight(load_rgb("test-set/20240503_105759.png"), 5003),
+        "test-set/20240503_105759.png",
+        "linear-light x0.25 darken, then seeded Poisson(scale=500)+Gaussian(sigma=0.006) noise, re-encode sRGB 8-bit",
+        seed=5003))
+    fx.append(_derived(
+        "noise-lowlight-110934-1024x768", "noise-lowlight", "calibration",
+        "derived/noise-lowlight",
+        lambda: build_lowlight(load_rgb("test-set/20240501_110934.png"), 5004),
+        "test-set/20240501_110934.png",
+        "linear-light x0.25 darken, then seeded Poisson(scale=500)+Gaussian(sigma=0.006) noise, re-encode sRGB 8-bit",
+        seed=5004))
 
     # ---- grayscale (derived) ----------------------------------------------- #
     fx.append(_derived(
@@ -595,6 +1101,12 @@ def registry() -> list[Fixture]:
         "derived/grayscale",
         lambda: build_grayscale(load_rgb("test-set/20240502_192515.png")),
         "test-set/20240502_192515.png",
+        "Rec.709 linear-light luma, re-encode sRGB, replicated to R=G=B"))
+    fx.append(_derived(
+        "grayscale-scene-151800-1024x768", "grayscale", "calibration",
+        "derived/grayscale",
+        lambda: build_grayscale(load_rgb("test-set/20240502_151800.png")),
+        "test-set/20240502_151800.png",
         "Rec.709 linear-light luma, re-encode sRGB, replicated to R=G=B"))
     fx.append(_derived(
         "grayscale-photo-203230-crop-1024x1024", "grayscale", "calibration",
@@ -683,9 +1195,43 @@ def sidecar_for(fx: Fixture, ppm_sha: str, png_sha: str | None) -> dict[str, Any
     return doc
 
 
+CAPTURE_STEM_RE = re.compile(r"(20\d{6}_\d{6})")
+
+
+def source_capture_id(fx: Fixture) -> str | None:
+    """The camera-capture stem a fixture ultimately comes from, or ``None``.
+
+    Parsed from the parent path's basename (``20260606_203230_4mp.png`` and
+    ``20260606_203230_result.png`` are one capture), so every crop, resolution
+    and colour variant of one photograph shares the id.
+    """
+    if fx.parent is None:
+        return None
+    m = CAPTURE_STEM_RE.search(os.path.basename(fx.parent["path"]))
+    return m.group(1) if m else None
+
+
+def family_fields(fx: Fixture) -> dict[str, Any]:
+    """The split-hygiene fields of one fixture.
+
+    ``family_id`` groups every derivative of one independent source: the
+    capture stem for photographic sources and their derivatives, the fixture's
+    own id for synthetic fixtures (fresh seeds are independent families by
+    design). All members of a family must share one split — ``cmd_build``
+    enforces it — so training/holdout separation is mechanically auditable.
+    """
+    capture = source_capture_id(fx)
+    return {
+        "family_id": capture if capture is not None else fx.fixture_id,
+        "variant_id": fx.fixture_id,
+        "generator_family": fx.klass if fx.kind in ("synthetic", "derived") else None,
+        "source_capture_id": capture,
+    }
+
+
 def manifest_entry(fx: Fixture, ppm_sha: str) -> dict[str, Any]:
     w, h, depth = fx.dims()
-    return {
+    entry = {
         "id": fx.fixture_id,
         "path": fx.ppm_rel(),
         "sha256": ppm_sha,
@@ -698,6 +1244,8 @@ def manifest_entry(fx: Fixture, ppm_sha: str) -> dict[str, Any]:
         "provenance": fx.provenance,
         "sidecar": fx.sidecar_rel(),
     }
+    entry.update(family_fields(fx))
+    return entry
 
 
 def realise(fx: Fixture) -> tuple[bytes, bytes | None]:
@@ -720,6 +1268,16 @@ def cmd_build(check: bool) -> int:
     dupes = {i for i in ids if ids.count(i) > 1}
     if dupes:
         print(f"ERROR: duplicate fixture ids: {sorted(dupes)}", file=sys.stderr)
+        return 2
+    # Family split-hygiene guard: every derivative of one source must stay in
+    # one split, or family leakage silently flatters any model trained on the
+    # calibration/development splits.
+    family_splits: dict[str, set[str]] = {}
+    for f in fixtures:
+        family_splits.setdefault(family_fields(f)["family_id"], set()).add(f.split)
+    leaking = {fam: sorted(s) for fam, s in family_splits.items() if len(s) > 1}
+    if leaking:
+        print(f"ERROR: image families cross splits: {leaking}", file=sys.stderr)
         return 2
 
     manifest_images: list[dict[str, Any]] = []

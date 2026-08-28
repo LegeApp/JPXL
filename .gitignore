@@ -38,3 +38,9 @@ target/
 
 # Source-export bundle produced by copy-code-only.py (regenerable).
 JPXL/JPXL.zip
+
+# Python bytecode caches from the tools/ test suites.
+__pycache__/
+
+# Agent-pack snapshot archives (regenerable exports, never history).
+/jpegXL-rs-agent-pack-*.7z

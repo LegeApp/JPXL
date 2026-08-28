@@ -1,0 +1,5 @@
+fixture: prog_large.jpg
+origin: synthesised by tests/fixtures/generate.py (original content)
+license: CC0-1.0 / public domain (no third-party image used)
+sha256: 2b4cdeee8298264627c1ac4d4cd246bcdf399bb17df310714e185e4aab1be708
+regenerate: cjpeg -quality 92 -progressive -sample 2x2 (1024x768 synthetic source)

@@ -1,0 +1,5 @@
+fixture: base_restart_rows.jpg
+origin: synthesised by tests/fixtures/generate.py (original content)
+license: CC0-1.0 / public domain (no third-party image used)
+sha256: b07dbf9d47363145de93221a43ebbc36d28423eae9c065e8cfa98693b6b144d7
+regenerate: cjpeg -quality 90 -sample 1x1 -restart 2B

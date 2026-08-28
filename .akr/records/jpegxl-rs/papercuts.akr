@@ -37,6 +37,18 @@ record jpegxl-rs.papercut.a-harmless-scratch-setup-command-was-rejected/1 : pape
     created_at 2026-08-18
 }
 
+record jpegxl-rs.papercut.a-work-revision-that-cites-already-committed/1 : papercut {
+    title "A work revision that cites already-committed evidence in verified_by…"
+    state verified
+    statement """
+        A work revision that cites already-committed evidence in verified_by lands "not satisfied - predates the last change" unless the evidence rows are committed in the very same commit as the revision (the current-together grace); revising a record in a later .akr-only commit therefore un-satisfies checks whose measurements are still perfectly valid, and there is no way to re-land unchanged evidence. Retargeting a check citation onto fresh evidence needs either an observed_at at-or-after the revision commit (chicken-and-egg) or duplicated evidence records. Hit while pointing pqc-usable-efforts-cost's workspace-gates check at the 2026-08-25 gates evidence; repaired by dropping the revision commit.
+        """
+    observed_at git:7f7c6d1433906f0f6751af94b2903cd3e3f80f72
+    about "akr"
+    author "claude"
+    created_at 2026-08-25
+}
+
 record jpegxl-rs.papercut.after-a-temporary-comparison-worktree-restored/1 : papercut {
     title "After a temporary comparison worktree restored a modified source with…"
     state verified
@@ -126,6 +138,18 @@ record jpegxl-rs.papercut.akr-view-active-work-current-state-etc-returned/1 : pa
     observed_at git:788a3b4ebce146cacbe3412b12de6f712da58304
     author "grok-4.5"
     created_at 2026-08-06
+}
+
+record jpegxl-rs.papercut.amending-an-akr-generated-commit-message-to/1 : papercut {
+    title "Amending an akr-generated commit message (to replace the generic…"
+    state verified
+    statement """
+        Amending an akr-generated commit message (to replace the generic "chore:" subject with a descriptive one while keeping the AKR trailers byte-identical) is rejected by the commit-msg hook with AKR-C031 because the change transaction closes at akr git commit; the only way through is git commit --amend --no-verify. Either akr git commit could accept a subject/body override, or the hook could allow amends whose trailers match the last commit.
+        """
+    observed_at git:a523d0157ac223678b9d02342d0a8a7fbc34d642
+    about "akr"
+    author "claude"
+    created_at 2026-08-25
 }
 
 record jpegxl-rs.papercut.cargo-fmt-all-check-fails-on-code-committed-at/1 : papercut {
@@ -255,6 +279,18 @@ record jpegxl-rs.papercut.knowledge-complete-s-cited-evidence-gets-its/1 : paper
     created_at 2026-08-07
 }
 
+record jpegxl-rs.papercut.knowledge-get-with-detail-canonical-on-jpegxl/1 : papercut {
+    title "knowledge.get with detail canonical on…"
+    state verified
+    statement """
+        knowledge.get with detail canonical on jpegxl-rs.work.pqc-usable-efforts-cost/7 truncated at the tool's token cap and the suggested continuation (detail summary) cannot return the acceptance block's source text either, so reproducing checks verbatim for a revision required reading .akr/records/jpegxl-rs/work.akr by hand. A continuation or an acceptance-only detail level would remove the need to touch the records directory.
+        """
+    observed_at git:4bbb629fd4dc8bcf3cd33199b2d4aefdad39e351
+    about "akr"
+    author "claude"
+    created_at 2026-08-25
+}
+
 record jpegxl-rs.papercut.knowledge-propose-documents-observation/1 : papercut {
     title "knowledge.propose documents observation observed_at as required but…"
     state verified
@@ -289,6 +325,18 @@ record jpegxl-rs.papercut.knowledge-propose-exposes-topic-for-every/1 : papercut
     about "akr"
     author "codex-gpt-5"
     created_at 2026-08-23
+}
+
+record jpegxl-rs.papercut.knowledge-propose-s-generic-slots-schema-does/1 : papercut {
+    title "knowledge.propose's generic `slots` schema does not expose that an…"
+    state verified
+    statement """
+        knowledge.propose's generic `slots` schema does not expose that an observation's `method` must be one of manual/command/instrumented/observation. V-022 said to add `method`; supplying explanatory prose then produced dozens of parser diagnostics before the enum expectation appeared.
+        """
+    observed_at git:41a2e3f20631e000954b9ea76612c70f1847e745
+    about "akr"
+    author "codex"
+    created_at 2026-08-24
 }
 
 record jpegxl-rs.papercut.knowledge-propose-says-observation-requires/1 : papercut {
@@ -382,6 +430,17 @@ record jpegxl-rs.papercut.the-frozen-pqc-holdout-reducer-scripts-and/1 : papercu
     about "project measurement harness"
     author "codex"
     created_at 2026-08-22
+}
+
+record jpegxl-rs.papercut.the-frozen-pr7-holdout-parser-assumed/1 : papercut {
+    title "The frozen PR7 holdout parser assumed `ssimulacra2` immediately…"
+    state verified
+    statement """
+        The frozen PR7 holdout parser assumed `ssimulacra2` immediately followed `psnr_db`; the current compare line inserts `ssimulacra2_jpxl` and its version first, so an otherwise successful 12 MP resumed cell was needlessly rerun. Parse named fields independently or share the checked-in compare parser.
+        """
+    observed_at git:41a2e3f20631e000954b9ea76612c70f1847e745
+    author "codex"
+    created_at 2026-08-24
 }
 
 record jpegxl-rs.papercut.the-installed-akr-0-3-1-rejected-four-existing/1 : papercut {

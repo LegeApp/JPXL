@@ -121,13 +121,18 @@ reported is the score the written file has: the reconstruction is bit-exact
 with `jpxl-decode`, and the scorer quantizes to the frame's bit depth the way
 a viewer would see it.
 
-- **Search.** A calibrated table (`jpxl features` source statistics → starting
-  quantizer) picks the first probe; the controller brackets the target by
-  extrapolating the measured loss slope, aims at the log-loss crossing, and
-  then attaches entropy coding to only the coarsest qualifying candidates and
-  keeps the smallest exact stream. Probes reuse the first candidate's cover and
-  chroma-from-luma; a finalist far from that anchor is re-planned fresh and
-  re-scored.
+- **Search.** A trained one-shot model (pooled quantile regression over
+  `jpxl features` source statistics plus a DCT8 transform summary; the
+  `one-shot-controller` feature, on by default) picks the first probe when the
+  input is in its confidence envelope, and falls back to the calibrated
+  starting table when it is not (tiny frames, out-of-envelope features). From
+  that seed the controller brackets the target by extrapolating the measured
+  loss slope, aims at the log-loss crossing, and then attaches entropy coding
+  to only the coarsest qualifying candidates and keeps the smallest exact
+  stream. Probes reuse the first candidate's cover and chroma-from-luma; a
+  finalist far from that anchor is re-planned fresh and re-scored. Every
+  emission is verified at full resolution against the canonical scorer before
+  it is reported.
 - **Budgets.** Fast: at most 3 scored probes and 2 exact prices. Balanced: 5
   and 3. These are hard caps; there is no hidden exhaustive fallback.
 - **Reporting.** Every perceptual encode prints one line,
@@ -139,7 +144,7 @@ a viewer would see it.
   `under_target_work_cap`, `saturated_floor`, `routed_to_lossless` (score 100)
   and `unsupported_too_small` (below the metric's 8×8 floor). Setting
   `JPXL_QUALITY_TRACE=<path>` appends a machine-readable
-  `jpxl.quality-trace/1` record per encode: source features, the predicted
+  `jpxl.quality-trace/2` record per encode: source features, the predicted
   rung, every probe's quantizer/score/bytes, and wall time by phase.
 - **Determinism.** The same input produces the same codestream across worker
   counts: the metric reduces fixed-size row bands in fixed order, the renderer
@@ -204,7 +209,24 @@ The project has two distinct comparison modes. They must not be conflated.
   a quality claim. The exhaustive JPXL `Quality` preset is deliberately much
   slower and is not the speed-parity path.
 
-The tracked harness alternates the encoders on identical P6 PPM inputs,
+Two reproduction entry points exist. The portable, dependency-light one is
+`JPXL/tools/bench_vs_libjxl.sh`: given a corpus and the oracle binaries from
+`tools/setup-oracles.sh`, it emits a `bytes / bpp / SSIMULACRA2 / wall` row per
+image and setting for both encoders — every stream decoded and scored with the
+*same* in-tree production SSIMULACRA2 — behind a provenance header (UTC date,
+host, each binary's version and sha256, the exact flags, per-input hashes and
+dimensions), with optional `--jsonl` output. It grades JPXL alone, clearly
+marked, when no runnable oracle is present on the host.
+
+```sh
+cd JPXL
+# JPXL quality targets vs cjxl distances, one identical PPM corpus, 4 threads:
+tools/bench_vs_libjxl.sh --quality "70 85 90" --distance "3.0 1.5 1.0" \
+  --effort balanced --threads 4 --runs 3 --jsonl bench.jsonl <corpus-dir>
+```
+
+The fuller, tracked harness (`tools/codec_compare.py`, and the Windows-native
+`tools/compare-libjxl.ps1`) alternates the encoders on identical P6 PPM inputs,
 uses an explicit equal thread count, decodes both streams with `djxl`, and
 records provenance, hashes, bitrate, quality metrics, and timing dispersion.
 
@@ -250,7 +272,18 @@ committing test images or generated streams.
 
 ## License
 
-JPXL is licensed under the [MIT License](LICENSE).
+JPXL is licensed under the [MIT License](LICENSE) (mirrored at
+[JPXL/LICENSE-MIT](JPXL/LICENSE-MIT)). Every workspace crate declares MIT.
+
+Every third-party dependency is permissive and MIT-compatible, and the
+dependency graph contains no copyleft (no GPL/LGPL/AGPL/MPL/CDDL). The
+full crate-by-crate audit — including the handful of dependencies that offer
+BSD-2/3-Clause rather than MIT, and the measurement-only metrics that stay off
+by default — is in
+[JPXL/docs/LICENSING-AUDIT.md](JPXL/docs/LICENSING-AUDIT.md). The gitignored
+libjxl oracle checkout (BSD-3-Clause), the ISO/IEC standards documents, and the
+local test images are working material only: they are not part of the build and
+are not distributed.
 
 JPEG XL may be subject to patent claims; this repository’s software license
 does not provide patent advice or a patent grant.

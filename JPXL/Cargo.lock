@@ -358,6 +358,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "jpxl-jpeg"
+version = "0.3.0"
+
+[[package]]
 name = "jpxl-perceptual"
 version = "0.3.0"
 dependencies = [

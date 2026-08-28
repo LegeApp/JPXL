@@ -193,6 +193,28 @@ impl RenderedFrame {
             .unwrap_or_else(|| srgb_to_linear(q as f32 / max))
     }
 
+    /// The composed depth quantizer: the integer level that
+    /// [`Self::linear_sample`] forms from `linear_to_srgb(x)` — the sRGB
+    /// encode, the scale by `max`, the round, the finiteness guard and the
+    /// clamp, in that order. Kept callable on its own so threshold
+    /// construction and its verification bisect the actual function.
+    fn composed_level(x: f32, max: f32) -> usize {
+        let scaled = (linear_to_srgb(x) * max).round();
+        if scaled.is_finite() {
+            // Clamped into [0, max] with max < 2^32 before the cast, so the
+            // narrowing is exact.
+            #[allow(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "the value is clamped to [0, max] first"
+            )]
+            let q = scaled.clamp(0.0, max) as u32;
+            usize::try_from(q).unwrap_or(0)
+        } else {
+            0
+        }
+    }
+
     /// The planes quantized to `bits` per sample exactly as the decoder's
     /// integer output is: scaled, rounded and clamped.
     #[must_use]
@@ -267,6 +289,160 @@ impl RenderedFrame {
         }
         self.planes
     }
+
+    /// [`Self::into_linear_rgb_at_depth`] with the per-sample transfer-curve
+    /// lookup banded over `executor`'s workers.
+    ///
+    /// The lookup is an independent per-sample map, so each fixed row band is
+    /// converted on its own and the output is identical to the serial form at
+    /// any worker count. This is the large-frame scoring path, where the
+    /// 36-million-sample round trip is otherwise a serial tail on every probe.
+    #[must_use]
+    pub fn into_linear_rgb_at_depth_with(
+        mut self,
+        bits: u32,
+        executor: &EncodeExecutor,
+    ) -> [Vec<f32>; NUM_CHANNELS] {
+        let max = Self::full_scale(bits);
+        let lut = Self::linear_lut(bits, max);
+        let width = usize::try_from(self.width).unwrap_or(usize::MAX).max(1);
+        let bands = row_bands(&mut self.planes, width);
+        run_items(Some(executor), bands.len(), &|index| {
+            let Some((_, mut slices)) = bands.take(index) else {
+                return;
+            };
+            for plane in slices.iter_mut() {
+                for value in plane.iter_mut() {
+                    *value = Self::linear_sample(*value, max, &lut);
+                }
+            }
+        });
+        self.planes
+    }
+}
+
+/// Linear-domain thresholds of the composed depth quantizer for `levels`
+/// integer levels at full scale `max`: entry `q - 1` is the smallest `f32`
+/// whose [`RenderedFrame::composed_level`] is at least `q`.
+///
+/// Each boundary is found by bisection over the non-negative `f32` bit
+/// lattice against `composed_level` itself, so whatever the transfer curve's
+/// branches and roundings do, the boundary is the actual function's; the
+/// level function is monotone because every stage of the composition is.
+/// Both sides of every boundary are asserted after the search.
+fn quantize_thresholds(max: f32, levels: usize) -> Vec<f32> {
+    let mut thresholds = Vec::with_capacity(levels.saturating_sub(1));
+    for q in 1..levels {
+        // 2.0 encodes above full scale, so every boundary sits below it, and
+        // non-negative `f32` bit patterns order exactly as their values.
+        let (mut lo, mut hi) = (0u32, 2.0f32.to_bits());
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            if RenderedFrame::composed_level(f32::from_bits(mid), max) >= q {
+                hi = mid;
+            } else {
+                lo = mid + 1;
+            }
+        }
+        let t = f32::from_bits(lo);
+        debug_assert!(RenderedFrame::composed_level(t, max) >= q);
+        debug_assert!(lo == 0 || RenderedFrame::composed_level(f32::from_bits(lo - 1), max) < q);
+        thresholds.push(t);
+    }
+    thresholds
+}
+
+/// The composed level of one linear sample: how many thresholds it reaches.
+/// Non-finite samples take level 0, exactly as the round trip's finiteness
+/// guard sends them there; negative samples sit below every threshold. The
+/// reference form — [`DepthClassifier`] reproduces it with a guide table.
+#[inline]
+fn level_of(x: f32, thresholds: &[f32]) -> usize {
+    if !x.is_finite() {
+        return 0;
+    }
+    thresholds.partition_point(|&t| t <= x)
+}
+
+/// The composed depth quantizer as a lookup structure: the level thresholds,
+/// the levels' linear values, and a guide over the non-negative `f32` bit
+/// lattice pinning each bucket's samples to a narrow level range, so one
+/// sample's classification is two loads and at most a short ordered scan.
+#[derive(Debug)]
+struct DepthClassifier {
+    bits: u32,
+    thresholds: Vec<f32>,
+    lut: Vec<f32>,
+    /// Per bucket, the levels of the bucket's smallest and largest values.
+    guide: Vec<(u32, u32)>,
+    /// `bit pattern >> shift` is the bucket of a value in `[0, 2.0)`.
+    shift: u32,
+}
+
+/// The bit pattern of `2.0f32`, one past the last guided bucket: every
+/// threshold lies strictly below 2.0 (full scale encodes below it), so any
+/// larger sample takes the top level directly.
+const DEPTH_GUIDE_END: u32 = 0x4000_0000;
+
+impl DepthClassifier {
+    fn new(bits: u32) -> Self {
+        let max = RenderedFrame::full_scale(bits);
+        let lut = RenderedFrame::linear_lut(bits, max);
+        let thresholds = quantize_thresholds(max, lut.len());
+        let buckets = (lut.len() * 8).next_power_of_two().clamp(4096, 65_536);
+        let shift = DEPTH_GUIDE_END.trailing_zeros() - buckets.trailing_zeros();
+        let guide = (0..buckets)
+            .map(|b| {
+                let lo_bits = u32::try_from(b).unwrap_or(0) << shift;
+                let hi_bits = lo_bits + ((1u32 << shift) - 1);
+                let lo = level_of(f32::from_bits(lo_bits), &thresholds);
+                let hi = level_of(f32::from_bits(hi_bits), &thresholds);
+                (
+                    u32::try_from(lo).unwrap_or(u32::MAX),
+                    u32::try_from(hi).unwrap_or(u32::MAX),
+                )
+            })
+            .collect();
+        Self {
+            bits,
+            thresholds,
+            lut,
+            guide,
+            shift,
+        }
+    }
+
+    /// The level's linear value for one sample: `lut[level_of(x)]` for every
+    /// `f32`, non-finite and negative included, by way of the guide.
+    #[inline]
+    fn linear_at_depth(&self, x: f32) -> f32 {
+        if !x.is_finite() {
+            return self.lut.first().copied().unwrap_or(0.0);
+        }
+        let pattern = x.to_bits();
+        if pattern >= 0x8000_0000 {
+            // Negative, -0.0 included: below every (positive) threshold.
+            return self.lut.first().copied().unwrap_or(0.0);
+        }
+        if pattern >= DEPTH_GUIDE_END {
+            // At least 2.0: above every threshold.
+            return self.lut.last().copied().unwrap_or(0.0);
+        }
+        let (lo, hi) = self
+            .guide
+            .get((pattern >> self.shift) as usize)
+            .copied()
+            .unwrap_or((0, 0));
+        let mut level = lo as usize;
+        for &t in self.thresholds.get(lo as usize..hi as usize).unwrap_or(&[]) {
+            if t <= x {
+                level += 1;
+            } else {
+                break;
+            }
+        }
+        self.lut.get(level).copied().unwrap_or(0.0)
+    }
 }
 
 /// Wall time of one render's stages, in milliseconds.
@@ -291,6 +467,10 @@ pub struct PlanRenderer {
     opsin: OpsinInverse,
     epf_params: EpfParams,
     gabor: GaborKernel,
+    /// The depth quantizer of the last [`Self::render_linear_at_depth_with`]
+    /// call, kept so a probe search bisects its thresholds once, not per
+    /// probe.
+    depth: Option<DepthClassifier>,
 }
 
 impl PlanRenderer {
@@ -311,6 +491,7 @@ impl PlanRenderer {
             ),
             epf_params: EpfParams::default(),
             gabor: GaborKernel::defaults(),
+            depth: None,
         })
     }
 
@@ -360,6 +541,39 @@ impl PlanRenderer {
             .map(|(frame, _)| frame)
     }
 
+    /// [`Self::render_with`] fused with
+    /// [`RenderedFrame::into_linear_rgb_at_depth_with`]: the linear-sRGB
+    /// planes after the round trip through `bits`-deep integer samples,
+    /// without ever materialising the signalled sRGB encoding. Each sample's
+    /// quantized level is found in linear light through
+    /// [`quantize_thresholds`], so every output is bit-identical to rendering
+    /// and round-tripping in two steps — the equivalence across the whole
+    /// curve, both branch seams and non-finite samples is pinned by
+    /// `fused_depth_levels_match_the_srgb_round_trip`.
+    ///
+    /// This is the scoring path: a perceptual probe wants only these planes,
+    /// and the two-step path paid a full-frame `powf` encode per sample just
+    /// to quantize away its result.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::render`].
+    pub fn render_linear_at_depth_with(
+        &mut self,
+        pixels: &ValidatedPixelPlan,
+        bits: u32,
+        executor: &EncodeExecutor,
+    ) -> Result<(u32, u32, [Vec<f32>; NUM_CHANNELS])> {
+        let classifier = match self.depth.take() {
+            Some(classifier) if classifier.bits == bits => classifier,
+            _ => DepthClassifier::new(bits),
+        };
+        let rendered = self.render_inner(pixels, Some(executor), Some(&classifier));
+        self.depth = Some(classifier);
+        let (frame, _) = rendered?;
+        Ok((frame.width, frame.height, frame.planes))
+    }
+
     /// [`Self::render_with`], also reporting where the time went.
     ///
     /// # Errors
@@ -369,6 +583,20 @@ impl PlanRenderer {
         &mut self,
         pixels: &ValidatedPixelPlan,
         executor: Option<&EncodeExecutor>,
+    ) -> Result<(RenderedFrame, RenderTimings)> {
+        self.render_inner(pixels, executor, None)
+    }
+
+    /// The full render pipeline. The colour stage ends in the signalled sRGB
+    /// encoding by default; with `linear_at_depth` it instead classifies each
+    /// linear sample against the thresholds and takes the level's linear
+    /// value from the table, and the returned frame's planes hold those
+    /// depth-quantized linear samples rather than the signalled encoding.
+    fn render_inner(
+        &mut self,
+        pixels: &ValidatedPixelPlan,
+        executor: Option<&EncodeExecutor>,
+        linear_at_depth: Option<&DepthClassifier>,
     ) -> Result<(RenderedFrame, RenderTimings)> {
         let mut timings = RenderTimings::default();
         let millis = |start: std::time::Instant| {
@@ -428,23 +656,51 @@ impl PlanRenderer {
             // I.5.2 + I.6 (LF): dequantize the three planes, then borrow
             // chroma from luma with the frame-wide LF factors.
             let lf = lf_planes(ir, &lf_mul, spatial.lf.extra_precision, (k_x_lf, k_b_lf))?;
-            let lf_at = |c: usize, bx: u32, by: u32| -> f32 {
-                if bx >= blocks.width || by >= blocks.height {
-                    return 0.0;
-                }
-                let idx = usize::try_from(u64::from(by) * u64::from(blocks.width) + u64::from(bx))
-                    .unwrap_or(usize::MAX);
-                lf.get(c).and_then(|p| p.get(idx)).copied().unwrap_or(0.0)
-            };
 
-            for (vb, coeffs) in group.blocks.iter().zip(ir.coefficients.iter()) {
+            // Warm the dequantization-matrix cache for every transform this
+            // group uses, so the per-varblock render below reads it through a
+            // shared immutable borrow and needs no `&mut self`.
+            for vb in group.blocks.iter() {
+                self.matrices_for(vb.transform)?;
+            }
+            let matrices_cache = &self.cache;
+            let epf_params = &self.epf_params;
+
+            // I.5.3, I.6, I.8, I.9 and J.4.3 for one varblock, producing its
+            // placed samples and sigma writes without touching shared frame
+            // state. A varblock is a pure function of its own inputs, so this
+            // is byte-for-byte the serial render regardless of worker count.
+            let render_one = |i: usize| -> Result<RenderedVarblock> {
+                let vb = group
+                    .blocks
+                    .get(i)
+                    .ok_or(RenderError::Unsupported("a varblock index past the group"))?;
+                let coeffs = ir
+                    .coefficients
+                    .get(i)
+                    .ok_or(RenderError::Unsupported("a varblock with no coefficients"))?;
+                let lf_at = |c: usize, bx: u32, by: u32| -> f32 {
+                    if bx >= blocks.width || by >= blocks.height {
+                        return 0.0;
+                    }
+                    let idx =
+                        usize::try_from(u64::from(by) * u64::from(blocks.width) + u64::from(bx))
+                            .unwrap_or(usize::MAX);
+                    lf.get(c).and_then(|p| p.get(idx)).copied().unwrap_or(0.0)
+                };
+
                 let transform = vb.transform;
                 let (bx, by) = (vb.origin.bx(), vb.origin.by());
                 let hf_mul = vb.hf_mul.get();
                 let mul = hf_multiplier(global_scale, hf_mul);
 
                 // I.5.3: dequantize all three channels.
-                let matrices = self.matrices_for(transform)?;
+                let matrices = matrices_cache
+                    .get(transform.dequant_matrix_index())
+                    .and_then(Option::as_ref)
+                    .ok_or(RenderError::Unsupported(
+                        "a dequantization matrix that was not warmed",
+                    ))?;
                 let (rows, cols) = (transform.coeff_rows(), transform.coeff_cols());
                 let mut coeff: [CoeffMatrix; NUM_CHANNELS] =
                     core::array::from_fn(|_| CoeffMatrix::zeros(rows, cols));
@@ -503,37 +759,21 @@ impl PlanRenderer {
                     matrix.write_llf(&llf_from_lf(transform, &lf_rect));
                 }
 
-                // I.9: samples, placed at the varblock's frame position.
+                // I.9: samples, at the varblock's frame position (placed later).
                 let x0 = rect.x0 + bx * 8;
                 let y0 = rect.y0 + by * 8;
-                for (c, matrix) in coeff.iter().enumerate() {
-                    let block = transform.samples_from_coefficients(matrix);
-                    let Some(plane) = planes.get_mut(c) else {
-                        continue;
-                    };
-                    for row in 0..block.rows() {
-                        let fy = y0.saturating_add(narrow(row));
-                        if fy >= height {
-                            continue;
-                        }
-                        for col in 0..block.cols() {
-                            let fx = x0.saturating_add(narrow(col));
-                            if fx >= width {
-                                continue;
-                            }
-                            let idx =
-                                usize::try_from(u64::from(fy) * u64::from(width) + u64::from(fx))
-                                    .unwrap_or(usize::MAX);
-                            if let Some(slot) = plane.get_mut(idx) {
-                                *slot = block.at(col, row);
-                            }
-                        }
-                    }
-                }
+                let samples: [SampleBlock; NUM_CHANNELS] = core::array::from_fn(|c| {
+                    coeff.get(c).map_or_else(
+                        || SampleBlock::zeros(transform.sample_rows(), transform.sample_cols()),
+                        |matrix| transform.samples_from_coefficients(matrix),
+                    )
+                });
 
                 // J.4.3: sigma per 8x8 block of the varblock, from `mul` and
-                // the block's own `Sharpness`.
+                // the block's own `Sharpness`, as (frame-block index, value).
                 let sharpness = group.sharpness.values();
+                let mut sigma_writes: Vec<(usize, f32)> =
+                    Vec::with_capacity(block_rows * block_cols);
                 for dy in 0..block_rows {
                     for dx in 0..block_cols {
                         let (sbx, sby) =
@@ -551,11 +791,100 @@ impl PlanRenderer {
                         if fbx >= blocks_x || fby >= blocks_y {
                             continue;
                         }
-                        if let Some(slot) = sigma.get_mut(fby * blocks_x + fbx) {
-                            *slot = vardct_sigma(mul, s, &self.epf_params);
+                        sigma_writes.push((fby * blocks_x + fbx, vardct_sigma(mul, s, epf_params)));
+                    }
+                }
+
+                Ok(RenderedVarblock {
+                    x0,
+                    y0,
+                    samples,
+                    sigma: sigma_writes,
+                })
+            };
+
+            // Render varblocks in bounded, order-preserving chunks: each chunk's
+            // per-varblock compute (dequant, CfL, LLF, inverse transform) runs
+            // across the executor, then its samples are scattered band-parallel:
+            // every worker owns a disjoint [`BAND_ROWS`]-row band and writes
+            // only the varblock rows that fall inside it. Each sample belongs
+            // to exactly one varblock and exactly one band, so the placed
+            // pixels are identical to a serial render at any worker count;
+            // chunking keeps the transient per-chunk buffers small rather than
+            // holding one buffer per varblock at once. Sigma writes are a few
+            // hundredths of the sample volume and stay serial.
+            let n = group.blocks.len().min(ir.coefficients.len());
+            let mut start = 0usize;
+            while start < n {
+                let end = (start + VARBLOCK_CHUNK).min(n);
+                let rendered =
+                    render_varblock_chunk(executor, end - start, &|k| render_one(start + k))?;
+                // Bucket each varblock into the (at most two, since a varblock
+                // is at most 32 rows tall) bands its rows intersect, preserving
+                // chunk order within a bucket.
+                let bands = row_bands(&mut planes, dims.width);
+                let mut buckets: Vec<Vec<usize>> = vec![Vec::new(); bands.len()];
+                for (k, rv) in rendered.iter().enumerate() {
+                    let rows = rv.samples.iter().map(|b| b.rows()).max().unwrap_or(0);
+                    if rows == 0 {
+                        continue;
+                    }
+                    let top = usize::try_from(rv.y0).unwrap_or(usize::MAX);
+                    let bottom = top.saturating_add(rows - 1);
+                    let last_band = buckets.len().saturating_sub(1);
+                    for band in
+                        (top / BAND_ROWS).min(last_band)..=(bottom / BAND_ROWS).min(last_band)
+                    {
+                        if let Some(bucket) = buckets.get_mut(band) {
+                            bucket.push(k);
                         }
                     }
                 }
+                run_items(executor, bands.len(), &|index| {
+                    let Some((row0, mut slices)) = bands.take(index) else {
+                        return;
+                    };
+                    let Some(bucket) = buckets.get(index) else {
+                        return;
+                    };
+                    let band_rows = slices.first().map_or(0, |s| s.len()) / dims.width.max(1);
+                    for &k in bucket {
+                        let Some(rv) = rendered.get(k) else {
+                            continue;
+                        };
+                        let x0 = usize::try_from(rv.x0).unwrap_or(usize::MAX);
+                        let y0 = usize::try_from(rv.y0).unwrap_or(usize::MAX);
+                        for (c, block) in rv.samples.iter().enumerate() {
+                            let Some(plane) = slices.get_mut(c) else {
+                                continue;
+                            };
+                            for row in 0..block.rows() {
+                                let fy = y0.saturating_add(row);
+                                if fy < row0 || fy >= row0.saturating_add(band_rows) {
+                                    continue;
+                                }
+                                let base = (fy - row0).saturating_mul(dims.width);
+                                for col in 0..block.cols() {
+                                    let fx = x0.saturating_add(col);
+                                    if fx >= dims.width {
+                                        continue;
+                                    }
+                                    if let Some(slot) = plane.get_mut(base.saturating_add(fx)) {
+                                        *slot = block.at(col, row);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+                for rv in &rendered {
+                    for &(idx, value) in &rv.sigma {
+                        if let Some(slot) = sigma.get_mut(idx) {
+                            *slot = value;
+                        }
+                    }
+                }
+                start = end;
             }
         }
 
@@ -615,7 +944,8 @@ impl PlanRenderer {
 
         timings.epf_ms = millis(stage_start);
 
-        // Annex L: XYB -> linear sRGB -> the signalled sRGB encoding.
+        // Annex L: XYB -> linear sRGB -> the signalled sRGB encoding, or,
+        // for the scoring path, straight to the depth-quantized linear value.
         let stage_start = std::time::Instant::now();
         {
             let bands = row_bands(&mut planes, dims.width);
@@ -626,9 +956,20 @@ impl PlanRenderer {
                 };
                 let [x, y, b] = &mut slices;
                 opsin.convert_planes(x, y, b);
-                for plane in slices.iter_mut() {
-                    for v in plane.iter_mut() {
-                        *v = linear_to_srgb(*v);
+                match linear_at_depth {
+                    None => {
+                        for plane in slices.iter_mut() {
+                            for v in plane.iter_mut() {
+                                *v = linear_to_srgb(*v);
+                            }
+                        }
+                    }
+                    Some(classifier) => {
+                        for plane in slices.iter_mut() {
+                            for v in plane.iter_mut() {
+                                *v = classifier.linear_at_depth(*v);
+                            }
+                        }
                     }
                 }
             });
@@ -731,6 +1072,47 @@ fn row_bands(planes: &mut [Vec<f32>; NUM_CHANNELS], width: usize) -> RowBands<'_
     RowBands { items }
 }
 
+/// One varblock's reconstruction result, produced off to the side so the
+/// per-varblock compute can run across the executor and be scattered into the
+/// frame afterwards.
+struct RenderedVarblock {
+    /// Frame x of the varblock's top-left sample.
+    x0: u32,
+    /// Frame y of the varblock's top-left sample.
+    y0: u32,
+    /// The placed samples, one block per channel.
+    samples: [SampleBlock; NUM_CHANNELS],
+    /// J.4.3 sigma writes as `(frame-block index, value)`.
+    sigma: Vec<(usize, f32)>,
+}
+
+/// Varblocks rendered per parallel chunk before their results are scattered.
+///
+/// A chunk holds at most this many [`RenderedVarblock`] results at once, so the
+/// transient sample storage stays a few megabytes rather than a whole frame's
+/// worth, while still giving the executor enough work per chunk to keep every
+/// worker busy on a large frame.
+const VARBLOCK_CHUNK: usize = 2048;
+
+/// Renders `n` varblocks through `f`, across `executor` when present (results
+/// in index order, so worker count cannot change them), serially otherwise.
+fn render_varblock_chunk(
+    executor: Option<&EncodeExecutor>,
+    n: usize,
+    f: &(dyn Fn(usize) -> Result<RenderedVarblock> + Sync),
+) -> Result<Vec<RenderedVarblock>> {
+    match executor {
+        Some(executor) => executor.map_ordered(n, f),
+        None => {
+            let mut out = Vec::with_capacity(n);
+            for i in 0..n {
+                out.push(f(i)?);
+            }
+            Ok(out)
+        }
+    }
+}
+
 /// Runs `items` independent closures on `executor` (serially without one).
 fn run_items(executor: Option<&EncodeExecutor>, items: usize, f: &(dyn Fn(usize) + Sync)) {
     match executor {
@@ -745,6 +1127,66 @@ fn run_items(executor: Option<&EncodeExecutor>, items: usize, f: &(dyn Fn(usize)
         None => {
             for i in 0..items {
                 f(i);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The fused threshold classifier must agree bit-for-bit with encoding to
+    /// sRGB and round-tripping through the depth quantizer, over a dense
+    /// sweep of the working range, the immediate bit-lattice neighbourhood of
+    /// every threshold (where any boundary error would live), both transfer
+    /// branch seams, and the non-finite specials.
+    #[test]
+    fn fused_depth_levels_match_the_srgb_round_trip() {
+        for bits in [1u32, 8, 12, 16] {
+            let max = RenderedFrame::full_scale(bits);
+            let classifier = DepthClassifier::new(bits);
+            let (lut, thresholds) = (&classifier.lut, &classifier.thresholds);
+            let check = |x: f32| {
+                let direct = RenderedFrame::linear_sample(linear_to_srgb(x), max, lut);
+                let searched = lut.get(level_of(x, thresholds)).copied().unwrap_or(0.0);
+                let guided = classifier.linear_at_depth(x);
+                assert_eq!(
+                    direct.to_bits(),
+                    searched.to_bits(),
+                    "search: bits {bits}, x {x} ({:#010x})",
+                    x.to_bits()
+                );
+                assert_eq!(
+                    direct.to_bits(),
+                    guided.to_bits(),
+                    "guide: bits {bits}, x {x} ({:#010x})",
+                    x.to_bits()
+                );
+            };
+            for i in 0..120_000 {
+                check(-0.2 + i as f32 * 1.25e-5);
+            }
+            for &t in thresholds {
+                let b = t.to_bits();
+                for d in 0..4u32 {
+                    check(f32::from_bits(b.saturating_sub(d)));
+                    check(f32::from_bits(b.saturating_add(d)));
+                }
+            }
+            for x in [
+                f32::NAN,
+                f32::INFINITY,
+                f32::NEG_INFINITY,
+                -0.0,
+                0.0,
+                0.003_130_8,
+                0.040_449_936,
+                1.0,
+                1.5,
+                f32::MIN_POSITIVE,
+            ] {
+                check(x);
             }
         }
     }

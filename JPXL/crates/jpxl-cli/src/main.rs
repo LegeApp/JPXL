@@ -47,8 +47,17 @@ Usage:
     jpxl analyze-atlas <in> <out.jsonl>
                                   Export the diagnostic AnalysisAtlasV2; this
                                   research command does not affect encoding
-    jpxl features <in> [--json]   Print the quality controller's frame source
-                                  features as one JSON line (calibration tool)
+    jpxl features <in> [--json] [--transform-summary]
+                                  Print the quality controller's frame source
+                                  features as one JSON line (calibration tool);
+                                  --transform-summary adds the DCT8-derived
+                                  transform features
+    jpxl quality-ladder --scales s1,s2,... [--effort fast|balanced] [--price]
+                        [--threads N] <in>
+                                  Build the production quality pixel plan
+                                  fresh at each effective scale, score each
+                                  canonically, optionally exact-price it, and
+                                  print JSONL (oracle-label calibration tool)
     jpxl bench <mode> [opts]      Time one encode path (see `jpxl bench --help`)
     jpxl --help                   Show this message
     jpxl --version                Show the version
@@ -80,6 +89,13 @@ Lossy options (8- or 16-bit RGB; any one selects the VarDCT path):
                                   effort's default (fast 70, balanced 85). This
                                   is the normal way to ask for lossy output.
     --lossy                       --quality with the effort's default score.
+    --quality-fallback <mode>     What to emit when the bounded search cannot
+                                  verify the requested score: lossless (a
+                                  mathematically lossless stream) or
+                                  best-effort (the finest verified under-target
+                                  stream, reported by its true score). Without
+                                  this flag such an encode fails, exits 1, and
+                                  writes nothing.
     --effort <mode>               Lossy effort fast|balanced (search-latency
                                   budget, also picks the --quality default), or
                                   a digit 1..9 for lossless Modular effort.
@@ -254,6 +270,7 @@ fn run(args: &[String]) -> u8 {
         "compare" => cmd_compare(rest),
         "analyze-atlas" => cmd_analyze_atlas(rest),
         "features" => cmd_features(rest),
+        "quality-ladder" => cmd_quality_ladder(rest),
         "bench" => cmd_bench(rest),
         other => {
             fail(&format!("unknown command `{other}`"));
@@ -474,6 +491,9 @@ fn cmd_encode(args: &[String]) -> u8 {
     // `Some(score)` is an explicit score, inner `None` means "use the effort's
     // default score".
     let mut quality: Option<Option<f64>> = None;
+    // What `--quality` emits when the bounded search cannot verify the score;
+    // `Refuse` (fail, write nothing) unless `--quality-fallback` says otherwise.
+    let mut quality_fallback = jpxl::QualityFallback::Refuse;
     // Fixed-quantizer expert mode.
     let mut global_scale: Option<u32> = None;
     // Lossy effort (search-latency budget); also picks the `--quality` default.
@@ -524,6 +544,20 @@ fn cmd_encode(args: &[String]) -> u8 {
                 }
             }
             "--lossy" => quality = Some(None),
+            "--quality-fallback" => {
+                let Some(mode) = rest.next() else {
+                    fail("`--quality-fallback` needs `lossless` or `best-effort`");
+                    return EXIT_ERROR;
+                };
+                quality_fallback = match mode.as_str() {
+                    "lossless" => jpxl::QualityFallback::Lossless,
+                    "best-effort" => jpxl::QualityFallback::BestEffort,
+                    _ => {
+                        fail("`--quality-fallback` needs `lossless` or `best-effort`");
+                        return EXIT_ERROR;
+                    }
+                };
+            }
             "--global-scale" => {
                 let Some(value) = rest.next().and_then(|v| v.parse::<u32>().ok()) else {
                     fail("`--global-scale` needs a positive representable integer");
@@ -924,7 +958,7 @@ fn cmd_encode(args: &[String]) -> u8 {
     let mut mode_label: Option<String> = None;
     let encoded = if let Some(explicit) = quality {
         let score = explicit.unwrap_or_else(|| lossy_effort.default_score());
-        match encode_quality(&image, score, &options, lossy_effort) {
+        match encode_quality(&image, score, &options, lossy_effort, quality_fallback) {
             Ok((bytes, line, mode)) => {
                 perceptual_line = Some(line);
                 mode_label = Some(mode);
@@ -2133,13 +2167,30 @@ fn cmd_analyze_atlas(args: &[String]) -> u8 {
 /// `jpxl features <input> [--json]`: print the quality controller's frame
 /// source features as one JSON line, for the initial-rung calibration tooling.
 fn cmd_features(args: &[String]) -> u8 {
-    let input = match args {
-        [input] => input,
-        [input, flag] | [flag, input] if flag == "--json" => input,
-        _ => {
-            fail("`features` takes an input raster and an optional `--json` flag");
-            return EXIT_ERROR;
+    let mut input: Option<&String> = None;
+    let mut transform_summary = false;
+    for arg in args {
+        match arg.as_str() {
+            "--json" => {}
+            "--transform-summary" => transform_summary = true,
+            other if other.starts_with("--") => {
+                fail(
+                    "`features` takes an input raster and optional `--json` / `--transform-summary` flags",
+                );
+                return EXIT_ERROR;
+            }
+            _ if input.is_none() => input = Some(arg),
+            _ => {
+                fail("`features` takes exactly one input raster");
+                return EXIT_ERROR;
+            }
         }
+    }
+    let Some(input) = input else {
+        fail(
+            "`features` takes an input raster and optional `--json` / `--transform-summary` flags",
+        );
+        return EXIT_ERROR;
     };
     let bytes = match read_path(input) {
         Ok(bytes) => bytes,
@@ -2169,7 +2220,224 @@ fn cmd_features(args: &[String]) -> u8 {
         image.height(),
         frame.is_grayscale(),
     );
-    println!("{}", features.to_json());
+    if transform_summary {
+        let mut request = jpxl_encode_policy::EncodeRequest::for_quality(
+            jpxl_encode_policy::RateSearchPreset::Balanced,
+        );
+        request.bits_per_sample = image.bits_per_sample();
+        match jpxl_encode_policy::transform_feature_summary(&frame, &request) {
+            Ok(summary) => println!(
+                "{{\"source_features\":{},\"transform_features\":{}}}",
+                features.to_json(),
+                summary.to_json()
+            ),
+            Err(error) => {
+                fail(&format!("{input}: {error}"));
+                return EXIT_ERROR;
+            }
+        }
+    } else {
+        println!("{}", features.to_json());
+    }
+    EXIT_OK
+}
+
+/// `jpxl quality-ladder --scales s1,s2,... [--effort fast|balanced] [--price]
+/// [--threads N] <raster>`: the one-shot program's oracle-label sweep.
+///
+/// Builds the production quality pixel plan fresh at every requested
+/// effective scale, scores each reconstruction canonically, optionally
+/// exact-prices it, and prints one `jpxl.quality-ladder/1` JSONL record per
+/// point after a header record carrying the source features. No navigation
+/// and no output file: this is measurement for the offline crossing trainer
+/// (`tools/quality_oracle_labels.py`), not an encoder mode.
+fn cmd_quality_ladder(args: &[String]) -> u8 {
+    let mut scales: Vec<u64> = Vec::new();
+    let mut effort = jpxl::Effort::Balanced;
+    let mut price = false;
+    let mut threads: Option<usize> = None;
+    let mut positional: Vec<&String> = Vec::new();
+    let mut rest = args.iter();
+    while let Some(arg) = rest.next() {
+        match arg.as_str() {
+            "--scales" => {
+                let Some(list) = rest.next() else {
+                    fail("`--scales` needs a comma-separated list of effective scales");
+                    return EXIT_ERROR;
+                };
+                for part in list.split(',') {
+                    match part.trim().parse::<u64>() {
+                        Ok(scale) if scale >= 1 => scales.push(scale),
+                        _ => {
+                            fail("`--scales` entries must be positive integers");
+                            return EXIT_ERROR;
+                        }
+                    }
+                }
+            }
+            "--effort" => {
+                let Some(mode) = rest.next() else {
+                    fail("`--effort` needs fast or balanced");
+                    return EXIT_ERROR;
+                };
+                effort = match mode.as_str() {
+                    "fast" => jpxl::Effort::Fast,
+                    "balanced" => jpxl::Effort::Balanced,
+                    _ => {
+                        fail("`--effort` needs fast or balanced");
+                        return EXIT_ERROR;
+                    }
+                };
+            }
+            "--price" => price = true,
+            "--threads" => {
+                let Some(value) = rest.next().and_then(|v| v.parse::<usize>().ok()) else {
+                    fail("`--threads` needs a positive worker count");
+                    return EXIT_ERROR;
+                };
+                if value == 0 {
+                    fail("`--threads` needs a positive worker count");
+                    return EXIT_ERROR;
+                }
+                threads = Some(value);
+            }
+            other if other.starts_with("--") => {
+                fail(&format!("unknown quality-ladder option `{other}`"));
+                return EXIT_ERROR;
+            }
+            _ => positional.push(arg),
+        }
+    }
+    let [input] = positional.as_slice() else {
+        fail("`quality-ladder` takes exactly one input raster");
+        return EXIT_ERROR;
+    };
+    if scales.is_empty() {
+        fail("`quality-ladder` needs `--scales s1,s2,...`");
+        return EXIT_ERROR;
+    }
+    if scales.len() > 4096 {
+        fail("`quality-ladder` caps a sweep at 4096 points");
+        return EXIT_ERROR;
+    }
+
+    let bytes = match read_path(input) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            fail(&format!("{input}: {error}"));
+            return EXIT_ERROR;
+        }
+    };
+    let image = match image_io::decode_input(&bytes, None) {
+        Ok(image) => image,
+        Err(error) => {
+            fail(&format!("{input}: {error}"));
+            return EXIT_ERROR;
+        }
+    };
+    let (width, height, bits_per_sample, rgb) = match image_to_rgb16(&image) {
+        Ok(parts) => parts,
+        Err(error) => {
+            fail(&format!("{input}: {error}"));
+            return EXIT_ERROR;
+        }
+    };
+    if width < jpxl_perceptual::MIN_DIMENSION || height < jpxl_perceptual::MIN_DIMENSION {
+        fail(&format!(
+            "{input}: below the perceptual metric's {0}x{0} floor",
+            jpxl_perceptual::MIN_DIMENSION
+        ));
+        return EXIT_ERROR;
+    }
+
+    // Map requested effective scales onto ladder rungs, ascending, deduped.
+    let mut rungs: Vec<jpxl_encode_policy::Rung> = scales
+        .iter()
+        .map(|&scale| jpxl_encode_policy::rung_for_effective_scale(scale))
+        .collect();
+    rungs.sort_unstable();
+    rungs.dedup();
+
+    let mut request = jpxl_encode_policy::EncodeRequest::for_quality(effort.into());
+    if let Some(threads) = threads {
+        request.resources = jpxl_encode::EncodeResources::groups(threads);
+    }
+    request.bits_per_sample = bits_per_sample;
+    let executor = request.resources.executor();
+    let frame = match jpxl_encode_policy::PreparedFrame::from_srgb16_with(
+        width,
+        height,
+        &rgb,
+        bits_per_sample,
+        Some(&executor),
+    ) {
+        Ok(frame) => frame,
+        Err(error) => {
+            fail(&format!("{input}: {error}"));
+            return EXIT_ERROR;
+        }
+    };
+    let mut evaluator = match jpxl_perceptual::PlanRenderEvaluator::from_srgb16(
+        width,
+        height,
+        &rgb,
+        bits_per_sample,
+        &executor,
+    ) {
+        Ok(evaluator) => evaluator,
+        Err(_) => {
+            fail(&format!(
+                "{input}: the frame cannot be scored by the perceptual metric"
+            ));
+            return EXIT_ERROR;
+        }
+    };
+    let atlas = jpxl_encode_policy::AnalysisAtlas::analyze(&frame);
+    let features = jpxl_encode_policy::source_features(&atlas, width, height, frame.is_grayscale());
+    use jpxl_encode_policy::PerceptualEvaluator as _;
+    println!(
+        "{{\"schema\":\"jpxl.quality-ladder/1\",\"input\":\"{}\",\"width\":{width},\
+         \"height\":{height},\"bit_depth\":{bits_per_sample},\"effort\":\"{}\",\
+         \"metric_version\":\"{}\",\"price\":{price},\"points\":{},\"source_features\":{}}}",
+        input.replace('\\', "/"),
+        effort_name(effort),
+        evaluator.metric_version(),
+        rungs.len(),
+        features.to_json(),
+    );
+    let points = match jpxl_encode_policy::sweep_frame_perceptual(
+        &frame,
+        &atlas,
+        &request,
+        &rungs,
+        price,
+        &mut evaluator,
+        &executor,
+    ) {
+        Ok(points) => points,
+        Err(error) => {
+            fail(&format!("{input}: {error}"));
+            return EXIT_ERROR;
+        }
+    };
+    for p in points {
+        println!(
+            "{{\"rung\":{},\"global_scale\":{},\"hf_mul\":{},\"quant_lf\":{},\
+             \"effective_scale\":{},\"score\":{},\"bytes\":{},\"plan_ms\":{},\
+             \"render_metric_ms\":{},\"price_ms\":{}}}",
+            p.rung.get(),
+            p.quantizer.global_scale.get(),
+            p.quantizer.hf_mul.get(),
+            p.quantizer.quant_lf.get(),
+            p.effective_scale,
+            p.score,
+            p.exact_bytes
+                .map_or_else(|| "null".to_owned(), |b| format!("{b}")),
+            p.plan_ms,
+            p.render_metric_ms,
+            p.price_ms,
+        );
+    }
     EXIT_OK
 }
 
@@ -2395,6 +2663,7 @@ fn perceptual_status_str(status: jpxl::PerceptualStatus) -> &'static str {
         jpxl::PerceptualStatus::UnderTargetWorkCap => "under_target_work_cap",
         jpxl::PerceptualStatus::RescuedFreshStructure => "rescued_fresh_structure",
         jpxl::PerceptualStatus::RoutedToLossless => "routed_to_lossless",
+        jpxl::PerceptualStatus::FallbackLossless => "fallback_lossless",
         jpxl::PerceptualStatus::UnsupportedTooSmall => "unsupported_too_small",
     }
 }
@@ -2451,12 +2720,15 @@ fn image_to_rgb16(image: &jpxl_encode::Image) -> Result<(u32, u32, u32, Vec<u16>
 ///
 /// Returns the codestream, the perceptual report line, and the summary mode
 /// string. A score of 100 routes to the lossless encoder; anything lower runs
-/// the quality controller.
+/// the quality controller. When the controller cannot verify the score and
+/// `fallback` is [`jpxl::QualityFallback::Refuse`], this returns `Err` and
+/// the caller writes nothing.
 fn encode_quality(
     image: &jpxl_encode::Image,
     score: f64,
     options: &jpxl_encode::EncodeOptions,
     effort: jpxl::Effort,
+    fallback: jpxl::QualityFallback,
 ) -> Result<(Vec<u8>, String, String), String> {
     let (width, height, bits_per_sample, rgb) = image_to_rgb16(image)?;
     let encoder = jpxl::Encoder::new()
@@ -2464,34 +2736,47 @@ fn encode_quality(
         .with_container(options.container)
         .with_jxlp_fragment_size(options.jxlp_fragment_size)
         .with_effort(effort)
+        .with_quality_fallback(fallback)
         .with_ssimulacra2_score(score)
         .map_err(|error| error.to_string())?;
     match encoder.encode_rgb16_reported(width, height, bits_per_sample, &rgb) {
         Ok((bytes, jpxl::EncodeReport::Perceptual(outcome))) => {
             let line = format_perceptual_line(&outcome, effort_name(effort));
-            // `JPXL_QUALITY_TRACE=<path>` appends the controller's
-            // `jpxl.quality-trace/1` record, the harness's and the
-            // predictor calibration's input.
-            if let (Some(path), Some(trace)) = (
-                std::env::var_os("JPXL_QUALITY_TRACE"),
-                outcome.trace_json.as_deref(),
-            ) {
-                use std::io::Write as _;
-                let appended = std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(&path)
-                    .and_then(|mut file| writeln!(file, "{trace}"));
-                if let Err(error) = appended {
-                    eprintln!("warning: could not write JPXL_QUALITY_TRACE: {error}");
-                }
-            }
-            let mode = format!("lossy VarDCT (perceptual), ssimulacra2>={score:.4}");
+            append_quality_trace(outcome.trace_json.as_deref());
+            let mode = if outcome.status == jpxl::PerceptualStatus::FallbackLossless {
+                format!("lossless Modular (fallback: ssimulacra2>={score:.4} unmet)")
+            } else {
+                format!("lossy VarDCT (perceptual), ssimulacra2>={score:.4}")
+            };
             Ok((bytes, line, mode))
         }
         Ok(_) => Err("perceptual encode produced an unexpected report".to_owned()),
         Err(jpxl::Error::Unsupported(what)) => Err(format!("ssimulacra2>={score:.4}: {what}")),
+        // A refused under-target encode still ran a full search; its trace is
+        // calibration input, so the harness sees it even though nothing is
+        // written.
+        Err(jpxl::Error::TargetNotMet(miss)) => {
+            append_quality_trace(miss.trace_json.as_deref());
+            Err(jpxl::Error::TargetNotMet(miss).to_string())
+        }
         Err(error) => Err(error.to_string()),
+    }
+}
+
+/// Appends one `jpxl.quality-trace/2` record to the `JPXL_QUALITY_TRACE`
+/// path, when both exist. The harness's and the predictor calibration's
+/// input; a write failure warns and never fails the encode.
+fn append_quality_trace(trace: Option<&str>) {
+    if let (Some(path), Some(trace)) = (std::env::var_os("JPXL_QUALITY_TRACE"), trace) {
+        use std::io::Write as _;
+        let appended = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .and_then(|mut file| writeln!(file, "{trace}"));
+        if let Err(error) = appended {
+            eprintln!("warning: could not write JPXL_QUALITY_TRACE: {error}");
+        }
     }
 }
 

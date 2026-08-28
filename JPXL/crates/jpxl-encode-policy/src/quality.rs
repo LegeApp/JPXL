@@ -19,9 +19,16 @@
 //!
 //! Every probe is a full-frame score of reconstructed pixels; nothing here
 //! infers a score from a rate. Budgets are hard: a production effort stops at
-//! its probe and price caps and reports what it could verify. The target is a
-//! floor — a stream is never emitted below it unless the finest quantizer
-//! cannot reach it, and then it says so ([`QualityStatus::SaturatedTop`]).
+//! its navigation probe and price caps (plus at most one rescue probe beyond
+//! the navigation cap when nothing has met the target yet) and reports what
+//! it could verify. "Smallest" is bounded the same way: the selection is the
+//! smallest among the exact-priced finalists this budget retained, not a
+//! global minimum over every conceivable stream meeting the score. The
+//! target is a floor — an outcome whose stream is below it says so
+//! explicitly: [`QualityStatus::SaturatedTop`] when the ladder's finest rung
+//! missed, [`QualityStatus::UnderTargetWorkCap`] when the probes ran out
+//! first. The public facade refuses both by default rather than returning
+//! them as ordinary successes.
 
 use std::time::Instant;
 
@@ -134,7 +141,12 @@ pub const MIN_AIM_MARGIN: f64 = 0.25;
 /// [`TRIAL_EXACT_PRICES`] cap.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct QualityBudget {
-    /// Full-frame render-and-score evaluations in the baseline solve.
+    /// Full-frame render-and-score evaluations the baseline solve's
+    /// *navigation* may spend. When they run out with nothing meeting the
+    /// target, one rescue probe (`rescue_probe`) may still run beyond this
+    /// cap, so the observable per-solve maximum is `pixel_probes + 1`; the
+    /// trace and [`QualityStats::pixel_probes`] count it like any other
+    /// probe.
     pub pixel_probes: u32,
     /// Entropy trainings followed by an exact emission in the baseline solve.
     pub exact_prices: u32,
@@ -155,6 +167,14 @@ pub struct QualityBudget {
     /// its exact size is smaller and its canonical score still meets the
     /// target.
     pub reducer: Option<ReducerLimits>,
+    /// Whether the search reduces the frame's DCT8x8 candidates into a
+    /// [`TransformFeatureSummary`](crate::quality_features::TransformFeatureSummary)
+    /// before solving. On in Fast and Balanced with the (default)
+    /// `one-shot-controller` feature: the summary feeds the crossing
+    /// predictor's seed, and its parallel prefill warms the same forward
+    /// cache the cover search reads, so in-search it measured net-neutral
+    /// wall (promotion A/B, 2026-08-24).
+    pub transform_shadow: bool,
 }
 
 /// Hard pixel-probe cap of one policy-bank trial: probe the baseline crossing
@@ -199,10 +219,13 @@ pub const MIN_TRIAL_SAVING_FRACTION: f64 = 0.005;
 /// [`search_frame_perceptual_with_budget`] to opt in.
 pub const BALANCED_DEFAULT_POLICY_TRIALS: u32 = 0;
 
-/// Whether Balanced runs the terminal reducer by default. Off until PR 7's
-/// gate (matched-score bytes down on the locked holdout with zero floor
-/// violations and bounded wall) is measured and recorded; the feature-gated
-/// Quality effort always runs it.
+/// Whether Balanced runs the terminal reducer by default.
+///
+/// Off after PR 7's full locked-holdout closure: the reducer stayed bounded
+/// and floor-safe, but the complete Quality candidate failed the standing
+/// Contract B promotion screen, while the earlier Balanced development screen
+/// exceeded its wall bound. The feature-gated Quality reference still runs it.
+/// See AKR evidence `pqc-pr7-holdout-complete-2026-08-24`.
 pub const BALANCED_DEFAULT_REDUCER: Option<ReducerLimits> = None;
 
 impl QualityBudget {
@@ -222,6 +245,7 @@ impl QualityBudget {
                 policy_trials: 0,
                 reserve: 0.06,
                 reducer: None,
+                transform_shadow: cfg!(feature = "one-shot-controller"),
             },
             RateSearchPreset::Balanced => Self {
                 pixel_probes: 5,
@@ -230,6 +254,7 @@ impl QualityBudget {
                 policy_trials: BALANCED_DEFAULT_POLICY_TRIALS,
                 reserve: 0.03,
                 reducer: BALANCED_DEFAULT_REDUCER,
+                transform_shadow: cfg!(feature = "one-shot-controller"),
             },
             RateSearchPreset::Quality => Self {
                 pixel_probes: 10,
@@ -238,6 +263,7 @@ impl QualityBudget {
                 policy_trials: 11,
                 reserve: 0.02,
                 reducer: Some(ReducerLimits::QUALITY),
+                transform_shadow: false,
             },
         }
     }
@@ -362,6 +388,70 @@ pub struct QualityStats {
     pub reducer_edits: u32,
     /// Exact bytes the terminal reducer saved (0 when its stream was not kept).
     pub reducer_bytes_saved: u64,
+    /// Whole-search work totals (baseline, policy trials and reducer alike),
+    /// split by the units the one-shot program prices separately. A probe is
+    /// one pixel plan, one full-frame reconstruction and one canonical metric
+    /// evaluation; an exact price is one entropy training and one emission; a
+    /// finalist rebuilt from a dropped plan is one extra pixel plan.
+    pub work: QualityWork,
+}
+
+/// Whole-search work totals for the `jpxl.quality-trace/2` record.
+///
+/// Unlike the effort-budget counters above these are *totals across the whole
+/// search* — baseline solve, policy-bank trials and the terminal reducer —
+/// so the trace shows what a request actually cost, not just what counted
+/// against the baseline caps. (A reducer pass that finds nothing to remove
+/// reports no evaluations, so its canonical scores are not included in that
+/// one case.)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct QualityWork {
+    /// Candidate pixel plans built (scored probes and unscored rebuilds).
+    pub pixel_plans: u32,
+    /// Full-frame reconstructions rendered for scoring.
+    pub reconstructions: u32,
+    /// Canonical metric evaluations of a reconstruction.
+    pub metric_evaluations: u32,
+    /// Entropy trainings.
+    pub entropy_trainings: u32,
+    /// Exact codestream emissions.
+    pub emissions: u32,
+}
+
+/// A shadow predictor's counterfactual decision for one search, recorded in
+/// the `jpxl.quality-trace/2` record without influencing the search (the
+/// one-shot program's PR 3/4 shadow stage; the exact controller stays
+/// authoritative). `None` until a shadow model is wired in.
+#[derive(Debug, Clone, PartialEq)]
+pub struct QualityPredictionTrace {
+    /// The generated model's version string.
+    pub model_version: &'static str,
+    /// The feature-vector schema the model consumed.
+    pub feature_schema: &'static str,
+    /// Predicted median crossing rung for the target.
+    pub median_rung: u32,
+    /// Risk-adjusted candidate rung a one-shot controller would plan first.
+    pub candidate_rung: u32,
+    /// Calibrated lower crossing-interval rung.
+    pub interval_low: u32,
+    /// Calibrated upper crossing-interval rung.
+    pub interval_high: u32,
+    /// Predicted local loss exponent `-d ln(loss) / d ln(scale)`.
+    pub local_loss_exponent: f64,
+    /// Predicted risk (0..=1) that the target saturates the ladder.
+    pub saturation_risk: f64,
+    /// Out-of-distribution flags that fired, by name.
+    pub ood_flags: Vec<&'static str>,
+    /// Why the shadow would have routed to the exact controller, if it would.
+    pub fallback_reason: Option<&'static str>,
+    /// The canonical score the search observed at (or nearest to) the
+    /// candidate rung, for counterfactual first-plan accounting.
+    pub first_observed_score: Option<f64>,
+    /// The slope-corrected rung the shadow would have re-planned at.
+    pub correction_rung: Option<u32>,
+    /// The counterfactual route: `one_shot`, `corrected`, or
+    /// `fallback_exact`.
+    pub decision_path: &'static str,
 }
 
 /// What a completed score-targeted search chose.
@@ -393,6 +483,10 @@ pub struct QualityOutcome {
     pub policy_trials: Vec<PolicyTrial>,
     /// The source features the prediction was made from.
     pub features: SourceFeatures,
+    /// The shadow predictor's counterfactual record, when one is wired in.
+    pub prediction: Option<QualityPredictionTrace>,
+    /// The PR 4 transform-feature summary, when the budget asked for one.
+    pub transform_features: Option<crate::quality_features::TransformFeatureSummary>,
     /// The metric the scores come from.
     pub metric_version: &'static str,
 }
@@ -405,7 +499,7 @@ impl QualityOutcome {
         self.achieved_score - self.requested_score
     }
 
-    /// The `jpxl.quality-trace/1` record of this search, one JSON line.
+    /// The `jpxl.quality-trace/2` record of this search, one JSON line.
     #[must_use]
     pub fn trace_json(&self, effort: &str) -> String {
         let probes: Vec<String> = self
@@ -458,11 +552,43 @@ impl QualityOutcome {
             || "null".to_owned(),
             |(lo, hi)| format!("[{},{}]", lo.get(), hi.get()),
         );
+        let prediction = self.prediction.as_ref().map_or_else(
+            || "null".to_owned(),
+            |p| {
+                let flags: Vec<String> = p.ood_flags.iter().map(|f| format!("\"{f}\"")).collect();
+                format!(
+                    "{{\"model_version\":\"{}\",\"feature_schema\":\"{}\",\"median_rung\":{},\
+                     \"candidate_rung\":{},\"interval_low\":{},\"interval_high\":{},\
+                     \"local_loss_exponent\":{},\"saturation_risk\":{},\"ood_flags\":[{}],\
+                     \"fallback_reason\":{},\"first_observed_score\":{},\"correction_rung\":{},\
+                     \"decision_path\":\"{}\"}}",
+                    p.model_version,
+                    p.feature_schema,
+                    p.median_rung,
+                    p.candidate_rung,
+                    p.interval_low,
+                    p.interval_high,
+                    p.local_loss_exponent,
+                    p.saturation_risk,
+                    flags.join(","),
+                    p.fallback_reason
+                        .map_or_else(|| "null".to_owned(), |r| format!("\"{r}\"")),
+                    p.first_observed_score
+                        .map_or_else(|| "null".to_owned(), |s| format!("{s}")),
+                    p.correction_rung
+                        .map_or_else(|| "null".to_owned(), |r| format!("{r}")),
+                    p.decision_path,
+                )
+            },
+        );
         format!(
-            "{{\"schema\":\"jpxl.quality-trace/1\",\"metric_version\":\"{}\",\"score_guard\":{},\
+            "{{\"schema\":\"jpxl.quality-trace/2\",\"metric_version\":\"{}\",\"score_guard\":{},\
              \"effort\":\"{}\",\"source_features\":{},\"predicted_rung\":{},\"bracket\":{},\
              \"pixel_probes\":{},\"exact_prices\":{},\"structural_builds\":{},\"policy_trials\":{},\
              \"policy_winner_margin_bytes\":{},\"reducer\":{{\"evaluations\":{},\"edits\":{},\"bytes_saved\":{}}},\
+             \"work\":{{\"pixel_plans\":{},\"reconstructions\":{},\"metric_evaluations\":{},\
+             \"entropy_trainings\":{},\"emissions\":{}}},\"prediction\":{},\
+             \"transform_features\":{},\
              \"requested_score\":{},\"achieved_score\":{},\
              \"guard_margin\":{},\"final_exact_bytes\":{},\"status\":\"{}\",\"saturated\":{},\
              \"wall_by_phase\":{{\"plan\":{},\"render_metric\":{},\"entropy\":{},\"emit\":{}}},\
@@ -483,6 +609,15 @@ impl QualityOutcome {
             self.stats.reducer_evaluations,
             self.stats.reducer_edits,
             self.stats.reducer_bytes_saved,
+            self.stats.work.pixel_plans,
+            self.stats.work.reconstructions,
+            self.stats.work.metric_evaluations,
+            self.stats.work.entropy_trainings,
+            self.stats.work.emissions,
+            prediction,
+            self.transform_features
+                .as_ref()
+                .map_or_else(|| "null".to_owned(), |t| t.to_json()),
             self.requested_score,
             self.achieved_score,
             self.achieved_score - self.requested_score - self.guard,
@@ -694,6 +829,11 @@ struct Navigator<'c, 'a, 'r, 't, 'e> {
     policy_id: u32,
     anchor: Option<StructuralAnchor>,
     anchor_rung: Option<Rung>,
+    /// A model-predicted local loss exponent used in place of
+    /// [`PRIOR_LOSS_EXPONENT`] while only one probe exists (the one-shot
+    /// program's slope prior). Measured slopes always win once two probes
+    /// bracket a direction.
+    prior_beta: Option<f64>,
     probes: Vec<ProbeRecord>,
     trace: &'t mut Vec<QualityProbe>,
     local: QualityStats,
@@ -759,6 +899,9 @@ impl Navigator<'_, '_, '_, '_, '_> {
         let millis = u64::try_from(score_start.elapsed().as_millis()).unwrap_or(u64::MAX);
         self.local.render_metric_ms = self.local.render_metric_ms.saturating_add(millis);
         self.local.pixel_probes = self.local.pixel_probes.saturating_add(1);
+        self.local.work.pixel_plans = self.local.work.pixel_plans.saturating_add(1);
+        self.local.work.reconstructions = self.local.work.reconstructions.saturating_add(1);
+        self.local.work.metric_evaluations = self.local.work.metric_evaluations.saturating_add(1);
         let feasible = score >= self.threshold();
         self.trace.push(QualityProbe {
             policy_id: self.policy_id,
@@ -859,7 +1002,7 @@ impl Navigator<'_, '_, '_, '_, '_> {
                 let dy = loss(from.1).ln() - loss(o.1).ln();
                 (dx.abs() > f64::EPSILON && dy / dx < 0.0).then(|| (-dy / dx).clamp(0.2, 3.0))
             })
-            .unwrap_or(PRIOR_LOSS_EXPONENT);
+            .unwrap_or_else(|| self.prior_beta.unwrap_or(PRIOR_LOSS_EXPONENT));
         let margin = EXPANSION_MARGIN.powi(i32::try_from(attempt.saturating_add(1)).unwrap_or(1));
         let mut ratio = (loss(from.1) / loss(self.threshold())).powf(1.0 / alpha);
         ratio = if finer {
@@ -987,6 +1130,8 @@ fn price_pixels(
     let emit_ms = u64::try_from(emit_start.elapsed().as_millis()).unwrap_or(u64::MAX);
     nav.local.emit_ms = nav.local.emit_ms.saturating_add(emit_ms);
     nav.local.exact_prices = nav.local.exact_prices.saturating_add(1);
+    nav.local.work.entropy_trainings = nav.local.work.entropy_trainings.saturating_add(1);
+    nav.local.work.emissions = nav.local.work.emissions.saturating_add(1);
     let feasible = score >= nav.threshold();
     nav.trace.push(QualityProbe {
         policy_id: nav.policy_id,
@@ -1061,6 +1206,7 @@ fn solve_baseline(
     structure_tier: EntropySearch,
     finalist_entropy: EntropySearch,
     predicted: Rung,
+    prior_beta: Option<f64>,
     trace: &mut Vec<QualityProbe>,
 ) -> Result<(PolicySolve, QualityStats, Option<StructuralAnchor>)> {
     let mut nav = Navigator {
@@ -1076,6 +1222,7 @@ fn solve_baseline(
         policy_id: 0,
         anchor: None,
         anchor_rung: None,
+        prior_beta,
         probes: Vec::new(),
         trace,
         local: QualityStats {
@@ -1152,14 +1299,17 @@ fn solve_baseline(
                     .and_then(|p| p.pixels.take());
                 let (pixels, geometry) = match retained {
                     Some(planned) => planned,
-                    None => nav.ctx.pixel_plan_for(
-                        nav.request,
-                        quantizer,
-                        nav.enable_cfl,
-                        nav.structure_tier,
-                        AnchorReuse::None,
-                        None,
-                    )?,
+                    None => {
+                        nav.local.work.pixel_plans = nav.local.work.pixel_plans.saturating_add(1);
+                        nav.ctx.pixel_plan_for(
+                            nav.request,
+                            quantizer,
+                            nav.enable_cfl,
+                            nav.structure_tier,
+                            AnchorReuse::None,
+                            None,
+                        )?
+                    }
                 };
                 let priced = price_pixels(
                     &mut nav,
@@ -1184,6 +1334,7 @@ fn solve_baseline(
                     (Some(anchor), StructureSource::Reused) => AnchorReuse::CoverAndCfl(anchor),
                     _ => AnchorReuse::None,
                 };
+                nav.local.work.pixel_plans = nav.local.work.pixel_plans.saturating_add(1);
                 nav.ctx.pixel_plan_for(
                     nav.request,
                     quantizer,
@@ -1243,20 +1394,15 @@ fn solve_baseline(
     ))
 }
 
-/// One bank alternative's bounded solve: a priced finalist and its work.
-struct TrialSolve {
-    finalist: PricedFinalist,
-    local: QualityStats,
-}
-
 /// Solves one policy-bank alternative to the same target under a small budget
 /// ([`TRIAL_PIXEL_PROBES`] pixel probes, [`TRIAL_EXACT_PRICES`] exact price),
 /// starting from the baseline's crossing rung `seed`.
 ///
 /// `shared_anchor` is `Some` only for a quantizer-side alternative that reuses
 /// the baseline's cover and CfL; a CfL or restoration alternative passes `None`
-/// and builds a fresh plan. Returns `None` when the alternative found no
-/// feasible stream inside its budget.
+/// and builds a fresh plan. The finalist is `None` when the alternative found
+/// no feasible stream inside its budget; its stats come back either way so
+/// the search's whole-work totals stay honest.
 ///
 /// `ctx` is the baseline's warm context: a quantizer-side trial reads its
 /// forward coefficients from that cache and spends zero fresh structural
@@ -1278,7 +1424,7 @@ fn solve_trial(
     shared_anchor: Option<&StructuralAnchor>,
     policy_id: u32,
     trace: &mut Vec<QualityProbe>,
-) -> Result<Option<TrialSolve>> {
+) -> Result<(Option<PricedFinalist>, QualityStats)> {
     let seed_fresh = shared_anchor.is_none();
     let anchor_rung = shared_anchor.as_ref().map(|_| seed);
     let mut nav = Navigator {
@@ -1294,6 +1440,7 @@ fn solve_trial(
             policy_trials: 0,
             reserve,
             reducer: None,
+            transform_shadow: false,
         },
         enable_cfl,
         structure_tier,
@@ -1301,6 +1448,7 @@ fn solve_trial(
         policy_id,
         anchor: shared_anchor.cloned(),
         anchor_rung,
+        prior_beta: None,
         probes: Vec::new(),
         trace,
         local: QualityStats::default(),
@@ -1326,11 +1474,11 @@ fn solve_trial(
         .min_by_key(|(_, p)| p.rung)
         .map(|(i, _)| i);
     let Some(index) = chosen_index else {
-        return Ok(None);
+        return Ok((None, nav.local));
     };
     let (quantizer, score, structure) = {
         let Some(p) = nav.probes.get(index) else {
-            return Ok(None);
+            return Ok((None, nav.local));
         };
         (p.quantizer, p.score, p.structure)
     };
@@ -1342,6 +1490,7 @@ fn solve_trial(
                 (Some(anchor), StructureSource::Reused) => AnchorReuse::CoverAndCfl(anchor),
                 _ => AnchorReuse::None,
             };
+            nav.local.work.pixel_plans = nav.local.work.pixel_plans.saturating_add(1);
             nav.ctx.pixel_plan_for(
                 nav.request,
                 quantizer,
@@ -1354,11 +1503,11 @@ fn solve_trial(
     };
     let finalist = price_pixels(&mut nav, quantizer, score, structure, &pixels, &geometry)?;
     let local = nav.local;
-    Ok(Some(TrialSolve { finalist, local }))
+    Ok((Some(finalist), local))
 }
 
-/// Folds a trial's timings (not its probe/price counts, which stay baseline-
-/// scoped) into the combined stats.
+/// Folds a trial's timings and whole-search work totals (not its probe/price
+/// counts, which stay baseline-scoped) into the combined stats.
 fn fold_timings(combined: &mut QualityStats, trial: &QualityStats) {
     combined.plan_ms = combined.plan_ms.saturating_add(trial.plan_ms);
     combined.render_metric_ms = combined
@@ -1366,6 +1515,23 @@ fn fold_timings(combined: &mut QualityStats, trial: &QualityStats) {
         .saturating_add(trial.render_metric_ms);
     combined.entropy_ms = combined.entropy_ms.saturating_add(trial.entropy_ms);
     combined.emit_ms = combined.emit_ms.saturating_add(trial.emit_ms);
+    combined.work.pixel_plans = combined
+        .work
+        .pixel_plans
+        .saturating_add(trial.work.pixel_plans);
+    combined.work.reconstructions = combined
+        .work
+        .reconstructions
+        .saturating_add(trial.work.reconstructions);
+    combined.work.metric_evaluations = combined
+        .work
+        .metric_evaluations
+        .saturating_add(trial.work.metric_evaluations);
+    combined.work.entropy_trainings = combined
+        .work
+        .entropy_trainings
+        .saturating_add(trial.work.entropy_trainings);
+    combined.work.emissions = combined.work.emissions.saturating_add(trial.work.emissions);
 }
 
 /// Runs the terminal reducer on the winning finalist and replaces it when the
@@ -1410,6 +1576,14 @@ fn reduce_winner(
         return Ok(());
     };
     stats.reducer_evaluations = reduced.stats.evaluations;
+    stats.work.reconstructions = stats
+        .work
+        .reconstructions
+        .saturating_add(reduced.stats.evaluations);
+    stats.work.metric_evaluations = stats
+        .work
+        .metric_evaluations
+        .saturating_add(reduced.stats.evaluations);
 
     let ctx = CandidateSearchContext::new(frame, transform_frame, atlas, request, executor);
     let entropy_start = Instant::now();
@@ -1421,6 +1595,8 @@ fn reduce_winner(
     let emit_ms = u64::try_from(emit_start.elapsed().as_millis()).unwrap_or(u64::MAX);
     stats.emit_ms = stats.emit_ms.saturating_add(emit_ms);
     stats.exact_prices = stats.exact_prices.saturating_add(1);
+    stats.work.entropy_trainings = stats.work.entropy_trainings.saturating_add(1);
+    stats.work.emissions = stats.work.emissions.saturating_add(1);
     let kept = emission.sizing.total < winner.sizing.total;
     trace.push(QualityProbe {
         policy_id: REDUCER_POLICY_ID,
@@ -1446,6 +1622,121 @@ fn reduce_winner(
 
 /// The `policy_id` the trace gives the reducer's exact price.
 pub const REDUCER_POLICY_ID: u32 = u32::MAX;
+
+/// One fresh-structure point of a quality-oracle ladder sweep.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LadderPoint {
+    /// The rung that was built and scored.
+    pub rung: Rung,
+    /// The quantizer at that rung (with the effort's `quant_lf` coupling).
+    pub quantizer: QuantizerChoice,
+    /// `global_scale * HfMul` of that quantizer.
+    pub effective_scale: u64,
+    /// The canonical score of the fresh-structure reconstruction.
+    pub score: f64,
+    /// The exact codestream size, when pricing was requested.
+    pub exact_bytes: Option<u64>,
+    /// Milliseconds in pixel planning.
+    pub plan_ms: u64,
+    /// Milliseconds in rendering and scoring.
+    pub render_metric_ms: u64,
+    /// Milliseconds in entropy training and emission (0 when not priced).
+    pub price_ms: u64,
+}
+
+/// Sweeps `rungs` with the production quality pixel policy of `request`'s
+/// effort — a fresh cover/CfL build per rung over one shared forward-DCT
+/// cache — scoring every rung canonically and exact-pricing it when `price`
+/// is set.
+///
+/// This is the one-shot program's oracle-label measurement (PR 2): a
+/// crossing predictor must train on the same fresh-structure operating
+/// points the production controller emits, not on fixed-quantizer
+/// approximations of them. No navigation happens here; every requested rung
+/// is built, scored and dropped before the next, so at most one frame-sized
+/// pixel plan is alive at a time.
+///
+/// # Errors
+///
+/// As [`search_frame_perceptual`].
+pub fn sweep_frame_perceptual(
+    frame: &PreparedFrame,
+    atlas: &AnalysisAtlas,
+    request: &EncodeRequest,
+    rungs: &[Rung],
+    price: bool,
+    evaluator: &mut dyn PerceptualEvaluator,
+    executor: &jpxl_encode::EncodeExecutor,
+) -> Result<Vec<LadderPoint>> {
+    let preset = request.rate_preset;
+    let (enable_cfl, structure_tier, finalist_entropy) = planning_tiers(preset);
+    let transform_owned = if request.restoration.gaborish {
+        Some(crate::prepare_gaborish_frame(frame)?)
+    } else {
+        None
+    };
+    let transform_frame = transform_owned.as_ref().unwrap_or(frame);
+    let baseline_policy = crate::policy_bank::PerceptualPolicy::baseline(preset);
+    let base_request = baseline_policy.apply(request);
+    let mut ctx =
+        CandidateSearchContext::new(frame, transform_frame, atlas, &base_request, executor);
+
+    let mut points = Vec::with_capacity(rungs.len());
+    for &rung in rungs {
+        let quantizer = QuantizerChoice::at(rung, base_request.quant_lf)?;
+        let plan_start = Instant::now();
+        let (pixels, geometry) = ctx.pixel_plan_for(
+            &base_request,
+            quantizer,
+            enable_cfl,
+            structure_tier,
+            AnchorReuse::None,
+            None,
+        )?;
+        let plan_ms = u64::try_from(plan_start.elapsed().as_millis()).unwrap_or(u64::MAX);
+        let score_start = Instant::now();
+        let (observation, retained) = evaluator.evaluate_owned(pixels)?;
+        let render_metric_ms = u64::try_from(score_start.elapsed().as_millis()).unwrap_or(u64::MAX);
+        let mut price_ms = 0u64;
+        let exact_bytes = if price {
+            // A memory-bounded evaluator may have dropped the plan; the fresh
+            // rebuild is byte-identical by construction.
+            let pixels = match retained {
+                Some(pixels) => pixels,
+                None => {
+                    ctx.pixel_plan_for(
+                        &base_request,
+                        quantizer,
+                        enable_cfl,
+                        structure_tier,
+                        AnchorReuse::None,
+                        None,
+                    )?
+                    .0
+                }
+            };
+            let price_start = Instant::now();
+            let plan =
+                ctx.attach_entropy_for(&base_request, &pixels, &geometry, finalist_entropy)?;
+            let emission = emit_codestream_with_executor(&plan, ctx.executor())?;
+            price_ms = u64::try_from(price_start.elapsed().as_millis()).unwrap_or(u64::MAX);
+            Some(emission.sizing.total)
+        } else {
+            None
+        };
+        points.push(LadderPoint {
+            rung,
+            quantizer,
+            effective_scale: effective_scale(rung),
+            score: observation.score,
+            exact_bytes,
+            plan_ms,
+            render_metric_ms,
+            price_ms,
+        });
+    }
+    Ok(points)
+}
 
 /// Runs the score-targeted search over a prepared frame at the preset's budget.
 ///
@@ -1515,6 +1806,38 @@ pub fn search_frame_perceptual_with_budget(
     let base_request = baseline_policy.apply(request);
     let mut ctx =
         CandidateSearchContext::new(frame, transform_frame, atlas, &base_request, executor);
+    // PR 4 shadow measurement: reduce the DCT8x8 candidates before the solve
+    // so the summary is quantizer-independent and the fill warms the cover's
+    // own cache. Off in every production preset.
+    let transform_features = if budget.transform_shadow {
+        Some(ctx.prepare_quality_transform_summary(&base_request)?)
+    } else {
+        None
+    };
+    // PR 5 (feature-gated): the generated crossing model's risk-adjusted
+    // candidate becomes the first fresh plan and its slope steers the first
+    // correction; a fallback signal (OOD, wide interval, saturation risk,
+    // tiny frame, or no generated model) keeps the standard predictor start.
+    // Everything downstream — canonical verification before entropy, the
+    // bounded navigator, the total caps — is unchanged. The summary the
+    // prediction reads warmed the cover's own cache, so this costs no
+    // duplicated transform work.
+    #[cfg(feature = "one-shot-controller")]
+    let (predicted, prior_beta) = match transform_features
+        .as_ref()
+        .and_then(|tf| crate::quality_prediction::predict_v2(&features, tf, target_score))
+    {
+        // Confident: the risk-adjusted candidate is the first fresh plan.
+        Some(p) if p.fallback_reason.is_none() => (p.candidate_rung, Some(p.local_loss_exponent)),
+        // Uncertain but in distribution (wide interval, saturation risk):
+        // the navigator still runs its full bounded search, so the model's
+        // median is simply a better seed than the legacy table.
+        Some(p) if p.ood_flags.is_empty() => (p.median_rung, Some(p.local_loss_exponent)),
+        // Out of distribution: keep the legacy predictor's start.
+        _ => (predicted, None),
+    };
+    #[cfg(not(feature = "one-shot-controller"))]
+    let prior_beta: Option<f64> = None;
     let (baseline, mut stats, baseline_anchor) = solve_baseline(
         &mut ctx,
         &base_request,
@@ -1526,6 +1849,7 @@ pub fn search_frame_perceptual_with_budget(
         structure_tier,
         finalist_entropy,
         predicted,
+        prior_beta,
         &mut trace,
     )?;
 
@@ -1580,7 +1904,7 @@ pub fn search_frame_perceptual_with_budget(
                     None
                 };
                 let trial_request = policy.apply(request);
-                let trial = solve_trial(
+                let (trial_finalist, trial_stats) = solve_trial(
                     &mut ctx,
                     &trial_request,
                     evaluator,
@@ -1596,10 +1920,10 @@ pub fn search_frame_perceptual_with_budget(
                     &mut trace,
                 )?;
                 stats.policy_trials = stats.policy_trials.saturating_add(1);
-                match trial {
-                    Some(t) => {
-                        fold_timings(&mut stats, &t.local);
-                        let bytes = t.finalist.sizing.total;
+                fold_timings(&mut stats, &trial_stats);
+                match trial_finalist {
+                    Some(finalist) => {
+                        let bytes = finalist.sizing.total;
                         let saving = incumbent_bytes.saturating_sub(bytes);
                         // Quality demands a minimum saving; a single Balanced
                         // pass keeps any strict improvement.
@@ -1612,16 +1936,16 @@ pub fn search_frame_perceptual_with_budget(
                         } else {
                             saving > 0
                         };
-                        let keep = t.finalist.feasible && bytes < incumbent_bytes && enough;
+                        let keep = finalist.feasible && bytes < incumbent_bytes && enough;
                         policy_trials.push(PolicyTrial {
                             id: policy_id,
-                            rung: t.finalist.quantizer.rung.get(),
-                            score: t.finalist.score,
+                            rung: finalist.quantizer.rung.get(),
+                            score: finalist.score,
                             bytes,
                             kept: false,
                         });
                         if keep {
-                            winner = t.finalist;
+                            winner = finalist;
                             winner_policy = policy;
                             winner_is_trial = true;
                             winner_trial_id = Some(policy_id);
@@ -1695,6 +2019,12 @@ pub fn search_frame_perceptual_with_budget(
         QualityStatus::MetWorkCap
     };
     let metric_version = evaluator.metric_version();
+    // PR 3/4 shadow: the counterfactual one-shot record, computed from the
+    // finished search's own probes. Never touches the emitted bytes; absent
+    // when no transform summary was computed.
+    let prediction = transform_features.as_ref().and_then(|tf| {
+        crate::quality_prediction::shadow_prediction_trace(&features, tf, target_score, &trace)
+    });
     Ok(QualityOutcome {
         codestream: winner.bytes,
         plan: winner.plan,
@@ -1709,6 +2039,8 @@ pub fn search_frame_perceptual_with_budget(
         stats,
         policy_trials,
         features,
+        prediction,
+        transform_features,
         metric_version,
     })
 }
@@ -1762,8 +2094,7 @@ mod tests {
         }
     }
 
-    fn frame() -> PreparedFrame {
-        let (w, h) = (96u32, 80u32);
+    fn sized_frame(w: u32, h: u32) -> PreparedFrame {
         let rgb: Vec<u8> = (0..w * h)
             .flat_map(|i| {
                 let x = i % w;
@@ -1776,6 +2107,10 @@ mod tests {
             })
             .collect();
         PreparedFrame::from_srgb8(w, h, &rgb).expect("frame")
+    }
+
+    fn frame() -> PreparedFrame {
+        sized_frame(96, 80)
     }
 
     fn run(preset: RateSearchPreset, target: f64) -> (QualityOutcome, u32) {
@@ -1817,6 +2152,116 @@ mod tests {
         )
         .expect("search");
         (outcome, evaluator.calls)
+    }
+
+    /// PR 5 (feature-gated): the one-shot start plans the generated model's
+    /// risk-adjusted candidate as the first fresh plan when the model routes
+    /// there, and keeps the standard predictor start when any fallback
+    /// signal fires. The caps and floor semantics are unchanged either way.
+    #[cfg(feature = "one-shot-controller")]
+    #[test]
+    fn the_one_shot_start_follows_the_model_routing() {
+        let (w, h) = (160u32, 144u32);
+        let frame = sized_frame(w, h);
+        let atlas = AnalysisAtlas::analyze(&frame);
+        let mut request = EncodeRequest::for_quality(RateSearchPreset::Balanced);
+        request.restoration.gaborish = false;
+        let executor = request.resources.executor();
+        let mut evaluator = CurveEvaluator {
+            calls: 0,
+            discard: false,
+        };
+        let target = PerceptualTarget::new(PerceptualMetric::Ssimulacra2, 85.0).expect("target");
+        let budget = QualityBudget::for_preset(RateSearchPreset::Balanced);
+        let outcome = search_frame_perceptual_with_budget(
+            &frame,
+            &atlas,
+            &request,
+            target,
+            &mut evaluator,
+            &executor,
+            budget,
+        )
+        .expect("search");
+
+        let features = source_features(&atlas, w, h, frame.is_grayscale());
+        let mut check_cache = crate::CandidateForwardCache::new();
+        let summary =
+            crate::quality_transform_summary(&frame, &request, &mut check_cache, Some(&executor))
+                .expect("transform summary");
+        match crate::quality_prediction::predict_v2(&features, &summary, 85.0) {
+            Some(p) if p.fallback_reason.is_none() => {
+                assert_eq!(
+                    outcome.stats.predicted,
+                    Some(p.candidate_rung),
+                    "the model's candidate is the first fresh plan"
+                );
+                assert_eq!(
+                    outcome.trace.first().map(|probe| probe.quantizer.rung),
+                    Some(p.candidate_rung)
+                );
+            }
+            Some(p) if p.ood_flags.is_empty() => {
+                assert_eq!(
+                    outcome.stats.predicted,
+                    Some(p.median_rung),
+                    "an uncertain in-distribution route seeds the navigator with the median"
+                );
+            }
+            _ => {
+                let standard = rung_for_scale(predicted_effective_scale(&features, 85.0));
+                assert_eq!(
+                    outcome.stats.predicted,
+                    Some(standard),
+                    "an out-of-distribution frame keeps the legacy predictor start"
+                );
+            }
+        }
+        assert!(outcome.achieved_score >= 85.0);
+        // The one rescue probe beyond the navigation cap stays the maximum.
+        assert!(outcome.stats.pixel_probes <= budget.pixel_probes + 1);
+        assert!(outcome.prediction.is_some(), "the shadow trace still fills");
+    }
+
+    /// A solve that runs out of probes before anything meets a reachable
+    /// target reports [`QualityStatus::UnderTargetWorkCap`] — not a success
+    /// status — and its counters show the one rescue probe that ran beyond
+    /// the navigation cap.
+    #[test]
+    fn running_out_of_probes_reports_under_target_work_cap() {
+        let budget = QualityBudget {
+            pixel_probes: 1,
+            exact_prices: 1,
+            structural_builds: 1,
+            policy_trials: 0,
+            reserve: 0.03,
+            reducer: None,
+            transform_shadow: false,
+        };
+        // The curve tops out near 99.96, so 99.9 is reachable on the ladder;
+        // one navigation probe plus one bounded rescue jump cannot get there.
+        let (outcome, _) = run_with_budget(RateSearchPreset::Balanced, 99.9, budget);
+        assert_eq!(outcome.status, QualityStatus::UnderTargetWorkCap);
+        assert!(!outcome.saturated, "{:?}", outcome.stats);
+        assert!(outcome.achieved_score < 99.9);
+        // The navigation cap of one, plus the single documented rescue probe.
+        assert_eq!(outcome.stats.pixel_probes, 2);
+        assert_eq!(outcome.stats.exact_prices, 1);
+    }
+
+    /// Proves the failed Quality promotion screen cannot leak its policy-bank
+    /// or reducer work into either production effort's default budget.
+    #[test]
+    fn production_budgets_keep_quality_only_work_disabled() {
+        for preset in [RateSearchPreset::Fast, RateSearchPreset::Balanced] {
+            let budget = QualityBudget::for_preset(preset);
+            assert_eq!(budget.policy_trials, 0);
+            assert_eq!(budget.reducer, None);
+        }
+
+        let quality = QualityBudget::for_preset(RateSearchPreset::Quality);
+        assert!(quality.policy_trials > 0);
+        assert_eq!(quality.reducer, Some(ReducerLimits::QUALITY));
     }
 
     #[test]
@@ -2022,7 +2467,7 @@ mod tests {
     fn the_trace_is_machine_readable() {
         let (outcome, _) = run(RateSearchPreset::Fast, 70.0);
         let json = outcome.trace_json("fast");
-        assert!(json.starts_with("{\"schema\":\"jpxl.quality-trace/1\""));
+        assert!(json.starts_with("{\"schema\":\"jpxl.quality-trace/2\""));
         assert!(json.contains("\"probes\":[{\"kind\":\"pixel\""));
         assert!(json.contains("\"policy_id\":0"));
         assert!(json.contains("\"policy_trials\":0"));
@@ -2044,10 +2489,12 @@ mod tests {
         };
         let with = QualityBudget {
             reducer: Some(limits),
+            transform_shadow: false,
             ..QualityBudget::for_preset(RateSearchPreset::Balanced)
         };
         let without = QualityBudget {
             reducer: None,
+            transform_shadow: false,
             ..QualityBudget::for_preset(RateSearchPreset::Balanced)
         };
         let (reduced, _) = run_with_budget(RateSearchPreset::Balanced, 70.0, with);
@@ -2132,6 +2579,7 @@ mod tests {
             structure_tier,
             finalist_entropy,
             predicted,
+            None,
             &mut trace,
         )
         .expect("baseline solve");
@@ -2149,7 +2597,7 @@ mod tests {
             "a chroma-only alternative must reuse structure"
         );
         let qs_request = qs_policy.apply(&request);
-        let qs = solve_trial(
+        let (qs_finalist, qs_stats) = solve_trial(
             &mut ctx,
             &qs_request,
             &mut evaluator,
@@ -2164,10 +2612,10 @@ mod tests {
             1,
             &mut trace,
         )
-        .expect("quantizer-side trial")
-        .expect("a feasible quantizer-side finalist");
+        .expect("quantizer-side trial");
+        assert!(qs_finalist.is_some(), "a feasible quantizer-side finalist");
         assert_eq!(
-            qs.local.structural_builds, 0,
+            qs_stats.structural_builds, 0,
             "a quantizer-side trial rebuilt structure"
         );
 
@@ -2180,7 +2628,7 @@ mod tests {
             "a CfL flip must not reuse structure"
         );
         let st_request = st_policy.apply(&request);
-        let st = solve_trial(
+        let (st_finalist, st_stats) = solve_trial(
             &mut ctx,
             &st_request,
             &mut evaluator,
@@ -2195,10 +2643,10 @@ mod tests {
             2,
             &mut trace,
         )
-        .expect("structural trial")
-        .expect("a feasible structural finalist");
+        .expect("structural trial");
+        assert!(st_finalist.is_some(), "a feasible structural finalist");
         assert_eq!(
-            st.local.structural_builds, 1,
+            st_stats.structural_builds, 1,
             "a structural trial did not build exactly one cover"
         );
     }

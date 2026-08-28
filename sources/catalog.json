@@ -24,6 +24,17 @@
     "title": "Outside advice: a codec-optimization perceptual metric for JPXL (JPXL-PQ / JPXL-PCost)"
   },
   {
+    "added_at": "2026-08-24",
+    "availability": "full",
+    "byte_len": 53129,
+    "content_hash": "sha256:ab931f55436c9b169b1369718c4eaa1187e8d007ff7ed9d430f280d01a8bf991",
+    "id": "jpxl-one-shot-quality-controller-memo-2026-08-24",
+    "media_type": "text/markdown",
+    "origin": "external",
+    "path": "sources/external/jpxl-one-shot-quality-controller-memo-2026-08-24--ab931f55.md",
+    "title": "One-shot quality-controller design memo (advisor response, 2026-08-24)"
+  },
+  {
     "added_at": "2026-08-22",
     "availability": "full",
     "byte_len": 37908,

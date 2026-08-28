@@ -1,6 +1,34 @@
 akr 0.1
 project jpegxl-rs
 
+record jpegxl-rs.evidence.avx2-pooling-bit-identity-2026-08-26/1 : evidence {
+    title "jpegxl-rs.evidence.avx2-pooling-bit-identity-2026-08-26"
+    state verified
+    result pass
+    method command
+    observed_at git:d2a54b5486b90fd4808e9bb77c67eea6bbd9f010
+    command "cargo test -p jpxl-perceptual; cmp on full A/B encodes vs HEAD-baseline build"
+    summary """
+        accumulate_band's avx2+fma clone is byte-identical to the scalar
+        walk: the lane test covers remainder lengths 0,1,7,8,9,64,250,
+        and full quality-path encodes of the canonical images compare
+        equal with cmp against a pre-change baseline binary. Wall-clock
+        on the 12 MP quality path improved about 5-8% at 4 threads.
+        """
+}
+
+record jpegxl-rs.evidence.bench-vs-libjxl-reproducible-2026-08-25/1 : evidence {
+    title "One documented command compares JPXL and native cjxl/djxl on the same inputs with recorded provenance"
+    state verified
+    result pass
+    method command
+    observed_at git:a523d0157ac223678b9d02342d0a8a7fbc34d642
+    command "JPXL/tools/bench_vs_libjxl.sh --jpxl target/release/jpxl --quality \"70 85\" --runs 1 --jsonl bench-vs-libjxl.jsonl <corpus images>"
+    summary """
+        After tools/setup-oracles.sh produced native Linux cjxl/djxl v0.13.0 (196a43d9, pinned in oracle-bin/PINNED_REVISIONS.txt), bench_vs_libjxl.sh emitted a size/bpp/SSIMULACRA2/wall table for jpxl --quality 70/85 and cjxl -d 3.0/1.5/1.0 on three corpus images (2400x1800 photo, 1600x900 text-screenshot, 700x700 radial gradient), every stream decoded and scored by the same in-tree metric, with a provenance header (UTC date, host, binary versions and sha256, flags, per-input sha256/dims) and machine-readable jpxl.bench-vs-libjxl/1 JSONL kept at pqc-scatter-20260825/bench-vs-libjxl.jsonl. Sample: on the photo, jpxl q85 emitted 796,985 bytes at score 85.45 versus cjxl -d1.0 at 804,397 bytes and score 83.41; on text-screenshot cjxl -d3.0 was 4.7x smaller at a higher score, consistent with the recorded VarDCT-on-synthetic gap.
+        """
+}
+
 record jpegxl-rs.evidence.cli-netpbm-subtypes-2026-08-21/1 : evidence {
     title "Focused CLI tests passed: explicit PPM/PGM output uses P6/P5 and incompatible channel layouts error."
     state verified
@@ -583,6 +611,18 @@ record jpegxl-rs.evidence.history-backfilled/1 : evidence {
     author "GitHub Uploader"
 }
 
+record jpegxl-rs.evidence.jpeg-phase-a-roundtrip-2026-08-25/1 : evidence {
+    title "jpxl-jpeg roundtrips the full 5,218-file Pol Art archive byte-identically except one provably corrupt file, with typed refusals proven"
+    state verified
+    result pass
+    method command
+    observed_at git:c1cdbf582689914c46af67c1b3e59cacc88b920b
+    command "cd JPXL && cargo run --release -p jpxl-jpeg --example roundtrip_sweep -- \"/mnt/Samsung980_1TB/Pol Desktop/Pol Art Folder 08-24-2017\""
+    summary """
+        The deterministic sweep (sorted paths, stride 1 — a superset of the >=500-sample requirement) parsed and re-serialized every JPEG in the archive: 5,217 of 5,218 byte-identical with zero mismatches and zero refusals; coverage of the identical set spans baseline 3,166, progressive 2,049, extended sequential 2, chroma 4:4:4 2,985 / 4:2:0 2,081 / 4:2:2 140 / 4:4:0 6, grayscale, restart intervals 684, Exif 2,419 / ICC 1,558 / XMP 1,396, and 41 files with post-EOI tail data. The single non-roundtripping file is ~15 KB of real data zero-padded to 3.18 MB, rejected by libjpeg's djpeg as premature EOF and refused here with a typed malformed-stream error. All 81 earlier mismatches shared one root cause — libjpeg's non-derivable progressive AC EOB-run splits — fixed by recording the exact run lengths at decode and replaying them flush-on-match at encode; the prog_large.jpg regression fixture proves the recorded runs are load-bearing. Typed refusal of arithmetic, hierarchical, lossless, and 12-bit inputs is proven by 10 dedicated tests; 34 crate tests pass in release.
+        """
+}
+
 record jpegxl-rs.evidence.m1-plan-ir/1 : evidence {
     title "M1 - VarDCT plan IR and structural split"
     state verified
@@ -761,6 +801,19 @@ record jpegxl-rs.evidence.markdown-cutover/2 : evidence {
         """
     supersedes [ @jpegxl-rs.evidence.markdown-cutover/1 ]
     author "GitHub Uploader"
+}
+
+record jpegxl-rs.evidence.mit-only-licensing-audit-2026-08-25/1 : evidence {
+    title "Workspace licensing surface is MIT-only with no copyleft anywhere in the dependency graph"
+    state verified
+    result pass
+    method command
+    observed_at git:a523d0157ac223678b9d02342d0a8a7fbc34d642
+    command "cd JPXL && cargo tree --workspace (dependency/license enumeration; full table in JPXL/docs/LICENSING-AUDIT.md)"
+    artifact "JPXL/docs/LICENSING-AUDIT.md"
+    summary """
+        All 12 workspace crates declare MIT via license.workspace; LICENSE and JPXL/LICENSE-MIT carry consistent MIT text; a scan of the full dependency graph (default ~41 external crates plus ~26 behind off-by-default measurement features) found no GPL/LGPL/AGPL/MPL/CDDL/EUPL/SSPL license anywhere; the only non-MIT arms are permissive (moxcms and pxfm BSD-3-Clause/Apache-2.0 on the default path via the image raster adapter; ssimulacra2 BSD-2, butteraugli BSD-3, v_frame BSD-2, imgref CC0/Apache behind feature gates). No ISO text or AGPL-derived content is present in any shipped crate. Full table in JPXL/docs/LICENSING-AUDIT.md.
+        """
 }
 
 record jpegxl-rs.evidence.modular-effort-ramp-landed-2026-08-10/1 : evidence {
@@ -5035,6 +5088,75 @@ record jpegxl-rs.evidence.phase9-quant-scheduling-speed-2026-08-15/1 : evidence 
         """
 }
 
+record jpegxl-rs.evidence.pipeline-metadata-seam-2026-08-26/1 : evidence {
+    title "jpegxl-rs.evidence.pipeline-metadata-seam-2026-08-26"
+    state verified
+    result pass
+    method command
+    observed_at git:05733e9b32cec8e460e552fea5f01c20c87ca941
+    command "cargo test --workspace (jpxl facade + jpxl-encode suites)"
+    summary """
+        The metadata seam is verified end to end at this commit: an
+        appended Exif box round-trips through the decoder's box walk
+        with the codestream untouched; with_exif rejects payloads
+        without a TIFF byte-order header; all four ColourSpace values
+        round-trip through the decoder's ColourEncoding parse; a
+        greyscale image rejects non-sRGB signalling; lossy VarDCT
+        returns a typed Unsupported for non-sRGB input. Cross-repo, a
+        real 25 MB Samsung DNG's 574-byte TIFF blob survived
+        raw-autotune develop, JPXL encode, openarc archive and extract
+        byte-identically (recorded on the openarc ledger).
+        """
+}
+
+record jpegxl-rs.evidence.pqc-fused-render-memory-12mp-2026-08-25/1 : evidence {
+    title "Fused-render 12 MP memory: peak 2,008,408 KiB under the 2 GiB ceiling"
+    state verified
+    result pass
+    method command
+    observed_at git:c23bc009ae6cd1a288e1922a60fe534dc711324c
+    command "python3 .agent/scratch/pqc-metric-cuts-20260825/rss_12mp.py"
+    summary """
+        Balanced q85 on the locked 12 MP anchor after the fused render: peak RSS 2,007,060-2,008,408 KiB over three serialized capped runs, under the 2,097,152 KiB ceiling; output bytes unchanged (1,315,649). Report in kept scratch pqc-metric-cuts-20260825/rss-12mp.json.
+        """
+}
+
+record jpegxl-rs.evidence.pqc-fused-render-production-identity-2026-08-25/1 : evidence {
+    title "Fused-render production identity: 52/52 matrix and 6/6 pre-change A/B byte-identical"
+    state verified
+    result pass
+    method command
+    observed_at git:c23bc009ae6cd1a288e1922a60fe534dc711324c
+    command "python3 .agent/scratch/pqc-metric-cuts-20260825/identity_scatter.py"
+    summary """
+        After the fused depth-quantized probe render, the full locked production-identity matrix is 52/52 byte-identical (threads 1/4, AVX2 on/off) and the 6-cell A/B against the pre-change 1fc3ca7 reference binary is byte-identical across threads 1/4/8 and AVX2 off; the classifier's per-sample equivalence with encode-then-round-trip is additionally pinned by the fused_depth_levels_match_the_srgb_round_trip unit test. Reports in kept scratch pqc-metric-cuts-20260825 (round 2; round-1 reports preserved as *-round1).
+        """
+}
+
+record jpegxl-rs.evidence.pqc-fused-render-wall-anchors-2026-08-25/1 : evidence {
+    title "Fused-render wall anchors: 4.3 MP at 2.50x (8t), 2.0x target still unmet"
+    state verified
+    result fail
+    method command
+    observed_at git:c23bc009ae6cd1a288e1922a60fe534dc711324c
+    command "python3 .agent/scratch/pqc-metric-cuts-20260825/wall_scatter.py"
+    summary """
+        Interleaved matched-score timing after the fused render: quality/rate 3.06x at 4 threads (load_1m 1.6-1.9) and 2.50x at 8 (load 4.0-4.2) on the 4.3 MP anchor; 4.65x at 4 threads on 12 MP (load 1.9-3.7); the 12 MP 8-thread schedule cell read 3.54x under ambient load 4.0-5.4 and is not representative — quiet manual 12 MP 8-thread quality runs measured 2.39-2.53 s against the schedule's 2.79 s median. Down from 3.40x/2.76x and 5.07x/3.50x before the fusion the same day. The 2.0x wall-anchors target remains unmet on both anchors. Report in kept scratch pqc-metric-cuts-20260825/wall-scatter.json (round 1 preserved as wall-scatter-round1.json).
+        """
+}
+
+record jpegxl-rs.evidence.pqc-fused-render-workspace-gates-2026-08-25/1 : evidence {
+    title "Fused-render workspace gates: fmt, clippy -D warnings, release tests all pass"
+    state verified
+    result pass
+    method command
+    observed_at git:c23bc009ae6cd1a288e1922a60fe534dc711324c
+    command "cd JPXL && set -o pipefail && cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace --release"
+    summary """
+        One strictly chained run at the fused-render tree: cargo fmt --all --check, clippy --workspace --all-targets -D warnings, and the release workspace test suite (76 test groups) all pass, exit 0.
+        """
+}
+
 record jpegxl-rs.evidence.pqc-low-memory-12mp-2026-08-23/1 : evidence {
     title "Low-memory Balanced q85 path meets the 12 MP two-GiB RSS ceiling"
     state verified
@@ -5093,6 +5215,105 @@ record jpegxl-rs.evidence.pqc-low-memory-xlarge-identity-2026-08-23/1 : evidence
         """
 }
 
+record jpegxl-rs.evidence.pqc-memory-12mp-2026-08-25/1 : evidence {
+    title "Balanced q85 on the locked 12 MP anchor peaks at 1.95 GiB RSS, under the 2.0 GiB ceiling"
+    state verified
+    result pass
+    method command
+    observed_at git:b0c128c785d7524c6002eb34ca7ebd990b24bf1e
+    command "python3 .agent/scratch/pqc-scatter-20260825/rss_12mp.py"
+    summary """
+        Three serialized release encodes of the locked 4000x3000 anchor (Balanced q85, 4 threads, RLIMIT_AS 9 GiB, ru_maxrss via wait4) peaked at 2,036,248-2,043,056 KiB, all under the 2,097,152 KiB (2.0 GiB) ceiling, with identical 1,315,649-byte output each run; rows in the kept scratch entry pqc-scatter-20260825/rss-12mp.json.
+        """
+}
+
+record jpegxl-rs.evidence.pqc-metric-cuts-memory-12mp-2026-08-25/1 : evidence {
+    title "Metric-cuts 12 MP memory: peak 2,008,188 KiB under the 2 GiB ceiling"
+    state verified
+    result pass
+    method command
+    observed_at git:c0253b3134674f9223100ccd992fca59815161a0
+    command "python3 .agent/scratch/pqc-metric-cuts-20260825/rss_12mp.py"
+    summary """
+        Balanced q85 on the locked 12 MP anchor after the exact metric-path cost cuts: peak RSS 2,007,068-2,008,188 KiB over three serialized capped runs, under the 2,097,152 KiB ceiling and down from 2,043,056 before the cuts; output bytes unchanged (1,315,649). Report in kept scratch pqc-metric-cuts-20260825/rss-12mp.json.
+        """
+}
+
+record jpegxl-rs.evidence.pqc-metric-cuts-production-identity-2026-08-25/1 : evidence {
+    title "Metric-cuts production identity: 52/52 matrix and 6/6 pre-change A/B byte-identical"
+    state verified
+    result pass
+    method command
+    observed_at git:c0253b3134674f9223100ccd992fca59815161a0
+    command "python3 .agent/scratch/pqc-metric-cuts-20260825/identity_scatter.py"
+    summary """
+        After the exact metric-path cost cuts, the full locked production-identity matrix is 52/52 byte-identical (threads 1/4, AVX2 on/off), and a 6-cell A/B against the pre-change reference binary (worktree build of 1fc3ca7) is byte-identical across threads 1/4/8 and AVX2 off; reports in kept scratch pqc-metric-cuts-20260825 (identity-scatter-summary.json, identity-ab.json).
+        """
+}
+
+record jpegxl-rs.evidence.pqc-metric-cuts-wall-anchors-2026-08-25/1 : evidence {
+    title "Metric-cuts wall anchors: ratios cut ~9-19 percent, 2.0x target still unmet"
+    state verified
+    result fail
+    method command
+    observed_at git:c0253b3134674f9223100ccd992fca59815161a0
+    command "python3 .agent/scratch/pqc-metric-cuts-20260825/wall_scatter.py"
+    summary """
+        Interleaved matched-score timing after the exact metric-path cost cuts (standing recipe, load_1m 1.8-4.5): quality/rate 3.40x at 4 threads and 2.76x at 8 on the 4.3 MP anchor, 5.07x and 3.50x on 12 MP, from 3.87x/3.22x and 5.42x/4.25x before the cuts (that run at load 5.2-7.7; the ratio columns are the load-robust comparison). Quality medians 1.33/1.17 s (4.3 MP) and 3.65/2.62 s (12 MP). The 2.0x wall-anchors target remains unmet on both anchors. Report in kept scratch pqc-metric-cuts-20260825/wall-scatter.json.
+        """
+}
+
+record jpegxl-rs.evidence.pqc-metric-cuts-workspace-gates-2026-08-25/1 : evidence {
+    title "Metric-cuts workspace gates: fmt, clippy -D warnings, release tests all pass"
+    state verified
+    result pass
+    method command
+    observed_at git:c0253b3134674f9223100ccd992fca59815161a0
+    command "cd JPXL && set -o pipefail && cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace --release"
+    summary """
+        One strictly chained run at the metric-cuts tree: cargo fmt --all --check, clippy --workspace --all-targets -D warnings, and the release workspace test suite (76 test groups) all pass, exit 0.
+        """
+}
+
+record jpegxl-rs.evidence.pqc-one-shot-falsification-screen-2026-08-24/1 : evidence {
+    title "One-shot falsification screen: fails on corpus coverage, transform features validated"
+    state verified
+    result fail
+    method command
+    observed_at git:41a2e3f20631e000954b9ea76612c70f1847e745
+    command "python JPXL/tools/quality_predictor_v2.py train --labels oracle-labels.jsonl --feature-sets table2 source source+transform --transform-features transform-features.json --sweep-dir oracle-sweeps --ridge-grid 0.03 0.3 3.0"
+    summary """
+        The memo's pre-PR5 falsification screen fails on the expanded 38-family corpus: best model (pooled quantile regression, source+transform features, ridge 3.0) reaches leave-one-family-out median |ln err| 0.220 and p90 0.805 vs the quick-screen p90<=0.45 and production median<=0.10/p90<=0.30 bounds. First-plan success 0.88 and simulated common-case bytes 1.0016 pass their checks, and first-or-one-correction success is 1.00, but the honest uncertainty intervals route 99% of requests to the exact controller (expected reconstructions 3.98, no wall win). Tail is concentrated in saturated (p90 3.58) and sky-noise gradient (p90 4.07) classes - single-content-family coverage - while photo/scene/text/noise/line-art/grayscale sit at p90 0.36-0.67. Standalone transform-summary cost on the 12 MP anchor is 21.9% of a matched-rate encode (fails the 5% bolt-on gate; in-search shared-cache marginal cost unmeasured). Report kept in .agent/scratch/one-shot-qpv2-20260824/qpv2-report.json.
+        """
+    author "GitHub Uploader"
+}
+
+record jpegxl-rs.evidence.pqc-one-shot-pr1-5-gates-2026-08-24/1 : evidence {
+    title "One-shot PR 1-5 implementation: all workspace gates pass"
+    state verified
+    result pass
+    method command
+    observed_at git:41a2e3f20631e000954b9ea76612c70f1847e745
+    command "cargo test --workspace && cargo test -p jpxl-encode-policy --features one-shot-controller && cargo clippy --workspace --all-targets [--features one-shot-controller] && cargo fmt --all --check && python -m unittest discover -s JPXL/tools/tests && python JPXL/tools/make-quality-guard-fixtures.py build --check"
+    summary """
+        The one-shot program's PR 1-5 implementation passes every workspace gate: full test suite green (71 suites) in the default build and 155 policy tests under the one-shot-controller feature (including the PR 5 routing test and the trace/2 assertions), clippy clean in both configurations, formatting clean, 75 Python tool tests green (trainer, oracle-label, fixture-generator suites), and the fixture generator's check mode reproduces all 56 corpus PPMs byte-identically with the family split-hygiene guard passing. Default-build behavior is unchanged: the shadow predictor only logs, and the one-shot start is compiled out.
+        """
+    author "GitHub Uploader"
+}
+
+record jpegxl-rs.evidence.pqc-one-shot-promotion-ab-2026-08-25/1 : evidence {
+    title "One-shot promotion A/B: floor held, bytes and work strictly better in aggregate"
+    state verified
+    result pass
+    method command
+    observed_at git:41a2e3f20631e000954b9ea76612c70f1847e745
+    command "python JPXL/tools/one_shot_promotion_ab.py --manifest test-set/quality-corpus.json --splits holdout ... ; python JPXL/tools/one_shot_promotion_ab.py --manifest test-set/ext-polart-manifest.json --splits ext-holdout ..."
+    summary """
+        Promotion A/B of the one-shot-controller build against the default controller, interleaved on the same machine. Locked 13-image holdout (91 cells): zero floor violations both arms, byte geomean 0.99744 (bound 1.007), wall geomean 0.989, reconstructions 348 vs 339; worst cells are three sub-kilobyte saturated fixtures (max ratio 1.51 = +131 bytes absolute). Never-tuned ext-holdout paintings (50 families, 350 cells): zero floor violations, byte geomean 0.99018, reconstructions 1287 to 1056 (-18%), wall geomean 0.838, worst cell 1.117 at target 95 with a higher achieved score. Achieved-score dips above the floor exist in both arms (1 default, 2 one-shot) - a pre-existing bounded-search artifact, no hard inversion below target anywhere. Wall anchors at q85 vs matched-rate: 4.3 MP 1.36x both arms; 12 MP 8.02x default vs 6.31x one-shot (metric/render remains the dominant residual, as the memo predicted). Raw rows kept in .agent/scratch/one-shot-qpv2-20260824/ (ab-locked-holdout.json, ab-ext-holdout.json).
+        """
+    author "GitHub Uploader"
+}
+
 record jpegxl-rs.evidence.pqc-pr0-corpus-manifest-2026-08-22/1 : evidence {
     title "The generator reproduces 47 fixtures (47 PPM + 29 PNG + 47 JSON provenance sidecars, idempotent sha256) and the jpxl.codec-corpus/1 manifest test-set/quality-corpus.json (gitignored) validates; splits are calibration 19, development 15, holdout 13 with no source family in two splits; classes text-screenshot 5, line-art 5, gradient 6, saturated 4, tiny 6, noise-lowlight 1, grayscale 2, photo-scene 7, photo 11. 14 generator unit tests pass."
     state verified
@@ -5104,6 +5325,19 @@ record jpegxl-rs.evidence.pqc-pr0-corpus-manifest-2026-08-22/1 : evidence {
     summary """
         The generator reproduces 47 fixtures (47 PPM + 29 PNG + 47 JSON provenance sidecars, idempotent sha256) and the jpxl.codec-corpus/1 manifest test-set/quality-corpus.json (gitignored) validates; splits are calibration 19, development 15, holdout 13 with no source family in two splits; classes text-screenshot 5, line-art 5, gradient 6, saturated 4, tiny 6, noise-lowlight 1, grayscale 2, photo-scene 7, photo 11. 14 generator unit tests pass.
         """
+}
+
+record jpegxl-rs.evidence.pqc-pr0-hard-floor-tests-2026-08-24/1 : evidence {
+    title "PR0 hard floor: targeted miss-path tests pass"
+    state verified
+    result pass
+    method command
+    observed_at git:41a2e3f20631e000954b9ea76612c70f1847e745
+    command "cargo test -p jpxl-encode-policy running_out_of_probes && cargo test -p jpxl --test quality_encode && cargo test -p jpxl-cli --test cli_quality"
+    summary """
+        New miss-path tests all pass: policy-layer UnderTargetWorkCap with rescue accounting (pixel_probes 1 + 1 rescue), facade refuse/lossless/best-effort on the deterministic 64x64 gradient miss at 99.5 Fast (TargetNotMet with LadderSaturated, FallbackLossless bytes equal to the lossless encoder's, best-effort re-scored independently), and 8/8 CLI quality tests including exit-1-with-no-output-file refusal and --quality-fallback validation.
+        """
+    author "GitHub Uploader"
 }
 
 record jpegxl-rs.evidence.pqc-pr0-predictor-table-2026-08-22/1 : evidence {
@@ -5128,6 +5362,19 @@ record jpegxl-rs.evidence.pqc-pr0-sources-registered-2026-08-22/1 : evidence {
     summary """
         Both advice documents are registered under sources/external with content hashes (jpxl-ssimulacra2-quality-controller-plan-2026-08-21 dfef416b, jpxl-encoder-metric-advice-2026-08-22 cff3dfa7); the intake copies were removed and catalog.json updated.
         """
+}
+
+record jpegxl-rs.evidence.pqc-pr0-workspace-gates-2026-08-24/1 : evidence {
+    title "PR0 hard floor: workspace and tools gates pass"
+    state verified
+    result pass
+    method command
+    observed_at git:41a2e3f20631e000954b9ea76612c70f1847e745
+    command "cargo test --workspace && cargo test --workspace --profile fast-debug && cargo clippy --workspace --all-targets && cargo fmt --all --check && python -m unittest discover -s JPXL/tools/tests"
+    summary """
+        Workspace gates pass after the hard-floor change: full test suite green in both debug and fast-debug profiles (zero failures), clippy emits no warnings, formatting is clean, and the 46 Python tool tests pass (codec_compare now opts into --quality-fallback best-effort so curve points on an unmet target stay measurable).
+        """
+    author "GitHub Uploader"
 }
 
 record jpegxl-rs.evidence.pqc-pr1-api-semantics-2026-08-22/1 : evidence {
@@ -5430,6 +5677,18 @@ record jpegxl-rs.evidence.pqc-pr7-balanced-single-shot-2026-08-22/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.pqc-pr7-closure-workspace-gates-2026-08-24/1 : evidence {
+    title "PR7 holdout closure workspace and feature gates pass"
+    state verified
+    result pass
+    method command
+    observed_at git:41a2e3f20631e000954b9ea76612c70f1847e745
+    command "cd JPXL && cargo build --workspace; cargo test --workspace --release; cargo clippy --workspace --all-targets -- -D warnings; cargo fmt --all --check; cargo test -p jpxl-cli --release --features quality-effort,perceptual"
+    summary """
+        Workspace build, full release suite, strict Clippy, formatting, and the quality-effort+perceptual feature-enabled CLI release tests all pass after the policy note and regression-test update.
+        """
+}
+
 record jpegxl-rs.evidence.pqc-pr7-dev-split-2026-08-22/1 : evidence {
     title "Development split, Balanced with the reducer on versus off: bytes geomean 0.9825 at target 70 (photos 0.9903, min 0.888) and 0.9912 at 85 (photos 0.9886, min 0.9835); zero floor violations in 30 cells (the reduced stream is kept only when its exact size is smaller and every accepted batch is re-scored canonically); at most 6 evaluations; wall geomean 1.53x / 1.63x. Bytes down at matched-or-better score with bounded work, but the wall exceeds Balanced's +25% budget, so the reducer ships default-off on Balanced (BALANCED_DEFAULT_REDUCER = None) and on for the feature-gated Quality effort; the locked-holdout gate is still to be measured."
     state verified
@@ -5439,6 +5698,52 @@ record jpegxl-rs.evidence.pqc-pr7-dev-split-2026-08-22/1 : evidence {
     command ".agent/scratch/pr7-20260822/measure.py: jpxl-base vs jpxl-reducer (BALANCED_DEFAULT_REDUCER forced to ReducerLimits::QUALITY for the build), --quality {70,85} --effort balanced --threads 4, 15 development images, serial, RLIMIT_AS 12 GB"
     summary """
         Development split, Balanced with the reducer on versus off: bytes geomean 0.9825 at target 70 (photos 0.9903, min 0.888) and 0.9912 at 85 (photos 0.9886, min 0.9835); zero floor violations in 30 cells (the reduced stream is kept only when its exact size is smaller and every accepted batch is re-scored canonically); at most 6 evaluations; wall geomean 1.53x / 1.63x. Bytes down at matched-or-better score with bounded work, but the wall exceeds Balanced's +25% budget, so the reducer ships default-off on Balanced (BALANCED_DEFAULT_REDUCER = None) and on for the feature-gated Quality effort; the locked-holdout gate is still to be measured.
+        """
+}
+
+record jpegxl-rs.evidence.pqc-pr7-holdout-complete-2026-08-24/1 : evidence {
+    title "Full PR7 locked-holdout Quality/reducer sweep completes after low-memory changes"
+    state verified
+    result pass
+    method command
+    observed_at git:41a2e3f20631e000954b9ea76612c70f1847e745
+    command "python3 .agent/scratch/pr7-holdout-closure-20260824/resume_holdout.py && python3 .agent/scratch/pr7-holdout-closure-20260824/analyze.py"
+    summary """
+        Combined historical checkpoints with 53 resumed rows to close 91/91 Quality and 91/91 Balanced cells on all 13 locked holdout images. All 182 successful rows had zero canonical-floor and decoder failures; reducer work stayed at <=6 evaluations, saved 263,266 exact bytes total, and produced 0.991552 final/before geomean. The formerly blocked 50 MP Quality rows completed serially under a 12 GiB cap; worst measured peak was 11,163,372 KiB. Kept report: .agent/scratch/pr7-holdout-closure-20260824/report.json (SHA-256 fd78df93...f282e).
+        """
+}
+
+record jpegxl-rs.evidence.pqc-pr7-policy-gating-test-2026-08-24/1 : evidence {
+    title "Production budgets keep rejected Quality-only work disabled"
+    state verified
+    result pass
+    method command
+    observed_at git:41a2e3f20631e000954b9ea76612c70f1847e745
+    command "cd JPXL && cargo test -p jpxl-encode-policy --profile fast-debug production_budgets_keep_quality_only_work_disabled"
+    summary """
+        The new policy regression test passes and proves Fast/Balanced default budgets retain zero policy trials and no reducer while the feature-gated Quality budget retains its bank and terminal reducer.
+        """
+}
+
+record jpegxl-rs.evidence.pqc-pr7-promotion-disposition-2026-08-24/1 : evidence {
+    title "Full Contract B result is dispositioned without weakening the public gate"
+    state verified
+    result pass
+    method observation
+    observed_at git:41a2e3f20631e000954b9ea76612c70f1847e745
+    summary """
+        The full 79-cell common-score report was evaluated against the standing Quality promotion conditions. Overall matched bytes pass at 0.958292, but Butteraugli mean 1.047881 and worst pnorm3 1.868818 fail their 1.02/1.05 limits, so the existing quality-effort feature gate remains in force. No search-policy change is justified; the source note now records the completed gate and a regression test pins Quality-only work out of Fast/Balanced.
+        """
+}
+
+record jpegxl-rs.evidence.pqc-pr7-quality-promotion-full-2026-08-24/1 : evidence {
+    title "Full locked holdout rejects public Quality promotion under Contract B"
+    state verified
+    result fail
+    method observation
+    observed_at git:41a2e3f20631e000954b9ea76612c70f1847e745
+    summary """
+        Across 79 common-score cells, Quality/Balanced bytes pass at 0.958292 geomean, but Butteraugli mean ratio is 1.047881 (>1.02) and worst pnorm3 ratio is 1.868818 (>1.05), so Contract B fails. Photos are nearly byte-neutral at 0.991367 with BA mean 1.000790 and worst pnorm3 1.042495; non-photo savings drive the aggregate while saturated, tiny, and text cells drive the guard failure. Quality remains feature-gated.
         """
 }
 
@@ -5464,6 +5769,19 @@ record jpegxl-rs.evidence.pqc-pr7-reducer-holdout-partial-2026-08-22/1 : evidenc
     command "python .agent/scratch/pr7-holdout-20260822/analyze_partial.py"
     summary """
         Across 64 completed Quality cells the reducer had zero canonical floor violations, at most 6 evaluations, saved 147845 exact bytes total, and produced a 0.98925 final/before geomean (0.98626 on 50 eligible cells). The reducer-off decoded guard baseline and 27 remaining Quality cells were not run; reducer-gate remains open and is deferred with no more Quality testing requested.
+        """
+    author "GitHub Uploader"
+}
+
+record jpegxl-rs.evidence.pqc-qpv2-expanded-corpus-gate-2026-08-25/1 : evidence {
+    title "Expanded-corpus qpv2 model: blind holdout hits production p90; transform features win"
+    state verified
+    result pass
+    method command
+    observed_at git:41a2e3f20631e000954b9ea76612c70f1847e745
+    command "python JPXL/tools/quality_corpus_extend.py --source-dir \"D:\\Pol Desktop\\Pol Art Folder 08-24-2017\" --name ext-polart --max-images 220; quality_oracle_labels.py sweep (2h budget); quality_predictor_v2.py train --feature-sets table2 source source+transform"
+    summary """
+        Corpus expanded with 211 independent painting families from the user's collection (104 calibration / 57 development / 50 never-tuned ext-holdout, deterministic split by family hash, originals untouched); 103 swept within the 2-hour budget for 994 total label rows (zero censored). Retrained pooled model, 10-fold family-grouped CV: source+transform wins (CV median 0.121 / p90 0.461 vs source-only 0.176/0.595); blind never-tuned ext-holdout: median 0.113, p90 0.258 (production p90 bound met), p99 0.478, first-plan 0.925, first-or-one-correction 1.00. Remaining CV tail is entirely the saturated (p90 3.58) and sky-noise gradient classes, still effectively class-held-out. Emitted runtime model qpv2-st-1 (19 features: 9 source + 10 DCT8-summary); the in-search transform summary measured -3.9% wall at 4.3 MP (shares the cover's cache; standalone 7.8% after parallelizing the fill from 21.9% serial). Artifacts in .agent/scratch/one-shot-qpv2-20260824/.
         """
     author "GitHub Uploader"
 }
@@ -5534,6 +5852,18 @@ record jpegxl-rs.evidence.pqc-quality-rate-workspace-gates-2026-08-23/1 : eviden
     command "cd JPXL && cargo build --workspace && cargo test --workspace --release && cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all --check"
     summary """
         The complete chained workspace build, release-test, clippy-with-warnings-denied, and formatting gate exited successfully.
+        """
+}
+
+record jpegxl-rs.evidence.pqc-scatter-production-identity-2026-08-25/1 : evidence {
+    title "Production identity holds after the band-parallel scatter: 52/52 locked cells identical across threads 1/4 and AVX2 on/off"
+    state verified
+    result pass
+    method command
+    observed_at git:b0c128c785d7524c6002eb34ca7ebd990b24bf1e
+    command "python3 .agent/scratch/pqc-scatter-20260825/identity_scatter.py"
+    summary """
+        The full locked 13-image matrix (both production efforts, q70 and q85, serialized under a 9 GiB address-space cap) produced 52/52 byte-identical cells across threads 1, threads 4, and threads 4 with JPXL_DISABLE_AVX2=1 on the band-parallel-scatter binary; separately, six image/target cells (both anchors at q85/q70, Fast and Balanced, text-screenshot and gradient) hashed identically between this binary and a reference binary built from commit 1fc3ca7 in an isolated worktree, and within the new binary at threads 1/4/8 and AVX2 off. Rows and summaries are in the kept scratch entry pqc-scatter-20260825 (identity-scatter-summary.json, identity-ab.json).
         """
 }
 
@@ -6298,6 +6628,18 @@ record jpegxl-rs.evidence.quality-q9-workspace-gates-2026-08-19/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.readme-current-state-2026-08-25/1 : evidence {
+    title "README describes the current supported scope, exclusions, clean-room policy, build steps, and the recorded benchmark"
+    state verified
+    result pass
+    method manual
+    observed_at git:a523d0157ac223678b9d02342d0a8a7fbc34d642
+    artifact "README.md"
+    summary """
+        The README's claims were verified against JPXL/docs/CONFORMANCE.md and the actual CLI contracts (jpxl --help, encode, compare); the quality-search section now correctly describes the promoted one-shot seed (qpv2-st-1 pooled quantile regression behind the default one-shot-controller feature, with the calibrated-table fallback for out-of-envelope inputs) and the full-resolution canonical verification before every emission, replacing the stale claim that the calibrated table picks the first probe; the benchmark section documents the reproducible bench_vs_libjxl.sh entry point, and the license section states the no-copyleft position with a pointer to the audit.
+        """
+}
+
 record jpegxl-rs.evidence.release-workspace-tests-2026-08-21/1 : evidence {
     title "Release-mode workspace tests pass"
     state verified
@@ -6514,4 +6856,16 @@ record jpegxl-rs.evidence.spine-conventions/1 : evidence {
         jpegxl-rs.decision.ledger-conventions fixes namespace, scope convention, and the kind crosswalk
         """
     author "GitHub Uploader"
+}
+
+record jpegxl-rs.evidence.workspace-gates-2026-08-25/1 : evidence {
+    title "Workspace release gates pass with jpxl-jpeg, the scatter change, and the publish surface in the tree"
+    state verified
+    result pass
+    method command
+    observed_at git:c1cdbf582689914c46af67c1b3e59cacc88b920b
+    command "cd JPXL && cargo test --workspace --release && cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all --check"
+    summary """
+        Under pipefail in one chained run: cargo test --workspace --release reported 76 test-result groups, all ok with zero failures (including the new jpxl-jpeg suite); cargo clippy --workspace --all-targets -D warnings finished clean; cargo fmt --all --check passed.
+        """
 }

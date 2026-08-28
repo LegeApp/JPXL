@@ -1,0 +1,5 @@
+fixture: base_gray.jpg
+origin: synthesised by tests/fixtures/generate.py (original content)
+license: CC0-1.0 / public domain (no third-party image used)
+sha256: 9ef80258bd425cd773d5e62863b3cab6097491f00a9f60316f0ffff9e25d37c7
+regenerate: cjpeg -quality 85 -grayscale

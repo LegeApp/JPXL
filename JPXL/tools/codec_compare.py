@@ -43,7 +43,10 @@ SUMMARY_SCHEMA = "jpxl.codec-comparison-summary/1"
 # /2 adds a same-effort JPXL rate baseline and keeps controller-achieved scores
 # separate from the common decoded in-tree score used for matched-rate work.
 QUALITY_SUMMARY_SCHEMA = "jpxl.codec-quality-summary/2"
-QUALITY_TRACE_SCHEMA = "jpxl.quality-trace/1"
+# Accepted quality-trace schemas, preferred first: /2 adds the whole-search
+# `work` block and the shadow `prediction` block; /1 traces predate them and
+# stay readable.
+QUALITY_TRACE_SCHEMAS = ("jpxl.quality-trace/2", "jpxl.quality-trace/1")
 METRIC_VARIATION_SCHEMA = "jpxl.metric-variation/1"
 METRIC_VARIATION_INPUT_SCHEMA = "jpxl.metric-variation-input/1"
 RISK_INPUT_SCHEMA = "jpxl.edge-risk-input/1"
@@ -662,12 +665,21 @@ def quality_encode_command(
     threads: int,
     effort: str,
 ) -> list[str]:
-    """The perceptual VarDCT encode: a minimum SSIMULACRA2 target of ``score``."""
+    """The perceptual VarDCT encode: a minimum SSIMULACRA2 target of ``score``.
+
+    The harness opts into ``--quality-fallback best-effort``: by default an
+    unmet target now exits 1 and writes nothing, but a curve point wants the
+    under-target stream with its true ``saturated_top`` /
+    ``under_target_work_cap`` status and measured score, which is what this
+    mode emits.
+    """
     return [
         str(binary),
         "encode",
         "--quality",
         f"{score:.4f}",
+        "--quality-fallback",
+        "best-effort",
         "--effort",
         effort,
         "--threads",
@@ -706,16 +718,16 @@ def parse_quality_line(output: str) -> dict[str, Any]:
 
 
 def read_quality_trace(path: Path) -> dict[str, Any]:
-    """Return the ``jpxl.quality-trace/1`` object written to a trace file."""
+    """Return the ``jpxl.quality-trace/*`` object written to a trace file."""
     records = [
         json.loads(line)
         for line in path.read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
     for record in records:
-        if record.get("schema") == QUALITY_TRACE_SCHEMA:
+        if record.get("schema") in QUALITY_TRACE_SCHEMAS:
             return record
-    raise HarnessError(f"no {QUALITY_TRACE_SCHEMA} record in trace file {path}")
+    raise HarnessError(f"no {QUALITY_TRACE_SCHEMAS[0]} record in trace file {path}")
 
 
 def curve_point(

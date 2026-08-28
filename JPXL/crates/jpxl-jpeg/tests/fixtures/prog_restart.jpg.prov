@@ -1,0 +1,5 @@
+fixture: prog_restart.jpg
+origin: synthesised by tests/fixtures/generate.py (original content)
+license: CC0-1.0 / public domain (no third-party image used)
+sha256: 809213f5fd6990175934c25e03eeb4a2c43d924256878ef82a9e50e98473c801
+regenerate: cjpeg -quality 90 -progressive -sample 2x2 -restart 4

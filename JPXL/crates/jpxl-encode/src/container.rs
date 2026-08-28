@@ -93,6 +93,27 @@ pub fn wrap_fragmented(codestream: &[u8], level: u8, fragment_size: usize) -> Ve
     out
 }
 
+/// Appends an `Exif` box (18181-2 9.5) to an already-wrapped container.
+///
+/// The payload must be the raw Exif block as JEITA CP-3451E / CP-3461B
+/// define it — beginning with the TIFF header — and the box's
+/// `tiff_header_offset` field is therefore written as zero. Clause 5 leaves
+/// box order free after the file type box, so appending after the codestream
+/// boxes is conforming; [`wrap`] writes the `jxlc` box with an explicit
+/// length precisely so a box can follow it.
+///
+/// Per 9.5, codestream fields (orientation, dimensions) take precedence over
+/// Exif equivalents at decode time; the caller is responsible for not
+/// contradicting them.
+pub fn append_exif(container: &mut Vec<u8>, exif_payload: &[u8]) {
+    // LBox counts the 8-byte header and the u32 tiff_header_offset.
+    let explicit = u32::try_from(exif_payload.len() + 12).ok();
+    container.extend_from_slice(&explicit.unwrap_or(0).to_be_bytes());
+    container.extend_from_slice(b"Exif");
+    container.extend_from_slice(&0u32.to_be_bytes()); // tiff_header_offset
+    container.extend_from_slice(exif_payload);
+}
+
 /// The signature box, the file type box and — when the level is not the
 /// default — the level box, i.e. everything before the codestream boxes.
 fn preamble(payload_hint: usize, level: u8) -> Vec<u8> {
@@ -194,6 +215,32 @@ mod tests {
                 tree.codestream(&mut guard).expect("reassembles"),
                 codestream
             );
+        }
+    }
+
+    /// The claim the archive pipeline needs: an appended `Exif` box survives
+    /// the decoder's box walk with its payload intact, and does not disturb
+    /// codestream extraction — for a whole `jxlc` file and a fragmented one.
+    #[test]
+    fn an_appended_exif_box_round_trips_and_leaves_the_codestream_alone() {
+        let codestream: Vec<u8> = (0..500u32).map(|i| (i % 251) as u8).collect();
+        // A plausible payload head: little-endian TIFF header, then filler.
+        let mut exif = vec![0x49, 0x49, 0x2A, 0x00];
+        exif.extend((0..64u32).map(|i| (i % 7) as u8));
+
+        for mut file in [
+            wrap(&codestream, DEFAULT_LEVEL),
+            wrap_fragmented(&codestream, EXTENDED_LEVEL, 128),
+        ] {
+            append_exif(&mut file, &exif);
+            let mut guard = AllocGuard::new(&Limits::relaxed());
+            let tree = jpxl_decode::container::BoxTree::parse(&file, &mut guard).expect("parses");
+            tree.validate().expect("conforming with an Exif box");
+            assert_eq!(tree.codestream(&mut guard).expect("codestream"), codestream);
+            let parsed = tree.exif().expect("well-formed Exif boxes");
+            assert_eq!(parsed.len(), 1);
+            assert_eq!(parsed[0].tiff_header_offset, 0);
+            assert_eq!(parsed[0].payload, &exif[..]);
         }
     }
 

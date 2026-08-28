@@ -1,0 +1,5 @@
+fixture: base_q98.jpg
+origin: synthesised by tests/fixtures/generate.py (original content)
+license: CC0-1.0 / public domain (no third-party image used)
+sha256: 0f4769cf46a36d8e11bde1f4e4ce556784298ea3ec8e7fa4db19c7fc1cf9bb82
+regenerate: cjpeg -quality 98 -sample 1x1

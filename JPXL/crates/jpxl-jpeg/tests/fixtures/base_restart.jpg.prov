@@ -1,0 +1,5 @@
+fixture: base_restart.jpg
+origin: synthesised by tests/fixtures/generate.py (original content)
+license: CC0-1.0 / public domain (no third-party image used)
+sha256: ddfe7e6dd538ded71789ad4b4b7b94ce27bb5753aba1914ee27b8443e5ef3374
+regenerate: cjpeg -quality 90 -sample 2x2 -restart 5
