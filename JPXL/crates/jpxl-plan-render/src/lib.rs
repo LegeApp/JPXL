@@ -479,13 +479,37 @@ struct RenderScratch {
     varblocks: Vec<RenderedVarblock>,
 }
 
+/// Shapes `buf` to `len` zeros. An empty buffer is replaced by `vec![0.0]`'s
+/// zeroed allocation — the kernel's lazily zeroed pages, never an eager
+/// memset over hundreds of megabytes — so the released-scratch (large-frame)
+/// path costs exactly what a fresh allocation always cost.
+fn zeroed_in_place(buf: &mut Vec<f32>, len: usize) {
+    if buf.is_empty() {
+        *buf = vec![0.0f32; len];
+    } else {
+        buf.clear();
+        buf.resize(len, 0.0);
+    }
+}
+
+/// Shapes `buf` to `len` samples of unspecified contents, for a consumer
+/// that overwrites every sample before any is read; the same lazy zeroed
+/// allocation as [`zeroed_in_place`] when the buffer starts empty.
+fn shaped_in_place(buf: &mut Vec<f32>, len: usize) {
+    if buf.is_empty() {
+        *buf = vec![0.0f32; len];
+    } else {
+        buf.truncate(len);
+        buf.resize(len, 0.0);
+    }
+}
+
 impl RenderScratch {
     /// Three zeroed `len`-long planes, reusing recycled allocations.
     fn take_planes(&mut self, len: usize) -> [Vec<f32>; NUM_CHANNELS] {
         let mut planes = core::mem::take(&mut self.planes);
         for plane in &mut planes {
-            plane.clear();
-            plane.resize(len, 0.0);
+            zeroed_in_place(plane, len);
         }
         planes
     }
@@ -495,8 +519,7 @@ impl RenderScratch {
     fn take_aux(&mut self, len: usize) -> [Vec<f32>; NUM_CHANNELS] {
         let mut aux = core::mem::take(&mut self.aux);
         for plane in &mut aux {
-            plane.truncate(len);
-            plane.resize(len, 0.0);
+            shaped_in_place(plane, len);
         }
         aux
     }
@@ -504,8 +527,7 @@ impl RenderScratch {
     /// A zeroed `len`-long sigma buffer.
     fn take_sigma(&mut self, len: usize) -> Vec<f32> {
         let mut sigma = core::mem::take(&mut self.sigma);
-        sigma.clear();
-        sigma.resize(len, 0.0);
+        zeroed_in_place(&mut sigma, len);
         sigma
     }
 }
@@ -558,9 +580,16 @@ impl PlanRenderer {
 
     /// Frees the frame-sized scratch buffers. For the large-frame search
     /// path, where holding several spare full-resolution planes between
-    /// probes would raise the search's resident peak.
+    /// probes would raise the search's resident peak. The varblock slot
+    /// arena is kept: it is a few tens of megabytes at most, and re-growing
+    /// its thousands of small buffers every probe measurably costs page
+    /// faults that retaining it does not.
     pub fn release_scratch(&mut self) {
-        self.scratch = RenderScratch::default();
+        let varblocks = core::mem::take(&mut self.scratch.varblocks);
+        self.scratch = RenderScratch {
+            varblocks,
+            ..RenderScratch::default()
+        };
     }
 
     /// The three dequantization matrices for a transform, built on first use.
@@ -904,21 +933,30 @@ impl PlanRenderer {
                     arena.push(RenderedVarblock::empty());
                 }
                 {
+                    // One executor item per stride of varblocks, so the
+                    // scratch pool's mutex is touched twice per stride, not
+                    // twice per varblock (as one lock per varblock it
+                    // measured +5% on the 12 MP quality wall).
                     let slots = VarblockSlots::new(arena.get_mut(..end - start).unwrap_or(&mut []));
-                    fill_items(executor, end - start, &|k| {
-                        let Some(slot) = slots.take(k) else {
-                            return Ok(());
-                        };
+                    let strides = (end - start).div_ceil(VARBLOCK_STRIDE);
+                    fill_items(executor, strides, &|item| {
+                        let lo = item * VARBLOCK_STRIDE;
+                        let hi = (lo + VARBLOCK_STRIDE).min(end - start);
                         let mut ws = worker_scratch
                             .lock()
                             .ok()
                             .and_then(|mut pool| pool.pop())
                             .unwrap_or_default();
-                        let result = render_one(start + k, slot, &mut ws);
+                        for k in lo..hi {
+                            let Some(slot) = slots.take(k) else {
+                                continue;
+                            };
+                            render_one(start + k, slot, &mut ws)?;
+                        }
                         if let Ok(mut pool) = worker_scratch.lock() {
                             pool.push(ws);
                         }
-                        result
+                        Ok(())
                     })?;
                 }
                 let rendered = arena.get(..end - start).unwrap_or(&[]);
@@ -1266,6 +1304,12 @@ impl<'a> VarblockSlots<'a> {
 /// worth, while still giving the executor enough work per chunk to keep every
 /// worker busy on a large frame.
 const VARBLOCK_CHUNK: usize = 2048;
+
+/// Varblocks one executor item renders serially, in index order, with one
+/// worker-scratch checkout. Small enough for [`VARBLOCK_CHUNK`] to still
+/// spread across every worker, large enough that the pool's mutex is off the
+/// per-varblock path.
+const VARBLOCK_STRIDE: usize = 64;
 
 /// Runs `n` fallible fill closures across `executor` when present (the first
 /// error in index order wins, so worker count cannot change the outcome),

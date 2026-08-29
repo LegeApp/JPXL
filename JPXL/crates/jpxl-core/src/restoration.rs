@@ -455,10 +455,16 @@ impl PaddedPlane {
         }
         let stride = dims.width + 2 * pad;
         let rows = dims.height + 2 * pad;
-        // No zero-fill: the row loop below writes all `stride` samples of
-        // every padded row, so resizing without clearing is exact.
-        storage.truncate(stride * rows);
-        storage.resize(stride * rows, 0.0f32);
+        // No eager zero-fill: the row loop below writes all `stride` samples
+        // of every padded row, so resizing without clearing is exact — and an
+        // empty `storage` takes `vec!`'s lazily zeroed allocation rather than
+        // paying a memset it does not need.
+        if storage.is_empty() {
+            storage = vec![0.0f32; stride * rows];
+        } else {
+            storage.truncate(stride * rows);
+            storage.resize(stride * rows, 0.0f32);
+        }
         let mut data = storage;
         for py in 0..rows {
             let sy = mirror1d(as_i64(py) - as_i64(pad), dims.height);
