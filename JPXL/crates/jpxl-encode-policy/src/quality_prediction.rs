@@ -17,7 +17,7 @@ use crate::quality_predictor_v2::{
     QPV2_FEATURE_CENTERS, QPV2_FEATURE_DIM, QPV2_FEATURE_SCALES, QPV2_FEATURE_SCHEMA, QPV2_KNOTS,
     QPV2_MODEL_VERSION, Qpv2Knot,
 };
-use crate::rate::{Rung, effective_scale, rung_for_effective_scale};
+use crate::quantizer_ladder::{Rung, effective_scale, rung_for_effective_scale};
 
 /// Matches the trainer's `EPS`: logs stay finite on zero-valued features.
 const FEATURE_EPS: f64 = 1e-9;

@@ -78,6 +78,7 @@ pub mod quality_prediction;
 pub mod quality_predictor;
 pub mod quality_predictor_v2;
 pub mod quantize;
+pub mod quantizer_ladder;
 pub mod rate;
 pub mod reducer;
 pub mod regret;
@@ -134,9 +135,11 @@ pub use quality::{
 };
 pub use quality_features::{SourceFeatures, TransformFeatureSummary, source_features};
 pub use quality_prediction::{QualityPredictionV2, predict_v2, shadow_prediction_trace};
+pub use quantizer_ladder::{
+    HF_MUL_RUNGS, LADDER_LEN, QuantizerChoice, Rung, effective_scale, rung_for_effective_scale,
+};
 pub use rate::{
-    LadderSearch, QuantizerChoice, RateOutcome, RatePhase, RateProbeStats, RateStatus, RateStep,
-    Rung, effective_scale, rung_for_effective_scale, search_frame,
+    LadderSearch, RateOutcome, RatePhase, RateProbeStats, RateStatus, RateStep, search_frame,
 };
 pub use request::{
     AdaptiveSharpness, ChromaHfPolicy, CoverFrequencyWeight, CoverMode, CoverRateModel,

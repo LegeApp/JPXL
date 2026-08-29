@@ -25,7 +25,8 @@
 //! unit of comparison).
 
 use crate::error::Result;
-use crate::rate::{QuantizerChoice, RateOutcome};
+use crate::quantizer_ladder::QuantizerChoice;
+use crate::rate::RateOutcome;
 use crate::{
     AnalysisAtlas, CandidateForwardCache, EncodeRequest, EntropySearch, PreparedFrame, RateTarget,
 };

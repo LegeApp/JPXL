@@ -38,7 +38,7 @@ use crate::quality_features::{SourceFeatures, source_features};
 use crate::quality_predictor::{
     FALLBACK_LOG_FIT, FLAT_BUCKET_EDGES, INITIAL_RUNG_TABLE, LUMA_BUCKET_EDGES,
 };
-use crate::rate::{QuantizerChoice, Rung, effective_scale, rung_for_effective_scale};
+use crate::quantizer_ladder::{QuantizerChoice, Rung, effective_scale, rung_for_effective_scale};
 use crate::reducer::ReducerLimits;
 use crate::request::{EncodeRequest, PerceptualTarget, RateSearchPreset};
 use crate::{AnalysisAtlas, AnchorReuse, EntropySearch, PreparedFrame, StructuralAnchor};

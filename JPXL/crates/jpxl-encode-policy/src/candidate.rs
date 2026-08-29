@@ -10,7 +10,7 @@
 //! into a writer-ready plan.
 
 use crate::error::Result;
-use crate::rate::QuantizerChoice;
+use crate::quantizer_ladder::QuantizerChoice;
 use crate::request::EncodeRequest;
 use crate::{AnalysisAtlas, AnchorReuse, EntropySearch, PreparedFrame, StructuralAnchor};
 use jpxl_encode::vardct::{ValidatedEmissionPlan, ValidatedPixelPlan, VardctGeometry};
