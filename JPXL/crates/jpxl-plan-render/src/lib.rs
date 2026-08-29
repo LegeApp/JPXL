@@ -458,6 +458,58 @@ pub struct RenderTimings {
     pub colour_ms: u64,
 }
 
+/// Full-frame working storage reused across renders, so a probe search pays
+/// the frame-sized allocations (and their first-touch page faults) once, not
+/// per probe. Every buffer is either zero-filled on takeout or provably
+/// fully overwritten before it is read, so reuse cannot change a sample.
+#[derive(Debug, Default)]
+struct RenderScratch {
+    /// Recycled output planes; zero-filled by [`Self::take_planes`].
+    planes: [Vec<f32>; NUM_CHANNELS],
+    /// Ping-pong partner of the output planes for the gaborish and EPF
+    /// stages. Never zeroed: both stages write every sample of every band.
+    aux: [Vec<f32>; NUM_CHANNELS],
+    /// Backing storage for the EPF's padded input planes
+    /// ([`PaddedPlane::new_in`] writes every padded sample).
+    padded: [Vec<f32>; NUM_CHANNELS],
+    /// Per-block sigma field; zero-filled by [`Self::take_sigma`].
+    sigma: Vec<f32>,
+    /// The chunk's varblock slots (at most [`VARBLOCK_CHUNK`]), each fully
+    /// overwritten by the varblock that takes it.
+    varblocks: Vec<RenderedVarblock>,
+}
+
+impl RenderScratch {
+    /// Three zeroed `len`-long planes, reusing recycled allocations.
+    fn take_planes(&mut self, len: usize) -> [Vec<f32>; NUM_CHANNELS] {
+        let mut planes = core::mem::take(&mut self.planes);
+        for plane in &mut planes {
+            plane.clear();
+            plane.resize(len, 0.0);
+        }
+        planes
+    }
+
+    /// Three `len`-long planes of unspecified contents, for a stage that
+    /// overwrites every sample before any is read.
+    fn take_aux(&mut self, len: usize) -> [Vec<f32>; NUM_CHANNELS] {
+        let mut aux = core::mem::take(&mut self.aux);
+        for plane in &mut aux {
+            plane.truncate(len);
+            plane.resize(len, 0.0);
+        }
+        aux
+    }
+
+    /// A zeroed `len`-long sigma buffer.
+    fn take_sigma(&mut self, len: usize) -> Vec<f32> {
+        let mut sigma = core::mem::take(&mut self.sigma);
+        sigma.clear();
+        sigma.resize(len, 0.0);
+        sigma
+    }
+}
+
 /// Reusable renderer: the dequantization matrices and the opsin inverse are
 /// built once and shared across every plan rendered.
 #[derive(Debug)]
@@ -471,6 +523,8 @@ pub struct PlanRenderer {
     /// call, kept so a probe search bisects its thresholds once, not per
     /// probe.
     depth: Option<DepthClassifier>,
+    /// Frame-sized buffers reused across renders.
+    scratch: RenderScratch,
 }
 
 impl PlanRenderer {
@@ -492,7 +546,21 @@ impl PlanRenderer {
             epf_params: EpfParams::default(),
             gabor: GaborKernel::defaults(),
             depth: None,
+            scratch: RenderScratch::default(),
         })
+    }
+
+    /// Hands a rendered frame's planes back for reuse by the next render.
+    /// Purely an allocation recycler: the planes' contents are never read.
+    pub fn recycle_planes(&mut self, planes: [Vec<f32>; NUM_CHANNELS]) {
+        self.scratch.planes = planes;
+    }
+
+    /// Frees the frame-sized scratch buffers. For the large-frame search
+    /// path, where holding several spare full-resolution planes between
+    /// probes would raise the search's resident peak.
+    pub fn release_scratch(&mut self) {
+        self.scratch = RenderScratch::default();
     }
 
     /// The three dequantization matrices for a transform, built on first use.
@@ -622,9 +690,9 @@ impl PlanRenderer {
             usize::try_from(height).unwrap_or(usize::MAX),
         );
         let len = dims.len();
-        let mut planes: [Vec<f32>; NUM_CHANNELS] = [vec![0.0; len], vec![0.0; len], vec![0.0; len]];
+        let mut planes = self.scratch.take_planes(len);
         let (blocks_x, blocks_y) = block_grid(dims);
-        let mut sigma = vec![0.0f32; blocks_x * blocks_y];
+        let mut sigma = self.scratch.take_sigma(blocks_x * blocks_y);
 
         let global_scale = spatial.quantizer.global_scale.get();
         let qm = [
@@ -646,6 +714,13 @@ impl PlanRenderer {
             i32::from(corr.b_factor_lf) - 128,
         );
 
+        // The chunk's varblock slots and the workers' dequant/IDCT scratch,
+        // reused across chunks, groups and renders: each varblock's compute
+        // fully overwrites the slot it takes, so reuse cannot change a sample.
+        let mut arena = core::mem::take(&mut self.scratch.varblocks);
+        let worker_scratch: std::sync::Mutex<Vec<WorkerScratch>> =
+            std::sync::Mutex::new(Vec::new());
+
         for (group, ir) in spatial.lf_groups.iter().zip(quantized.lf_groups.iter()) {
             let rect = geometry
                 .lf_group_rect(group.id)
@@ -666,142 +741,150 @@ impl PlanRenderer {
             let matrices_cache = &self.cache;
             let epf_params = &self.epf_params;
 
-            // I.5.3, I.6, I.8, I.9 and J.4.3 for one varblock, producing its
-            // placed samples and sigma writes without touching shared frame
-            // state. A varblock is a pure function of its own inputs, so this
-            // is byte-for-byte the serial render regardless of worker count.
-            let render_one = |i: usize| -> Result<RenderedVarblock> {
-                let vb = group
-                    .blocks
-                    .get(i)
-                    .ok_or(RenderError::Unsupported("a varblock index past the group"))?;
-                let coeffs = ir
-                    .coefficients
-                    .get(i)
-                    .ok_or(RenderError::Unsupported("a varblock with no coefficients"))?;
-                let lf_at = |c: usize, bx: u32, by: u32| -> f32 {
-                    if bx >= blocks.width || by >= blocks.height {
-                        return 0.0;
-                    }
-                    let idx =
-                        usize::try_from(u64::from(by) * u64::from(blocks.width) + u64::from(bx))
-                            .unwrap_or(usize::MAX);
-                    lf.get(c).and_then(|p| p.get(idx)).copied().unwrap_or(0.0)
-                };
-
-                let transform = vb.transform;
-                let (bx, by) = (vb.origin.bx(), vb.origin.by());
-                let hf_mul = vb.hf_mul.get();
-                let mul = hf_multiplier(global_scale, hf_mul);
-
-                // I.5.3: dequantize all three channels.
-                let matrices = matrices_cache
-                    .get(transform.dequant_matrix_index())
-                    .and_then(Option::as_ref)
-                    .ok_or(RenderError::Unsupported(
-                        "a dequantization matrix that was not warmed",
-                    ))?;
-                let (rows, cols) = (transform.coeff_rows(), transform.coeff_cols());
-                let mut coeff: [CoeffMatrix; NUM_CHANNELS] =
-                    core::array::from_fn(|_| CoeffMatrix::zeros(rows, cols));
-                for c in 0..NUM_CHANNELS {
-                    let quant = coeffs.channel(c).ok_or(RenderError::Unsupported(
-                        "a varblock with a missing channel",
-                    ))?;
-                    let matrix = matrices
-                        .get(c)
-                        .ok_or(RenderError::Unsupported("a missing dequantization channel"))?;
-                    let scale = mul * qm.get(c).copied().unwrap_or(1.0);
-                    let bias = DEFAULT_QUANT_BIAS.get(c).copied().unwrap_or(1.0);
-                    let Some(out) = coeff.get_mut(c) else {
-                        continue;
-                    };
-                    for (y, row) in quant.chunks_exact(cols).enumerate().take(rows) {
-                        for (x, &q) in row.iter().enumerate() {
-                            let adjusted = bias_adjust(q, bias, DEFAULT_QUANT_BIAS_NUMERATOR);
-                            out.set(x, y, adjusted * scale * matrix.at(x, y));
+            // I.5.3, I.6, I.8, I.9 and J.4.3 for one varblock, filling its
+            // chunk slot without touching shared frame state. A varblock is a
+            // pure function of its own inputs and every field of the slot is
+            // overwritten, so this is byte-for-byte the serial render
+            // regardless of worker count or slot history.
+            let render_one =
+                |i: usize, out: &mut RenderedVarblock, ws: &mut WorkerScratch| -> Result<()> {
+                    let vb = group
+                        .blocks
+                        .get(i)
+                        .ok_or(RenderError::Unsupported("a varblock index past the group"))?;
+                    let coeffs = ir
+                        .coefficients
+                        .get(i)
+                        .ok_or(RenderError::Unsupported("a varblock with no coefficients"))?;
+                    let lf_at = |c: usize, bx: u32, by: u32| -> f32 {
+                        if bx >= blocks.width || by >= blocks.height {
+                            return 0.0;
                         }
-                    }
-                }
-
-                // I.6 (HF): the tile's factors, applied to every cell; I.8
-                // overwrites the LLF cells right after.
-                let tile_index = usize::try_from(
-                    u64::from(by / CFL_TILE_BLOCKS) * u64::from(tiles.width)
-                        + u64::from(bx / CFL_TILE_BLOCKS),
-                )
-                .unwrap_or(usize::MAX);
-                let x_factor = group.cfl.x_from_y().get(tile_index).map_or(0, |f| f.get());
-                let b_factor = group.cfl.b_from_y().get(tile_index).map_or(0, |f| f.get());
-                let (k_x, k_b) = cfl_factors(
-                    corr.base_correlation_x,
-                    corr.base_correlation_b,
-                    corr.colour_factor,
-                    x_factor,
-                    b_factor,
-                );
-                apply_hf_cfl(&mut coeff, k_x, k_b);
-
-                // I.8: the LLF rectangle from the LF planes.
-                let (block_rows, block_cols) = transform.block_dims();
-                for (c, matrix) in coeff.iter_mut().enumerate() {
-                    let mut lf_rect = SampleBlock::zeros(block_rows, block_cols);
-                    for dy in 0..block_rows {
-                        for dx in 0..block_cols {
-                            let value = lf_at(
-                                c,
-                                bx.saturating_add(narrow(dx)),
-                                by.saturating_add(narrow(dy)),
-                            );
-                            lf_rect.set(dx, dy, value);
-                        }
-                    }
-                    matrix.write_llf(&llf_from_lf(transform, &lf_rect));
-                }
-
-                // I.9: samples, at the varblock's frame position (placed later).
-                let x0 = rect.x0 + bx * 8;
-                let y0 = rect.y0 + by * 8;
-                let samples: [SampleBlock; NUM_CHANNELS] = core::array::from_fn(|c| {
-                    coeff.get(c).map_or_else(
-                        || SampleBlock::zeros(transform.sample_rows(), transform.sample_cols()),
-                        |matrix| transform.samples_from_coefficients(matrix),
-                    )
-                });
-
-                // J.4.3: sigma per 8x8 block of the varblock, from `mul` and
-                // the block's own `Sharpness`, as (frame-block index, value).
-                let sharpness = group.sharpness.values();
-                let mut sigma_writes: Vec<(usize, f32)> =
-                    Vec::with_capacity(block_rows * block_cols);
-                for dy in 0..block_rows {
-                    for dx in 0..block_cols {
-                        let (sbx, sby) =
-                            (bx.saturating_add(narrow(dx)), by.saturating_add(narrow(dy)));
-                        if sbx >= blocks.width || sby >= blocks.height {
-                            continue;
-                        }
-                        let s_idx = usize::try_from(
-                            u64::from(sby) * u64::from(blocks.width) + u64::from(sbx),
+                        let idx = usize::try_from(
+                            u64::from(by) * u64::from(blocks.width) + u64::from(bx),
                         )
                         .unwrap_or(usize::MAX);
-                        let s = sharpness.get(s_idx).copied().unwrap_or(0).min(7);
-                        let fbx = usize::try_from(rect.x0 / 8 + sbx).unwrap_or(usize::MAX);
-                        let fby = usize::try_from(rect.y0 / 8 + sby).unwrap_or(usize::MAX);
-                        if fbx >= blocks_x || fby >= blocks_y {
-                            continue;
-                        }
-                        sigma_writes.push((fby * blocks_x + fbx, vardct_sigma(mul, s, epf_params)));
-                    }
-                }
+                        lf.get(c).and_then(|p| p.get(idx)).copied().unwrap_or(0.0)
+                    };
 
-                Ok(RenderedVarblock {
-                    x0,
-                    y0,
-                    samples,
-                    sigma: sigma_writes,
-                })
-            };
+                    let transform = vb.transform;
+                    let (bx, by) = (vb.origin.bx(), vb.origin.by());
+                    let hf_mul = vb.hf_mul.get();
+                    let mul = hf_multiplier(global_scale, hf_mul);
+
+                    // I.5.3: dequantize all three channels.
+                    let matrices = matrices_cache
+                        .get(transform.dequant_matrix_index())
+                        .and_then(Option::as_ref)
+                        .ok_or(RenderError::Unsupported(
+                            "a dequantization matrix that was not warmed",
+                        ))?;
+                    let (rows, cols) = (transform.coeff_rows(), transform.coeff_cols());
+                    let WorkerScratch {
+                        coeff,
+                        lf_rect,
+                        idct,
+                    } = ws;
+                    for matrix in coeff.iter_mut() {
+                        matrix.reset(rows, cols);
+                    }
+                    for c in 0..NUM_CHANNELS {
+                        let quant = coeffs.channel(c).ok_or(RenderError::Unsupported(
+                            "a varblock with a missing channel",
+                        ))?;
+                        let matrix = matrices
+                            .get(c)
+                            .ok_or(RenderError::Unsupported("a missing dequantization channel"))?;
+                        let scale = mul * qm.get(c).copied().unwrap_or(1.0);
+                        let bias = DEFAULT_QUANT_BIAS.get(c).copied().unwrap_or(1.0);
+                        let Some(target) = coeff.get_mut(c) else {
+                            continue;
+                        };
+                        for (y, row) in quant.chunks_exact(cols).enumerate().take(rows) {
+                            for (x, &q) in row.iter().enumerate() {
+                                let adjusted = bias_adjust(q, bias, DEFAULT_QUANT_BIAS_NUMERATOR);
+                                target.set(x, y, adjusted * scale * matrix.at(x, y));
+                            }
+                        }
+                    }
+
+                    // I.6 (HF): the tile's factors, applied to every cell; I.8
+                    // overwrites the LLF cells right after.
+                    let tile_index = usize::try_from(
+                        u64::from(by / CFL_TILE_BLOCKS) * u64::from(tiles.width)
+                            + u64::from(bx / CFL_TILE_BLOCKS),
+                    )
+                    .unwrap_or(usize::MAX);
+                    let x_factor = group.cfl.x_from_y().get(tile_index).map_or(0, |f| f.get());
+                    let b_factor = group.cfl.b_from_y().get(tile_index).map_or(0, |f| f.get());
+                    let (k_x, k_b) = cfl_factors(
+                        corr.base_correlation_x,
+                        corr.base_correlation_b,
+                        corr.colour_factor,
+                        x_factor,
+                        b_factor,
+                    );
+                    apply_hf_cfl(coeff, k_x, k_b);
+
+                    // I.8: the LLF rectangle from the LF planes. The rectangle is
+                    // rewritten cell for cell per channel, so one reused block
+                    // sees exactly the values a fresh zeroed block would.
+                    let (block_rows, block_cols) = transform.block_dims();
+                    lf_rect.reset(block_rows, block_cols);
+                    for (c, matrix) in coeff.iter_mut().enumerate() {
+                        for dy in 0..block_rows {
+                            for dx in 0..block_cols {
+                                let value = lf_at(
+                                    c,
+                                    bx.saturating_add(narrow(dx)),
+                                    by.saturating_add(narrow(dy)),
+                                );
+                                lf_rect.set(dx, dy, value);
+                            }
+                        }
+                        matrix.write_llf(&llf_from_lf(transform, lf_rect));
+                    }
+
+                    // I.9: samples, at the varblock's frame position (placed later).
+                    out.x0 = rect.x0 + bx * 8;
+                    out.y0 = rect.y0 + by * 8;
+                    for (c, block) in out.samples.iter_mut().enumerate() {
+                        match coeff.get(c) {
+                            Some(matrix) => {
+                                transform.samples_from_coefficients_into(matrix, block, idct);
+                            }
+                            None => block.reset(transform.sample_rows(), transform.sample_cols()),
+                        }
+                    }
+
+                    // J.4.3: sigma per 8x8 block of the varblock, from `mul` and
+                    // the block's own `Sharpness`, as (frame-block index, value).
+                    let sharpness = group.sharpness.values();
+                    out.sigma.clear();
+                    for dy in 0..block_rows {
+                        for dx in 0..block_cols {
+                            let (sbx, sby) =
+                                (bx.saturating_add(narrow(dx)), by.saturating_add(narrow(dy)));
+                            if sbx >= blocks.width || sby >= blocks.height {
+                                continue;
+                            }
+                            let s_idx = usize::try_from(
+                                u64::from(sby) * u64::from(blocks.width) + u64::from(sbx),
+                            )
+                            .unwrap_or(usize::MAX);
+                            let s = sharpness.get(s_idx).copied().unwrap_or(0).min(7);
+                            let fbx = usize::try_from(rect.x0 / 8 + sbx).unwrap_or(usize::MAX);
+                            let fby = usize::try_from(rect.y0 / 8 + sby).unwrap_or(usize::MAX);
+                            if fbx >= blocks_x || fby >= blocks_y {
+                                continue;
+                            }
+                            out.sigma
+                                .push((fby * blocks_x + fbx, vardct_sigma(mul, s, epf_params)));
+                        }
+                    }
+
+                    Ok(())
+                };
 
             // Render varblocks in bounded, order-preserving chunks: each chunk's
             // per-varblock compute (dequant, CfL, LLF, inverse transform) runs
@@ -817,8 +900,28 @@ impl PlanRenderer {
             let mut start = 0usize;
             while start < n {
                 let end = (start + VARBLOCK_CHUNK).min(n);
-                let rendered =
-                    render_varblock_chunk(executor, end - start, &|k| render_one(start + k))?;
+                while arena.len() < end - start {
+                    arena.push(RenderedVarblock::empty());
+                }
+                {
+                    let slots = VarblockSlots::new(arena.get_mut(..end - start).unwrap_or(&mut []));
+                    fill_items(executor, end - start, &|k| {
+                        let Some(slot) = slots.take(k) else {
+                            return Ok(());
+                        };
+                        let mut ws = worker_scratch
+                            .lock()
+                            .ok()
+                            .and_then(|mut pool| pool.pop())
+                            .unwrap_or_default();
+                        let result = render_one(start + k, slot, &mut ws);
+                        if let Ok(mut pool) = worker_scratch.lock() {
+                            pool.push(ws);
+                        }
+                        result
+                    })?;
+                }
+                let rendered = arena.get(..end - start).unwrap_or(&[]);
                 // Bucket each varblock into the (at most two, since a varblock
                 // is at most 32 rows tall) bands its rows intersect, preserving
                 // chunk order within a bucket.
@@ -877,7 +980,7 @@ impl PlanRenderer {
                         }
                     }
                 });
-                for rv in &rendered {
+                for rv in rendered {
                     for &(idx, value) in &rv.sigma {
                         if let Some(slot) = sigma.get_mut(idx) {
                             *slot = value;
@@ -887,30 +990,39 @@ impl PlanRenderer {
                 start = end;
             }
         }
+        self.scratch.varblocks = arena;
 
         timings.varblocks_ms = millis(stage_start);
 
-        // Annex J.
+        // Annex J. Both stages ping-pong between `planes` and `aux`: each
+        // writes every sample of its output before any is read, so the
+        // recycled buffer's stale contents cannot reach a rendered sample.
+        let restoration = spatial.restoration.gaborish || spatial.restoration.epf_iters > 0;
+        let mut aux = if restoration {
+            self.scratch.take_aux(len)
+        } else {
+            Default::default()
+        };
         let stage_start = std::time::Instant::now();
         if spatial.restoration.gaborish {
-            let mut out: [Vec<f32>; NUM_CHANNELS] =
-                [vec![0.0; len], vec![0.0; len], vec![0.0; len]];
-            for (dst, src) in out.iter_mut().zip(planes.iter()) {
+            for (dst, src) in aux.iter_mut().zip(planes.iter()) {
                 gaborish_into(src, dst, dims, &self.gabor);
             }
-            planes = out;
+            core::mem::swap(&mut planes, &mut aux);
         }
         timings.gaborish_ms = millis(stage_start);
         let stage_start = std::time::Instant::now();
         if spatial.restoration.epf_iters > 0 {
+            let mut padded_storage = core::mem::take(&mut self.scratch.padded);
             let field = SigmaField::new(&sigma, blocks_x, blocks_y).ok_or(
                 RenderError::Unsupported("a sigma field that does not match the block grid"),
             )?;
             for step in epf_steps(spatial.restoration.epf_iters).iter().copied() {
+                let [s0, s1, s2] = padded_storage;
                 let padded = [
-                    PaddedPlane::new(&planes[0], dims, EPF_PAD),
-                    PaddedPlane::new(&planes[1], dims, EPF_PAD),
-                    PaddedPlane::new(&planes[2], dims, EPF_PAD),
+                    PaddedPlane::new_in(&planes[0], dims, EPF_PAD, s0),
+                    PaddedPlane::new_in(&planes[1], dims, EPF_PAD, s1),
+                    PaddedPlane::new_in(&planes[2], dims, EPF_PAD, s2),
                 ];
                 let [Some(p0), Some(p1), Some(p2)] = padded else {
                     return Err(RenderError::Unsupported(
@@ -918,9 +1030,7 @@ impl PlanRenderer {
                     ));
                 };
                 let padded = [p0, p1, p2];
-                let mut out: [Vec<f32>; NUM_CHANNELS] =
-                    [vec![0.0; len], vec![0.0; len], vec![0.0; len]];
-                let bands = row_bands(&mut out, dims.width);
+                let bands = row_bands(&mut aux, dims.width);
                 let failed = std::sync::atomic::AtomicBool::new(false);
                 run_items(executor, bands.len(), &|index| {
                     let Some((row0, mut slices)) = bands.take(index) else {
@@ -938,8 +1048,13 @@ impl PlanRenderer {
                         "EPF planes that do not match the frame",
                     ));
                 }
-                planes = out;
+                core::mem::swap(&mut planes, &mut aux);
+                padded_storage = padded.map(PaddedPlane::into_storage);
             }
+            self.scratch.padded = padded_storage;
+        }
+        if restoration {
+            self.scratch.aux = aux;
         }
 
         timings.epf_ms = millis(stage_start);
@@ -976,6 +1091,7 @@ impl PlanRenderer {
         }
 
         timings.colour_ms = millis(stage_start);
+        self.scratch.sigma = sigma;
 
         Ok((
             RenderedFrame {
@@ -1074,7 +1190,9 @@ fn row_bands(planes: &mut [Vec<f32>; NUM_CHANNELS], width: usize) -> RowBands<'_
 
 /// One varblock's reconstruction result, produced off to the side so the
 /// per-varblock compute can run across the executor and be scattered into the
-/// frame afterwards.
+/// frame afterwards. Slots are reused across chunks and renders; every field
+/// is overwritten by the varblock that takes the slot.
+#[derive(Debug)]
 struct RenderedVarblock {
     /// Frame x of the varblock's top-left sample.
     x0: u32,
@@ -1086,6 +1204,61 @@ struct RenderedVarblock {
     sigma: Vec<(usize, f32)>,
 }
 
+impl RenderedVarblock {
+    /// An unfilled slot awaiting its first varblock.
+    fn empty() -> Self {
+        Self {
+            x0: 0,
+            y0: 0,
+            samples: core::array::from_fn(|_| SampleBlock::zeros(0, 0)),
+            sigma: Vec::new(),
+        }
+    }
+}
+
+/// One worker's dequantization and inverse-transform scratch, taken from a
+/// shared pool for the span of one varblock so the per-varblock loop makes no
+/// allocations on the plain-DCT path.
+struct WorkerScratch {
+    /// The three dequantized coefficient matrices, zero-reset per varblock.
+    coeff: [CoeffMatrix; NUM_CHANNELS],
+    /// The I.8 LF rectangle, rewritten cell for cell per channel.
+    lf_rect: SampleBlock,
+    /// The IDCT working buffer.
+    idct: Vec<f32>,
+}
+
+impl Default for WorkerScratch {
+    fn default() -> Self {
+        Self {
+            coeff: core::array::from_fn(|_| CoeffMatrix::zeros(0, 0)),
+            lf_rect: SampleBlock::zeros(0, 0),
+            idct: Vec::new(),
+        }
+    }
+}
+
+/// A chunk's varblock slots parked for one-shot pickup by executor items,
+/// the same shape as [`RowBands`].
+struct VarblockSlots<'a> {
+    items: Vec<std::sync::Mutex<Option<&'a mut RenderedVarblock>>>,
+}
+
+impl<'a> VarblockSlots<'a> {
+    fn new(slots: &'a mut [RenderedVarblock]) -> Self {
+        Self {
+            items: slots
+                .iter_mut()
+                .map(|slot| std::sync::Mutex::new(Some(slot)))
+                .collect(),
+        }
+    }
+
+    fn take(&self, index: usize) -> Option<&'a mut RenderedVarblock> {
+        self.items.get(index)?.lock().ok()?.take()
+    }
+}
+
 /// Varblocks rendered per parallel chunk before their results are scattered.
 ///
 /// A chunk holds at most this many [`RenderedVarblock`] results at once, so the
@@ -1094,21 +1267,21 @@ struct RenderedVarblock {
 /// worker busy on a large frame.
 const VARBLOCK_CHUNK: usize = 2048;
 
-/// Renders `n` varblocks through `f`, across `executor` when present (results
-/// in index order, so worker count cannot change them), serially otherwise.
-fn render_varblock_chunk(
+/// Runs `n` fallible fill closures across `executor` when present (the first
+/// error in index order wins, so worker count cannot change the outcome),
+/// serially otherwise.
+fn fill_items(
     executor: Option<&EncodeExecutor>,
     n: usize,
-    f: &(dyn Fn(usize) -> Result<RenderedVarblock> + Sync),
-) -> Result<Vec<RenderedVarblock>> {
+    f: &(dyn Fn(usize) -> Result<()> + Sync),
+) -> Result<()> {
     match executor {
-        Some(executor) => executor.map_ordered(n, f),
+        Some(executor) => executor.map_ordered(n, f).map(|_: Vec<()>| ()),
         None => {
-            let mut out = Vec::with_capacity(n);
             for i in 0..n {
-                out.push(f(i)?);
+                f(i)?;
             }
-            Ok(out)
+            Ok(())
         }
     }
 }

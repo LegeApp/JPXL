@@ -436,12 +436,30 @@ impl PaddedPlane {
     /// length disagrees with `dims`.
     #[must_use]
     pub fn new(plane: &[f32], dims: PlaneDims, pad: usize) -> Option<Self> {
+        Self::new_in(plane, dims, pad, Vec::new())
+    }
+
+    /// [`Self::new`] building into `storage`, so a caller that pads the same
+    /// shape repeatedly reuses one allocation. Every padded sample — mirror
+    /// margins included — is written below, so stale contents cannot leak
+    /// into the result and the output is identical to [`Self::new`]'s.
+    #[must_use]
+    pub fn new_in(
+        plane: &[f32],
+        dims: PlaneDims,
+        pad: usize,
+        mut storage: Vec<f32>,
+    ) -> Option<Self> {
         if plane.len() != dims.len() || dims.is_empty() {
             return None;
         }
         let stride = dims.width + 2 * pad;
         let rows = dims.height + 2 * pad;
-        let mut data = vec![0.0f32; stride * rows];
+        // No zero-fill: the row loop below writes all `stride` samples of
+        // every padded row, so resizing without clearing is exact.
+        storage.truncate(stride * rows);
+        storage.resize(stride * rows, 0.0f32);
+        let mut data = storage;
         for py in 0..rows {
             let sy = mirror1d(as_i64(py) - as_i64(pad), dims.height);
             let src = plane.get(sy * dims.width..sy * dims.width + dims.width)?;
@@ -501,6 +519,13 @@ impl PaddedPlane {
         self.data
             .get(py * self.stride + px..py * self.stride + self.stride)
             .unwrap_or(&[])
+    }
+
+    /// Consumes the plane, handing its backing storage back for reuse with
+    /// [`Self::new_in`].
+    #[must_use]
+    pub fn into_storage(self) -> Vec<f32> {
+        self.data
     }
 }
 

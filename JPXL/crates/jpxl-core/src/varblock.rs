@@ -38,7 +38,7 @@
 // noise rather than a defence.
 #![allow(clippy::indexing_slicing)]
 
-use crate::dct::{coeff_dims, dct_2d_raw, idct_2d_raw};
+use crate::dct::{coeff_dims, dct_2d_raw, idct_2d_into, idct_2d_raw};
 use crate::error::{JpxlError, Result};
 use std::sync::OnceLock;
 
@@ -534,6 +534,17 @@ impl CoeffMatrix {
         }
     }
 
+    /// Reshapes the matrix to a zeroed `rows x cols`, reusing its storage.
+    /// Equivalent to `*self = Self::zeros(rows, cols)` without the
+    /// allocation.
+    pub fn reset(&mut self, rows: usize, cols: usize) {
+        debug_assert!(rows <= cols, "coefficient matrices are always landscape");
+        self.rows = rows;
+        self.cols = cols;
+        self.data.clear();
+        self.data.resize(rows * cols, 0.0f32);
+    }
+
     /// Copies `llf` into the top-left corner, as I.8 requires of the LLF
     /// sub-rectangle.
     pub fn write_llf(&mut self, llf: &Self) {
@@ -606,6 +617,16 @@ impl SampleBlock {
         if x < self.cols && y < self.rows {
             self.data[y * self.cols + x] = value;
         }
+    }
+
+    /// Reshapes the block to a zeroed `rows x cols`, reusing its storage.
+    /// Equivalent to `*self = Self::zeros(rows, cols)` without the
+    /// allocation.
+    pub fn reset(&mut self, rows: usize, cols: usize) {
+        self.rows = rows;
+        self.cols = cols;
+        self.data.clear();
+        self.data.resize(rows * cols, 0.0f32);
     }
 }
 
@@ -1227,6 +1248,40 @@ impl TransformType {
                 )
             }
         }
+    }
+
+    /// [`Self::samples_from_coefficients`] writing into `out`, with `scratch`
+    /// as the IDCT working buffer, so a per-varblock render loop reuses two
+    /// allocations instead of making fresh ones per varblock.
+    ///
+    /// Sample-for-sample identical to the owning form: the plain `DCTRxC`
+    /// types run the same [`idct_2d_into`] the owning wrapper runs (which
+    /// writes every output sample, so `out`'s stale contents cannot leak),
+    /// and the special I.9.3-I.9.8 types delegate to it outright.
+    pub fn samples_from_coefficients_into(
+        self,
+        coefficients: &CoeffMatrix,
+        out: &mut SampleBlock,
+        scratch: &mut Vec<f32>,
+    ) {
+        let (rows, cols) = (self.sample_rows(), self.sample_cols());
+        if coefficients.rows() != self.coeff_rows() || coefficients.cols() != self.coeff_cols() {
+            debug_assert!(false, "coefficient matrix has the wrong shape");
+            out.reset(rows, cols);
+            return;
+        }
+        if self.dct_shape().is_none() {
+            *out = self.samples_from_coefficients(coefficients);
+            return;
+        }
+        out.rows = rows;
+        out.cols = cols;
+        // No zero-fill of the samples: `idct_2d_into` overwrites all of them.
+        out.data.truncate(rows * cols);
+        out.data.resize(rows * cols, 0.0f32);
+        scratch.truncate(rows * cols);
+        scratch.resize(rows * cols, 0.0f32);
+        idct_2d_into(coefficients.as_slice(), rows, cols, &mut out.data, scratch);
     }
 }
 

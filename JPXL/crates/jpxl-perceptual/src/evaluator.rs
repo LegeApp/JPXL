@@ -158,6 +158,10 @@ impl PerceptualEvaluator for PlanRenderEvaluator<'_> {
         &mut self,
         candidate: &ValidatedPixelPlan,
     ) -> jpxl_encode_policy::Result<PerceptualObservation> {
+        // The previous probe's planes are done with; hand their allocations
+        // back so this render reuses them instead of allocating three more.
+        self.renderer
+            .recycle_planes(core::mem::take(&mut self.linear));
         let (width, height, linear) = self
             .renderer
             .render_linear_at_depth_with(candidate, self.bits_per_sample, self.executor)
@@ -201,6 +205,10 @@ impl PerceptualEvaluator for PlanRenderEvaluator<'_> {
         // needed for this score. Exact finalists are rebuilt deterministically
         // by the policy if this rung survives navigation.
         drop(candidate);
+        // Large-frame path: holding spare full-resolution planes between
+        // probes would raise the search's resident peak, so free the
+        // renderer's scratch before the metric allocates its own.
+        self.renderer.release_scratch();
         let result = self
             .metric
             .score_owned(&self.reference, width, height, linear, self.executor)
