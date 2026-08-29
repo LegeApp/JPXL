@@ -66,6 +66,11 @@ pub struct PlanRenderEvaluator<'e> {
     executor: &'e EncodeExecutor,
     evaluations: u32,
     low_memory: bool,
+    /// Phase S1 shadow instrumentation: when set (`JPXL_SURROGATE_SHADOW`),
+    /// every canonical evaluation also computes the half-resolution surrogate
+    /// score of the same rendered planes and reports it alongside. Purely
+    /// observational — the canonical score is computed and returned unchanged.
+    surrogate_shadow: bool,
 }
 
 impl<'e> PlanRenderEvaluator<'e> {
@@ -137,7 +142,36 @@ impl<'e> PlanRenderEvaluator<'e> {
             executor,
             evaluations: 0,
             low_memory: u64::from(width).saturating_mul(u64::from(height)) >= LOW_MEMORY_PIXELS,
+            surrogate_shadow: std::env::var_os("JPXL_SURROGATE_SHADOW")
+                .is_some_and(|v| v != "0" && !v.is_empty()),
         })
+    }
+
+    /// The surrogate score of already-rendered candidate planes, with its
+    /// wall time, when `want` asks for one (navigation pairing or the
+    /// `JPXL_SURROGATE_SHADOW` instrumentation).
+    fn surrogate_of(
+        &mut self,
+        want: bool,
+        width: u32,
+        height: u32,
+        linear: &[Vec<f32>; 3],
+    ) -> (Option<f64>, Option<u64>) {
+        if !want {
+            return (None, None);
+        }
+        let start = std::time::Instant::now();
+        let [r, g, b] = linear;
+        let Ok(view) = LinearRgbView::new(width, height, r, g, b) else {
+            return (None, None);
+        };
+        let score = self
+            .metric
+            .score_surrogate(&self.reference, view, self.executor)
+            .ok()
+            .map(|result| result.score);
+        let millis = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
+        (score, score.map(|_| millis))
     }
 
     /// How many candidates have been scored.
@@ -153,10 +187,13 @@ impl<'e> PlanRenderEvaluator<'e> {
     }
 }
 
-impl PerceptualEvaluator for PlanRenderEvaluator<'_> {
-    fn evaluate(
+impl PlanRenderEvaluator<'_> {
+    /// Renders `candidate` and scores it canonically, with the surrogate
+    /// score alongside when `want_surrogate` asks for it.
+    fn evaluate_with(
         &mut self,
         candidate: &ValidatedPixelPlan,
+        want_surrogate: bool,
     ) -> jpxl_encode_policy::Result<PerceptualObservation> {
         // The previous probe's planes are done with; hand their allocations
         // back so this render reuses them instead of allocating three more.
@@ -168,6 +205,8 @@ impl PerceptualEvaluator for PlanRenderEvaluator<'_> {
             .map_err(|_| PolicyError::Unsupported {
                 what: "a candidate plan the renderer could not reconstruct",
             })?;
+        let (surrogate_score, surrogate_millis) =
+            self.surrogate_of(want_surrogate, width, height, &linear);
         self.linear = linear;
         let [r, g, b] = &self.linear;
         let view =
@@ -183,15 +222,35 @@ impl PerceptualEvaluator for PlanRenderEvaluator<'_> {
         self.evaluations = self.evaluations.saturating_add(1);
         Ok(PerceptualObservation {
             score: result.score,
+            surrogate_score,
+            surrogate_millis,
         })
+    }
+}
+
+impl PerceptualEvaluator for PlanRenderEvaluator<'_> {
+    fn evaluate(
+        &mut self,
+        candidate: &ValidatedPixelPlan,
+    ) -> jpxl_encode_policy::Result<PerceptualObservation> {
+        self.evaluate_with(candidate, self.surrogate_shadow)
     }
 
     fn evaluate_owned(
         &mut self,
         candidate: ValidatedPixelPlan,
     ) -> jpxl_encode_policy::Result<(PerceptualObservation, Option<ValidatedPixelPlan>)> {
+        self.evaluate_owned_for_navigation(candidate, false)
+    }
+
+    fn evaluate_owned_for_navigation(
+        &mut self,
+        candidate: ValidatedPixelPlan,
+        with_surrogate: bool,
+    ) -> jpxl_encode_policy::Result<(PerceptualObservation, Option<ValidatedPixelPlan>)> {
+        let want_surrogate = with_surrogate || self.surrogate_shadow;
         if !self.low_memory {
-            let observation = self.evaluate(&candidate)?;
+            let observation = self.evaluate_with(&candidate, want_surrogate)?;
             return Ok((observation, Some(candidate)));
         }
 
@@ -209,6 +268,8 @@ impl PerceptualEvaluator for PlanRenderEvaluator<'_> {
         // probes would raise the search's resident peak, so free the
         // renderer's scratch before the metric allocates its own.
         self.renderer.release_scratch();
+        let (surrogate_score, surrogate_millis) =
+            self.surrogate_of(want_surrogate, width, height, &linear);
         let result = self
             .metric
             .score_owned(&self.reference, width, height, linear, self.executor)
@@ -220,9 +281,65 @@ impl PerceptualEvaluator for PlanRenderEvaluator<'_> {
         Ok((
             PerceptualObservation {
                 score: result.score,
+                surrogate_score,
+                surrogate_millis,
             },
             None,
         ))
+    }
+
+    fn supports_surrogate(&self) -> bool {
+        true
+    }
+
+    fn evaluate_surrogate_owned(
+        &mut self,
+        candidate: ValidatedPixelPlan,
+    ) -> jpxl_encode_policy::Result<Option<PerceptualObservation>> {
+        // The previous probe's planes come back as this render's destination,
+        // exactly as on the canonical path.
+        self.renderer
+            .recycle_planes(core::mem::take(&mut self.linear));
+        let (width, height, linear) = self
+            .renderer
+            .render_linear_at_depth_with(&candidate, self.bits_per_sample, self.executor)
+            .map_err(|_| PolicyError::Unsupported {
+                what: "a candidate plan the renderer could not reconstruct",
+            })?;
+        // A surrogate observation can never become a finalist, so the
+        // coefficient payload is never needed again.
+        drop(candidate);
+        if self.low_memory {
+            self.renderer.release_scratch();
+        }
+        let start = std::time::Instant::now();
+        let result = {
+            let [r, g, b] = &linear;
+            let view = LinearRgbView::new(width, height, r, g, b).map_err(|_| {
+                PolicyError::Unsupported {
+                    what: "a rendered frame whose planes do not match its dimensions",
+                }
+            })?;
+            self.metric
+                .score_surrogate(&self.reference, view, self.executor)
+                .map_err(|_| PolicyError::Unsupported {
+                    what: "a candidate whose reference pyramid has no surrogate scale",
+                })?
+        };
+        let millis = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
+        if self.low_memory {
+            // Holding spare full-resolution planes between probes would raise
+            // the search's resident peak; the next render reallocates.
+            self.metric.release_scratch();
+        } else {
+            self.linear = linear;
+        }
+        self.evaluations = self.evaluations.saturating_add(1);
+        Ok(Some(PerceptualObservation {
+            score: result.score,
+            surrogate_score: Some(result.score),
+            surrogate_millis: Some(millis),
+        }))
     }
 
     fn metric_version(&self) -> &'static str {

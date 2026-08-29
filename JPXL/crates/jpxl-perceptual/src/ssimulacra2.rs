@@ -141,6 +141,85 @@ impl Ssimulacra2 {
         })
     }
 
+    /// Scores `candidate` at half linear resolution against the reference's
+    /// own pyramid from scale 1: the Phase S1 surrogate observation.
+    ///
+    /// The reference's scale-1..N planes *are* the half-resolution source's
+    /// pyramid (the 2:1 box downscale composes), so this is bit-for-bit the
+    /// SSIMULACRA2 score of `(half(source), half(candidate))` with no
+    /// source-side work beyond what the full-resolution reference already
+    /// retains. All scale-0 candidate work — the dominant metric cost — is
+    /// skipped; the candidate pays one downscale and the surviving scales.
+    ///
+    /// The result is a genuine score of a *different* comparison: it is
+    /// blind to finest-scale loss and therefore reads systematically high.
+    /// It may only ever propose a rung; the quality contract is satisfied
+    /// exclusively by [`Self::score`] / [`Self::score_owned`].
+    ///
+    /// # Errors
+    ///
+    /// [`MetricError::DimensionMismatch`] when the candidate's dimensions
+    /// differ from the reference's; [`MetricError::TooSmall`] when the
+    /// reference pyramid has no scale below full resolution.
+    pub fn score_surrogate(
+        &mut self,
+        reference: &PrecomputedReference,
+        candidate: LinearRgbView<'_>,
+        executor: &dyn BandExecutor,
+    ) -> Result<Ssimulacra2Result, MetricError> {
+        if candidate.width() != reference.width() || candidate.height() != reference.height() {
+            return Err(MetricError::DimensionMismatch {
+                reference: (reference.width(), reference.height()),
+                candidate: (candidate.width(), candidate.height()),
+            });
+        }
+        if reference.scale_count() < 2 {
+            return Err(MetricError::TooSmall {
+                width: reference.width().div_ceil(2),
+                height: reference.height().div_ceil(2),
+            });
+        }
+        self.blurs.resize_with(5, Blur::new);
+        let mut w = usize::try_from(candidate.width()).unwrap_or(usize::MAX);
+        let mut h = usize::try_from(candidate.height()).unwrap_or(usize::MAX);
+        let mut scales = Vec::with_capacity(reference.scale_count() - 1);
+        for (scale, rs) in reference.scales().iter().enumerate().skip(1) {
+            core::mem::swap(&mut self.prev_rgb, &mut self.cur_rgb);
+            let [pr, pg, pb] = &self.prev_rgb;
+            let src: [&[f32]; 3] = if scale == 1 {
+                [candidate.r(), candidate.g(), candidate.b()]
+            } else {
+                [pr, pg, pb]
+            };
+            downscale_planes(src, w, h, &mut self.cur_rgb, executor);
+            w = pyramid::half(w);
+            h = pyramid::half(h);
+            debug_assert_eq!((w, h), (rs.width, rs.height));
+            let pixels = w * h;
+            for plane in self.xyb.iter_mut() {
+                plane.clear();
+                plane.resize(pixels, 0.0);
+            }
+            {
+                let [cr, cg, cb] = &self.cur_rgb;
+                convert_planes([cr, cg, cb], &mut self.xyb, w, executor);
+            }
+            let channels =
+                self.score_converted_scale(rs, reference.retention(), w, h, executor, false);
+            scales.push(ScaleTerms {
+                width: u32::try_from(w).unwrap_or(u32::MAX),
+                height: u32::try_from(h).unwrap_or(u32::MAX),
+                channels,
+            });
+        }
+        let raw_error = weighted_error(&scales);
+        Ok(Ssimulacra2Result {
+            score: remap(raw_error),
+            raw_error,
+            scales,
+        })
+    }
+
     /// Scores owned candidate planes, reusing their allocations as the
     /// positive-XYB destination at each scale.
     ///
@@ -547,6 +626,74 @@ mod tests {
     #[test]
     fn the_weight_table_has_one_entry_per_term() {
         assert_eq!(WEIGHTS.len(), 3 * crate::SCALES * 2 * 3);
+    }
+
+    #[test]
+    fn the_surrogate_is_the_native_score_of_the_half_resolution_pair() {
+        let (width, height) = (32usize, 24usize);
+        let pixels = width * height;
+        let reference_planes: [Vec<f32>; 3] = core::array::from_fn(|channel| {
+            (0..pixels)
+                .map(|i| {
+                    let sample = u16::try_from((i * 41 + channel * 13) % 239).unwrap_or(0);
+                    f32::from(sample) / 238.0
+                })
+                .collect()
+        });
+        let mut candidate = reference_planes.clone();
+        for (channel, plane) in candidate.iter_mut().enumerate() {
+            let offset = f32::from(u16::try_from(channel + 1).unwrap_or(0)) * 0.002;
+            for value in plane {
+                *value = (*value + offset).min(1.0);
+            }
+        }
+        let halve = |planes: &[Vec<f32>; 3]| -> [Vec<f32>; 3] {
+            core::array::from_fn(|c| {
+                let mut out = vec![0.0f32; pyramid::half(width) * pyramid::half(height)];
+                pyramid::downscale_by_2(&planes[c], width, height, &mut out);
+                out
+            })
+        };
+        fn view(planes: &[Vec<f32>; 3], w: usize, h: usize) -> LinearRgbView<'_> {
+            LinearRgbView::new(
+                u32::try_from(w).unwrap_or(0),
+                u32::try_from(h).unwrap_or(0),
+                &planes[0],
+                &planes[1],
+                &planes[2],
+            )
+            .expect("the test planes have the declared shape")
+        }
+        let full_reference = PrecomputedReference::new(
+            view(&reference_planes, width, height),
+            ReferenceRetention::Moments,
+            &crate::executor::SerialExecutor,
+        )
+        .expect("the full-resolution test reference should precompute");
+        let surrogate = Ssimulacra2::new()
+            .score_surrogate(
+                &full_reference,
+                view(&candidate, width, height),
+                &crate::executor::SerialExecutor,
+            )
+            .expect("the surrogate should score");
+        let half_reference_planes = halve(&reference_planes);
+        let half_candidate = halve(&candidate);
+        let (hw, hh) = (pyramid::half(width), pyramid::half(height));
+        let half_reference = PrecomputedReference::new(
+            view(&half_reference_planes, hw, hh),
+            ReferenceRetention::Moments,
+            &crate::executor::SerialExecutor,
+        )
+        .expect("the half-resolution test reference should precompute");
+        let native = Ssimulacra2::new()
+            .score(
+                &half_reference,
+                view(&half_candidate, hw, hh),
+                &crate::executor::SerialExecutor,
+            )
+            .expect("the half-resolution pair should score");
+        assert_eq!(surrogate, native);
     }
 
     #[cfg(feature = "evaluator")]

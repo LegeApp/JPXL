@@ -41,6 +41,9 @@ g5-bounded-entropy = []
 # fewer reconstructions. Build without default features for the legacy
 # table-seeded controller.
 one-shot-controller = []
+# Phase S1: half-resolution surrogate bracket search with canonical
+# confirmation. Off by default until the promotion A/B gate passes.
+surrogate-navigation = []
 # S8 Phase D (AKR source `outside-advice-2026-08-06` §8;
 # `jpegxl-rs.work.arch-s8-full-redesign-scoped`):
 # the Phase C-validated (zero safety violations, exhaustively checked)

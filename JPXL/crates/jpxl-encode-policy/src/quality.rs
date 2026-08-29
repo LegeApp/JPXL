@@ -53,6 +53,12 @@ use jpxl_encode::vardct::{
 pub struct PerceptualObservation {
     /// The metric's score for the candidate against the source.
     pub score: f64,
+    /// The half-resolution surrogate's score for the same candidate, when the
+    /// evaluator computed one (Phase S1 shadow instrumentation). Advisory
+    /// only: feasibility and every accepted outcome read `score`.
+    pub surrogate_score: Option<f64>,
+    /// Wall time of the surrogate evaluation alone, in milliseconds.
+    pub surrogate_millis: Option<u64>,
 }
 
 /// Scores a candidate's pixels against the source.
@@ -87,6 +93,46 @@ pub trait PerceptualEvaluator {
     ) -> Result<(PerceptualObservation, Option<ValidatedPixelPlan>)> {
         let observation = self.evaluate(&candidate)?;
         Ok((observation, Some(candidate)))
+    }
+
+    /// As [`Self::evaluate_owned`], but `with_surrogate` asks the evaluator
+    /// to also report the half-resolution surrogate's score of the same
+    /// rendered planes (Phase S1 calibration pairing). An evaluator without
+    /// a surrogate ignores the request; the canonical score is unaffected
+    /// either way.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::evaluate`].
+    fn evaluate_owned_for_navigation(
+        &mut self,
+        candidate: ValidatedPixelPlan,
+        with_surrogate: bool,
+    ) -> Result<(PerceptualObservation, Option<ValidatedPixelPlan>)> {
+        let _ = with_surrogate;
+        self.evaluate_owned(candidate)
+    }
+
+    /// Whether [`Self::evaluate_surrogate_owned`] produces observations.
+    fn supports_surrogate(&self) -> bool {
+        false
+    }
+
+    /// Reconstructs `candidate` and scores it with the half-resolution
+    /// surrogate only — no canonical score. `Ok(None)` when the evaluator
+    /// has no surrogate. The plan is always consumed: a surrogate
+    /// observation can never become a finalist, so its payload is never
+    /// needed again.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::evaluate`].
+    fn evaluate_surrogate_owned(
+        &mut self,
+        candidate: ValidatedPixelPlan,
+    ) -> Result<Option<PerceptualObservation>> {
+        drop(candidate);
+        Ok(None)
     }
 
     /// The pinned metric identity the scores come from.
@@ -132,6 +178,43 @@ pub const MET_OVERSHOOT_BAND: f64 = 1.0;
 /// Smallest score margin the crossing aims above the target, whatever the
 /// effort's loss-relative reserve works out to.
 pub const MIN_AIM_MARGIN: f64 = 0.25;
+
+/// Smallest predictor interval width (`ln(interval_high / interval_low)`)
+/// that routes an uncertain in-distribution cell to the surrogate bracket
+/// search. Below it, the shadow corpus shows the canonical search already
+/// settling in two probes, which a surrogate detour cannot beat.
+pub const SURROGATE_INTERVAL_WIDTH_GATE: f64 = 0.3;
+
+/// Smallest requested score that routes to the surrogate bracket search.
+/// The calibrated estimate must land proposals inside the 1-point accept
+/// band ([`MET_OVERSHOOT_BAND`]); on the shadow corpus its mean error is
+/// 0.70 at a target of 85 and 5.8 at 30 — only the high-quality region,
+/// where the surrogate tracks the canonical curve nearly 1:1, clears the
+/// band. (Coincidentally the region real encodes ask for.)
+pub const SURROGATE_TARGET_FLOOR: f64 = 85.0;
+
+/// Most surrogate probes one baseline solve may spend (Phase S1). Surrogate
+/// probes aim; they never satisfy the quality contract, so this cap trades
+/// only proposal quality, never floor safety.
+pub const SURROGATE_PROBE_CAP: u32 = 2;
+
+/// Slope `k` relating canonical to surrogate log-loss movement:
+/// `Δln(loss_canonical) ≈ k · Δln(loss_surrogate)`, by the surrogate's own
+/// score band. Fitted on the ext calibration/development shadow-trace corpus
+/// (2026-08-29): the half-resolution surrogate under-moves mid-range (its
+/// blindness to finest-scale loss is largest there) and tracks nearly 1:1 in
+/// the high-quality band.
+fn surrogate_slope(surrogate_score: f64) -> f64 {
+    if surrogate_score >= 90.0 {
+        1.26
+    } else if surrogate_score >= 80.0 {
+        1.60
+    } else if surrogate_score >= 60.0 {
+        1.74
+    } else {
+        2.05
+    }
+}
 
 /// Hard work caps of one effort.
 ///
@@ -301,6 +384,11 @@ pub enum ProbeKind {
     Pixel,
     /// Entropy trained and the stream emitted exactly.
     Exact,
+    /// Pixels planned, rendered and scored by the half-resolution surrogate
+    /// only (Phase S1). Its `score` is the *estimated* canonical score from
+    /// the cell's calibration; the raw surrogate score rides in
+    /// `surrogate_score`. Never feasibility evidence for an outcome.
+    Surrogate,
 }
 
 /// Whether a candidate's cover and CfL were planned fresh or reused.
@@ -334,6 +422,12 @@ pub struct QualityProbe {
     pub feasible: Option<bool>,
     /// Wall time of this unit, in milliseconds.
     pub millis: u64,
+    /// The half-resolution surrogate's score, when the evaluator's Phase S1
+    /// shadow instrumentation computed one. Never used by the search.
+    pub surrogate_score: Option<f64>,
+    /// Wall time of the shadow surrogate evaluation, in milliseconds
+    /// (included in `millis`, which times the whole evaluator call).
+    pub surrogate_millis: Option<u64>,
 }
 
 /// One policy-bank trial's summary, for the trace and telemetry.
@@ -362,6 +456,9 @@ pub struct PolicyTrial {
 pub struct QualityStats {
     /// Pixel probes spent in the baseline solve (including finalist re-scores).
     pub pixel_probes: u32,
+    /// Surrogate probes spent in the baseline solve (Phase S1); they do not
+    /// count against `pixel_probes`' canonical budget.
+    pub surrogate_probes: u32,
     /// Exact prices spent in the baseline solve.
     pub exact_prices: u32,
     /// Fresh cover/CfL builds in the baseline solve.
@@ -510,10 +607,11 @@ impl QualityOutcome {
                 format!(
                     "{{\"kind\":\"{}\",\"policy_id\":{},\"rung\":{},\"global_scale\":{},\"hf_mul\":{},\
                      \"effective_scale\":{},\"score\":{},\"bytes\":{},\"structure\":\"{}\",\
-                     \"feasible\":{},\"millis\":{}}}",
+                     \"feasible\":{},\"millis\":{},\"surrogate_score\":{},\"surrogate_millis\":{}}}",
                     match p.kind {
                         ProbeKind::Pixel => "pixel",
                         ProbeKind::Exact => "exact",
+                        ProbeKind::Surrogate => "surrogate",
                     },
                     p.policy_id,
                     p.quantizer.rung.get(),
@@ -528,6 +626,10 @@ impl QualityOutcome {
                     },
                     p.feasible.map_or_else(|| "null".to_owned(), |f| format!("{f}")),
                     p.millis,
+                    p.surrogate_score
+                        .map_or_else(|| "null".to_owned(), |s| format!("{s}")),
+                    p.surrogate_millis
+                        .map_or_else(|| "null".to_owned(), |m| format!("{m}")),
                 )
             })
             .collect();
@@ -585,7 +687,7 @@ impl QualityOutcome {
         format!(
             "{{\"schema\":\"jpxl.quality-trace/2\",\"metric_version\":\"{}\",\"score_guard\":{},\
              \"effort\":\"{}\",\"source_features\":{},\"predicted_rung\":{},\"bracket\":{},\
-             \"pixel_probes\":{},\"exact_prices\":{},\"structural_builds\":{},\"policy_trials\":{},\
+             \"pixel_probes\":{},\"surrogate_probes\":{},\"exact_prices\":{},\"structural_builds\":{},\"policy_trials\":{},\
              \"policy_winner_margin_bytes\":{},\"reducer\":{{\"evaluations\":{},\"edits\":{},\"bytes_saved\":{}}},\
              \"work\":{{\"pixel_plans\":{},\"reconstructions\":{},\"metric_evaluations\":{},\
              \"entropy_trainings\":{},\"emissions\":{}}},\"prediction\":{},\
@@ -603,6 +705,7 @@ impl QualityOutcome {
                 .map_or_else(|| "null".to_owned(), |r| format!("{}", r.get())),
             bracket,
             self.stats.pixel_probes,
+            self.stats.surrogate_probes,
             self.stats.exact_prices,
             self.stats.structural_builds,
             self.stats.policy_trials,
@@ -786,6 +889,10 @@ struct ProbeRecord {
     feasible: bool,
     structure: StructureSource,
     pixels: Option<(ValidatedPixelPlan, VardctGeometry)>,
+    /// `true` for a canonically scored probe. A surrogate record carries an
+    /// *estimated* canonical score, exists only during the surrogate phase
+    /// to aim with, and is retired before any conclusion is drawn.
+    canonical: bool,
 }
 
 /// The running state of one policy's solve.
@@ -821,6 +928,12 @@ struct Navigator<'c, 'a, 'r, 't, 'e> {
     probes: Vec<ProbeRecord>,
     trace: &'t mut Vec<QualityProbe>,
     local: QualityStats,
+    /// Phase S1: pair every canonical probe with the surrogate score of the
+    /// same rendered planes, keeping the calibration below current.
+    pair_canonical: bool,
+    /// The latest paired observation as `(ln loss_canonical, ln loss_surrogate)`:
+    /// the anchor the surrogate-to-canonical estimate is drawn through.
+    calibration: Option<(f64, f64)>,
 }
 
 impl Navigator<'_, '_, '_, '_, '_> {
@@ -878,8 +991,15 @@ impl Navigator<'_, '_, '_, '_, '_> {
             .saturating_add(u64::try_from(plan_start.elapsed().as_millis()).unwrap_or(u64::MAX));
 
         let score_start = Instant::now();
-        let (observation, pixels) = self.evaluator.evaluate_owned(pixels)?;
+        let (observation, pixels) = self
+            .evaluator
+            .evaluate_owned_for_navigation(pixels, self.pair_canonical)?;
         let score = observation.score;
+        let surrogate_score = observation.surrogate_score;
+        let surrogate_millis = observation.surrogate_millis;
+        if let Some(surrogate) = surrogate_score {
+            self.calibration = Some((loss(score).ln(), loss(surrogate).ln()));
+        }
         let millis = u64::try_from(score_start.elapsed().as_millis()).unwrap_or(u64::MAX);
         self.local.render_metric_ms = self.local.render_metric_ms.saturating_add(millis);
         self.local.pixel_probes = self.local.pixel_probes.saturating_add(1);
@@ -897,6 +1017,8 @@ impl Navigator<'_, '_, '_, '_, '_> {
             structure,
             feasible: Some(feasible),
             millis,
+            surrogate_score,
+            surrogate_millis,
         });
         self.probes.push(ProbeRecord {
             rung,
@@ -905,9 +1027,82 @@ impl Navigator<'_, '_, '_, '_, '_> {
             feasible,
             structure,
             pixels: pixels.map(|pixels| (pixels, geometry)),
+            canonical: true,
         });
         self.retain_finalist_pixels();
         Ok(self.probes.len() - 1)
+    }
+
+    /// Plans, renders and surrogate-scores one rung (Phase S1), recording an
+    /// *estimated* canonical score drawn through the calibration pair with
+    /// the fitted band slope. Returns `false` when the evaluator has no
+    /// surrogate or no calibration exists yet — the caller falls back to
+    /// canonical probing.
+    fn probe_surrogate(&mut self, rung: Rung) -> Result<bool> {
+        let Some((cal_canonical, cal_surrogate)) = self.calibration else {
+            return Ok(false);
+        };
+        let quantizer = QuantizerChoice::at(rung, self.request.quant_lf)?;
+        let anchor = self.anchor.as_ref().ok_or(PolicyError::Unsupported {
+            what: "a surrogate probe before any canonical probe captured structure",
+        })?;
+        let plan_start = Instant::now();
+        let (pixels, _geometry) = self.ctx.pixel_plan_for(
+            self.request,
+            quantizer,
+            false,
+            self.structure_tier,
+            AnchorReuse::CoverAndCfl(anchor),
+            None,
+        )?;
+        self.local.plan_ms = self
+            .local
+            .plan_ms
+            .saturating_add(u64::try_from(plan_start.elapsed().as_millis()).unwrap_or(u64::MAX));
+        let score_start = Instant::now();
+        let Some(observation) = self.evaluator.evaluate_surrogate_owned(pixels)? else {
+            return Ok(false);
+        };
+        let millis = u64::try_from(score_start.elapsed().as_millis()).unwrap_or(u64::MAX);
+        self.local.render_metric_ms = self.local.render_metric_ms.saturating_add(millis);
+        self.local.surrogate_probes = self.local.surrogate_probes.saturating_add(1);
+        self.local.work.pixel_plans = self.local.work.pixel_plans.saturating_add(1);
+        self.local.work.reconstructions = self.local.work.reconstructions.saturating_add(1);
+        let surrogate = observation.score;
+        let estimated = 100.0
+            - (cal_canonical + surrogate_slope(surrogate) * (loss(surrogate).ln() - cal_surrogate))
+                .exp();
+        let feasible = estimated >= self.threshold();
+        self.trace.push(QualityProbe {
+            policy_id: self.policy_id,
+            kind: ProbeKind::Surrogate,
+            quantizer,
+            effective_scale: effective_scale(rung),
+            score: Some(estimated),
+            bytes: None,
+            structure: StructureSource::Reused,
+            feasible: Some(feasible),
+            millis,
+            surrogate_score: Some(surrogate),
+            surrogate_millis: observation.surrogate_millis,
+        });
+        self.probes.push(ProbeRecord {
+            rung,
+            quantizer,
+            score: estimated,
+            feasible,
+            structure: StructureSource::Reused,
+            pixels: None,
+            canonical: false,
+        });
+        Ok(true)
+    }
+
+    /// Retires every surrogate record: they exist to aim, and every
+    /// conclusion below — brackets kept, finalists priced, rescue and
+    /// saturation semantics — must rest on canonical observations only.
+    fn retire_surrogates(&mut self) {
+        self.probes.retain(|p| p.canonical);
     }
 
     /// Keeps the pixel plans of the two coarsest feasible probes only; every
@@ -1064,29 +1259,89 @@ impl Navigator<'_, '_, '_, '_, '_> {
         }
     }
 
+    /// The rung the crossing aim (with the effort's reserve) points at from
+    /// the current bracket, when one is worth probing.
+    fn tighten_aim(&self) -> Option<Rung> {
+        let (lo, hi) = self.bracket()?;
+        let relative = 100.0 - loss(self.threshold()) * (1.0 - self.budget.reserve);
+        let aim_score = relative.max(self.threshold() + MIN_AIM_MARGIN);
+        // Aiming at (or past) the feasible end of the bracket would only
+        // re-probe its neighbour: the bracket is as tight as the aim.
+        if aim_score >= hi.1 {
+            return None;
+        }
+        let rung = log_loss_crossing(lo, hi, aim_score)?;
+        (!self.already_probed(rung)).then_some(rung)
+    }
+
     /// Aims at the log-loss crossing (with the effort's reserve) and probes
     /// it, then once more from the refined bracket, while budget remains.
     fn tighten(&mut self) -> Result<()> {
         while self.pixel_budget_left() && !self.crossing_is_tight() {
-            let Some((lo, hi)) = self.bracket() else {
+            let Some(rung) = self.tighten_aim() else {
                 break;
             };
-            let relative = 100.0 - loss(self.threshold()) * (1.0 - self.budget.reserve);
-            let aim_score = relative.max(self.threshold() + MIN_AIM_MARGIN);
-            // Aiming at (or past) the feasible end of the bracket would only
-            // re-probe its neighbour: the bracket is as tight as the aim.
-            if aim_score >= hi.1 {
-                break;
-            }
-            let Some(rung) = log_loss_crossing(lo, hi, aim_score) else {
-                break;
-            };
-            if self.already_probed(rung) {
-                break;
-            }
             self.probe(rung, false)?;
         }
         Ok(())
+    }
+
+    /// Phase S1: acquire the bracket with surrogate probes — the same
+    /// expansion aims as the canonical machinery, observed at half
+    /// resolution and mapped through the cell's calibration. Exploration
+    /// stops the moment a (mixed) bracket exists: a surrogate probe costs a
+    /// full-resolution reconstruction, so it is spent only where a canonical
+    /// expansion probe would otherwise go, never on tightening — the
+    /// canonical confirmation of the crossing aim is the tightening. Every
+    /// record this pushes is retired before any conclusion is drawn.
+    fn surrogate_explore(&mut self) -> Result<()> {
+        if !self.evaluator.supports_surrogate() || self.calibration.is_none() {
+            return Ok(());
+        }
+        let mut attempt = 0u32;
+        while self.local.surrogate_probes < SURROGATE_PROBE_CAP && self.bracket().is_none() {
+            let Some(last) = self.probes.last() else {
+                break;
+            };
+            let finer = !last.feasible;
+            let Some(aim) = self.extrapolated_step(finer, attempt) else {
+                break;
+            };
+            attempt = attempt.saturating_add(1);
+            if self.already_probed(aim) {
+                break;
+            }
+            if !self.probe_surrogate(aim)? {
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    /// The S1 proposal after [`Self::surrogate_explore`]: the rung the
+    /// canonical confirmation should probe, plus whether an
+    /// estimated-infeasible observation bounds it from below (the
+    /// surrogate's stand-in for the canonical bracket's infeasible end).
+    ///
+    /// With a bracket, the proposal is the crossing aim (or the bracket's
+    /// feasible end when the aim has nowhere tighter to point); with every
+    /// observation on the feasible side, it is the coarsest of them.
+    fn surrogate_proposal(&self) -> Option<(Rung, bool, bool)> {
+        let coarsest = self
+            .probes
+            .iter()
+            .filter(|p| p.feasible)
+            .min_by_key(|p| p.rung)?;
+        let (rung, canonical) = if self.bracket().is_some() && !self.crossing_is_tight() {
+            match self.tighten_aim() {
+                Some(aim) => (aim, false),
+                None => (coarsest.rung, coarsest.canonical),
+            }
+        } else {
+            (coarsest.rung, coarsest.canonical)
+        };
+        let bounded_below = self.probes.iter().any(|p| !p.feasible && p.rung < rung);
+        Some((rung, canonical, bounded_below))
     }
 }
 
@@ -1134,6 +1389,8 @@ fn price_pixels(
         structure,
         feasible: Some(feasible),
         millis: entropy_ms.saturating_add(emit_ms),
+        surrogate_score: None,
+        surrogate_millis: None,
     });
     Ok(PricedFinalist {
         quantizer,
@@ -1199,8 +1456,10 @@ fn solve_baseline(
     predicted: Rung,
     prior_beta: Option<f64>,
     confident_stop: bool,
+    use_surrogates: bool,
     trace: &mut Vec<QualityProbe>,
 ) -> Result<(PolicySolve, QualityStats, Option<StructuralAnchor>)> {
+    let use_surrogates = use_surrogates && evaluator.supports_surrogate();
     let mut nav = Navigator {
         ctx,
         request,
@@ -1221,6 +1480,8 @@ fn solve_baseline(
             predicted: Some(predicted),
             ..QualityStats::default()
         },
+        pair_canonical: use_surrogates,
+        calibration: None,
     };
 
     // Navigation: predicted rung, bracket, crossing. Phase N3: when the
@@ -1239,7 +1500,36 @@ fn solve_baseline(
             .probes
             .first()
             .is_some_and(|p| p.feasible && p.score - nav.threshold() <= MET_OVERSHOOT_BAND);
-    if !one_shot_hit {
+    // Phase S1: on an uncertain in-distribution cell, the bracket search is
+    // run at half resolution first. Surrogate probes locate the estimated
+    // crossing; the proposal is then confirmed canonically, and the
+    // surrogate records are retired so everything below rests on canonical
+    // observations alone. The confirmed probe is accepted without a
+    // canonical coarser bracket only under the same overshoot band a
+    // bracketed search accepts, and only when the surrogate observed an
+    // estimated-infeasible point coarser than it (its stand-in for the
+    // bracket's infeasible end). A mispropose costs one canonical
+    // correction through the unchanged expansion/tightening machinery —
+    // the budgets and the rescue semantics are untouched.
+    let mut surrogate_hit = false;
+    if !one_shot_hit && use_surrogates {
+        nav.surrogate_explore()?;
+        let proposal = nav.surrogate_proposal();
+        nav.retire_surrogates();
+        // Calibration is spent; further canonical probes have no surrogate
+        // consumer, so they stop paying for the paired half-resolution score.
+        nav.pair_canonical = false;
+        if let Some((rung, canonical, bounded_below)) = proposal {
+            if !canonical && nav.pixel_budget_left() && !nav.already_probed(rung) {
+                nav.probe(rung, false)?;
+            }
+            surrogate_hit = bounded_below
+                && nav.coarsest_feasible().is_some_and(|p| {
+                    p.rung <= rung && p.score - nav.threshold() <= MET_OVERSHOOT_BAND
+                });
+        }
+    }
+    if !one_shot_hit && !surrogate_hit {
         nav.expand_until_bracketed()?;
     }
     nav.tighten()?;
@@ -1460,6 +1750,8 @@ fn solve_trial(
         probes: Vec::new(),
         trace,
         local: QualityStats::default(),
+        pair_canonical: false,
+        calibration: None,
     };
 
     // Probe the seed, then one neighbour: coarser to shed bytes if the seed
@@ -1616,6 +1908,8 @@ fn reduce_winner(
         structure: winner.structure,
         feasible: Some(true),
         millis: entropy_ms.saturating_add(emit_ms),
+        surrogate_score: None,
+        surrogate_millis: None,
     });
     if kept {
         stats.reducer_edits = reduced.stats.edits_applied;
@@ -1831,7 +2125,7 @@ pub fn search_frame_perceptual_with_budget(
     // prediction reads warmed the cover's own cache, so this costs no
     // duplicated transform work.
     #[cfg(feature = "one-shot-controller")]
-    let (predicted, prior_beta, confident_stop) = match transform_features
+    let (predicted, prior_beta, confident_stop, use_surrogates) = match transform_features
         .as_ref()
         .and_then(|tf| crate::quality_prediction::predict_v2(&features, tf, target_score))
     {
@@ -1839,17 +2133,35 @@ pub fn search_frame_perceptual_with_budget(
         // and (phase N3) a feasible landing inside the accept band ends
         // navigation there.
         Some(p) if p.fallback_reason.is_none() => {
-            (p.candidate_rung, Some(p.local_loss_exponent), true)
+            (p.candidate_rung, Some(p.local_loss_exponent), true, false)
         }
         // Uncertain but in distribution (wide interval, saturation risk):
-        // the navigator still runs its full bounded search, so the model's
-        // median is simply a better seed than the legacy table.
-        Some(p) if p.ood_flags.is_empty() => (p.median_rung, Some(p.local_loss_exponent), false),
-        // Out of distribution: keep the legacy predictor's start.
-        _ => (predicted, None, false),
+        // the navigator still runs its full bounded search from the model's
+        // median seed — and (phase S1, feature-gated) its bracket search
+        // runs at half resolution first, with canonical confirmation. Only
+        // a wide interval engages surrogates: below the width gate, 98% of
+        // cells settle in two canonical probes on the shadow corpus
+        // (2026-08-29), which no surrogate detour can beat.
+        Some(p) if p.ood_flags.is_empty() => {
+            let wide = p.interval_low.get() > 0
+                && (f64::from(p.interval_high.get()) / f64::from(p.interval_low.get())).ln()
+                    >= SURROGATE_INTERVAL_WIDTH_GATE;
+            (
+                p.median_rung,
+                Some(p.local_loss_exponent),
+                false,
+                cfg!(feature = "surrogate-navigation")
+                    && wide
+                    && target_score >= SURROGATE_TARGET_FLOOR,
+            )
+        }
+        // Out of distribution: keep the legacy predictor's start, all
+        // canonical.
+        _ => (predicted, None, false, false),
     };
     #[cfg(not(feature = "one-shot-controller"))]
-    let (prior_beta, confident_stop): (Option<f64>, bool) = (None, false);
+    let (prior_beta, confident_stop, use_surrogates): (Option<f64>, bool, bool) =
+        (None, false, false);
     let (baseline, mut stats, baseline_anchor) = solve_baseline(
         &mut ctx,
         &base_request,
@@ -1863,6 +2175,7 @@ pub fn search_frame_perceptual_with_budget(
         predicted,
         prior_beta,
         confident_stop,
+        use_surrogates,
         &mut trace,
     )?;
 
@@ -2091,6 +2404,8 @@ mod tests {
             let loss = 60.0 * (scale / 1000.0).powf(-0.8);
             Ok(PerceptualObservation {
                 score: 100.0 - loss,
+                surrogate_score: None,
+                surrogate_millis: None,
             })
         }
 
@@ -2593,6 +2908,7 @@ mod tests {
             finalist_entropy,
             predicted,
             None,
+            false,
             false,
             &mut trace,
         )
