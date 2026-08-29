@@ -352,3 +352,24 @@ record jpegxl-rs.assessment.semantic-guidance-is-a-quality-prior-not-parity-arch
             """
     }
 }
+
+record jpegxl-rs.assessment.surrogate-navigation-does-not-pay-for-wall/1 : assessment {
+    title "Surrogate navigation does not pay for wall even at 0.4× probe cost"
+    state verified
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/src/**",
+        path "JPXL/crates/jpxl-perceptual/**",
+        path "JPXL/crates/jpxl-plan-render/**"
+    ]
+    statement """
+        Measured twice on both reserved holdouts: with the interim shrink-after-reconstruct surrogate (~0.6× a canonical probe, S1) and with the S2 decimating render (0.398×, flat across image sizes), the navigator's bracket-acquire-plus-canonical-confirm structure spends ~1.5–2 surrogate probes per canonical probe it saves, leaving engaged-cell wall at ~1.00–1.01 despite cutting canonical metric evaluations 27–31% on engaged cells. Two structural facts bound the win: post-N3 canonical searches in the routable band are already short (~2.6 probes at target 90), and a surrogate probe's irreducible cost is the pixel plan plus the full-resolution varblock reconstruction — decimation only removes restoration, colour and metric work. The surrogate-navigation feature therefore stays off by default, and the rest of N3's routing table that waited on cheap surrogates stays parked. A genuine flip would need a coefficient-domain decimated reconstruction (~0.2× or less, IDCT folded with the 2:1 box average), which is a new phase decision with its own recalibration, not a tuning of the existing machinery.
+        """
+    confidence high
+    as_of git:520289bac686b1d9a0c011625b0a2d0969b3ad33
+    derived_from [ @jpegxl-rs.work.multifidelity-quality-search ]
+    verified_by [
+        @jpegxl-rs.evidence.s1-surrogate-navigation-holdout-gate,
+        @jpegxl-rs.evidence.s2-decimated-surrogate-holdout-gate,
+        @jpegxl-rs.evidence.s2-decimated-surrogate-sizing-corpus
+    ]
+}

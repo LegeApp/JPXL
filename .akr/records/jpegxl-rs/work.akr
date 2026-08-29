@@ -7031,7 +7031,7 @@ record jpegxl-rs.work.multifidelity-quality-search/3 : work {
 
 record jpegxl-rs.work.multifidelity-quality-search/4 : work {
     title "Multi-fidelity perceptual search: surrogates propose, canonical evaluation accepts"
-    state active
+    state superseded
     scope [
         path "JPXL/crates/jpxl-encode-policy/src/**",
         path "JPXL/crates/jpxl-perceptual/**",
@@ -7051,6 +7051,42 @@ record jpegxl-rs.work.multifidelity-quality-search/4 : work {
         @jpegxl-rs.evidence.r1-render-scratch-exact-and-measured,
         @jpegxl-rs.evidence.s1-surrogate-navigation-holdout-gate,
         @jpegxl-rs.evidence.s1-surrogate-sizing-shadow-corpus
+    ]
+    source {
+        kind internal
+        role origin
+        path "JPXL/docs/scheduler-unification-and-multifidelity-plan.md"
+        use """
+            Advisor proposal-verification architecture adopted after verification against current profiling attribution and predict_v2 capabilities.
+            """
+    }
+}
+
+record jpegxl-rs.work.multifidelity-quality-search/5 : work {
+    title "Multi-fidelity perceptual search: surrogates propose, canonical evaluation accepts"
+    state active
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/src/**",
+        path "JPXL/crates/jpxl-perceptual/**",
+        path "JPXL/crates/jpxl-plan-render/**"
+    ]
+    intent """
+        On top of the N0/N1-unified ladder mathematics, make most navigation probes cheap while every accepted result stays exact. Phases: N3 confidence-adaptive probe budgets; S1 a surrogate NavigationEvaluator (surrogates propose, only canonical scores accept, one canonical correction on miss then full-navigator fallback); S2 a banded renderer-to-metric pipeline built exact first, then a decimating surrogate variant replacing S1's interim implementation. Independent exact work R1 (landed). Conditional later: B1, E1, RT1/RT2. Narrative plan: JPXL/docs/scheduler-unification-and-multifidelity-plan.md.
+        """
+    note """
+        ALL PLANNED PHASES DELIVERED 2026-08-29. R1 (a9d421c), N3 first slice (ea65364), S1 default-off (767f080). S2 EXACT landed 41db766 (@jpegxl-rs.evidence.s2-exact-banded-metric-identity-and-rss): streamed banded moment pipeline, bit-identical, metric-only 12 MP peak -247/-411 MiB, wall 0.94-1.02. S2 SURROGATE landed 520289b (@jpegxl-rs.evidence.s2-decimated-surrogate-sizing-corpus, @jpegxl-rs.evidence.s2-decimated-surrogate-holdout-gate): the decimating render (full-res varblocks, 2:1 box, half-res restoration/colour) + score_surrogate_prescaled replaces shrink-after-reconstruct in navigation and shadow instrumentation; probe cost 0.398x canonical; slope table refit 1.85/1.98/1.93/2.20, SURROGATE_TARGET_FLOOR 90 (dev-derived); default path 20/20 identity; holdout A/Bs floor 0/0, bytes 1.0000/1.0002, mispropose 17.9% of 56 engaged bounded to one correction. VERDICT: wall stayed neutral (engaged ~1.00-1.01 despite -31% canonical evaluations) - @jpegxl-rs.assessment.surrogate-navigation-does-not-pay-for-wall. surrogate-navigation stays OFF by default; the once-planned default-enable and the rest of N3's routing table are CLOSED under the current probe structure. The only route to a flip is a coefficient-domain decimated reconstruction (~0.2x) - a NEW phase decision, not part of this work. Remaining items (B1, E1, RT1, RT2) are conditional and each needs its own justification before starting. Harnesses kept at .agent/scratch/s2-banded-metric-20260829 (and s1-surrogate-20260829, n3-probe-budgets-20260829, n0-ladder-extract-20260829).
+        """
+    depends_on [ @jpegxl-rs.work.ladder-navigator-unification ]
+    part_of [ @jpegxl-rs.track.perceptual-quality-controller ]
+    supersedes [ @jpegxl-rs.work.multifidelity-quality-search/4 ]
+    verified_by [
+        @jpegxl-rs.evidence.n3-confident-stop-byte-identical-holdouts,
+        @jpegxl-rs.evidence.r1-render-scratch-exact-and-measured,
+        @jpegxl-rs.evidence.s1-surrogate-navigation-holdout-gate,
+        @jpegxl-rs.evidence.s1-surrogate-sizing-shadow-corpus,
+        @jpegxl-rs.evidence.s2-decimated-surrogate-holdout-gate,
+        @jpegxl-rs.evidence.s2-decimated-surrogate-sizing-corpus,
+        @jpegxl-rs.evidence.s2-exact-banded-metric-identity-and-rss
     ]
     source {
         kind internal

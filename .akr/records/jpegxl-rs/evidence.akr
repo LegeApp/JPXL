@@ -6780,6 +6780,30 @@ record jpegxl-rs.evidence.s1-surrogate-sizing-shadow-corpus/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.s2-decimated-surrogate-holdout-gate/1 : evidence {
+    title "S2 decimated-surrogate holdout gate: floor 0/0, bytes parity, wall neutral — default stays off"
+    state verified
+    result pass
+    method command
+    observed_at git:520289bac686b1d9a0c011625b0a2d0969b3ad33
+    command "python3 .agent/scratch/s2-banded-metric-20260829/identity_s2_surrogate.py && python3 JPXL/tools/one_shot_promotion_ab.py --splits ext-holdout|holdout ... && python3 .agent/scratch/s2-banded-metric-20260829/mispropose_sweep.py"
+    summary """
+        S2 decimated-surrogate gate on a quiet host: default path 20/20 cells byte-identical with bit-identical canonical probe scores vs the S1 baseline (shadow surrogate scores changed 8/8 by design). Feature-on holdout A/Bs: ext 350 cells floor 0/0, bytes geomean 1.0000, wall 1.0005 (t90 canonical metric evaluations −19% at wall 0.993); locked 140 cells floor 0/0, bytes 1.0002 (worst +3.5%), wall 1.008 (t90 0.998). Mispropose 10/56 engaged (17.9%), each bounded to one canonical correction. Engaged-cell wall ~1.00–1.01 despite −31% canonical evaluations: the wall economics did not flip, so surrogate-navigation stays off by default.
+        """
+}
+
+record jpegxl-rs.evidence.s2-decimated-surrogate-sizing-corpus/1 : evidence {
+    title "S2 decimated-surrogate sizing: 0.4× probe cost, refit slope table, floor 90"
+    state verified
+    result pass
+    method command
+    observed_at git:520289bac686b1d9a0c011625b0a2d0969b3ad33
+    command "python3 .agent/scratch/s2-banded-metric-20260829/collect_shadow.py && python3 .agent/scratch/s2-banded-metric-20260829/fit_bands.py"
+    summary """
+        Fresh 1127-cell paired shadow corpus (ext calibration+development) under the decimating surrogate render: probe cost 0.398× canonical (flat 0.39–0.42 across &lt;1/1–4/≥4 MP); ln-loss slope table by surrogate-score band 1.85/1.98/1.93/2.20 (calibration-only fit agrees), first-probe-calibration feasibility transfer 88.5%; development-split mean estimate error 0.66 at target 90 vs 1.26 at 85 — SURROGATE_TARGET_FLOOR derived to 90 from development data, holdouts untouched.
+        """
+}
+
 record jpegxl-rs.evidence.s2-exact-banded-metric-identity-and-rss/1 : evidence {
     title "S2 exact variant gate: bit-identity, RSS reduction, wall neutral-or-better"
     state verified
