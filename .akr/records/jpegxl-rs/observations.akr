@@ -2450,6 +2450,33 @@ record jpegxl-rs.observation.realworld-encode-vs-cjxl-2026-08-06/1 : observation
     author "grok-build"
 }
 
+record jpegxl-rs.observation.s3-t90-band-routing-residual/1 : observation {
+    title "Residual: t90-band-only surrogate routing predicts engaged wall ~0.966 at S3 cost"
+    state superseded
+    scope [ path "JPXL/crates/jpxl-encode-policy/**" ]
+    statement """
+        On the S2 holdout model (validated 0.34% against the observed A/B), the t95 cells are the band that drags pooled engaged wall over 1.0 (t95 1.137 vs t90 0.990 at the S2 cost); at the measured S3 routed-band cost of 0.331x, t90-only engagement predicts engaged wall ~0.966 while pooled predicts 1.004-1.010. This is a holdout-derived finding: any routing change (an engagement ceiling below 95) must first be re-derived on the calibration/development shadow corpus, and the corpus-wide effect of a t90-band-only win is ~0.2% at ~11% engagement. Not pursued in S3; a future decision may pick it up.
+        """
+    observed_at git:d2aede3000000000000000000000000000000000
+    method command
+    review_after 2026-12-01
+    derived_from [ @jpegxl-rs.decision.s3-coefficient-domain-decimated-surrogate ]
+}
+
+record jpegxl-rs.observation.s3-t90-band-routing-residual/2 : observation {
+    title "Residual: t90-band-only surrogate routing predicts engaged wall ~0.966 at S3 cost"
+    state verified
+    scope [ path "JPXL/crates/jpxl-encode-policy/**" ]
+    statement """
+        On the S2 holdout model (validated 0.34% against the observed A/B), the t95 cells are the band that drags pooled engaged wall over 1.0 (t95 1.137 vs t90 0.990 at the S2 cost); at the measured S3 routed-band cost of 0.331x, t90-only engagement predicts engaged wall ~0.966 while pooled predicts 1.004-1.010. This is a holdout-derived finding: any routing change (an engagement ceiling below 95) must first be re-derived on the calibration/development shadow corpus, and the corpus-wide effect of a t90-band-only win is ~0.2% at ~11% engagement. Not pursued in S3; a future decision may pick it up.
+        """
+    observed_at git:d2aede324d0a80e7be307039445df4281937b7d4
+    method command
+    review_after 2026-12-01
+    derived_from [ @jpegxl-rs.decision.s3-coefficient-domain-decimated-surrogate ]
+    supersedes [ @jpegxl-rs.observation.s3-t90-band-routing-residual/1 ]
+}
+
 record jpegxl-rs.observation.selectivity-halves-the-damage-but-lambda-is-the-remaining-term-2026-08-12/1 : observation {
     title "Selective truncation cuts the SSIMULACRA2 damage by 62% but still regresses 25 of 28 cells: the remaining term is lambda, never calibrated against any perceptual metric"
     state verified

@@ -550,6 +550,28 @@ record jpegxl-rs.decision.retire-performance-md/1 : decision {
         """
 }
 
+record jpegxl-rs.decision.s3-coefficient-domain-decimated-surrogate/1 : decision {
+    title "S3: coefficient-domain decimated reconstruction, gated on engaged-cell wall ≤ 0.980"
+    state proposed
+    scope [
+        path "JPXL/crates/jpxl-core/**",
+        path "JPXL/crates/jpxl-encode-policy/**",
+        path "JPXL/crates/jpxl-perceptual/**",
+        path "JPXL/crates/jpxl-plan-render/**"
+    ]
+    decision """
+        Build the coefficient-domain decimated surrogate reconstruction: the 2:1 box average of a length-N normative IDCT computed exactly as a length-N/2 normative IDCT of folded coefficients (Y_0=X_0; Y_j=cos(pi j/2N)X_j - sin(pi j/2N)X_{N-j}; X_{N/2} annihilates), per axis, with a bit-exact low-pass fast branch when the partner region is +0.0, hoisted to the quantized arrays so dequant/CfL skip 3/4 of cells. Phased with pre-registered kill points: K0 economics model reproduction (done, 0.34% agreement); K1 measured varblock-stage survival alpha must be <= 0.30 before integration; K2 end-to-end c_rm within 0.02 of projection; K3 dev estimate error at t90 <= 0.8; K4 default-enable of surrogate-navigation only at engaged-cell wall geomean <= 0.980 pooled over both holdouts with floor 0/0, bytes geomean <= 1.0005 (worst <= 1.04), engaged p90 <= 1.18, mispropose <= 20% bounded to one correction, and 20/20 default-path byte identity.
+        """
+    context """
+        S2 closed with surrogate navigation wall-neutral at 0.398x render+metric cost. Phase-0 paired estimator over the S2 holdout artifacts (validated 0.34% against the observed A/B) shows: the pixel plan floors effective probe cost at 0.154x; half-res gaborish/EPF/colour+metric floor c_rm at 0.2005 giving c_rm(alpha)=0.198*alpha+0.2005; engaged-cell wall can never beat 0.961; break-even c_rm 0.305; wall <= 0.98 requires alpha <= 0.255. A 0.97 gate is physically unreachable (alpha <= 0.12). Corpus-wide payoff even on full success is ~0.2-0.4% (11.4% engagement). The phase is ordered so the cheapest disconfirming measurement comes first; a negative K1 closes surrogate navigation permanently with the sharper statement that it cannot be made to pay by making the surrogate cheaper.
+        """
+    consequences """
+        New kernels in jpxl-core (dct.rs fold + half IDCT, varblock.rs half_samples_from_coefficients_into with box-average fallback for never-emitted special transforms); the render decimate branch writes half-res planes directly and deletes decimate_rows; evaluator recycles the half planes (full-res capacity preserved) to keep the canonical render allocation-free; sigma stays full-res + 2x2 average verbatim so only one observation change enters the recalibration; full S2-style recalibration (fresh shadow corpus, k refit, floor re-derivation on dev, both holdout A/Bs, mispropose sweep) before any default-enable.
+        """
+    depends_on [ @jpegxl-rs.work.multifidelity-quality-search ]
+    derived_from [ @jpegxl-rs.assessment.surrogate-navigation-does-not-pay-for-wall ]
+}
+
 record jpegxl-rs.decision.ssimulacra2-is-the-primary-promotion-metric/1 : decision {
     title "Optimize for SSIMULACRA2 first; butteraugli becomes a secondary axis to refine later"
     state active

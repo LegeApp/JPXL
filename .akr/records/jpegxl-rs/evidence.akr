@@ -6816,6 +6816,32 @@ record jpegxl-rs.evidence.s2-exact-banded-metric-identity-and-rss/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.s3-default-path-identity/1 : evidence {
+    title "S3 default path 20/20 byte-identical vs the kept S2 baseline (quality + rate cells) with bit-identical canonical probe scores; shadow surrogate scores changed 8/8 (the fold's f32 rounding + odd-edge rule), and are bit-identical across the i32 hoist."
+    state verified
+    result pass
+    method command
+    observed_at git:d2aede324d0a80e7be307039445df4281937b7d4
+    command "python3 .agent/scratch/s3-coeff-surrogate-20260829/identity_s3_surrogate.py"
+    artifact ".agent/scratch/s3-coeff-surrogate-20260829/identity-s3-surrogate.json"
+    summary """
+        S3 default path 20/20 byte-identical vs the kept S2 baseline (quality + rate cells) with bit-identical canonical probe scores; shadow surrogate scores changed 8/8 (the fold's f32 rounding + odd-edge rule), and are bit-identical across the i32 hoist.
+        """
+}
+
+record jpegxl-rs.evidence.s3-k1-economics-verdict/1 : evidence {
+    title "K1 fired: S3 surrogate render+metric cost measured 0.316x canonical aggregate but 0.331x at the routed t>=90 band (the low-pass fast path is cold where quantization keeps high frequencies) — survival alpha 0.66 vs the 0.30 kill threshold; the validated paired model predicts pooled engaged wall 1.004-1.010 against the pre-registered <=0.980 gate, so the recalibration loop and holdout A/Bs were not run and surrogate-navigation stays default-off. Third cost point (0.6x, 0.398x, 0.316x) with wall never leaving ~1.0."
+    state verified
+    result fail
+    method command
+    observed_at git:d2aede324d0a80e7be307039445df4281937b7d4
+    command "python3 .agent/scratch/s3-coeff-surrogate-20260829/predict_wall.py (K0 0.34%); c_rm from .agent/scratch/s3-coeff-surrogate-20260829/shadow-traces.jsonl (173 cells)"
+    artifact ".agent/scratch/s3-coeff-surrogate-20260829/README.md"
+    summary """
+        K1 fired: S3 surrogate render+metric cost measured 0.316x canonical aggregate but 0.331x at the routed t>=90 band (the low-pass fast path is cold where quantization keeps high frequencies) — survival alpha 0.66 vs the 0.30 kill threshold; the validated paired model predicts pooled engaged wall 1.004-1.010 against the pre-registered <=0.980 gate, so the recalibration loop and holdout A/Bs were not run and surrogate-navigation stays default-off. Third cost point (0.6x, 0.398x, 0.316x) with wall never leaving ~1.0.
+        """
+}
+
 record jpegxl-rs.evidence.s8-cover-lane-simd-postcommit/1 : evidence {
     title "S8 landed state re-verified against commit 170677c"
     state verified

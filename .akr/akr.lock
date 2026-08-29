@@ -5,7 +5,7 @@ build {
     tool "akr 0.4.0"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:d26f429cba2f6d588b546c186225d3d9355ddb7be14cb24d25312eba76f90c3f"
+    source_graph "sha256:6945015df7ab5b61197ed3f63703f8a3a15fabb3f572dc1b00d3d37db49a66cd"
 }
 
 source ".akr/project.akr" {
@@ -24,13 +24,13 @@ source ".akr/records/jpegxl-rs/constraints.akr" {
 }
 
 source ".akr/records/jpegxl-rs/decisions.akr" {
-    hash "sha256:a7c07810b408069dab2854fdacf83ddb5d502da1a39974cef192ca016a15eb88"
-    records 23
+    hash "sha256:f1449763eb3c69cbeb31c594de5f8164ac38eb73fce22dc1c0e845efee744c95"
+    records 24
 }
 
 source ".akr/records/jpegxl-rs/evidence.akr" {
-    hash "sha256:b4c7e0ead27c3e8360782174e9ff2778b4244edddc5b41815285a0a6fffe7192"
-    records 575
+    hash "sha256:e63470766db5e31c0862c30f6d0d0adea68b64380c4f6cf1ab877755277ce60f"
+    records 577
 }
 
 source ".akr/records/jpegxl-rs/milestones.akr" {
@@ -39,8 +39,8 @@ source ".akr/records/jpegxl-rs/milestones.akr" {
 }
 
 source ".akr/records/jpegxl-rs/observations.akr" {
-    hash "sha256:45603a70e136457f806013a2f0575d352fb4098e7ec538e3fdf6faad32bbe005"
-    records 102
+    hash "sha256:d3ec2be0fc4cae601c78adc536b0ffe0077f0997b9cf8ad1315714479d843b92"
+    records 104
 }
 
 source ".akr/records/jpegxl-rs/papercuts.akr" {
@@ -197,6 +197,18 @@ resolution @jpegxl-rs.decision.optimization-pass-opened/1 {
     slot supported_by
     to @jpegxl-rs.assessment.encoder-static-optimization/1
     hash "sha256:8548505b7e04728e0c442fc78e178335cd58ed6cb481f7df9a9a751db20f0d04"
+}
+
+resolution @jpegxl-rs.decision.s3-coefficient-domain-decimated-surrogate/1 {
+    slot depends_on
+    to @jpegxl-rs.work.multifidelity-quality-search/5
+    hash "sha256:2614d8925e63a108e2d6f58ddadc41c13b400114f980cdd20428ef27e2f2d094"
+}
+
+resolution @jpegxl-rs.decision.s3-coefficient-domain-decimated-surrogate/1 {
+    slot derived_from
+    to @jpegxl-rs.assessment.surrogate-navigation-does-not-pay-for-wall/1
+    hash "sha256:ee4449917f5b7bd16c867a67a085ba40c7698a1a2603d1f4e0256f6e752a59c6"
 }
 
 resolution @jpegxl-rs.decision.ssimulacra2-is-the-primary-promotion-metric/1 {
@@ -1493,6 +1505,18 @@ resolution @jpegxl-rs.observation.quantizer-normalised-distortion-is-the-lever-2
     slot verified_by
     to @jpegxl-rs.evidence.phase6-1-step-proportional-harness-2026-08-12/1
     hash "sha256:307d28a032edcfb314b39b95a101ff22689d61affb87fd5d1d9d1a6f55235b17"
+}
+
+resolution @jpegxl-rs.observation.s3-t90-band-routing-residual/1 {
+    slot derived_from
+    to @jpegxl-rs.decision.s3-coefficient-domain-decimated-surrogate/1
+    hash "sha256:4b13931e7ea014a6a56e743a2f341a130e9532fafb33f5740a2417246669934d"
+}
+
+resolution @jpegxl-rs.observation.s3-t90-band-routing-residual/2 {
+    slot derived_from
+    to @jpegxl-rs.decision.s3-coefficient-domain-decimated-surrogate/1
+    hash "sha256:4b13931e7ea014a6a56e743a2f341a130e9532fafb33f5740a2417246669934d"
 }
 
 resolution @jpegxl-rs.observation.selectivity-halves-the-damage-but-lambda-is-the-remaining-term-2026-08-12/1 {
@@ -6950,6 +6974,16 @@ seal @jpegxl-rs.evidence.s2-exact-banded-metric-identity-and-rss/1 {
     hash "sha256:f5aa7bd1cc6df0d039a64c7ba48f350837d6a5bb885eb279db045564edad976d"
 }
 
+seal @jpegxl-rs.evidence.s3-default-path-identity/1 {
+    state verified
+    hash "sha256:e2359237ea27ad6597f19b79c19b854ad1a797b4a90996825e28749235aee51c"
+}
+
+seal @jpegxl-rs.evidence.s3-k1-economics-verdict/1 {
+    state verified
+    hash "sha256:669d4ff797d48d3b364a946ab1b32f3dcd17650668cf3c819e1ebbc50e11ef8f"
+}
+
 seal @jpegxl-rs.evidence.s8-cover-lane-simd-postcommit/1 {
     state verified
     hash "sha256:6bec980f72c053fbe0e942da007af951e57c6c0f7852d05219bcc437626ff628"
@@ -7578,6 +7612,16 @@ seal @jpegxl-rs.observation.quantizer-normalised-distortion-is-the-lever-2026-08
 seal @jpegxl-rs.observation.realworld-encode-vs-cjxl-2026-08-06/1 {
     state verified
     hash "sha256:7e4565cecadb16ef1791f6123f266919138447b2fbabafa77b7a67c49e709337"
+}
+
+seal @jpegxl-rs.observation.s3-t90-band-routing-residual/1 {
+    state superseded
+    hash "sha256:a6f32d041d41a20e2ddfeed86045d77a39b517a61fed6b9be190c0f9238e28b0"
+}
+
+seal @jpegxl-rs.observation.s3-t90-band-routing-residual/2 {
+    state verified
+    hash "sha256:afe626c36a8c387edaef7970f0dd5b69fe49b08c2be057655062dad9d45c2748"
 }
 
 seal @jpegxl-rs.observation.selectivity-halves-the-damage-but-lambda-is-the-remaining-term-2026-08-12/1 {
