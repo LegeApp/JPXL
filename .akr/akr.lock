@@ -5,7 +5,7 @@ build {
     tool "akr 0.4.0"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:61961d149fb481137916f2fdfca5887b003eacf90cacae8d184107d841f72873"
+    source_graph "sha256:fea73e97cbed843216d8b6bacfdcdadb186af4d9e5b2cc7a06e3aafe5ffb7d00"
 }
 
 source ".akr/project.akr" {
@@ -69,8 +69,8 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:f559f4ef4c6912352d24f38c6fa028b0e6a63599aaf9c3d024ac18499275121a"
-    records 191
+    hash "sha256:5eb4016682665c6c9a452f1cf86d895e79283d8f32e66ac90f63070695ab22dc"
+    records 192
 }
 
 resolution @jpegxl-rs.decision.encoder-architecture-phases/1 {
@@ -3643,10 +3643,28 @@ resolution @jpegxl-rs.work.ladder-navigator-unification/2 {
     hash "sha256:7baafe506ecbb95adaf686f104582a725bf40fbd01cc11e28aba62b7184a7cf8"
 }
 
+resolution @jpegxl-rs.work.ladder-navigator-unification/3 {
+    slot part_of
+    to @jpegxl-rs.track.perceptual-quality-controller/1
+    hash "sha256:ee46ea6ea41bbe6b52ee4962868f2ed858f276a6e2455fd361c4086cc0aee1c0"
+}
+
+resolution @jpegxl-rs.work.ladder-navigator-unification/3 {
+    slot verified_by
+    to @jpegxl-rs.evidence.n0-ladder-extraction-byte-identical/1
+    hash "sha256:62d1f8ada7a2ae10fe2f17d4994043d1f2df07714982b99696ea96ab0303685f"
+}
+
+resolution @jpegxl-rs.work.ladder-navigator-unification/3 {
+    slot verified_by
+    to @jpegxl-rs.evidence.n1-shared-crossing-probe-parity/1
+    hash "sha256:7baafe506ecbb95adaf686f104582a725bf40fbd01cc11e28aba62b7184a7cf8"
+}
+
 resolution @jpegxl-rs.work.multifidelity-quality-search/1 {
     slot depends_on
-    to @jpegxl-rs.work.ladder-navigator-unification/2
-    hash "sha256:6468463bab2ae28782f3e13d4effb660b568aa92f2811a2db73e3cacd1589cb8"
+    to @jpegxl-rs.work.ladder-navigator-unification/3
+    hash "sha256:cdbafdfd96f48e236b53f416bf0144d98e4640115b5e2dd19c9a2cb72fcb4cd2"
 }
 
 resolution @jpegxl-rs.work.multifidelity-quality-search/1 {
@@ -8320,8 +8338,13 @@ seal @jpegxl-rs.work.ladder-navigator-unification/1 {
 }
 
 seal @jpegxl-rs.work.ladder-navigator-unification/2 {
+    state superseded
+    hash "sha256:7092e671be5647d69381b352999cd8315013360f092adca81111b9aa9b086998"
+}
+
+seal @jpegxl-rs.work.ladder-navigator-unification/3 {
     state active
-    hash "sha256:6468463bab2ae28782f3e13d4effb660b568aa92f2811a2db73e3cacd1589cb8"
+    hash "sha256:cdbafdfd96f48e236b53f416bf0144d98e4640115b5e2dd19c9a2cb72fcb4cd2"
 }
 
 seal @jpegxl-rs.work.native-windows-quality-tooling/1 {
