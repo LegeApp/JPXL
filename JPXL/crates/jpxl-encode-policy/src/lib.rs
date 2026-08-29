@@ -71,6 +71,7 @@ mod entropy;
 mod entropy_cost;
 pub mod error;
 pub mod field;
+pub mod navigation;
 pub mod policy_bank;
 pub mod quality;
 pub mod quality_features;

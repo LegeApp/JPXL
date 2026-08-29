@@ -34,11 +34,12 @@ use std::time::Instant;
 
 use crate::candidate::CandidateSearchContext;
 use crate::error::{PolicyError, Result};
+use crate::navigation::{LocalModel, Progress, force_progress, ln_scale, rung_for_scale};
 use crate::quality_features::{SourceFeatures, source_features};
 use crate::quality_predictor::{
     FALLBACK_LOG_FIT, FLAT_BUCKET_EDGES, INITIAL_RUNG_TABLE, LUMA_BUCKET_EDGES,
 };
-use crate::quantizer_ladder::{QuantizerChoice, Rung, effective_scale, rung_for_effective_scale};
+use crate::quantizer_ladder::{QuantizerChoice, Rung, effective_scale};
 use crate::reducer::ReducerLimits;
 use crate::request::{EncodeRequest, PerceptualTarget, RateSearchPreset};
 use crate::{AnalysisAtlas, AnchorReuse, EntropySearch, PreparedFrame, StructuralAnchor};
@@ -653,26 +654,16 @@ fn loss(score: f64) -> f64 {
     (100.0 - score).max(LOSS_EPSILON)
 }
 
-/// Natural log of a rung's effective scale.
-#[allow(
-    clippy::cast_precision_loss,
-    reason = "effective scales stay far inside f64's exact-integer range"
-)]
-fn ln_scale(rung: Rung) -> f64 {
-    (effective_scale(rung) as f64).ln()
-}
-
-/// The rung nearest an effective scale, clamped into the ladder.
-#[allow(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    reason = "a finite positive scale is clamped before the narrowing"
-)]
-fn rung_for_scale(scale: f64) -> Rung {
-    if !scale.is_finite() {
-        return Rung::FLOOR;
-    }
-    rung_for_effective_scale(scale.round().clamp(1.0, u64::MAX as f64) as u64)
+/// This controller's `y` coordinate: `-ln(loss)`.
+///
+/// The metric loss falls as the quantizer gets finer, so the raw log-loss
+/// curve runs the opposite way from the rate curve. Negating it puts both
+/// the same way up — rising in `x` — which is the orientation
+/// [`crate::navigation`] assumes, and it is an exact operation: the slope
+/// and the crossing numerator both flip sign, so the crossing is unchanged
+/// bit for bit (`navigation::tests::negating_the_y_axis_does_not_move_the_crossing`).
+fn neg_ln_loss(score: f64) -> f64 {
+    -loss(score).ln()
 }
 
 /// Where the crossing of `log(loss)` against `log(effective scale)` with the
@@ -691,12 +682,11 @@ pub(crate) fn log_loss_crossing(
         return None;
     }
     let (x_lo, x_hi) = (ln_scale(lo_rung), ln_scale(hi_rung));
-    let (y_lo, y_hi) = (loss(lo_score).ln(), loss(hi_score).ln());
-    if y_hi >= y_lo || x_hi <= x_lo {
+    let (y_lo, y_hi) = (neg_ln_loss(lo_score), neg_ln_loss(hi_score));
+    if y_hi <= y_lo || x_hi <= x_lo {
         return None;
     }
-    let slope = (y_hi - y_lo) / (x_hi - x_lo);
-    let x = x_lo + (loss(aim_score).ln() - y_lo) / slope;
+    let x = LocalModel::through((x_lo, y_lo), (x_hi, y_hi)).crossing(neg_ln_loss(aim_score));
     let rung = rung_for_scale(x.exp());
     // Keep the aim strictly inside the bracket so every probe is informative.
     let inner_lo = Rung::new(lo_rung.get() + 1);
@@ -708,22 +698,16 @@ pub(crate) fn log_loss_crossing(
 /// coarser, clamped into the ladder. Returns the same rung only at the
 /// ladder's end.
 pub(crate) fn geometric_step(from: Rung, finer: bool) -> Rung {
+    // `ln_scale(from).exp()`, not `effective_scale(from) as f64`: the round
+    // trip through the logarithm is what this step has always aimed from,
+    // and it is not the identity on every rung.
     let scale = ln_scale(from).exp();
     let next = if finer {
         scale * BRACKET_RATIO
     } else {
         scale / BRACKET_RATIO
     };
-    let rung = rung_for_scale(next);
-    if rung == from {
-        if finer {
-            Rung::new(from.get().saturating_add(1))
-        } else {
-            Rung::new(from.get().saturating_sub(1))
-        }
-    } else {
-        rung
-    }
+    force_progress(rung_for_scale(next), from, finer, Progress::NudgeWhenStuck)
 }
 
 /// Whether a finalist at `rung` is too far from the structure anchor to
@@ -996,11 +980,18 @@ impl Navigator<'_, '_, '_, '_, '_> {
         if (finer && from.0 == Rung::TOP) || (!finer && from.0 == Rung::FLOOR) {
             return None;
         }
+        // The local slope in the shared `(x, -ln loss)` coordinate: positive
+        // when the finer probe really did lose less. Rejected unless the two
+        // points are far enough apart in `x` to fit through, and unless the
+        // loss actually fell; otherwise the prior exponent stands in.
         let alpha = other
             .and_then(|o| {
-                let dx = ln_scale(from.0) - ln_scale(o.0);
-                let dy = loss(from.1).ln() - loss(o.1).ln();
-                (dx.abs() > f64::EPSILON && dy / dx < 0.0).then(|| (-dy / dx).clamp(0.2, 3.0))
+                let model = LocalModel::through(
+                    (ln_scale(o.0), neg_ln_loss(o.1)),
+                    (ln_scale(from.0), neg_ln_loss(from.1)),
+                );
+                ((ln_scale(from.0) - ln_scale(o.0)).abs() > f64::EPSILON && model.slope > 0.0)
+                    .then(|| model.slope.clamp(0.2, 3.0))
             })
             .unwrap_or_else(|| self.prior_beta.unwrap_or(PRIOR_LOSS_EXPONENT));
         let margin = EXPANSION_MARGIN.powi(i32::try_from(attempt.saturating_add(1)).unwrap_or(1));

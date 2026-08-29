@@ -61,6 +61,10 @@ use jpxl_encode::vardct::{
 };
 
 use crate::error::{PolicyError, Result};
+use crate::navigation::{
+    LocalModel, Progress, bounded_fraction_crossing, force_progress, geometric_step, ln_scale,
+    rung_for_scale,
+};
 pub use crate::quantizer_ladder::{
     HF_MUL_RUNGS, LADDER_LEN, QuantizerChoice, Rung, effective_scale, rung_for_effective_scale,
 };
@@ -70,6 +74,20 @@ use crate::request::{EncodeRequest, RateSearchBudget, RateTarget, RateTolerance}
 #[cfg(feature = "anchor-sketch")]
 use crate::{AnchorReuse, StructuralAnchor};
 use crate::{CandidateForwardCache, EntropySearch, diagnostics};
+
+/// This controller's `y` coordinate: `ln(bytes)`.
+///
+/// Size against quantizer scale is near power-law over the range the ladder
+/// spans, so the log is what makes the curve locally straight and lets
+/// [`crate::navigation`] fit it. Rising in `x` — a finer quantizer is a
+/// bigger file — which is the orientation the shared mathematics assumes.
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "byte counts stay inside f64's exact-integer range"
+)]
+fn ln_bytes(bytes: u64) -> f64 {
+    (bytes as f64).ln()
+}
 
 /// Which phase of the loop priced a candidate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -455,23 +473,7 @@ pub fn search_ladder_with(
 /// The next rung up or down from `current` for a [`BracketMode::Local`]
 /// step of `ratio` in effective scale (never `current` itself).
 fn local_step(current: Rung, ratio: f64, up: bool) -> Rung {
-    #[allow(
-        clippy::cast_precision_loss,
-        reason = "effective scales are far below f64's exact-integer range"
-    )]
-    let scale = effective_scale(current) as f64;
-    let aimed = if up { scale * ratio } else { scale / ratio };
-    #[allow(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        reason = "finite positive scale, clamped through the ladder constructor"
-    )]
-    let rung = rung_for_effective_scale(aimed.round().clamp(1.0, u64::MAX as f64) as u64);
-    if up {
-        rung.max(Rung::new(current.get().saturating_add(1)))
-    } else {
-        rung.min(Rung::new(current.get().saturating_sub(1)))
-    }
+    geometric_step(current, ratio, up, Progress::AtLeastOneRung)
 }
 
 /// The next rung up or down for a [`BracketMode::Cold`] bracket.
@@ -486,6 +488,9 @@ fn local_step(current: Rung, ratio: f64, up: bool) -> Rung {
 /// representability gap. The latter also keeps the floor/top boundary cases
 /// terminating without relying on floating-point rounding.
 fn cold_step(current: Rung, up: bool) -> Rung {
+    // Integer doubling, not [`geometric_step`]'s float ratio: an octave of
+    // effective scale is exact in `u64` and this step is taken from a cold
+    // start, where a rounding difference would move the whole bracket.
     let scale = effective_scale(current);
     let aimed = if up {
         scale.saturating_mul(2)
@@ -493,12 +498,12 @@ fn cold_step(current: Rung, up: bool) -> Rung {
         scale / 2
     }
     .max(1);
-    let rung = rung_for_effective_scale(aimed);
-    if up {
-        rung.max(Rung::new(current.get().saturating_add(1)))
-    } else {
-        rung.min(Rung::new(current.get().saturating_sub(1)))
-    }
+    force_progress(
+        rung_for_effective_scale(aimed),
+        current,
+        up,
+        Progress::AtLeastOneRung,
+    )
 }
 
 /// Where to aim next inside a bracket: false position on log(size) against
@@ -524,23 +529,9 @@ fn interpolated_rung(lo: (Rung, u64), hi: (Rung, u64), target: u64) -> Option<Ru
         // Not increasing across the bracket: a pocket, not a slope.
         return None;
     }
-    #[allow(
-        clippy::cast_precision_loss,
-        reason = "scales and byte counts stay inside f64's exact-integer range"
-    )]
-    let (lo_x, hi_x, lo_y, hi_y, t_y) = (
-        (effective_scale(lo_rung) as f64).ln(),
-        (effective_scale(hi_rung) as f64).ln(),
-        (lo_bytes as f64).ln(),
-        (hi_bytes as f64).ln(),
-        (target as f64).ln(),
-    );
-    let span = hi_y - lo_y;
-    if !span.is_finite() || span <= 0.0 {
-        return None;
-    }
-    let fraction = ((t_y - lo_y) / span).clamp(0.0, 1.0);
-    let guess_x = lo_x + fraction * (hi_x - lo_x);
+    let (lo_x, hi_x) = (ln_scale(lo_rung), ln_scale(hi_rung));
+    let (lo_y, hi_y, t_y) = (ln_bytes(lo_bytes), ln_bytes(hi_bytes), ln_bytes(target));
+    let guess_x = bounded_fraction_crossing((lo_x, lo_y), (hi_x, hi_y), t_y)?;
     if !guess_x.is_finite() {
         return None;
     }
@@ -548,13 +539,7 @@ fn interpolated_rung(lo: (Rung, u64), hi: (Rung, u64), target: u64) -> Option<Ru
     if !guess_scale.is_finite() || guess_scale < 0.0 {
         return None;
     }
-    #[allow(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        reason = "clamped into the bracket immediately below"
-    )]
-    let guess_scale = guess_scale.round() as u64;
-    let guess = rung_for_effective_scale(guess_scale).get();
+    let guess = rung_for_scale(guess_scale).get();
     let (low, high) = (lo_rung.get() + 1, hi_rung.get().checked_sub(1)?);
     if low > high {
         return None;
@@ -621,13 +606,11 @@ fn correction_rung_from_navigation(
             .max_by_key(|step| step.quantizer.rung)
             .map(|step| (step.quantizer.rung, step.bytes));
         let extrapolated = above.and_then(|(hi_rung, hi_bytes)| {
-            #[allow(
-                clippy::cast_precision_loss,
-                reason = "scales and byte counts stay inside f64's exact-integer range"
-            )]
-            let slope = ((hi_bytes as f64).ln() - (navigation.bytes as f64).ln())
-                / ((effective_scale(hi_rung) as f64).ln()
-                    - (effective_scale(finalist) as f64).ln());
+            let slope = LocalModel::through(
+                (ln_scale(finalist), ln_bytes(navigation.bytes)),
+                (ln_scale(hi_rung), ln_bytes(hi_bytes)),
+            )
+            .slope;
             target_rung_from_slope(
                 (finalist, navigation.bytes),
                 estimated_default_target,
@@ -1160,17 +1143,11 @@ fn two_anchor_target_rung(first: (Rung, u64), second: (Rung, u64), target: u64) 
     if lo_rung == hi_rung || lo_bytes == 0 || hi_bytes <= lo_bytes || target == 0 {
         return None;
     }
-    #[allow(
-        clippy::cast_precision_loss,
-        reason = "scales and byte counts stay inside f64's exact-integer range"
-    )]
-    let (lo_x, hi_x, lo_y, hi_y) = (
-        (effective_scale(lo_rung) as f64).ln(),
-        (effective_scale(hi_rung) as f64).ln(),
-        (lo_bytes as f64).ln(),
-        (hi_bytes as f64).ln(),
-    );
-    let slope = (hi_y - lo_y) / (hi_x - lo_x);
+    let slope = LocalModel::through(
+        (ln_scale(lo_rung), ln_bytes(lo_bytes)),
+        (ln_scale(hi_rung), ln_bytes(hi_bytes)),
+    )
+    .slope;
     if !slope.is_finite() || slope <= 0.0 {
         return None;
     }
@@ -1181,23 +1158,13 @@ fn target_rung_from_slope(anchor: (Rung, u64), target: u64, slope: f64) -> Optio
     if anchor.1 == 0 || target == 0 || !slope.is_finite() || slope <= 0.0 {
         return None;
     }
-    #[allow(
-        clippy::cast_precision_loss,
-        reason = "scales and byte counts stay inside f64's exact-integer range"
-    )]
-    let guess_x = (effective_scale(anchor.0) as f64).ln()
-        + ((target as f64).ln() - (anchor.1 as f64).ln()) / slope;
+    let guess_x =
+        LocalModel::new((ln_scale(anchor.0), ln_bytes(anchor.1)), slope).crossing(ln_bytes(target));
     let guess_scale = guess_x.exp();
     if !guess_scale.is_finite() || guess_scale <= 0.0 {
         return None;
     }
-    #[allow(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        reason = "finite positive estimate is clamped by the ladder constructor"
-    )]
-    let guess = rung_for_effective_scale(guess_scale.round().clamp(1.0, u64::MAX as f64) as u64);
-    Some(guess)
+    Some(rung_for_scale(guess_scale))
 }
 
 #[cfg(feature = "anchor-sketch")]
@@ -1215,12 +1182,11 @@ fn two_anchor_correction_rung(
     if lo_rung == hi_rung || lo_bytes == 0 || hi_bytes <= lo_bytes {
         return None;
     }
-    #[allow(
-        clippy::cast_precision_loss,
-        reason = "scales and byte counts stay inside f64's exact-integer range"
-    )]
-    let slope = ((hi_bytes as f64).ln() - (lo_bytes as f64).ln())
-        / ((effective_scale(hi_rung) as f64).ln() - (effective_scale(lo_rung) as f64).ln());
+    let slope = LocalModel::through(
+        (ln_scale(lo_rung), ln_bytes(lo_bytes)),
+        (ln_scale(hi_rung), ln_bytes(hi_bytes)),
+    )
+    .slope;
     target_rung_from_slope(finalist, target, slope)
 }
 
@@ -1318,12 +1284,7 @@ fn second_anchor_rung(start: Rung, anchor_bytes: u64, target: u64) -> Rung {
         reason = "wire-scale is far below f64's exact-integer range"
     )]
     let proposed = effective_scale(start) as f64 * ratio.powf(SECOND_ANCHOR_EXPONENT);
-    #[allow(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        reason = "finite positive scale is clamped through the ladder constructor"
-    )]
-    let mut rung = rung_for_effective_scale(proposed.max(1.0).round() as u64);
+    let mut rung = rung_for_scale(proposed);
     if rung == start {
         rung = if anchor_bytes > target {
             Rung::new(start.get() / 2)
