@@ -903,6 +903,15 @@ mod avx2 {
     pub(super) fn column_pass_f32x8(m: &mut [f32], rows: usize, cols: usize, forward: bool) {
         super::column_pass_lanes::<crate::simd::avx2::F32x8>(m, rows, cols, forward);
     }
+
+    /// [`super::half_column_pass_lanes`] over AVX2 lanes, compiled with AVX2.
+    ///
+    /// Safe to call only when the host supports AVX2 (see
+    /// [`crate::cpu::has_avx2`]), exactly as [`column_pass_f32x8`].
+    #[target_feature(enable = "avx2")]
+    pub(super) fn half_column_pass_f32x8(m: &mut [f32], rows: usize, cols: usize) {
+        super::half_column_pass_lanes::<crate::simd::avx2::F32x8>(m, rows, cols);
+    }
 }
 
 /// Column-first reference for tests of the lane-batched pipeline: every column
@@ -1099,6 +1108,256 @@ pub fn idct_2d_for_transform(
 ) -> Option<SampleBlock> {
     let (rows, cols) = transform.dct_shape()?;
     Some(idct_2d(coeffs, rows, cols))
+}
+
+// ---------------------------------------------------------------------------
+// Half-resolution inverse: IDCT_2D composed with a 2:1 box average
+// ---------------------------------------------------------------------------
+//
+// NOT part of Annex I: this is the encoder's half-resolution surrogate
+// reconstruction. The derivation is exact, not an approximation. For the
+// normative length-`N` inverse (I.2, `c_0 = 1`, `c_k = sqrt(2)`),
+//
+// ```text
+// x[n] = sum_k c_k * X_k * cos((pi*k/N) * (n + 1/2))
+// ```
+//
+// the pairwise mean `y[m] = (x[2m] + x[2m+1]) / 2` satisfies, via
+// `cos A + cos B = 2 cos((A+B)/2) cos((A-B)/2)`,
+//
+// ```text
+// y[m] = sum_k c_k * X_k * cos(pi*k/(2N)) * cos((pi*k/M) * (m + 1/2)),  M = N/2
+// ```
+//
+// whose basis index `k` folds onto the length-`M` normative inverse:
+// `k = M` contributes zero at every `m` (`cos(pi*(m + 1/2)) = 0`), and
+// `k = 2M - j` lands on basis `j` with weight `-1` and
+// `cos(pi*(2M-j)/(2N)) = sin(pi*j/(2N))`. Since `c_j = c_{2M-j} = sqrt(2)`
+// for `1 <= j < M`, the folded vector
+//
+// ```text
+// Y_0 = X_0
+// Y_j = cos(pi*j/(2N)) * X_j - sin(pi*j/(2N)) * X_{N-j},   1 <= j < M
+// ```
+//
+// plugs straight into the *existing* normative length-`M` inverse. Three
+// successive octaves multiply a surviving index `j` by
+// `cos(pi*j/(2N)) * cos(pi*j/N) * cos(2*pi*j/N)`, which is exactly
+// `1 / ScaleF(j, N)` (see `varblock::scale_f`) — the same Dirichlet identity
+// I.8 uses, one octave at a time; the tests pin that composition.
+//
+// The 2-D 2x2 box average is the tensor product of two 1-D pairwise means, so
+// each coefficient axis folds independently and the passes mirror
+// [`idct_2d_in_place`] exactly, on shrinking data.
+
+/// Fold-weight tables for lengths 2, 4, ..., 256, filled on first use.
+static FOLD_WEIGHTS: [OnceLock<Vec<[f32; 2]>>; 8] = [const { OnceLock::new() }; 8];
+
+/// `[cos(pi*j/(2n)), sin(pi*j/(2n))]` for `j` in `0..n/2`: the weights that
+/// fold a length-`n` coefficient vector onto the length-`n/2` one whose
+/// normative inverse is the pairwise mean of the length-`n` inverse.
+///
+/// Computed in `f64` and cast, the same determinism contract as
+/// [`DCT_MATRICES`] and `varblock`'s `SCALE_F_TABLES`. `n` must be a
+/// supported length of at least 2; anything else gets an empty table (and
+/// asserts in a debug build).
+// The weights are cosines/sines in [0, 1]; the f64->f32 cast is the same
+// deliberate rounding `build_dct_matrix` and `scale_f_closed_form` perform.
+#[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
+fn fold_weights(n: usize) -> &'static [[f32; 2]] {
+    if n < 2 || !is_supported_length(n) {
+        debug_assert!(false, "unsupported fold length {n}");
+        return &[];
+    }
+    let slot = n.trailing_zeros() as usize - 1;
+    FOLD_WEIGHTS[slot].get_or_init(|| {
+        (0..n / 2)
+            .map(|j| {
+                let angle = core::f64::consts::PI * (j as f64) / (2.0 * n as f64);
+                [angle.cos() as f32, angle.sin() as f32]
+            })
+            .collect()
+    })
+}
+
+/// One column pass of the half-resolution inverse: folds each length-`rows`
+/// column onto the length-`rows/2` coefficient vector whose normative inverse
+/// is the pairwise mean of the full one, then runs that inverse (including
+/// its `sqrt(rows/2)` normative scale).
+///
+/// Writes rows `0..rows/2` of `m` in place, so on return `m[..rows/2 * cols]`
+/// is a compact `(rows/2) x cols` matrix with the same stride; rows past
+/// `rows/2` are left stale. Row `rows/2` of the input is never read (the box
+/// average annihilates it). Each lane performs the same IEEE-754 operations
+/// in the same order as the scalar path, so the result is bit-identical
+/// whichever lane width is chosen.
+#[allow(clippy::cast_precision_loss)]
+#[inline(always)]
+fn half_column_pass_lanes<L: Lane>(m: &mut [f32], rows: usize, cols: usize) {
+    let half = rows / 2;
+    let weights = fold_weights(rows);
+    let scale = L::splat((half as f32).sqrt());
+    let mut buf = [L::splat(0.0); MAX_BUTTERFLY_LENGTH];
+    let col = &mut buf[..half];
+    for c in (0..cols).step_by(L::LANES) {
+        col[0] = L::load(&m[c..]);
+        for (j, slot) in col.iter_mut().enumerate().skip(1) {
+            let low = L::load(&m[j * cols + c..]);
+            let high = L::load(&m[(rows - j) * cols + c..]);
+            *slot = L::splat(weights[j][0]) * low - L::splat(weights[j][1]) * high;
+        }
+        dct_iii_lanes(col);
+        for (r, slot) in col.iter_mut().enumerate() {
+            (*slot * scale).store(&mut m[r * cols + c..]);
+        }
+    }
+}
+
+/// [`half_column_pass`] for the lengths the butterflies do not cover
+/// (`rows/2 > MAX_BUTTERFLY_LENGTH`): gathers and folds each column into a
+/// temporary and runs the scalar normative inverse on it.
+fn half_column_pass_scalar(m: &mut [f32], rows: usize, cols: usize) {
+    let half = rows / 2;
+    let weights = fold_weights(rows);
+    let mut buf = [0.0f32; MAX_TRANSFORM_SIZE];
+    for c in 0..cols {
+        let col = &mut buf[..half];
+        col[0] = m[c];
+        for (j, slot) in col.iter_mut().enumerate().skip(1) {
+            *slot = weights[j][0] * m[j * cols + c] - weights[j][1] * m[(rows - j) * cols + c];
+        }
+        idct_1d(col);
+        for r in 0..half {
+            m[r * cols + c] = buf[r];
+        }
+    }
+}
+
+/// The fold-and-invert column pass down every column of a row-major
+/// `rows x cols` matrix, in place; the half-resolution sibling of
+/// [`column_pass`], with the same lane dispatch.
+fn half_column_pass(m: &mut [f32], rows: usize, cols: usize) {
+    if rows / 2 > MAX_BUTTERFLY_LENGTH {
+        half_column_pass_scalar(m, rows, cols);
+        return;
+    }
+    #[cfg(feature = "simd")]
+    {
+        if cols.is_multiple_of(8) {
+            #[cfg(target_arch = "x86_64")]
+            if crate::cpu::has_avx2() {
+                // SAFETY: `half_column_pass_f32x8` only requires that the host
+                // support AVX2, which `has_avx2` has just confirmed; its body
+                // is the same safe generic half column pass compiled for AVX2.
+                #[allow(unsafe_code)]
+                unsafe {
+                    avx2::half_column_pass_f32x8(m, rows, cols);
+                }
+                return;
+            }
+            half_column_pass_lanes::<wide::f32x8>(m, rows, cols);
+            return;
+        }
+        if cols.is_multiple_of(4) {
+            half_column_pass_lanes::<wide::f32x4>(m, rows, cols);
+            return;
+        }
+    }
+    half_column_pass_lanes::<f32>(m, rows, cols);
+}
+
+/// The sample shape of the half-resolution inverse of a `rows x cols` block.
+#[must_use]
+pub const fn half_dims(rows: usize, cols: usize) -> (usize, usize) {
+    (rows / 2, cols / 2)
+}
+
+/// Is `(rows, cols)` a shape the half-resolution inverse can handle? Both
+/// dimensions must be supported lengths of at least 2 so their halves exist.
+fn half_shape_is_ok(buf_len: usize, rows: usize, cols: usize) -> bool {
+    shape_is_ok(buf_len, rows, cols) && rows >= 2 && cols >= 2
+}
+
+/// `IDCT_2D` composed with a 2:1 box average, evaluated in the coefficient
+/// domain, in place on a caller-provided buffer.
+///
+/// On entry `work[..rows * cols]` holds the landscape coefficient matrix of
+/// [`coeff_dims`]; on exit `work[..(rows/2) * (cols/2)]` holds the row-major
+/// `(rows/2) x (cols/2)` samples, equal to the raster-order 2x2 mean of
+/// [`idct_2d_in_place`]'s output up to `f32` rounding (the fold above is an
+/// exact identity in real arithmetic). `scratch` is clobbered; both buffers
+/// must hold at least `rows * cols` values.
+pub fn half_idct_2d_in_place(work: &mut [f32], scratch: &mut [f32], rows: usize, cols: usize) {
+    let n = rows * cols;
+    if !half_shape_is_ok(work.len(), rows, cols) || scratch.len() < n {
+        debug_assert!(false, "bad half IDCT_2D shape {rows}x{cols}");
+        return;
+    }
+    // The same conditional-transpose structure as `idct_2d_in_place`, with
+    // each pass folding its axis: `scratch` starts as the `cols x rows`
+    // matrix, the first pass leaves `(cols/2) x rows`, and the second leaves
+    // the `(rows/2) x (cols/2)` samples.
+    if cols > rows {
+        transpose_into(work, scratch, rows, cols);
+    } else {
+        scratch[..n].copy_from_slice(&work[..n]);
+    }
+    half_column_pass(scratch, cols, rows);
+    transpose_into(scratch, work, cols / 2, rows);
+    half_column_pass(work, rows, cols / 2);
+}
+
+/// [`half_idct_2d_in_place`] with the low-quarter shortcut: valid only when
+/// every coefficient the fold reaches through its `sin` partner term is zero,
+/// i.e. every cell with column `x >= max(rows,cols)/2` or row
+/// `y >= min(rows,cols)/2` of the landscape matrix.
+///
+/// Under that precondition the fold degenerates to a diagonal
+/// `cos(pi*y/(2*cr)) * cos(pi*x/(2*cc))` scale on the retained low quarter
+/// followed by the ordinary half-size [`idct_2d_in_place`] — a quarter of the
+/// data through every pass. The two orderings round differently (~1e-6
+/// relative), so this is *not* bit-identical to the fused path; it is a pure
+/// function of the input either way, so worker count and lane width still
+/// cannot change a sample. Same buffer contract as [`half_idct_2d_in_place`].
+pub fn lowpass_half_idct_2d_in_place(
+    work: &mut [f32],
+    scratch: &mut [f32],
+    rows: usize,
+    cols: usize,
+) {
+    let n = rows * cols;
+    if !half_shape_is_ok(work.len(), rows, cols) || scratch.len() < n {
+        debug_assert!(false, "bad half IDCT_2D shape {rows}x{cols}");
+        return;
+    }
+    let (cr, cc) = coeff_dims(rows, cols);
+    let (hcr, hcc) = (cr / 2, cc / 2);
+    let row_weights = fold_weights(cr);
+    let col_weights = fold_weights(cc);
+    for y in 0..hcr {
+        for x in 0..hcc {
+            scratch[y * hcc + x] = work[y * cc + x] * row_weights[y][0] * col_weights[x][0];
+        }
+    }
+    let hn = hcr * hcc;
+    work[..hn].copy_from_slice(&scratch[..hn]);
+    idct_2d_in_place(work, scratch, rows / 2, cols / 2);
+}
+
+/// [`half_idct_2d_in_place`] as an owning wrapper: landscape coefficients to
+/// the `(rows/2) x (cols/2)` half-resolution samples.
+#[must_use]
+pub fn half_idct_2d_raw(coeffs: &[f32], rows: usize, cols: usize) -> Vec<f32> {
+    let (hr, hc) = half_dims(rows, cols);
+    if !half_shape_is_ok(coeffs.len(), rows, cols) || coeffs.len() != rows * cols {
+        debug_assert!(false, "bad half IDCT_2D shape {rows}x{cols}");
+        return vec![0.0f32; hr * hc];
+    }
+    let mut work = coeffs.to_vec();
+    let mut scratch = vec![0.0f32; rows * cols];
+    half_idct_2d_in_place(&mut work, &mut scratch, rows, cols);
+    work.truncate(hr * hc);
+    work
 }
 
 // ---------------------------------------------------------------------------
@@ -1900,6 +2159,193 @@ mod tests {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    /// Sample shapes the half-resolution inverse is exercised over: every
+    /// plain-DCT shape with both dims in 8..=32, plus 64x64 (lane path at the
+    /// largest butterfly half) and 128x128 (the scalar gather path,
+    /// `rows/2 > MAX_BUTTERFLY_LENGTH`).
+    const HALF_IDCT_SHAPES: [(usize, usize); 11] = [
+        (8, 8),
+        (16, 16),
+        (32, 32),
+        (16, 8),
+        (8, 16),
+        (32, 8),
+        (8, 32),
+        (32, 16),
+        (16, 32),
+        (64, 64),
+        (128, 128),
+    ];
+
+    /// The raster-order 2x2 box mean of a row-major `rows x cols` sample
+    /// matrix: the pixel-domain oracle the coefficient-domain fold must match.
+    fn box_mean(samples: &[f32], rows: usize, cols: usize) -> Vec<f32> {
+        let (hr, hc) = (rows / 2, cols / 2);
+        let mut out = vec![0.0f32; hr * hc];
+        for y in 0..hr {
+            for x in 0..hc {
+                let a = samples[2 * y * cols + 2 * x];
+                let b = samples[2 * y * cols + 2 * x + 1];
+                let c = samples[(2 * y + 1) * cols + 2 * x];
+                let d = samples[(2 * y + 1) * cols + 2 * x + 1];
+                out[y * hc + x] = (a + b + c + d) * 0.25;
+            }
+        }
+        out
+    }
+
+    /// The fold identity is exact: the coefficient-domain half inverse equals
+    /// the full normative inverse followed by the pixel-domain 2x2 mean, to
+    /// f32 rounding, at small and large amplitudes, for every shape family
+    /// (squares, both rectangle orientations, the dense-matrix lengths).
+    ///
+    /// This is the test that promotes the module-doc derivation from
+    /// hand-verified-at-N<=4 to verified: the algebra has no size-dependent
+    /// step, so passing at 8..128 pins it everywhere.
+    #[test]
+    fn half_idct_matches_the_box_average_of_the_full_idct() {
+        let mut rng = Lcg::new(0xf01d_ed01);
+        for &(rows, cols) in &HALF_IDCT_SHAPES {
+            for round in 0..4 {
+                let amplitude = if round % 2 == 0 { 1.0 } else { 4096.0 };
+                let coeffs: Vec<f32> = (0..rows * cols).map(|_| rng.next(amplitude)).collect();
+                let full = idct_2d_raw(&coeffs, rows, cols);
+                let want = box_mean(&full, rows, cols);
+                let got = half_idct_2d_raw(&coeffs, rows, cols);
+                assert_eq!(got.len(), want.len(), "{rows}x{cols} half sample count");
+                let peak = want.iter().fold(1.0f32, |m, v| m.max(v.abs()));
+                assert_slice_close(
+                    &got,
+                    &want,
+                    3e-5 * peak,
+                    &format!("{rows}x{cols} amp {amplitude} half samples"),
+                );
+            }
+        }
+    }
+
+    /// `Y_0 = X_0` on both axes and the normative half-length inverse maps a
+    /// DC-only block to a constant equal to DC (the same property the full
+    /// inverse pins at `dct.rs`'s module docs), so a DC-only block's half
+    /// reconstruction is that constant too. Guards the `sqrt(half)` scale.
+    #[test]
+    fn half_idct_of_dc_only_is_the_dc_constant() {
+        for &(rows, cols) in &HALF_IDCT_SHAPES {
+            let mut coeffs = vec![0.0f32; rows * cols];
+            coeffs[0] = 3.25;
+            for (i, s) in half_idct_2d_raw(&coeffs, rows, cols).iter().enumerate() {
+                assert_close(*s, 3.25, 1e-5, &format!("{rows}x{cols} dc cell {i}"));
+            }
+        }
+    }
+
+    /// The half column pass keeps the full pipeline's lane contract: every
+    /// lane width (and the AVX2 entry, on hosts that have it) is bit-for-bit
+    /// equal to the scalar pass over the same matrix, stale tail rows
+    /// included.
+    #[cfg(feature = "simd")]
+    #[test]
+    fn half_lane_widths_are_bit_identical_to_scalar() {
+        let mut rng = Lcg::new(0x0f_a11ed);
+        for &rows in &[2usize, 4, 8, 16, 32, 64] {
+            for &cols in &[4usize, 8, 16, 32] {
+                for round in 0..8 {
+                    let amplitude = if round % 2 == 0 { 1.0 } else { 4096.0 };
+                    let base: Vec<f32> = (0..rows * cols).map(|_| rng.next(amplitude)).collect();
+                    let mut scalar = base.clone();
+                    half_column_pass_lanes::<f32>(&mut scalar, rows, cols);
+                    let mut four = base.clone();
+                    half_column_pass_lanes::<wide::f32x4>(&mut four, rows, cols);
+                    let mut dispatched = base.clone();
+                    half_column_pass(&mut dispatched, rows, cols);
+                    let mut variants = vec![("f32x4", four), ("dispatched", dispatched)];
+                    if cols.is_multiple_of(8) {
+                        let mut eight = base.clone();
+                        half_column_pass_lanes::<wide::f32x8>(&mut eight, rows, cols);
+                        variants.push(("f32x8", eight));
+                        #[cfg(target_arch = "x86_64")]
+                        if crate::cpu::has_avx2() {
+                            let mut wide256 = base;
+                            // SAFETY: AVX2 support was just confirmed.
+                            #[allow(unsafe_code)]
+                            unsafe {
+                                avx2::half_column_pass_f32x8(&mut wide256, rows, cols);
+                            }
+                            variants.push(("avx2", wide256));
+                        }
+                    }
+                    for (name, values) in &variants {
+                        for (i, (s, v)) in scalar
+                            .iter()
+                            .zip(values.iter())
+                            .take(rows / 2 * cols)
+                            .enumerate()
+                        {
+                            assert_eq!(
+                                s.to_bits(),
+                                v.to_bits(),
+                                "{rows}x{cols} {name} half cell {i}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// When the partner region is zero the low-pass quarter route agrees with
+    /// the exact fused fold to rounding (~1e-6 relative; the two orderings
+    /// are deliberately not bit-identical — the weight lands on a different
+    /// side of the horizontal inverse).
+    #[test]
+    fn lowpass_agrees_with_the_exact_fold_when_the_high_region_is_zero() {
+        let mut rng = Lcg::new(0x0100_9a55);
+        for &(rows, cols) in &HALF_IDCT_SHAPES {
+            let (cr, cc) = coeff_dims(rows, cols);
+            let mut coeffs = vec![0.0f32; rows * cols];
+            for y in 0..cr / 2 {
+                for x in 0..cc / 2 {
+                    coeffs[y * cc + x] = rng.next(64.0);
+                }
+            }
+            let mut fused = coeffs.clone();
+            let mut scratch = vec![0.0f32; rows * cols];
+            half_idct_2d_in_place(&mut fused, &mut scratch, rows, cols);
+            let mut low = coeffs;
+            lowpass_half_idct_2d_in_place(&mut low, &mut scratch, rows, cols);
+            let hn = (rows / 2) * (cols / 2);
+            let peak = fused[..hn].iter().fold(1.0f32, |m, v| m.max(v.abs()));
+            assert_slice_close(
+                &low[..hn],
+                &fused[..hn],
+                1e-5 * peak,
+                &format!("{rows}x{cols} lowpass vs fused"),
+            );
+        }
+    }
+
+    /// Three successive octaves of the fold multiply a surviving low index by
+    /// `cos(pi*j/(2N)) * cos(pi*j/N) * cos(2*pi*j/N)`, which is I.8's
+    /// `1 / ScaleF(j, N)` — the shipped Dirichlet identity, one octave at a
+    /// time. Ties the fold table to a constant the LF path already probes end
+    /// to end.
+    #[test]
+    fn fold_weights_compose_to_the_scale_f_reciprocal() {
+        for &n in &[8usize, 16, 32, 64, 128, 256] {
+            for j in 0..n / 8 {
+                let product = f64::from(fold_weights(n)[j][0])
+                    * f64::from(fold_weights(n / 2)[j][0])
+                    * f64::from(fold_weights(n / 4)[j][0]);
+                let scale = f64::from(crate::varblock::scale_f(j, n / 8));
+                assert!(
+                    (product * scale - 1.0).abs() < 1e-5,
+                    "n {n} j {j}: fold product {product} vs 1/ScaleF {}",
+                    1.0 / scale
+                );
             }
         }
     }

@@ -192,8 +192,12 @@ pub const SURROGATE_INTERVAL_WIDTH_GATE: f64 = 0.3;
 /// 90, 1.26 at 85 and 4.6 at 30 — only the top band, where the surrogate
 /// tracks the canonical curve most tightly, clears the accept band. (The
 /// interim shrink-after-reconstruct surrogate cleared 85; the decimated
-/// observation is coarser and buys its ~0.4× probe cost with this narrower
-/// routing.)
+/// observation is coarser and buys its cheaper probes with this narrower
+/// routing. Phase S3's coefficient-domain reconstruction cut a probe's
+/// render+metric cost to ~0.32× canonical — ~0.33× at the routed targets,
+/// where quantization leaves the high-frequency region dense and the
+/// low-pass fast path rarely fires — while changing the observation itself
+/// only at the f32-rounding level, so this fit carries over.)
 pub const SURROGATE_TARGET_FLOOR: f64 = 90.0;
 
 /// Most surrogate probes one baseline solve may spend (Phase S1). Surrogate

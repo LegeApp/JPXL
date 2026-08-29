@@ -671,17 +671,21 @@ impl PlanRenderer {
         Ok((frame.width, frame.height, frame.planes))
     }
 
-    /// The Phase S2 surrogate render: reconstruct every varblock at full
-    /// resolution (quantization detail must reach the observation), then
-    /// box-decimate the XYB planes 2:1 and run the restoration filters and
-    /// the colour/depth stage at half resolution. Returns the half-resolution
-    /// dimensions and depth-quantized linear planes.
+    /// The Phase S3 surrogate render: reconstruct every varblock's own 2:1
+    /// box average directly in the coefficient domain (the fold is an exact
+    /// identity, so quantization detail still reaches the observation), then
+    /// run the restoration filters and the colour/depth stage at half
+    /// resolution. No full-resolution pixel plane ever exists on this path.
+    /// Returns the half-resolution dimensions and depth-quantized linear
+    /// planes.
     ///
     /// This is *not* the canonical render downscaled: the filters act at the
-    /// half scale (with a 2×2-averaged sigma field), so the result is a
-    /// cheaper, deterministic *surrogate* observation — it may propose, never
-    /// accept. Output is identical at any worker count, like every other
-    /// render path.
+    /// half scale (with a 2×2-averaged sigma field), and at an odd frame
+    /// dimension the last half-res row/column averages the varblock's own
+    /// out-of-frame reconstruction rather than replicating the edge, so the
+    /// result is a cheaper, deterministic *surrogate* observation — it may
+    /// propose, never accept. Output is identical at any worker count, like
+    /// every other render path.
     ///
     /// # Errors
     ///
@@ -751,7 +755,24 @@ impl PlanRenderer {
             usize::try_from(height).unwrap_or(usize::MAX),
         );
         let len = dims.len();
-        let mut planes = self.scratch.take_planes(len);
+        // Phase S3 surrogate: the varblocks reconstruct straight into
+        // half-resolution planes (the 2:1 box average is folded into the
+        // inverse transform), so the frame buffers, the scatter, and every
+        // later stage run at half size — no full-resolution pixel plane ever
+        // exists on the decimated path. Sigma stays on the full-resolution
+        // block grid and is 2x2-averaged after the varblock stage, exactly as
+        // the S2 pixel-domain decimation did.
+        let (out_width, out_height) = if decimate {
+            (width.div_ceil(2), height.div_ceil(2))
+        } else {
+            (width, height)
+        };
+        let out_dims = PlaneDims::new(
+            usize::try_from(out_width).unwrap_or(usize::MAX),
+            usize::try_from(out_height).unwrap_or(usize::MAX),
+        );
+        let out_len = out_dims.len();
+        let mut planes = self.scratch.take_planes(out_len);
         let (blocks_x, blocks_y) = block_grid(dims);
         let mut sigma = self.scratch.take_sigma(blocks_x * blocks_y);
 
@@ -841,6 +862,31 @@ impl PlanRenderer {
                             "a dequantization matrix that was not warmed",
                         ))?;
                     let (rows, cols) = (transform.coeff_rows(), transform.coeff_cols());
+                    // Phase S3 fast path: when every quantized coefficient in
+                    // the region the half-resolution fold reaches only
+                    // through its partner term is zero — across all three
+                    // channels, because CfL mixes Y into X and B — the
+                    // dequantization, the CfL pass and the inverse all
+                    // confine themselves to the low quarter. Bit-exact: a
+                    // zero quantized cell dequantizes to `+0.0` (zero times
+                    // positive factors) and CfL over zeros is zeros, so the
+                    // kernel's own low-pass predicate then holds on exactly
+                    // the matrix the unhoisted path would have built.
+                    let (hr, hc) = (rows / 2, cols / 2);
+                    let lowpass = decimate
+                        && transform.dct_shape().is_some()
+                        && (0..NUM_CHANNELS).all(|c| {
+                            coeffs.channel(c).is_some_and(|quant| {
+                                quant.chunks_exact(cols).enumerate().take(rows).all(
+                                    |(y, row)| {
+                                        row.iter().enumerate().all(|(x, &q)| {
+                                            (x < hc && y < hr) || q == 0
+                                        })
+                                    },
+                                )
+                            })
+                        });
+                    let (dq_rows, dq_cols) = if lowpass { (hr, hc) } else { (rows, cols) };
                     let WorkerScratch {
                         coeff,
                         lf_rect,
@@ -861,8 +907,8 @@ impl PlanRenderer {
                         let Some(target) = coeff.get_mut(c) else {
                             continue;
                         };
-                        for (y, row) in quant.chunks_exact(cols).enumerate().take(rows) {
-                            for (x, &q) in row.iter().enumerate() {
+                        for (y, row) in quant.chunks_exact(cols).enumerate().take(dq_rows) {
+                            for (x, &q) in row.iter().enumerate().take(dq_cols) {
                                 let adjusted = bias_adjust(q, bias, DEFAULT_QUANT_BIAS_NUMERATOR);
                                 target.set(x, y, adjusted * scale * matrix.at(x, y));
                             }
@@ -885,7 +931,7 @@ impl PlanRenderer {
                         x_factor,
                         b_factor,
                     );
-                    apply_hf_cfl(coeff, k_x, k_b);
+                    apply_hf_cfl(coeff, k_x, k_b, dq_rows, dq_cols);
 
                     // I.8: the LLF rectangle from the LF planes. The rectangle is
                     // rewritten cell for cell per channel, so one reused block
@@ -906,14 +952,31 @@ impl PlanRenderer {
                         matrix.write_llf(&llf_from_lf(transform, lf_rect));
                     }
 
-                    // I.9: samples, at the varblock's frame position (placed later).
-                    out.x0 = rect.x0 + bx * 8;
-                    out.y0 = rect.y0 + by * 8;
+                    // I.9: samples, at the varblock's frame position (placed
+                    // later). The decimated path reconstructs the varblock's
+                    // own 2:1 box average in the coefficient domain; origins
+                    // are multiples of 8 (LF-group rects are >=1024-aligned),
+                    // so the half-resolution placement at exactly half the
+                    // offset never straddles varblocks.
+                    if decimate {
+                        out.x0 = rect.x0 / 2 + bx * 4;
+                        out.y0 = rect.y0 / 2 + by * 4;
+                    } else {
+                        out.x0 = rect.x0 + bx * 8;
+                        out.y0 = rect.y0 + by * 8;
+                    }
                     for (c, block) in out.samples.iter_mut().enumerate() {
                         match coeff.get(c) {
+                            Some(matrix) if decimate => {
+                                transform.half_samples_from_coefficients_into(matrix, block, idct);
+                            }
                             Some(matrix) => {
                                 transform.samples_from_coefficients_into(matrix, block, idct);
                             }
+                            None if decimate => block.reset(
+                                transform.half_sample_rows(),
+                                transform.half_sample_cols(),
+                            ),
                             None => block.reset(transform.sample_rows(), transform.sample_cols()),
                         }
                     }
@@ -995,7 +1058,7 @@ impl PlanRenderer {
                 // Bucket each varblock into the (at most two, since a varblock
                 // is at most 32 rows tall) bands its rows intersect, preserving
                 // chunk order within a bucket.
-                let bands = row_bands(&mut planes, dims.width);
+                let bands = row_bands(&mut planes, out_dims.width);
                 let mut buckets: Vec<Vec<usize>> = vec![Vec::new(); bands.len()];
                 for (k, rv) in rendered.iter().enumerate() {
                     let rows = rv.samples.iter().map(|b| b.rows()).max().unwrap_or(0);
@@ -1020,7 +1083,7 @@ impl PlanRenderer {
                     let Some(bucket) = buckets.get(index) else {
                         return;
                     };
-                    let band_rows = slices.first().map_or(0, |s| s.len()) / dims.width.max(1);
+                    let band_rows = slices.first().map_or(0, |s| s.len()) / out_dims.width.max(1);
                     for &k in bucket {
                         let Some(rv) = rendered.get(k) else {
                             continue;
@@ -1036,10 +1099,10 @@ impl PlanRenderer {
                                 if fy < row0 || fy >= row0.saturating_add(band_rows) {
                                     continue;
                                 }
-                                let base = (fy - row0).saturating_mul(dims.width);
+                                let base = (fy - row0).saturating_mul(out_dims.width);
                                 for col in 0..block.cols() {
                                     let fx = x0.saturating_add(col);
-                                    if fx >= dims.width {
+                                    if fx >= out_dims.width {
                                         continue;
                                     }
                                     if let Some(slot) = plane.get_mut(base.saturating_add(fx)) {
@@ -1064,36 +1127,15 @@ impl PlanRenderer {
 
         timings.varblocks_ms = millis(stage_start);
 
-        // Phase S2 surrogate: box-decimate the reconstructed XYB planes 2:1
-        // and shadow the frame geometry, so the restoration filters and the
-        // colour stage below run at half resolution. The full-resolution
-        // planes go back to the scratch recycler. Each half-res 8×8 sigma
-        // block averages the up-to-four full-res blocks it covers.
-        let (width, height, dims, len, mut planes, sigma, blocks_x, blocks_y) = if decimate {
-            let (hw, hh) = (width.div_ceil(2), height.div_ceil(2));
-            let hdims = PlaneDims::new(
-                usize::try_from(hw).unwrap_or(usize::MAX),
-                usize::try_from(hh).unwrap_or(usize::MAX),
-            );
-            let hlen = hdims.len();
-            let mut hplanes: [Vec<f32>; NUM_CHANNELS] =
-                [Vec::new(), Vec::new(), Vec::new()].map(|mut p: Vec<f32>| {
-                    shaped_in_place(&mut p, hlen);
-                    p
-                });
-            {
-                let bands = row_bands(&mut hplanes, hdims.width);
-                run_items(executor, bands.len(), &|index| {
-                    let Some((row0, mut slices)) = bands.take(index) else {
-                        return;
-                    };
-                    for (out, src) in slices.iter_mut().zip(planes.iter()) {
-                        decimate_rows(src, dims, row0, out, hdims.width);
-                    }
-                });
-            }
-            self.scratch.planes = planes;
-            let (hbx, hby) = block_grid(hdims);
+        // Phase S3 surrogate: the planes were already reconstructed at half
+        // resolution by the coefficient-domain fold above; only the geometry
+        // and the sigma field switch to the half grid here. Each half-res 8×8
+        // sigma block averages the up-to-four full-res blocks it covers
+        // (in-range never-written blocks participate as zeros, preserving the
+        // S2 pixel-domain semantics so the reconstruction is the only thing
+        // this phase changes about the observation).
+        let (width, height, dims, len, sigma, blocks_x, blocks_y) = if decimate {
+            let (hbx, hby) = block_grid(out_dims);
             let mut hsigma = vec![0.0f32; hbx.saturating_mul(hby)];
             for (j, row) in hsigma.chunks_exact_mut(hbx.max(1)).enumerate() {
                 for (i, out) in row.iter_mut().enumerate() {
@@ -1112,9 +1154,9 @@ impl PlanRenderer {
                     *out = if count > 0 { sum / count as f32 } else { 0.0 };
                 }
             }
-            (hw, hh, hdims, hlen, hplanes, hsigma, hbx, hby)
+            (out_width, out_height, out_dims, out_len, hsigma, hbx, hby)
         } else {
-            (width, height, dims, len, planes, sigma, blocks_x, blocks_y)
+            (width, height, dims, len, sigma, blocks_x, blocks_y)
         };
 
         // Annex J. Both stages ping-pong between `planes` and `aux`: each
@@ -1256,9 +1298,11 @@ fn lf_planes(
     Ok(out)
 }
 
-/// I.6 for HF coefficients over three same-shaped matrices.
-fn apply_hf_cfl(coeffs: &mut [CoeffMatrix; NUM_CHANNELS], k_x: f32, k_b: f32) {
-    let (rows, cols) = (coeffs[1].rows(), coeffs[1].cols());
+/// I.6 for HF coefficients over three same-shaped matrices, over the first
+/// `rows x cols` cells (the full matrix on the canonical path; the low
+/// quarter on the decimated fast path, whose remaining cells are all zero and
+/// CfL over zeros is zeros).
+fn apply_hf_cfl(coeffs: &mut [CoeffMatrix; NUM_CHANNELS], k_x: f32, k_b: f32, rows: usize, cols: usize) {
     for y in 0..rows {
         for x in 0..cols {
             let d_y = coeffs[1].at(x, y);
@@ -1298,40 +1342,6 @@ impl<'a> RowBands<'a> {
 }
 
 /// Cuts three equally sized planes into [`BAND_ROWS`]-row bands.
-/// Box-decimates full-resolution rows into output rows `row0 ..` of one
-/// half-resolution band: each output sample averages its 2×2 source block in
-/// raster order (top-left, top-right, bottom-left, bottom-right) scaled by
-/// exactly `0.25`, replicating the last row/column when a dimension is odd.
-/// Every output depends only on its own source block, so any banding is
-/// bit-identical to a serial pass.
-fn decimate_rows(src: &[f32], src_dims: PlaneDims, row0: usize, out: &mut [f32], out_width: usize) {
-    if src_dims.width == 0 || src_dims.height == 0 || out_width == 0 {
-        return;
-    }
-    let last_x = src_dims.width - 1;
-    let last_y = src_dims.height - 1;
-    for (dy, out_row) in out.chunks_exact_mut(out_width).enumerate() {
-        let oy = row0 + dy;
-        let y0 = (oy * 2).min(last_y);
-        let y1 = (oy * 2 + 1).min(last_y);
-        let row0 = src
-            .get(y0 * src_dims.width..(y0 + 1) * src_dims.width)
-            .unwrap_or(&[]);
-        let row1 = src
-            .get(y1 * src_dims.width..(y1 + 1) * src_dims.width)
-            .unwrap_or(&[]);
-        for (ox, out) in out_row.iter_mut().enumerate() {
-            let x0 = (ox * 2).min(last_x);
-            let x1 = (ox * 2 + 1).min(last_x);
-            let a = row0.get(x0).copied().unwrap_or(0.0);
-            let b = row0.get(x1).copied().unwrap_or(0.0);
-            let c = row1.get(x0).copied().unwrap_or(0.0);
-            let d = row1.get(x1).copied().unwrap_or(0.0);
-            *out = (a + b + c + d) * 0.25;
-        }
-    }
-}
-
 fn row_bands(planes: &mut [Vec<f32>; NUM_CHANNELS], width: usize) -> RowBands<'_> {
     let band_len = width.saturating_mul(BAND_ROWS).max(1);
     let [p0, p1, p2] = planes;

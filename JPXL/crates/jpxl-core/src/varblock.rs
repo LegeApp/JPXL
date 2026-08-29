@@ -38,7 +38,10 @@
 // noise rather than a defence.
 #![allow(clippy::indexing_slicing)]
 
-use crate::dct::{coeff_dims, dct_2d_raw, idct_2d_into, idct_2d_raw};
+use crate::dct::{
+    coeff_dims, dct_2d_raw, half_idct_2d_in_place, idct_2d_into, idct_2d_raw,
+    lowpass_half_idct_2d_in_place,
+};
 use crate::error::{JpxlError, Result};
 use std::sync::OnceLock;
 
@@ -1283,6 +1286,120 @@ impl TransformType {
         scratch.resize(rows * cols, 0.0f32);
         idct_2d_into(coefficients.as_slice(), rows, cols, &mut out.data, scratch);
     }
+
+    /// Half of [`Self::sample_rows`]. Exact: sample dimensions are always
+    /// multiples of 8.
+    #[must_use]
+    pub fn half_sample_rows(self) -> usize {
+        self.sample_rows() / 2
+    }
+
+    /// Half of [`Self::sample_cols`].
+    #[must_use]
+    pub fn half_sample_cols(self) -> usize {
+        self.sample_cols() / 2
+    }
+
+    /// I.9 composed with a 2:1 box average of the varblock's own samples,
+    /// evaluated in the coefficient domain for the plain `DCTRxC` types and by
+    /// explicit averaging for the I.9.3-I.9.8 special forms.
+    ///
+    /// NOT part of Annex I: this is the encoder's half-resolution surrogate
+    /// reconstruction. Mirrors [`Self::samples_from_coefficients_into`]; `out`
+    /// becomes `half_sample_rows() x half_sample_cols()`. When
+    /// [`folds_to_lowpass`] holds (the common case at navigation quality,
+    /// where quantization has zeroed the high coefficient region) the plain
+    /// types take a quarter-size low-pass route that agrees with the exact
+    /// fold to ~1e-6 relative rather than bitwise; the branch is a pure
+    /// function of the coefficients, so worker count and lane width still
+    /// cannot change a sample.
+    pub fn half_samples_from_coefficients_into(
+        self,
+        coefficients: &CoeffMatrix,
+        out: &mut SampleBlock,
+        scratch: &mut Vec<f32>,
+    ) {
+        let (rows, cols) = (self.sample_rows(), self.sample_cols());
+        let (hr, hc) = (rows / 2, cols / 2);
+        if coefficients.rows() != self.coeff_rows() || coefficients.cols() != self.coeff_cols() {
+            debug_assert!(false, "coefficient matrix has the wrong shape");
+            out.reset(hr, hc);
+            return;
+        }
+        if self.dct_shape().is_none() {
+            // The special 8x8-footprint forms are never emitted by the current
+            // planner; average their full reconstruction rather than deriving
+            // nine bespoke half-resolution kernels.
+            let full = self.samples_from_coefficients(coefficients);
+            box_average_into(&full, out);
+            return;
+        }
+        let n = rows * cols;
+        scratch.truncate(2 * n);
+        scratch.resize(2 * n, 0.0f32);
+        let (work, spare) = scratch.split_at_mut(n);
+        work.copy_from_slice(coefficients.as_slice());
+        if folds_to_lowpass(coefficients) {
+            lowpass_half_idct_2d_in_place(work, spare, rows, cols);
+        } else {
+            half_idct_2d_in_place(work, spare, rows, cols);
+        }
+        out.rows = hr;
+        out.cols = hc;
+        out.data.clear();
+        out.data.extend_from_slice(&work[..hr * hc]);
+    }
+
+    /// [`Self::half_samples_from_coefficients_into`] as an owning wrapper.
+    #[must_use]
+    pub fn half_samples_from_coefficients(self, coefficients: &CoeffMatrix) -> SampleBlock {
+        let mut out = SampleBlock::zeros(0, 0);
+        let mut scratch = Vec::new();
+        self.half_samples_from_coefficients_into(coefficients, &mut out, &mut scratch);
+        out
+    }
+}
+
+/// True when every coefficient the half-resolution fold reaches only through
+/// its `sin` partner term is `+0.0` — every cell with `x >= cols/2` or
+/// `y >= rows/2` of the landscape matrix — so the fold degenerates bitwise
+/// (`x - 0.0 == x`) to the low-pass quarter route.
+///
+/// The test is bitwise (`to_bits() == 0`): a `-0.0` partner reports `false`,
+/// because `x - (-0.0)` is not the identity on `-0.0` itself and the whole
+/// point of the predicate is that taking the shortcut cannot change which
+/// computation the exact path would have performed on nonzero data.
+#[must_use]
+pub fn folds_to_lowpass(coefficients: &CoeffMatrix) -> bool {
+    let (rows, cols) = (coefficients.rows(), coefficients.cols());
+    let (hr, hc) = (rows / 2, cols / 2);
+    let data = coefficients.as_slice();
+    for y in 0..rows {
+        for x in 0..cols {
+            if (x >= hc || y >= hr) && data[y * cols + x].to_bits() != 0 {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// The 2:1 box average of a block whose dimensions are both even: output
+/// `(x, y)` is the mean of the four samples at `(2x + i, 2y + j)`, summed in
+/// raster order (top-left, top-right, bottom-left, bottom-right) and scaled
+/// by `0.25`, matching the render decimation's summation order.
+fn box_average_into(src: &SampleBlock, out: &mut SampleBlock) {
+    let (hr, hc) = (src.rows() / 2, src.cols() / 2);
+    out.reset(hr, hc);
+    for y in 0..hr {
+        for x in 0..hc {
+            let a = src.at(2 * x, 2 * y);
+            let b = src.at(2 * x + 1, 2 * y);
+            let c = src.at(2 * x, 2 * y + 1);
+            let d = src.at(2 * x + 1, 2 * y + 1);
+            out.set(x, y, (a + b + c + d) * 0.25);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1312,6 +1429,110 @@ mod tests {
             "{what}: {a} vs {b} (delta {})",
             (a - b).abs()
         );
+    }
+
+    // -- Half-resolution reconstruction ------------------------------------
+
+    /// A random coefficient matrix of `transform`'s shape; `low_only` confines
+    /// the nonzero cells to the low quarter so the low-pass branch fires.
+    fn random_coeffs(transform: TransformType, rng: &mut Lcg, low_only: bool) -> CoeffMatrix {
+        let (rows, cols) = (transform.coeff_rows(), transform.coeff_cols());
+        let mut m = CoeffMatrix::zeros(rows, cols);
+        for y in 0..rows {
+            for x in 0..cols {
+                if !low_only || (x < cols / 2 && y < rows / 2) {
+                    m.set(x, y, rng.next(32.0));
+                }
+            }
+        }
+        m
+    }
+
+    /// For every Table I.1 transform, the half-resolution reconstruction
+    /// equals the 2x2 box average of the full reconstruction: exactly for the
+    /// special I.9.3-I.9.8 forms (same computation), to f32 rounding for the
+    /// plain `DCTRxC` families — on both the exact-fold path (dense
+    /// coefficients) and the low-pass branch (low-quarter-only coefficients).
+    #[test]
+    fn half_samples_match_the_box_average_for_every_transform() {
+        let mut rng = Lcg::new(0xdec1_0a7e);
+        for &transform in TransformType::ALL.iter() {
+            for low_only in [false, true] {
+                let coeffs = random_coeffs(transform, &mut rng, low_only);
+                let full = transform.samples_from_coefficients(&coeffs);
+                let mut want = SampleBlock::zeros(0, 0);
+                box_average_into(&full, &mut want);
+                let got = transform.half_samples_from_coefficients(&coeffs);
+                assert_eq!(
+                    (got.rows(), got.cols()),
+                    (transform.half_sample_rows(), transform.half_sample_cols()),
+                    "{transform:?} half dims"
+                );
+                if transform.dct_shape().is_none() {
+                    assert_eq!(
+                        got.as_slice(),
+                        want.as_slice(),
+                        "{transform:?} special-form half samples"
+                    );
+                } else {
+                    let peak = want.as_slice().iter().fold(1.0f32, |m, v| m.max(v.abs()));
+                    for (i, (g, w)) in
+                        got.as_slice().iter().zip(want.as_slice().iter()).enumerate()
+                    {
+                        assert_close(
+                            *g,
+                            *w,
+                            3e-5 * peak,
+                            &format!("{transform:?} low_only={low_only} half cell {i}"),
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Scratch and output reuse across differently shaped varblocks in
+    /// sequence produces the same samples as fresh buffers — the same
+    /// reuse-safety argument `samples_from_coefficients_into` makes.
+    #[test]
+    fn half_samples_into_reuse_matches_the_owning_form() {
+        let mut rng = Lcg::new(0x5c7a_7c4e);
+        let mut out = SampleBlock::zeros(0, 0);
+        let mut scratch = Vec::new();
+        for &transform in &[
+            TransformType::Dct32x32,
+            TransformType::Dct8x8,
+            TransformType::Dct16x8,
+            TransformType::Hornuss,
+            TransformType::Dct16x16,
+        ] {
+            let coeffs = random_coeffs(transform, &mut rng, false);
+            let fresh = transform.half_samples_from_coefficients(&coeffs);
+            transform.half_samples_from_coefficients_into(&coeffs, &mut out, &mut scratch);
+            assert_eq!(
+                out.as_slice(),
+                fresh.as_slice(),
+                "{transform:?} reused vs fresh half samples"
+            );
+        }
+    }
+
+    /// The low-pass predicate is bitwise: a high-region `+0.0` passes, any
+    /// nonzero fails, and a `-0.0` fails too (taking the shortcut must never
+    /// change which computation the exact path would have performed).
+    #[test]
+    fn folds_to_lowpass_is_a_bitwise_zero_test() {
+        let t = TransformType::Dct8x8;
+        let mut m = CoeffMatrix::zeros(t.coeff_rows(), t.coeff_cols());
+        m.set(1, 1, 5.0);
+        m.set(3, 2, -7.0);
+        assert!(folds_to_lowpass(&m), "low-quarter-only must pass");
+        m.set(6, 1, 1.0e-30);
+        assert!(!folds_to_lowpass(&m), "a nonzero high cell must fail");
+        m.set(6, 1, 0.0);
+        assert!(folds_to_lowpass(&m), "restored +0.0 must pass again");
+        m.set(1, 6, -0.0);
+        assert!(!folds_to_lowpass(&m), "-0.0 in the high region must fail");
     }
 
     // -- Table I.1 / I.4 / I.7 vocabulary ----------------------------------

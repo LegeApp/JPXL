@@ -147,11 +147,11 @@ impl<'e> PlanRenderEvaluator<'e> {
         })
     }
 
-    /// The surrogate score of `candidate` through the Phase S2 decimating
-    /// render — reconstruction at full resolution, restoration and colour at
-    /// half — with its wall time (render and metric together), when `want`
-    /// asks for one (navigation pairing or the `JPXL_SURROGATE_SHADOW`
-    /// instrumentation).
+    /// The surrogate score of `candidate` through the Phase S3 decimating
+    /// render — the varblocks' 2:1 box average reconstructed directly in the
+    /// coefficient domain, restoration and colour at half resolution — with
+    /// its wall time (render and metric together), when `want` asks for one
+    /// (navigation pairing or the `JPXL_SURROGATE_SHADOW` instrumentation).
     fn surrogate_of(
         &mut self,
         want: bool,
@@ -178,6 +178,11 @@ impl<'e> PlanRenderEvaluator<'e> {
                 .ok()
                 .map(|result| result.score)
         };
+        // The half planes usually carry full-resolution capacity (they came
+        // from a recycled canonical probe); hand them back so a canonical
+        // render that follows resizes in place instead of allocating three
+        // fresh planes.
+        self.renderer.recycle_planes(half);
         let millis = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
         (score, score.map(|_| millis))
     }
@@ -207,9 +212,10 @@ impl PlanRenderEvaluator<'_> {
         // back so this render reuses them instead of allocating three more.
         self.renderer
             .recycle_planes(core::mem::take(&mut self.linear));
-        // The decimated surrogate render runs first: it recycles its
-        // full-resolution reconstruction planes, which the canonical render
-        // below then reuses.
+        // The decimated surrogate render runs first: it borrows those
+        // full-capacity planes for its half-resolution output and
+        // `surrogate_of` recycles them again, so the canonical render below
+        // still resizes in place.
         let (surrogate_score, surrogate_millis) = self.surrogate_of(want_surrogate, candidate);
         let (width, height, linear) = self
             .renderer
@@ -342,6 +348,10 @@ impl PerceptualEvaluator for PlanRenderEvaluator<'_> {
             // Holding spare planes between probes would raise the search's
             // resident peak; the next render reallocates.
             self.metric.release_scratch();
+        } else {
+            // Keep the (usually full-capacity) plane allocations circulating
+            // for whichever render runs next.
+            self.renderer.recycle_planes(half);
         }
         self.evaluations = self.evaluations.saturating_add(1);
         Ok(Some(PerceptualObservation {
