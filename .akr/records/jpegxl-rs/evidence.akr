@@ -881,6 +881,19 @@ record jpegxl-rs.evidence.n1-shared-crossing-probe-parity/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.n3-confident-stop-byte-identical-holdouts/1 : evidence {
+    title "N3 confident stop: 490/490 holdout cells byte-identical, 0 floor violations, reconstructions and wall down"
+    state verified
+    result pass
+    method command
+    observed_at git:ea65364f1398914ec619e1c38124e89141f2d0e1
+    command "python3 JPXL/tools/one_shot_promotion_ab.py --manifest test-set/ext-polart-manifest.json --splits ext-holdout ...; python3 JPXL/tools/one_shot_promotion_ab.py --manifest test-set/quality-corpus.json --splits holdout ..."
+    artifact ".agent/scratch/n3-probe-budgets-20260829/n3-ab-ext-holdout.json"
+    summary """
+        N3's confident one-probe stop (ea65364), pre-N3 vs N3 interleaved on both reserved holdouts: ext-holdout 350/350 cells and locked mixed holdout 140/140 cells with byte geomean and worst-cell ratio exactly 1.0 (every output byte-identical), 0 floor violations on either arm, total reconstructions 1591 to 1557, wall geomean 0.979/0.985. Sizing on 1652 calibration/development trace cells: the stop fires 88 times, and in all 88 the full search chose exactly the stopped rung; the 1.5-point band admits byte losses (worst +13%) and the ood-only gate admits one saturated-class +5.5% cell, so the shipped rule keeps MET_OVERSHOOT_BAND (1.0) and the strict fallback_reason gate. Firing cells drop to one canonical probe, the 12 MP anchor at q95 included.
+        """
+}
+
 record jpegxl-rs.evidence.native-cjxl-match-2026-08-19/1 : evidence {
     title "cjxl-match.ps1 runs the matched-byte comparison natively"
     state verified

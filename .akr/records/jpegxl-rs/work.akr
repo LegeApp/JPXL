@@ -6940,7 +6940,7 @@ record jpegxl-rs.work.ladder-navigator-unification/4 : work {
 
 record jpegxl-rs.work.multifidelity-quality-search/1 : work {
     title "Multi-fidelity perceptual search: surrogates propose, canonical evaluation accepts"
-    state active
+    state superseded
     scope [
         path "JPXL/crates/jpxl-encode-policy/src/**",
         path "JPXL/crates/jpxl-perceptual/**",
@@ -6955,6 +6955,37 @@ record jpegxl-rs.work.multifidelity-quality-search/1 : work {
     depends_on [ @jpegxl-rs.work.ladder-navigator-unification ]
     part_of [ @jpegxl-rs.track.perceptual-quality-controller ]
     verified_by [ @jpegxl-rs.evidence.r1-render-scratch-exact-and-measured ]
+    source {
+        kind internal
+        role origin
+        path "JPXL/docs/scheduler-unification-and-multifidelity-plan.md"
+        use """
+            Advisor proposal-verification architecture adopted after verification against current profiling attribution and predict_v2 capabilities.
+            """
+    }
+}
+
+record jpegxl-rs.work.multifidelity-quality-search/2 : work {
+    title "Multi-fidelity perceptual search: surrogates propose, canonical evaluation accepts"
+    state active
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/src/**",
+        path "JPXL/crates/jpxl-perceptual/**",
+        path "JPXL/crates/jpxl-plan-render/**"
+    ]
+    intent """
+        On top of the N0/N1-unified ladder mathematics, make most navigation probes cheap while every accepted result stays exact. Phases: N3 confidence-adaptive probe budgets driven by predict_v2 (interval width, saturation_risk, ood_flags select 0-2 surrogate probes and a 1-2 canonical budget; the preset 3/5 canonical caps remain the emergency ceiling; conservative in-interval first probe, then residual-corrected second candidate); S1 a surrogate NavigationEvaluator (half-linear-resolution reconstruction, surviving SSIMULACRA2 scales, Authority::Surrogate) that may only propose - QualityOutcome must be backed by a canonical full-resolution SSIMULACRA2 score, with one canonical correction on miss then fallback to the full navigator; S2 a banded renderer-to-metric pipeline built exact first (band EPF+halo, XYB, horizontal blur, per-column vertical recurrence state, original-pixel-order f64 pooling preserved), then a decimating surrogate variant. Independent exact work R1: per-worker RenderScratch and dequantize_into/idct_into/render_varblock_into in jpxl-plan-render, removing per-varblock CoeffMatrix/SampleBlock/RenderedVarblock/sigma_writes allocation and chunk staging. Conditional later: paired-candidate SIMD lanes (B1), blur/EPF/XYB exact micro-work (E1), rate-path fused multi-rung quantization and a learned rate prior (RT1/RT2). Narrative plan: JPXL/docs/scheduler-unification-and-multifidelity-plan.md.
+        """
+    note """
+        R1 landed 2026-08-29 (a9d421c render-scratch reuse, 8f3192e follow-up), gated by @jpegxl-rs.evidence.r1-render-scratch-exact-and-measured: 16/16 byte-identical vs e895c32, 4.3 MP wall -2.2% / RSS -48 MiB, 12 MP wall +1.2% / RSS +14 MiB under the 2 GiB ceiling; the 12 MP residual is release_scratch's serial munmaps, the price of the ceiling (keeping scratch measured 2284 MiB peak). Named follow-ups: recycling full-resolution planes back through Ssimulacra2::score_owned, and S2's banded scorer, either of which removes the munmap churn structurally. N3 FIRST SLICE LANDED 2026-08-29 (ea65364), gated by @jpegxl-rs.evidence.n3-confident-stop-byte-identical-holdouts: solve_baseline skips the coarser-verification expansion when the qpv2 route is confident (fallback_reason none) and the candidate probe lands feasible within MET_OVERSHOOT_BAND. Sized on 1652 calibration/development trace cells (88 fires, 100% exact-hit; the 1.5-point band and the looser ood-only gate were measured and rejected); holdout gate 490/490 cells byte-identical, 0 floor violations, reconstructions 1591 to 1557, wall -2%. What remains of N3 beyond this slice - surrogate-probe routing per the plan's table - has no consumer until S1 exists, so S1 (surrogate NavigationEvaluator at half resolution, Authority::Surrogate, canonical acceptance) is the next phase and the largest remaining scheduler win. Remaining gates unchanged: policy phases run the promotion A/B (0 floor violations, byte parity band, canonical probes strictly down, no OOD/saturated-tail regression, mispropose rate reported); exact phases byte-identical under the quiet-host recipe. Closed directions in the plan doc must not be revisited. Sizing/gate harnesses kept at .agent/scratch/n3-probe-budgets-20260829.
+        """
+    depends_on [ @jpegxl-rs.work.ladder-navigator-unification ]
+    part_of [ @jpegxl-rs.track.perceptual-quality-controller ]
+    supersedes [ @jpegxl-rs.work.multifidelity-quality-search/1 ]
+    verified_by [
+        @jpegxl-rs.evidence.n3-confident-stop-byte-identical-holdouts,
+        @jpegxl-rs.evidence.r1-render-scratch-exact-and-measured
+    ]
     source {
         kind internal
         role origin
