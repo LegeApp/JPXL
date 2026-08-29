@@ -6888,7 +6888,7 @@ record jpegxl-rs.work.ladder-navigator-unification/2 : work {
 
 record jpegxl-rs.work.ladder-navigator-unification/3 : work {
     title "Unify rate and quality search around a shared quantizer-ladder navigation engine"
-    state active
+    state superseded
     scope [ path "JPXL/crates/jpxl-encode-policy/src/**" ]
     intent """
         Extract a common ladder-navigation engine from rate.rs and quality.rs in three behavior-preserving phases: N0 move Rung/QuantizerChoice/effective_scale/rung_for_effective_scale/coupled_quant_lf into quantizer_ladder.rs; N1 replace the duplicated log-domain crossing math (interpolated_rung, two_anchor_target_rung, target_rung_from_slope; log_loss_crossing, extrapolated_step, geometric_step) with one navigation.rs (LocalModel, Constraint::Ceiling/Floor, coordinate transforms y=ln(bytes) and y=-ln(max(100-score,eps))); N2 a stateful LadderNavigator (NavigationObservation with Authority::Surrogate/Canonical, NavigationPrior, NavigationBudget, no-repeat cache, bracket discovery, crossing tightening) with rate and quality as objective adapters. Byte-rate specifics (never-over ceiling, non-monotone pockets, LF fill, entropy tiers, maximize-bytes ranking) stay in rate.rs; perceptual specifics (canonical render+metric acceptance, score guard, policy bank, reducer) stay in quality.rs. Unify where to probe; never unify what a probe means or what constitutes a valid final answer. Narrative plan: JPXL/docs/scheduler-unification-and-multifidelity-plan.md.
@@ -6912,22 +6912,49 @@ record jpegxl-rs.work.ladder-navigator-unification/3 : work {
     }
 }
 
+record jpegxl-rs.work.ladder-navigator-unification/4 : work {
+    title "Unify rate and quality search around a shared quantizer-ladder navigation engine"
+    state completed
+    scope [ path "JPXL/crates/jpxl-encode-policy/src/**" ]
+    intent """
+        Extract a common ladder-navigation engine from rate.rs and quality.rs in behavior-preserving phases: N0 move Rung/QuantizerChoice/effective_scale/rung_for_effective_scale/coupled_quant_lf into quantizer_ladder.rs; N1 replace the duplicated log-domain crossing math with one navigation.rs. N2's stateful LadderNavigator is not built: the 2026-08-29 user directive resolved the open sequencing decision - unification is only as important as it benefits optimization for speed and quality - and @jpegxl-rs.assessment.n2-navigator-does-not-pay-for-itself had already found N2 buys neither. Byte-rate specifics stay in rate.rs; perceptual specifics stay in quality.rs. Unify where to probe; never unify what a probe means or what constitutes a valid final answer. Narrative plan: JPXL/docs/scheduler-unification-and-multifidelity-plan.md.
+        """
+    note """
+        N0 landed 2026-08-29 (2ed1273): quantizer_ladder.rs owns Rung, QuantizerChoice, HF_MUL_RUNGS, LADDER_LEN, the HfMul segment helpers, coupled_quant_lf, effective_scale and rung_for_effective_scale plus the four ladder-shape tests; rate.rs re-exports them and quality.rs, quality_prediction.rs, candidate.rs and stability.rs import from the new module. N1 landed 2026-08-29 (760a3e0): navigation.rs is the single copy of the crossing mathematics (ln_scale, rung_for_scale, fit_slope, LocalModel::{new,through,crossing}, bounded_fraction_crossing, Progress, force_progress, geometric_step); rate.rs supplies ln_bytes and quality.rs supplies neg_ln_loss so both curves rise in x, and the negation is proved bit-exact by a navigation.rs test. Deliberate non-unifications, parameterised not harmonised: Progress::AtLeastOneRung (rate) vs NudgeWhenStuck (quality); bounded_fraction_crossing (rate bisection) vs LocalModel::crossing (everything else); guards left at call sites; cold_step's integer octave. Gates met: @jpegxl-rs.evidence.n0-ladder-extraction-byte-identical and @jpegxl-rs.evidence.n1-shared-crossing-probe-parity (24/24 identical probe sequences, 16/16 byte-identical). N2 RESOLVED AS SKIPPED 2026-08-29: the user's directive that unification matters only insofar as it benefits speed and quality closes the sequencing question the previous session left open; @jpegxl-rs.assessment.n2-navigator-does-not-pay-for-itself stands as the technical grounds (residual duplication is ~sixty lines of bookkeeping with deliberately opposite reducers, different cache kinds, and step rules that cannot share a next_action() loop bit-exactly). Authority/NavigationPrior/Constraint types belong where S1 gives them a consumer. Rejected shapes stand: rate::Search<F> as the shared abstraction, quality::Navigator as the shared abstraction, evaluator-owning generics. The work completes with N0+N1; N3/R1 and everything after live under @jpegxl-rs.work.multifidelity-quality-search. Gate harnesses and the e895c32 baseline CLI kept at .agent/scratch/n0-ladder-extract-20260829.
+        """
+    part_of [ @jpegxl-rs.track.perceptual-quality-controller ]
+    supersedes [ @jpegxl-rs.work.ladder-navigator-unification/3 ]
+    verified_by [
+        @jpegxl-rs.evidence.n0-ladder-extraction-byte-identical,
+        @jpegxl-rs.evidence.n1-shared-crossing-probe-parity
+    ]
+    source {
+        kind internal
+        role origin
+        path "JPXL/docs/scheduler-unification-and-multifidelity-plan.md"
+        use """
+            Advisor-recommended unification architecture, verified against the tree at e895c32 before adoption.
+            """
+    }
+}
+
 record jpegxl-rs.work.multifidelity-quality-search/1 : work {
     title "Multi-fidelity perceptual search: surrogates propose, canonical evaluation accepts"
-    state proposed
+    state active
     scope [
         path "JPXL/crates/jpxl-encode-policy/src/**",
         path "JPXL/crates/jpxl-perceptual/**",
         path "JPXL/crates/jpxl-plan-render/**"
     ]
     intent """
-        On top of the unified LadderNavigator, make most navigation probes cheap while every accepted result stays exact. Phases: N3 confidence-adaptive probe budgets driven by predict_v2 (interval width, saturation_risk, ood_flags select 0-2 surrogate probes and a 1-2 canonical budget; the preset 3/5 canonical caps remain the emergency ceiling; conservative in-interval first probe, then residual-corrected second candidate); S1 a surrogate NavigationEvaluator (half-linear-resolution reconstruction, surviving SSIMULACRA2 scales, Authority::Surrogate) that may only propose - QualityOutcome must be backed by a canonical full-resolution SSIMULACRA2 score, with one canonical correction on miss then fallback to the full navigator; S2 a banded renderer-to-metric pipeline built exact first (band EPF+halo, XYB, horizontal blur, per-column vertical recurrence state, original-pixel-order f64 pooling preserved), then a decimating surrogate variant. Independent exact work R1: per-worker RenderScratch and dequantize_into/idct_into/render_varblock_into in jpxl-plan-render, removing per-varblock CoeffMatrix/SampleBlock/RenderedVarblock/sigma_writes allocation and chunk staging. Conditional later: paired-candidate SIMD lanes (B1), blur/EPF/XYB exact micro-work (E1), rate-path fused multi-rung quantization and a learned rate prior (RT1/RT2). Narrative plan: JPXL/docs/scheduler-unification-and-multifidelity-plan.md.
+        On top of the N0/N1-unified ladder mathematics, make most navigation probes cheap while every accepted result stays exact. Phases: N3 confidence-adaptive probe budgets driven by predict_v2 (interval width, saturation_risk, ood_flags select 0-2 surrogate probes and a 1-2 canonical budget; the preset 3/5 canonical caps remain the emergency ceiling; conservative in-interval first probe, then residual-corrected second candidate); S1 a surrogate NavigationEvaluator (half-linear-resolution reconstruction, surviving SSIMULACRA2 scales, Authority::Surrogate) that may only propose - QualityOutcome must be backed by a canonical full-resolution SSIMULACRA2 score, with one canonical correction on miss then fallback to the full navigator; S2 a banded renderer-to-metric pipeline built exact first (band EPF+halo, XYB, horizontal blur, per-column vertical recurrence state, original-pixel-order f64 pooling preserved), then a decimating surrogate variant. Independent exact work R1: per-worker RenderScratch and dequantize_into/idct_into/render_varblock_into in jpxl-plan-render, removing per-varblock CoeffMatrix/SampleBlock/RenderedVarblock/sigma_writes allocation and chunk staging. Conditional later: paired-candidate SIMD lanes (B1), blur/EPF/XYB exact micro-work (E1), rate-path fused multi-rung quantization and a learned rate prior (RT1/RT2). Narrative plan: JPXL/docs/scheduler-unification-and-multifidelity-plan.md.
         """
     note """
-        Gates: policy phases (N3, S1, S2-surrogate) run the 441-cell A/B sweep with 0 floor violations, bytes within the ~0.997 parity band, mean canonical probes strictly down, no OOD/saturated-tail regression, surrogate mispropose rate reported; exact phases (R1, S2-exact, E1) require byte-identical fingerprints (S2-exact: bit-identical metric scores) with wall/RSS measured under the quiet-host wall_current.py recipe. Closed directions are listed in the plan doc and must not be revisited (pool.rs accumulation order, fixed slopes, policy-bank searches, entropy alternatives).
+        R1 landed 2026-08-29 (a9d421c render-scratch reuse, 8f3192e follow-up): PlanRenderer owns a RenderScratch persisting across renders (recycled output planes, gaborish/EPF ping-pong partner, PaddedPlane::new_in/into_storage padded storage, sigma, varblock slot arena filled through the parked-slot pattern); per-varblock dequant/IDCT draw from a strided worker pool via new jpxl-core primitives (CoeffMatrix::reset, SampleBlock::reset, samples_from_coefficients_into over the existing idct_2d_into); the evaluator recycles planes across probes and, on the large-frame path, releases the frame-sized scratch per probe (keeping only the small varblock arena) to hold the 2 GiB peak ceiling. Gate: @jpegxl-rs.evidence.r1-render-scratch-exact-and-measured - 16/16 byte-identical vs e895c32, 4.3 MP wall -2.2% / RSS -48 MiB, 12 MP wall +1.2% / RSS +14 MiB under the ceiling, the residual attributed to release_scratch's serial munmaps (~30 ms/encode), which are the price of the ceiling: keeping scratch across probes measured 2284 MiB peak. Named follow-ups, not built: recycling the full-resolution planes back through Ssimulacra2::score_owned (they die after scale 0 today), and S2's banded scorer, either of which removes the munmap churn structurally. Remaining gates for the policy phases (N3, S1, S2-surrogate): the 441-cell A/B sweep with 0 floor violations, bytes within the ~0.997 parity band, mean canonical probes strictly down, no OOD/saturated-tail regression, surrogate mispropose rate reported; exact phases (S2-exact, E1) require byte-identical fingerprints (S2-exact: bit-identical metric scores) with wall/RSS under the quiet-host recipe. Closed directions in the plan doc must not be revisited (pool.rs accumulation order, fixed slopes, policy-bank searches, entropy alternatives). N3 shape settled by trace reading 2026-08-29: the win is skipping expand_until_bracketed's coarser-verification probe when prediction is confident (no ood_flags/fallback_reason, low saturation_risk, tight interval) and the first canonical probe lands feasible within the search's own MET_OVERSHOOT_BAND; thresholds to be sized from fresh JPXL_QUALITY_TRACE collection over the ext corpus, gated with tools/one_shot_promotion_ab.py.
         """
     depends_on [ @jpegxl-rs.work.ladder-navigator-unification ]
     part_of [ @jpegxl-rs.track.perceptual-quality-controller ]
+    verified_by [ @jpegxl-rs.evidence.r1-render-scratch-exact-and-measured ]
     source {
         kind internal
         role origin

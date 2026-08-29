@@ -6654,6 +6654,19 @@ record jpegxl-rs.evidence.quality-q9-workspace-gates-2026-08-19/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.r1-render-scratch-exact-and-measured/1 : evidence {
+    title "R1 render-scratch reuse: byte-identical, 4.3 MP wall and RSS down, 12 MP within 1.2% under the memory ceiling"
+    state verified
+    result pass
+    method command
+    observed_at git:8f3192e76f95b38924f8c47de6ed9153d1430579
+    command "python3 .agent/scratch/n0-ladder-extract-20260829/identity_n0.py; python3 .agent/scratch/r1-render-scratch-20260829/wall_ab_r1.py"
+    artifact ".agent/scratch/r1-render-scratch-20260829/wall-ab-final.log"
+    summary """
+        R1 (a9d421c + 8f3192e) is exact and measured: 16/16 cells byte-identical vs the e895c32 baseline CLI (both quality efforts and the rate path), and every A/B run's output byte-identical run for run. Quiet-host interleaved A/B vs pre-R1 c41a705, --threads 4: 4.3 MP quality wall 1.121 s to 1.097 s (-2.2%), max RSS 1059 MiB to 1011 MiB (-48 MiB); 12 MP quality wall 2.939 s to 2.974 s (+1.2%), max RSS 2008 MiB to 2022 MiB, under the 2 GiB ceiling. The 12 MP residual is attributed: ~30 ms/encode is release_scratch's serial munmaps of the ~900 MB frame scratch each probe, kept because retaining the scratch across probes measured 2284 MiB peak, over the ceiling; render-stage timings themselves are equal to baseline. 1605 tests, clippy -D warnings, fmt --check green.
+        """
+}
+
 record jpegxl-rs.evidence.readme-current-state-2026-08-25/1 : evidence {
     title "README describes the current supported scope, exclusions, clean-room policy, build steps, and the recorded benchmark"
     state verified
