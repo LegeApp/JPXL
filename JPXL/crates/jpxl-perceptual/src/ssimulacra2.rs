@@ -8,16 +8,14 @@
 //! norms × 3 maps` terms (108 for a full pyramid) are combined with the
 //! metric's published weights and remapped onto its 0..100 scale.
 
-use crate::bands::{BAND_ROWS, Handoff, Partials, band_count, band_of};
-use crate::blur::Blur;
 use crate::executor::BandExecutor;
-use crate::pool::{ChannelTerms, MapSums, MomentBands, accumulate_band};
+use crate::pool::ChannelTerms;
 #[cfg(feature = "evaluator")]
 use crate::reference::convert_planes_in_place;
 use crate::reference::{
     PrecomputedReference, ReferenceRetention, ReferenceScale, convert_planes, downscale_planes,
 };
-use crate::{LinearRgbView, MetricError, pyramid};
+use crate::{LinearRgbView, MetricError, pyramid, streamed};
 
 /// Pooled terms of one scale.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -48,12 +46,9 @@ pub struct Ssimulacra2 {
     prev_rgb: [Vec<f32>; 3],
     cur_rgb: [Vec<f32>; 3],
     xyb: [Vec<f32>; 3],
-    mu2: Vec<f32>,
-    s22: Vec<f32>,
-    s12: Vec<f32>,
-    ref_mu: Vec<f32>,
-    ref_s11: Vec<f32>,
-    blurs: Vec<Blur>,
+    /// The streamed moment pipeline's rings and per-strip recursion state —
+    /// `O(width)`, never a full frame.
+    stream: streamed::Scratch,
 }
 
 impl Ssimulacra2 {
@@ -93,7 +88,6 @@ impl Ssimulacra2 {
                 candidate: (candidate.width(), candidate.height()),
             });
         }
-        self.blurs.resize_with(5, Blur::new);
         let mut scales = Vec::with_capacity(reference.scale_count());
         let mut w = usize::try_from(candidate.width()).unwrap_or(usize::MAX);
         let mut h = usize::try_from(candidate.height()).unwrap_or(usize::MAX);
@@ -125,8 +119,7 @@ impl Ssimulacra2 {
                 };
                 convert_planes(src, &mut self.xyb, w, executor);
             }
-            let channels =
-                self.score_converted_scale(rs, reference.retention(), w, h, executor, false);
+            let channels = self.score_converted_scale(rs, reference.retention(), w, h, executor);
             scales.push(ScaleTerms {
                 width: u32::try_from(w).unwrap_or(u32::MAX),
                 height: u32::try_from(h).unwrap_or(u32::MAX),
@@ -179,7 +172,6 @@ impl Ssimulacra2 {
                 height: reference.height().div_ceil(2),
             });
         }
-        self.blurs.resize_with(5, Blur::new);
         let mut w = usize::try_from(candidate.width()).unwrap_or(usize::MAX);
         let mut h = usize::try_from(candidate.height()).unwrap_or(usize::MAX);
         let mut scales = Vec::with_capacity(reference.scale_count() - 1);
@@ -204,8 +196,7 @@ impl Ssimulacra2 {
                 let [cr, cg, cb] = &self.cur_rgb;
                 convert_planes([cr, cg, cb], &mut self.xyb, w, executor);
             }
-            let channels =
-                self.score_converted_scale(rs, reference.retention(), w, h, executor, false);
+            let channels = self.score_converted_scale(rs, reference.retention(), w, h, executor);
             scales.push(ScaleTerms {
                 width: u32::try_from(w).unwrap_or(u32::MAX),
                 height: u32::try_from(h).unwrap_or(u32::MAX),
@@ -246,7 +237,6 @@ impl Ssimulacra2 {
             }
         }
 
-        self.blurs.resize_with(5, Blur::new);
         let mut scales = Vec::with_capacity(reference.scale_count());
         let mut current = Some(candidate);
         let mut w = usize::try_from(width).unwrap_or(usize::MAX);
@@ -267,14 +257,8 @@ impl Ssimulacra2 {
             };
             convert_planes_in_place(&mut rgb, w, executor);
             self.xyb = rgb;
-            let channels = self.score_converted_scale(
-                reference_scale,
-                reference.retention(),
-                w,
-                h,
-                executor,
-                true,
-            );
+            let channels =
+                self.score_converted_scale(reference_scale, reference.retention(), w, h, executor);
             scales.push(ScaleTerms {
                 width: u32::try_from(w).unwrap_or(u32::MAX),
                 height: u32::try_from(h).unwrap_or(u32::MAX),
@@ -299,158 +283,17 @@ impl Ssimulacra2 {
         width: usize,
         height: usize,
         executor: &dyn BandExecutor,
-        low_memory: bool,
     ) -> [ChannelTerms; 3] {
-        let pixels = width * height;
-        // The blurs below write every sample of these planes before the pool
-        // reads them, so a reused plane needs no re-zeroing; resize only grows
-        // (zeroed) or truncates.
-        for buf in [&mut self.mu2, &mut self.s22, &mut self.s12] {
-            buf.resize(pixels, 0.0);
-        }
-        let recompute_reference = retention == ReferenceRetention::PlanesOnly;
-        if recompute_reference {
-            for buf in [&mut self.ref_mu, &mut self.ref_s11] {
-                buf.resize(pixels, 0.0);
-            }
-        }
-
-        let mut channels = [ChannelTerms::default(); 3];
-        for (c, terms) in channels.iter_mut().enumerate() {
-            let Some(img1) = reference.xyb.get(c) else {
-                continue;
-            };
-            let Some(img2) = self.xyb.get(c) else {
-                continue;
-            };
-            // Up to five independent blurs: the candidate's mean, second
-            // moment and cross moment, plus the source moments when the
-            // reference did not retain them.
-            if low_memory {
-                if let Some(blur) = self.blurs.first_mut() {
-                    blur.blur_plane(img2, &mut self.mu2, width, height, executor);
-                    blur.blur_product_plane(img2, img2, &mut self.s22, width, height, executor);
-                    blur.blur_product_plane(img1, img2, &mut self.s12, width, height, executor);
-                    if recompute_reference {
-                        blur.blur_plane(img1, &mut self.ref_mu, width, height, executor);
-                        blur.blur_product_plane(
-                            img1,
-                            img1,
-                            &mut self.ref_s11,
-                            width,
-                            height,
-                            executor,
-                        );
-                    }
-                }
-            } else {
-                enum Job<'a> {
-                    Plane(&'a mut Blur, &'a [f32], &'a mut [f32]),
-                    Product(&'a mut Blur, &'a [f32], &'a [f32], &'a mut [f32]),
-                }
-                let mut blurs = self.blurs.iter_mut();
-                let mut items: Vec<Job<'_>> = Vec::with_capacity(5);
-                if let Some(b) = blurs.next() {
-                    items.push(Job::Plane(b, img2.as_slice(), self.mu2.as_mut_slice()));
-                }
-                if let Some(b) = blurs.next() {
-                    items.push(Job::Product(
-                        b,
-                        img2.as_slice(),
-                        img2.as_slice(),
-                        self.s22.as_mut_slice(),
-                    ));
-                }
-                if let Some(b) = blurs.next() {
-                    items.push(Job::Product(
-                        b,
-                        img1.as_slice(),
-                        img2.as_slice(),
-                        self.s12.as_mut_slice(),
-                    ));
-                }
-                if recompute_reference {
-                    if let Some(b) = blurs.next() {
-                        items.push(Job::Plane(b, img1.as_slice(), self.ref_mu.as_mut_slice()));
-                    }
-                    if let Some(b) = blurs.next() {
-                        items.push(Job::Product(
-                            b,
-                            img1.as_slice(),
-                            img1.as_slice(),
-                            self.ref_s11.as_mut_slice(),
-                        ));
-                    }
-                }
-                let items = Handoff::new(items);
-                executor.run(items.len(), &|index| match items.take(index) {
-                    Some(Job::Plane(blur, input, output)) => {
-                        blur.blur_plane(input, output, width, height, executor);
-                    }
-                    Some(Job::Product(blur, a, b, output)) => {
-                        blur.blur_product_plane(a, b, output, width, height, executor);
-                    }
-                    None => {}
-                });
-            }
-
-            let (mu1, s11): (&[f32], &[f32]) = match (&reference.mu, &reference.s11) {
-                (Some(mu), Some(s11)) if !recompute_reference => (
-                    mu.get(c).map_or(&[][..], Vec::as_slice),
-                    s11.get(c).map_or(&[][..], Vec::as_slice),
-                ),
-                _ => (&self.ref_mu, &self.ref_s11),
-            };
-            let sums = pool_maps(
-                &MomentBands {
-                    img1,
-                    mu1,
-                    s11,
-                    img2,
-                    mu2: &self.mu2,
-                    s22: &self.s22,
-                    s12: &self.s12,
-                },
-                width,
-                height,
-                executor,
-            );
-            *terms = ChannelTerms::from_sums(&sums, pixels);
-        }
-        channels
+        streamed::channel_terms(
+            &mut self.stream,
+            reference,
+            retention,
+            &self.xyb,
+            width,
+            height,
+            executor,
+        )
     }
-}
-
-/// Pools the three maps over the plane in fixed row bands, reducing the
-/// bands' partial sums in order.
-fn pool_maps(
-    planes: &MomentBands<'_>,
-    width: usize,
-    height: usize,
-    executor: &dyn BandExecutor,
-) -> MapSums {
-    let band_len = width.saturating_mul(BAND_ROWS);
-    let bands = band_count(height);
-    let partials = Partials::<MapSums>::new(bands);
-    executor.run(bands, &|index| {
-        let mut sums = MapSums::default();
-        let band = MomentBands {
-            img1: band_of(planes.img1, index, band_len),
-            mu1: band_of(planes.mu1, index, band_len),
-            s11: band_of(planes.s11, index, band_len),
-            img2: band_of(planes.img2, index, band_len),
-            mu2: band_of(planes.mu2, index, band_len),
-            s22: band_of(planes.s22, index, band_len),
-            s12: band_of(planes.s12, index, band_len),
-        };
-        accumulate_band(&band, &mut sums);
-        partials.set(index, sums);
-    });
-    let mut total = MapSums::default();
-    for partial in partials.into_ordered() {
-        total.add(&partial);
-    }
-    total
 }
 
 /// The metric's published weights over `(component, scale, norm, map)` in

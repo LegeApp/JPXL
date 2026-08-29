@@ -70,32 +70,3 @@ pub(crate) fn mutable_bands(planes: Vec<&mut [f32]>, band_len: usize) -> Handoff
     }
     Handoff::new(bands)
 }
-
-/// Partial sums produced by bands, reduced in band order by the caller.
-pub(crate) struct Partials<T> {
-    slots: Vec<Mutex<T>>,
-}
-
-impl<T: Default + Copy> Partials<T> {
-    pub(crate) fn new(count: usize) -> Self {
-        Self {
-            slots: (0..count).map(|_| Mutex::new(T::default())).collect(),
-        }
-    }
-
-    pub(crate) fn set(&self, index: usize, value: T) {
-        if let Some(slot) = self.slots.get(index)
-            && let Ok(mut guard) = slot.lock()
-        {
-            *guard = value;
-        }
-    }
-
-    /// The partials in index order.
-    pub(crate) fn into_ordered(self) -> Vec<T> {
-        self.slots
-            .into_iter()
-            .map(|slot| slot.into_inner().unwrap_or_default())
-            .collect()
-    }
-}

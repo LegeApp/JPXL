@@ -33,7 +33,7 @@ use crate::bands::{BAND_ROWS, band_of, mutable_bands};
 use crate::executor::BandExecutor;
 
 /// Truncation radius `N = round(3.2795 σ + 0.2546)` for σ = 1.5.
-const RADIUS: isize = 5;
+pub(crate) const RADIUS: isize = 5;
 
 /// Input gains of the three cosine components (k = 1, 3, 5).
 const MUL_IN: [f64; 3] = [
@@ -56,9 +56,13 @@ pub struct Blur {
     temp: Vec<f32>,
 }
 
+/// A blur's input: a plane, or a per-sample product of two planes rounded to
+/// `f32` as it enters the horizontal pass.
 #[derive(Clone, Copy)]
-enum BlurInput<'a> {
+pub(crate) enum BlurInput<'a> {
+    /// A single row-major plane.
     Plane(&'a [f32]),
+    /// The per-sample product `a * b`.
     Product(&'a [f32], &'a [f32]),
 }
 
@@ -184,7 +188,7 @@ const ROW_LANES: usize = 4;
 /// depends on that row alone and the lane arithmetic is exactly [`step`]'s,
 /// so the grouping cannot change a value. Dispatched to an AVX2 build where
 /// the host supports it.
-fn horizontal_band(input: BlurInput<'_>, out_band: &mut [f32], width: usize) {
+pub(crate) fn horizontal_band(input: BlurInput<'_>, out_band: &mut [f32], width: usize) {
     #[cfg(target_arch = "x86_64")]
     if jpxl_core::cpu::has_avx2() {
         // SAFETY: `horizontal_band_avx2` only requires that the host support
@@ -407,7 +411,7 @@ fn horizontal_padded(output: &mut [f32], padded: &[f32]) {
 
 /// Columns processed together in the vertical pass: each strip is one
 /// executor item writing its own buffer.
-const STRIP: usize = 64;
+pub(crate) const STRIP: usize = 64;
 
 /// Vertical recursive pass over every column, strips in parallel, each strip
 /// writing its own disjoint column range of the row-major output directly.
@@ -432,7 +436,7 @@ fn vertical_pass(
 
 /// A row-major plane shared across strip workers, each writing row windows of
 /// a column range no other worker touches.
-struct DisjointColumns {
+pub(crate) struct DisjointColumns {
     ptr: *mut f32,
     len: usize,
 }
@@ -444,7 +448,7 @@ struct DisjointColumns {
 unsafe impl Sync for DisjointColumns {}
 
 impl DisjointColumns {
-    fn new(plane: &mut [f32]) -> Self {
+    pub(crate) fn new(plane: &mut [f32]) -> Self {
         Self {
             ptr: plane.as_mut_ptr(),
             len: plane.len(),
@@ -461,7 +465,7 @@ impl DisjointColumns {
     // The `&self`-to-`&mut` shape is the point of the type: it is a manual
     // interior-mutability cell whose disjointness contract lives in `unsafe`.
     #[allow(unsafe_code, clippy::mut_from_ref)]
-    unsafe fn window(&self, offset: usize, cols: usize) -> Option<&mut [f32]> {
+    pub(crate) unsafe fn window(&self, offset: usize, cols: usize) -> Option<&mut [f32]> {
         let end = offset.checked_add(cols)?;
         if end > self.len {
             return None;
@@ -476,7 +480,8 @@ impl DisjointColumns {
 /// (structure-of-arrays). Each pole's per-column update is then an independent
 /// lane, so the compiler vectorises the column loop. `prev[k]`/`prev2[k]` are
 /// the two previous outputs of pole `k` for every column.
-struct StripState {
+#[derive(Debug)]
+pub(crate) struct StripState {
     prev: [Vec<f64>; 3],
     prev2: [Vec<f64>; 3],
     /// `f64::from(top + bottom)` for the current row, one per column.
@@ -486,13 +491,26 @@ struct StripState {
 }
 
 impl StripState {
-    fn new(cols: usize) -> Self {
+    pub(crate) fn new(cols: usize) -> Self {
         Self {
             prev: [vec![0.0; cols], vec![0.0; cols], vec![0.0; cols]],
             prev2: [vec![0.0; cols], vec![0.0; cols], vec![0.0; cols]],
             sum: vec![0.0; cols],
             acc: vec![0.0; cols],
         }
+    }
+
+    /// Returns the state to the all-zero start over `cols` columns, exactly
+    /// as [`Self::new`] builds it.
+    pub(crate) fn reset(&mut self, cols: usize) {
+        for lane in self.prev.iter_mut().chain(self.prev2.iter_mut()) {
+            lane.clear();
+            lane.resize(cols, 0.0);
+        }
+        self.sum.clear();
+        self.sum.resize(cols, 0.0);
+        self.acc.clear();
+        self.acc.resize(cols, 0.0);
     }
 }
 
@@ -531,7 +549,12 @@ fn pole_step(
 /// writes the summed output rounded to `f32` once.
 #[inline(always)]
 #[allow(clippy::cast_possible_truncation)]
-fn vertical_row(top: &[f32], bottom: &[f32], state: &mut StripState, out: Option<&mut [f32]>) {
+pub(crate) fn vertical_row(
+    top: &[f32],
+    bottom: &[f32],
+    state: &mut StripState,
+    out: Option<&mut [f32]>,
+) {
     let StripState {
         prev,
         prev2,

@@ -43,6 +43,7 @@ pub mod pool;
 pub mod pyramid;
 pub mod reference;
 pub mod ssimulacra2;
+mod streamed;
 pub mod version;
 
 #[cfg(feature = "evaluator")]
