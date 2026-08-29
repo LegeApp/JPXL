@@ -855,6 +855,19 @@ record jpegxl-rs.evidence.modular-search-chaff-2026-08-10/1 : evidence {
     author "GitHub Uploader"
 }
 
+record jpegxl-rs.evidence.n0-ladder-extraction-byte-identical/1 : evidence {
+    title "N0 quantizer-ladder extraction is byte-identical on 13 quality and rate cells"
+    state verified
+    result pass
+    method command
+    observed_at git:2ed12734c616bf5d39663b70a2d2d8451e1456cf
+    command "python3 .agent/scratch/n0-ladder-extract-20260829/identity_n0.py"
+    artifact ".agent/scratch/n0-ladder-extract-20260829/identity-n0.json"
+    summary """
+        Release CLI built from the current tree and from e895c32 produced identical SHA-256 codestreams on all 13 cells: eight --quality cells (fast q70/q80 and balanced q85/q90 over photo-201839-large-4000x3000, photo-201839-mid-2400x1800, photo-203230-mid2-2832x2124, scene-20240502_151356) and five --target-bytes cells (200 kB, 1.5 MB, 6 MB, 400 kB, 4 MB) whose tight targets drive the search above global_scale's ceiling into the HfMul segments. Workspace cargo test (fast-debug), clippy --workspace --all-targets -D warnings, and cargo fmt --all --check all pass at the same commit.
+        """
+}
+
 record jpegxl-rs.evidence.native-cjxl-match-2026-08-19/1 : evidence {
     title "cjxl-match.ps1 runs the matched-byte comparison natively"
     state verified

@@ -5,7 +5,7 @@ build {
     tool "akr 0.4.0"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:6ac895964def8010de05a0b2df35dd6b307b6fe4ed0efa4ba6fff6608633c48f"
+    source_graph "sha256:6d839bcdb9f5709e5ec10cea1b72faf0b10508ccd79867f57a0f6244431b8623"
 }
 
 source ".akr/project.akr" {
@@ -29,8 +29,8 @@ source ".akr/records/jpegxl-rs/decisions.akr" {
 }
 
 source ".akr/records/jpegxl-rs/evidence.akr" {
-    hash "sha256:d04e0b11af4cc93647f60cb756ed981f01a093d4ab3969445c4eba15fd4f7aaf"
-    records 566
+    hash "sha256:1872ea8cf04e69796b4672ad386ac90efa470a1452fca0744c070008eb7e8533"
+    records 567
 }
 
 source ".akr/records/jpegxl-rs/milestones.akr" {
@@ -69,7 +69,7 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:31b0d0f3b820b96a7ea55da3d5ed3a93d46d4f85f0e696983e6ed862ca9d4aed"
+    hash "sha256:25e6074d20ed26c7574f044b2d31a4e52f79ffe2b151904516d2fac3ed762c6f"
     records 190
 }
 
@@ -3619,10 +3619,16 @@ resolution @jpegxl-rs.work.ladder-navigator-unification/1 {
     hash "sha256:ee46ea6ea41bbe6b52ee4962868f2ed858f276a6e2455fd361c4086cc0aee1c0"
 }
 
+resolution @jpegxl-rs.work.ladder-navigator-unification/1 {
+    slot verified_by
+    to @jpegxl-rs.evidence.n0-ladder-extraction-byte-identical/1
+    hash "sha256:62d1f8ada7a2ae10fe2f17d4994043d1f2df07714982b99696ea96ab0303685f"
+}
+
 resolution @jpegxl-rs.work.multifidelity-quality-search/1 {
     slot depends_on
     to @jpegxl-rs.work.ladder-navigator-unification/1
-    hash "sha256:d49b3560161aaa586d52bf5f01717f39f8bef41527fd2496567569a918afb724"
+    hash "sha256:1c627b431e9f335deb95ced741bf5e55d0b48bc48bb5993e8fc3652e5d3d5fb0"
 }
 
 resolution @jpegxl-rs.work.multifidelity-quality-search/1 {
@@ -4218,6 +4224,11 @@ seal @jpegxl-rs.evidence.modular-effort-ramp-tests-2026-08-10/1 {
 seal @jpegxl-rs.evidence.modular-search-chaff-2026-08-10/1 {
     state verified
     hash "sha256:a4833fa291e1afa6f1cb66d12b6bbf69970a863ef0ccf76d5c102d17de002152"
+}
+
+seal @jpegxl-rs.evidence.n0-ladder-extraction-byte-identical/1 {
+    state verified
+    hash "sha256:62d1f8ada7a2ae10fe2f17d4994043d1f2df07714982b99696ea96ab0303685f"
 }
 
 seal @jpegxl-rs.evidence.native-cjxl-match-2026-08-19/1 {
@@ -8273,6 +8284,11 @@ seal @jpegxl-rs.work.general-use-api-cli/2 {
 seal @jpegxl-rs.work.jpeg-bitstream-recompression/1 {
     state active
     hash "sha256:ce3dba766d1838cacfa52c7f95faf9c996bebf87a5013c532a4b798d7a41bce2"
+}
+
+seal @jpegxl-rs.work.ladder-navigator-unification/1 {
+    state active
+    hash "sha256:1c627b431e9f335deb95ced741bf5e55d0b48bc48bb5993e8fc3652e5d3d5fb0"
 }
 
 seal @jpegxl-rs.work.native-windows-quality-tooling/1 {
