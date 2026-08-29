@@ -6840,7 +6840,7 @@ record jpegxl-rs.work.jpeg-bitstream-recompression/1 : work {
 
 record jpegxl-rs.work.ladder-navigator-unification/1 : work {
     title "Unify rate and quality search around a shared quantizer-ladder navigation engine"
-    state active
+    state superseded
     scope [ path "JPXL/crates/jpxl-encode-policy/src/**" ]
     intent """
         Extract a common ladder-navigation engine from rate.rs and quality.rs in three behavior-preserving phases: N0 move Rung/QuantizerChoice/effective_scale/rung_for_effective_scale/coupled_quant_lf into quantizer_ladder.rs; N1 replace the duplicated log-domain crossing math (interpolated_rung, two_anchor_target_rung, target_rung_from_slope; log_loss_crossing, extrapolated_step, geometric_step) with one navigation.rs (LocalModel, Constraint::Ceiling/Floor, coordinate transforms y=ln(bytes) and y=-ln(max(100-score,eps))); N2 a stateful LadderNavigator (NavigationObservation with Authority::Surrogate/Canonical, NavigationPrior, NavigationBudget, no-repeat cache, bracket discovery, crossing tightening) with rate and quality as objective adapters. Byte-rate specifics (never-over ceiling, non-monotone pockets, LF fill, entropy tiers, maximize-bytes ranking) stay in rate.rs; perceptual specifics (canonical render+metric acceptance, score guard, policy bank, reducer) stay in quality.rs. Unify where to probe; never unify what a probe means or what constitutes a valid final answer. Narrative plan: JPXL/docs/scheduler-unification-and-multifidelity-plan.md.
@@ -6850,6 +6850,32 @@ record jpegxl-rs.work.ladder-navigator-unification/1 : work {
         """
     part_of [ @jpegxl-rs.track.perceptual-quality-controller ]
     verified_by [ @jpegxl-rs.evidence.n0-ladder-extraction-byte-identical ]
+    source {
+        kind internal
+        role origin
+        path "JPXL/docs/scheduler-unification-and-multifidelity-plan.md"
+        use """
+            Advisor-recommended unification architecture, verified against the tree at e895c32 before adoption.
+            """
+    }
+}
+
+record jpegxl-rs.work.ladder-navigator-unification/2 : work {
+    title "Unify rate and quality search around a shared quantizer-ladder navigation engine"
+    state active
+    scope [ path "JPXL/crates/jpxl-encode-policy/src/**" ]
+    intent """
+        Extract a common ladder-navigation engine from rate.rs and quality.rs in three behavior-preserving phases: N0 move Rung/QuantizerChoice/effective_scale/rung_for_effective_scale/coupled_quant_lf into quantizer_ladder.rs; N1 replace the duplicated log-domain crossing math (interpolated_rung, two_anchor_target_rung, target_rung_from_slope; log_loss_crossing, extrapolated_step, geometric_step) with one navigation.rs (LocalModel, Constraint::Ceiling/Floor, coordinate transforms y=ln(bytes) and y=-ln(max(100-score,eps))); N2 a stateful LadderNavigator (NavigationObservation with Authority::Surrogate/Canonical, NavigationPrior, NavigationBudget, no-repeat cache, bracket discovery, crossing tightening) with rate and quality as objective adapters. Byte-rate specifics (never-over ceiling, non-monotone pockets, LF fill, entropy tiers, maximize-bytes ranking) stay in rate.rs; perceptual specifics (canonical render+metric acceptance, score guard, policy bank, reducer) stay in quality.rs. Unify where to probe; never unify what a probe means or what constitutes a valid final answer. Narrative plan: JPXL/docs/scheduler-unification-and-multifidelity-plan.md.
+        """
+    note """
+        N0 landed 2026-08-29 (2ed1273): quantizer_ladder.rs owns Rung, QuantizerChoice, HF_MUL_RUNGS, LADDER_LEN, the HfMul segment helpers, coupled_quant_lf, effective_scale and rung_for_effective_scale plus the four ladder-shape tests; rate.rs re-exports them and quality.rs, quality_prediction.rs, candidate.rs and stability.rs import from the new module. N1 landed 2026-08-29 (760a3e0): navigation.rs is the single copy of the crossing mathematics (ln_scale, rung_for_scale, fit_slope, LocalModel::{new,through,crossing}, bounded_fraction_crossing, Progress, force_progress, geometric_step); rate.rs supplies ln_bytes and quality.rs supplies neg_ln_loss so both curves rise in x, and the negation is proved bit-exact by a navigation.rs test rather than argued. Deliberate non-unifications, parameterised not harmonised: Progress::AtLeastOneRung (rate) vs NudgeWhenStuck (quality); bounded_fraction_crossing (rate bisection) vs LocalModel::crossing (everything else); guards left at the call sites; cold_step's integer octave. Constraint::Ceiling/Floor deferred to N2, where a consumer exists. Gates met: @jpegxl-rs.evidence.n0-ladder-extraction-byte-identical and @jpegxl-rs.evidence.n1-shared-crossing-probe-parity (24/24 identical probe sequences, 16/16 byte-identical). N2 (the stateful LadderNavigator) remains. Gate for N2: byte-identical corpus fingerprints and identical probe-sequence traces for both --target-bytes and quality paths, wall neutral. Rejected shapes: rate::Search<F> as the shared abstraction (rate-specific internals), quality::Navigator as the shared abstraction (owns execution policy), evaluator-owning generics. Any parity deviation must be enumerated and A/B-swept before merge.
+        """
+    part_of [ @jpegxl-rs.track.perceptual-quality-controller ]
+    supersedes [ @jpegxl-rs.work.ladder-navigator-unification/1 ]
+    verified_by [
+        @jpegxl-rs.evidence.n0-ladder-extraction-byte-identical,
+        @jpegxl-rs.evidence.n1-shared-crossing-probe-parity
+    ]
     source {
         kind internal
         role origin

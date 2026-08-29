@@ -868,6 +868,19 @@ record jpegxl-rs.evidence.n0-ladder-extraction-byte-identical/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.n1-shared-crossing-probe-parity/1 : evidence {
+    title "N1 shared crossing mathematics: identical probe sequences and byte-identical output"
+    state verified
+    result pass
+    method command
+    observed_at git:760a3e057e5539effe6c4f4f20d4e0531ac50d6a
+    command "python3 .agent/scratch/n0-ladder-extract-20260829/trace_parity.py && python3 .agent/scratch/n0-ladder-extract-20260829/identity_n0.py"
+    artifact ".agent/scratch/n0-ladder-extract-20260829/trace-parity-n1.json"
+    summary """
+        After replacing rate.rs's interpolated_rung/two_anchor_target_rung/target_rung_from_slope and quality.rs's log_loss_crossing/geometric_step/alpha fit with navigation.rs, 24/24 cells produced identical probe sequences against e895c32 — every probe's rung, global_scale, hf_mul, effective_scale, score, bytes, structure source and feasibility compared as exact text through JPXL_QUALITY_TRACE (jpxl.quality-trace/2) and JPXL_RATE_TRACE — and 16/16 cells were byte-identical. Cells span both rate presets (default exhaustive bisection and --effort fast's two-anchor anchor-sketch controller, which is the only path through the two-anchor slope fit and the anchored correction), both quality efforts, and the saturated-gradient and text-screenshot tails. cargo test --workspace (1605 passed, 0 failed), clippy --workspace --all-targets -D warnings and fmt --all --check pass at the same commit. No wall measurement: this phase makes no wall claim.
+        """
+}
+
 record jpegxl-rs.evidence.native-cjxl-match-2026-08-19/1 : evidence {
     title "cjxl-match.ps1 runs the matched-byte comparison natively"
     state verified
