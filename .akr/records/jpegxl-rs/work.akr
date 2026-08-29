@@ -6838,6 +6838,53 @@ record jpegxl-rs.work.jpeg-bitstream-recompression/1 : work {
     }
 }
 
+record jpegxl-rs.work.ladder-navigator-unification/1 : work {
+    title "Unify rate and quality search around a shared quantizer-ladder navigation engine"
+    state proposed
+    scope [ path "JPXL/crates/jpxl-encode-policy/src/**" ]
+    intent """
+        Extract a common ladder-navigation engine from rate.rs and quality.rs in three behavior-preserving phases: N0 move Rung/QuantizerChoice/effective_scale/rung_for_effective_scale/coupled_quant_lf into quantizer_ladder.rs; N1 replace the duplicated log-domain crossing math (interpolated_rung, two_anchor_target_rung, target_rung_from_slope; log_loss_crossing, extrapolated_step, geometric_step) with one navigation.rs (LocalModel, Constraint::Ceiling/Floor, coordinate transforms y=ln(bytes) and y=-ln(max(100-score,eps))); N2 a stateful LadderNavigator (NavigationObservation with Authority::Surrogate/Canonical, NavigationPrior, NavigationBudget, no-repeat cache, bracket discovery, crossing tightening) with rate and quality as objective adapters. Byte-rate specifics (never-over ceiling, non-monotone pockets, LF fill, entropy tiers, maximize-bytes ranking) stay in rate.rs; perceptual specifics (canonical render+metric acceptance, score guard, policy bank, reducer) stay in quality.rs. Unify where to probe; never unify what a probe means or what constitutes a valid final answer. Narrative plan: JPXL/docs/scheduler-unification-and-multifidelity-plan.md.
+        """
+    note """
+        Gates: N0/N1/N2 each require byte-identical Fast/Balanced corpus fingerprints and identical probe-sequence traces for both --target-bytes and quality paths; wall neutral. Rejected shapes: rate::Search<F> as the shared abstraction (rate-specific internals), quality::Navigator as the shared abstraction (owns execution policy), evaluator-owning generics. Any parity deviation must be enumerated and A/B-swept before merge.
+        """
+    part_of [ @jpegxl-rs.track.perceptual-quality-controller ]
+    source {
+        kind internal
+        role origin
+        path "JPXL/docs/scheduler-unification-and-multifidelity-plan.md"
+        use """
+            Advisor-recommended unification architecture, verified against the tree at e895c32 before adoption.
+            """
+    }
+}
+
+record jpegxl-rs.work.multifidelity-quality-search/1 : work {
+    title "Multi-fidelity perceptual search: surrogates propose, canonical evaluation accepts"
+    state proposed
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/src/**",
+        path "JPXL/crates/jpxl-perceptual/**",
+        path "JPXL/crates/jpxl-plan-render/**"
+    ]
+    intent """
+        On top of the unified LadderNavigator, make most navigation probes cheap while every accepted result stays exact. Phases: N3 confidence-adaptive probe budgets driven by predict_v2 (interval width, saturation_risk, ood_flags select 0-2 surrogate probes and a 1-2 canonical budget; the preset 3/5 canonical caps remain the emergency ceiling; conservative in-interval first probe, then residual-corrected second candidate); S1 a surrogate NavigationEvaluator (half-linear-resolution reconstruction, surviving SSIMULACRA2 scales, Authority::Surrogate) that may only propose - QualityOutcome must be backed by a canonical full-resolution SSIMULACRA2 score, with one canonical correction on miss then fallback to the full navigator; S2 a banded renderer-to-metric pipeline built exact first (band EPF+halo, XYB, horizontal blur, per-column vertical recurrence state, original-pixel-order f64 pooling preserved), then a decimating surrogate variant. Independent exact work R1: per-worker RenderScratch and dequantize_into/idct_into/render_varblock_into in jpxl-plan-render, removing per-varblock CoeffMatrix/SampleBlock/RenderedVarblock/sigma_writes allocation and chunk staging. Conditional later: paired-candidate SIMD lanes (B1), blur/EPF/XYB exact micro-work (E1), rate-path fused multi-rung quantization and a learned rate prior (RT1/RT2). Narrative plan: JPXL/docs/scheduler-unification-and-multifidelity-plan.md.
+        """
+    note """
+        Gates: policy phases (N3, S1, S2-surrogate) run the 441-cell A/B sweep with 0 floor violations, bytes within the ~0.997 parity band, mean canonical probes strictly down, no OOD/saturated-tail regression, surrogate mispropose rate reported; exact phases (R1, S2-exact, E1) require byte-identical fingerprints (S2-exact: bit-identical metric scores) with wall/RSS measured under the quiet-host wall_current.py recipe. Closed directions are listed in the plan doc and must not be revisited (pool.rs accumulation order, fixed slopes, policy-bank searches, entropy alternatives).
+        """
+    depends_on [ @jpegxl-rs.work.ladder-navigator-unification ]
+    part_of [ @jpegxl-rs.track.perceptual-quality-controller ]
+    source {
+        kind internal
+        role origin
+        path "JPXL/docs/scheduler-unification-and-multifidelity-plan.md"
+        use """
+            Advisor proposal-verification architecture adopted after verification against current profiling attribution and predict_v2 capabilities.
+            """
+    }
+}
+
 record jpegxl-rs.work.native-windows-quality-tooling/1 : work {
     title "Native Windows equivalents for the last bash-only quality/conformance tooling (cjxl-match, fetch-conformance)"
     state completed
