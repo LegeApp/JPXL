@@ -6754,6 +6754,32 @@ record jpegxl-rs.evidence.rulings-captured/1 : evidence {
     author "GitHub Uploader"
 }
 
+record jpegxl-rs.evidence.s1-surrogate-navigation-holdout-gate/1 : evidence {
+    title "S1 holdout gate: floor 0/0, bytes parity, canonical probes down where routed, feature-off byte-identical"
+    state verified
+    result pass
+    method command
+    observed_at git:767f0809577ca164d980339a2d47e624201d996f
+    command "python3 JPXL/tools/one_shot_promotion_ab.py --manifest test-set/ext-polart-manifest.json --splits ext-holdout ... ; python3 JPXL/tools/one_shot_promotion_ab.py --manifest test-set/quality-corpus.json --splits holdout ... ; python3 .agent/scratch/s1-surrogate-20260829/mispropose_sweep.py"
+    artifact ".agent/scratch/s1-surrogate-20260829/s1-ab-ext-holdout.json"
+    summary """
+        S1 promotion gate over both reserved holdouts (490 cells, surrogate-navigation build vs default build at 767f080): 0 floor violations on both arms in both sweeps; bytes geomean 1.0002 (ext) and 1.0000 (locked), worst cell +3.8%; canonical metric evaluations 1029 to 961 on ext-holdout with the engaged target-90 population at -27%; wall geomean 1.000 (ext) / 1.031 (locked) under a raw-autotune-loaded host; 97/490 cells engaged, mispropose 14.4%, each bounded to one canonical correction. Feature off: 16/16 identity cells byte-identical vs e895c32.
+        """
+}
+
+record jpegxl-rs.evidence.s1-surrogate-sizing-shadow-corpus/1 : evidence {
+    title "S1 shadow-corpus sizing: surrogate cost 0.171, ln-loss slope model 89.6% transfer"
+    state verified
+    result pass
+    method command
+    observed_at git:767f0809577ca164d980339a2d47e624201d996f
+    command "python3 .agent/scratch/s1-surrogate-20260829/collect_shadow.py && python3 .agent/scratch/s1-surrogate-20260829/analyze_shadow.py"
+    artifact ".agent/scratch/s1-surrogate-20260829/shadow-traces.jsonl"
+    summary """
+        S1 sizing on 1127 paired shadow cells (calibration+development): the half-resolution surrogate costs 0.171 of the canonical evaluator wall; a per-cell score offset fails at expansion distances, while the ln-loss slope model (per-band k 1.26/1.60/1.74/2.05, calibrated at the first paired canonical probe) reaches 89.6% feasibility transfer with median estimate error 0.76 points; error is 0.70 at target 85 versus 5.8 at target 30, which fixes the routing floor at 85.
+        """
+}
+
 record jpegxl-rs.evidence.s8-cover-lane-simd-postcommit/1 : evidence {
     title "S8 landed state re-verified against commit 170677c"
     state verified

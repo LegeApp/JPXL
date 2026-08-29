@@ -6967,7 +6967,7 @@ record jpegxl-rs.work.multifidelity-quality-search/1 : work {
 
 record jpegxl-rs.work.multifidelity-quality-search/2 : work {
     title "Multi-fidelity perceptual search: surrogates propose, canonical evaluation accepts"
-    state active
+    state superseded
     scope [
         path "JPXL/crates/jpxl-encode-policy/src/**",
         path "JPXL/crates/jpxl-perceptual/**",
@@ -6985,6 +6985,39 @@ record jpegxl-rs.work.multifidelity-quality-search/2 : work {
     verified_by [
         @jpegxl-rs.evidence.n3-confident-stop-byte-identical-holdouts,
         @jpegxl-rs.evidence.r1-render-scratch-exact-and-measured
+    ]
+    source {
+        kind internal
+        role origin
+        path "JPXL/docs/scheduler-unification-and-multifidelity-plan.md"
+        use """
+            Advisor proposal-verification architecture adopted after verification against current profiling attribution and predict_v2 capabilities.
+            """
+    }
+}
+
+record jpegxl-rs.work.multifidelity-quality-search/3 : work {
+    title "Multi-fidelity perceptual search: surrogates propose, canonical evaluation accepts"
+    state active
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/src/**",
+        path "JPXL/crates/jpxl-perceptual/**",
+        path "JPXL/crates/jpxl-plan-render/**"
+    ]
+    intent """
+        On top of the N0/N1-unified ladder mathematics, make most navigation probes cheap while every accepted result stays exact. Phases: N3 confidence-adaptive probe budgets driven by predict_v2; S1 a surrogate NavigationEvaluator (half-resolution surrogate observations that may only propose - QualityOutcome must be backed by a canonical full-resolution SSIMULACRA2 score, with one canonical correction on miss then fallback to the full navigator); S2 a banded renderer-to-metric pipeline built exact first (band EPF+halo, XYB, horizontal blur, per-column vertical recurrence state, original-pixel-order f64 pooling preserved), then a decimating surrogate variant that replaces S1's interim shrink-after-reconstruct implementation. Independent exact work R1 (landed): render-scratch reuse in jpxl-plan-render. Conditional later: B1, E1, RT1/RT2. Narrative plan: JPXL/docs/scheduler-unification-and-multifidelity-plan.md.
+        """
+    note """
+        R1 landed 2026-08-29 (a9d421c, 8f3192e; @jpegxl-rs.evidence.r1-render-scratch-exact-and-measured). N3 first slice landed 2026-08-29 (ea65364; @jpegxl-rs.evidence.n3-confident-stop-byte-identical-holdouts). S1 LANDED 2026-08-29 (767f080) BEHIND THE OFF-BY-DEFAULT surrogate-navigation FEATURE: Ssimulacra2::score_surrogate is bit-for-bit the metric of the half-resolution pair against the existing reference pyramid from scale 1 (parity test, no extra source-side work); the navigator calibrates ln-loss at a paired anchor probe, maps surrogate movement through a per-band slope k (1.26/1.60/1.74/2.05, fitted on the 1127-cell shadow corpus, @jpegxl-rs.evidence.s1-surrogate-sizing-shadow-corpus), acquires the bracket at half resolution, confirms the crossing aim canonically, and retires every surrogate record before any conclusion - outcomes stay exclusively canonical-backed. Routing (dev-derived, holdout-validated): uncertain in-distribution, interval width >= 0.3, target >= 85 (the calibrated estimate's mean error 0.70 sits inside the 1.0-point accept band there; 5.8 at target 30). Gate @jpegxl-rs.evidence.s1-surrogate-navigation-holdout-gate: floor 0/0, bytes geomean 1.000, canonical evaluations -6.6% ext corpus-wide (-27% on engaged target-90 cells), wall neutral on a loaded host, mispropose 14.4% bounded to one correction; feature-off 16/16 byte-identical. WHY DEFAULT-OFF: a surrogate probe still pays the full-resolution render, so it costs ~0.6x a canonical probe and the wall win is capped near neutral - the phase's economics flip when S2's decimating surrogate render makes the observation genuinely cheap. NEXT: S2 - the exact banded renderer-to-metric pipeline (gate: bit-identical scores, RSS down at 12 and 50 MP), then its decimating surrogate variant feeding this S1 machinery and re-running this gate, which should then also enable the feature by default and unlock the rest of N3's routing table. JPXL_SURROGATE_SHADOW instruments any build with paired surrogate scores (byte-identical off/on). Closed directions in the plan doc must not be revisited. Harnesses kept at .agent/scratch/s1-surrogate-20260829 (and n3-probe-budgets-20260829, n0-ladder-extract-20260829).
+        """
+    depends_on [ @jpegxl-rs.work.ladder-navigator-unification ]
+    part_of [ @jpegxl-rs.track.perceptual-quality-controller ]
+    supersedes [ @jpegxl-rs.work.multifidelity-quality-search/2 ]
+    verified_by [
+        @jpegxl-rs.evidence.n3-confident-stop-byte-identical-holdouts,
+        @jpegxl-rs.evidence.r1-render-scratch-exact-and-measured,
+        @jpegxl-rs.evidence.s1-surrogate-navigation-holdout-gate,
+        @jpegxl-rs.evidence.s1-surrogate-sizing-shadow-corpus
     ]
     source {
         kind internal
