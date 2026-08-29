@@ -1198,6 +1198,7 @@ fn solve_baseline(
     finalist_entropy: EntropySearch,
     predicted: Rung,
     prior_beta: Option<f64>,
+    confident_stop: bool,
     trace: &mut Vec<QualityProbe>,
 ) -> Result<(PolicySolve, QualityStats, Option<StructuralAnchor>)> {
     let mut nav = Navigator {
@@ -1222,9 +1223,25 @@ fn solve_baseline(
         },
     };
 
-    // Navigation: predicted rung, bracket, crossing.
+    // Navigation: predicted rung, bracket, crossing. Phase N3: when the
+    // crossing model is confident and its candidate probe lands feasible
+    // within the same overshoot band a bracketed search would accept
+    // (`MET_OVERSHOOT_BAND`), the coarser-verification expansion is skipped —
+    // the probe already is the answer the full search would keep. Sized on
+    // the ext calibration/development trace corpus (2026-08-29): every cell
+    // the stop fires on, the full search chose exactly this rung, so the
+    // saving is one probe and zero bytes. The stopped probe is still a
+    // canonical render-and-score, and its finalist is still exactly priced:
+    // nothing about what constitutes a valid answer changes.
     nav.probe(predicted, true)?;
-    nav.expand_until_bracketed()?;
+    let one_shot_hit = confident_stop
+        && nav
+            .probes
+            .first()
+            .is_some_and(|p| p.feasible && p.score - nav.threshold() <= MET_OVERSHOOT_BAND);
+    if !one_shot_hit {
+        nav.expand_until_bracketed()?;
+    }
     nav.tighten()?;
     nav.rescue_probe()?;
     nav.local.bracket = nav.bracket().map(|((lo, _), (hi, _))| (lo, hi));
@@ -1814,21 +1831,25 @@ pub fn search_frame_perceptual_with_budget(
     // prediction reads warmed the cover's own cache, so this costs no
     // duplicated transform work.
     #[cfg(feature = "one-shot-controller")]
-    let (predicted, prior_beta) = match transform_features
+    let (predicted, prior_beta, confident_stop) = match transform_features
         .as_ref()
         .and_then(|tf| crate::quality_prediction::predict_v2(&features, tf, target_score))
     {
-        // Confident: the risk-adjusted candidate is the first fresh plan.
-        Some(p) if p.fallback_reason.is_none() => (p.candidate_rung, Some(p.local_loss_exponent)),
+        // Confident: the risk-adjusted candidate is the first fresh plan,
+        // and (phase N3) a feasible landing inside the accept band ends
+        // navigation there.
+        Some(p) if p.fallback_reason.is_none() => {
+            (p.candidate_rung, Some(p.local_loss_exponent), true)
+        }
         // Uncertain but in distribution (wide interval, saturation risk):
         // the navigator still runs its full bounded search, so the model's
         // median is simply a better seed than the legacy table.
-        Some(p) if p.ood_flags.is_empty() => (p.median_rung, Some(p.local_loss_exponent)),
+        Some(p) if p.ood_flags.is_empty() => (p.median_rung, Some(p.local_loss_exponent), false),
         // Out of distribution: keep the legacy predictor's start.
-        _ => (predicted, None),
+        _ => (predicted, None, false),
     };
     #[cfg(not(feature = "one-shot-controller"))]
-    let prior_beta: Option<f64> = None;
+    let (prior_beta, confident_stop): (Option<f64>, bool) = (None, false);
     let (baseline, mut stats, baseline_anchor) = solve_baseline(
         &mut ctx,
         &base_request,
@@ -1841,6 +1862,7 @@ pub fn search_frame_perceptual_with_budget(
         finalist_entropy,
         predicted,
         prior_beta,
+        confident_stop,
         &mut trace,
     )?;
 
@@ -2571,6 +2593,7 @@ mod tests {
             finalist_entropy,
             predicted,
             None,
+            false,
             &mut trace,
         )
         .expect("baseline solve");
