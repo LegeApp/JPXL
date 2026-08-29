@@ -413,6 +413,71 @@ fn the_pixel_plan_split_reassembles_the_same_emission_plan() {
     );
 }
 
+/// The decimating surrogate render (Phase S2): worker-count independent,
+/// half-resolution, and close to — but deliberately not equal to — the
+/// canonical render's own 2:1 downscale (its filters act at the half scale).
+#[test]
+fn decimated_render_is_deterministic_and_tracks_the_canonical_downscale() {
+    let (w, h) = (509u32, 355u32); // odd dims exercise the edge replication
+    let rgb = synthetic_rgb8(w, h, 23);
+    let frame = PreparedFrame::from_srgb8(w, h, &rgb).unwrap();
+    let plan = plan_frame(&frame, &EncodeRequest::defaults()).unwrap();
+    let pixels = validate_pixels(plan.plan().pixels()).unwrap();
+    let mut renderer = PlanRenderer::new().unwrap();
+
+    let one = jpxl_encode::EncodeResources::groups(1).executor();
+    let four = jpxl_encode::EncodeResources::groups(4).executor();
+    let (dw, dh, decimated) = renderer
+        .render_linear_at_depth_decimated_with(&pixels, 8, &one)
+        .unwrap();
+    assert_eq!((dw, dh), (w.div_ceil(2), h.div_ceil(2)));
+    let (dw4, dh4, decimated4) = renderer
+        .render_linear_at_depth_decimated_with(&pixels, 8, &four)
+        .unwrap();
+    assert_eq!((dw, dh), (dw4, dh4));
+    assert_eq!(
+        decimated, decimated4,
+        "worker count must not change a sample"
+    );
+
+    // Against the canonical render's own downscale: the same reconstruction
+    // enters both, so the surrogate must sit close (filters and the depth
+    // quantizer act at different scales, so exact equality is not expected).
+    let (cw, ch, canonical) = renderer
+        .render_linear_at_depth_with(&pixels, 8, &one)
+        .unwrap();
+    assert_eq!((cw, ch), (w, h));
+    let (cw, ch) = (cw as usize, ch as usize);
+    let mut sum = 0.0f64;
+    let mut count = 0u64;
+    for (half, full) in decimated.iter().zip(canonical.iter()) {
+        for oy in 0..dh as usize {
+            for ox in 0..dw as usize {
+                let y0 = (oy * 2).min(ch - 1);
+                let y1 = (oy * 2 + 1).min(ch - 1);
+                let x0 = (ox * 2).min(cw - 1);
+                let x1 = (ox * 2 + 1).min(cw - 1);
+                let avg = (full[y0 * cw + x0]
+                    + full[y0 * cw + x1]
+                    + full[y1 * cw + x0]
+                    + full[y1 * cw + x1])
+                    * 0.25;
+                sum += f64::from((half[oy * dw as usize + ox] - avg).abs());
+                count += 1;
+            }
+        }
+    }
+    let mean = sum / count.max(1) as f64;
+    assert!(
+        mean < 0.01,
+        "the decimated render drifted from the canonical downscale: mean |diff| {mean}"
+    );
+    assert!(
+        mean > 0.0,
+        "suspiciously exact: the filters should differ at the half scale"
+    );
+}
+
 /// Wall time of one 4 MP render under the production Balanced policy.
 /// Run with `cargo test --release -p jpxl-plan-render --test parity -- --ignored --nocapture timing`.
 #[test]

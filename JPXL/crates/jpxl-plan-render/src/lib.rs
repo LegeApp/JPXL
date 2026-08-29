@@ -665,7 +665,38 @@ impl PlanRenderer {
             Some(classifier) if classifier.bits == bits => classifier,
             _ => DepthClassifier::new(bits),
         };
-        let rendered = self.render_inner(pixels, Some(executor), Some(&classifier));
+        let rendered = self.render_inner(pixels, Some(executor), Some(&classifier), false);
+        self.depth = Some(classifier);
+        let (frame, _) = rendered?;
+        Ok((frame.width, frame.height, frame.planes))
+    }
+
+    /// The Phase S2 surrogate render: reconstruct every varblock at full
+    /// resolution (quantization detail must reach the observation), then
+    /// box-decimate the XYB planes 2:1 and run the restoration filters and
+    /// the colour/depth stage at half resolution. Returns the half-resolution
+    /// dimensions and depth-quantized linear planes.
+    ///
+    /// This is *not* the canonical render downscaled: the filters act at the
+    /// half scale (with a 2×2-averaged sigma field), so the result is a
+    /// cheaper, deterministic *surrogate* observation — it may propose, never
+    /// accept. Output is identical at any worker count, like every other
+    /// render path.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::render`].
+    pub fn render_linear_at_depth_decimated_with(
+        &mut self,
+        pixels: &ValidatedPixelPlan,
+        bits: u32,
+        executor: &EncodeExecutor,
+    ) -> Result<(u32, u32, [Vec<f32>; NUM_CHANNELS])> {
+        let classifier = match self.depth.take() {
+            Some(classifier) if classifier.bits == bits => classifier,
+            _ => DepthClassifier::new(bits),
+        };
+        let rendered = self.render_inner(pixels, Some(executor), Some(&classifier), true);
         self.depth = Some(classifier);
         let (frame, _) = rendered?;
         Ok((frame.width, frame.height, frame.planes))
@@ -681,7 +712,7 @@ impl PlanRenderer {
         pixels: &ValidatedPixelPlan,
         executor: Option<&EncodeExecutor>,
     ) -> Result<(RenderedFrame, RenderTimings)> {
-        self.render_inner(pixels, executor, None)
+        self.render_inner(pixels, executor, None, false)
     }
 
     /// The full render pipeline. The colour stage ends in the signalled sRGB
@@ -694,6 +725,7 @@ impl PlanRenderer {
         pixels: &ValidatedPixelPlan,
         executor: Option<&EncodeExecutor>,
         linear_at_depth: Option<&DepthClassifier>,
+        decimate: bool,
     ) -> Result<(RenderedFrame, RenderTimings)> {
         let mut timings = RenderTimings::default();
         let millis = |start: std::time::Instant| {
@@ -1032,6 +1064,59 @@ impl PlanRenderer {
 
         timings.varblocks_ms = millis(stage_start);
 
+        // Phase S2 surrogate: box-decimate the reconstructed XYB planes 2:1
+        // and shadow the frame geometry, so the restoration filters and the
+        // colour stage below run at half resolution. The full-resolution
+        // planes go back to the scratch recycler. Each half-res 8×8 sigma
+        // block averages the up-to-four full-res blocks it covers.
+        let (width, height, dims, len, mut planes, sigma, blocks_x, blocks_y) = if decimate {
+            let (hw, hh) = (width.div_ceil(2), height.div_ceil(2));
+            let hdims = PlaneDims::new(
+                usize::try_from(hw).unwrap_or(usize::MAX),
+                usize::try_from(hh).unwrap_or(usize::MAX),
+            );
+            let hlen = hdims.len();
+            let mut hplanes: [Vec<f32>; NUM_CHANNELS] =
+                [Vec::new(), Vec::new(), Vec::new()].map(|mut p: Vec<f32>| {
+                    shaped_in_place(&mut p, hlen);
+                    p
+                });
+            {
+                let bands = row_bands(&mut hplanes, hdims.width);
+                run_items(executor, bands.len(), &|index| {
+                    let Some((row0, mut slices)) = bands.take(index) else {
+                        return;
+                    };
+                    for (out, src) in slices.iter_mut().zip(planes.iter()) {
+                        decimate_rows(src, dims, row0, out, hdims.width);
+                    }
+                });
+            }
+            self.scratch.planes = planes;
+            let (hbx, hby) = block_grid(hdims);
+            let mut hsigma = vec![0.0f32; hbx.saturating_mul(hby)];
+            for (j, row) in hsigma.chunks_exact_mut(hbx.max(1)).enumerate() {
+                for (i, out) in row.iter_mut().enumerate() {
+                    let mut sum = 0.0f32;
+                    let mut count = 0u32;
+                    for (dy, dx) in [(0, 0), (0, 1), (1, 0), (1, 1)] {
+                        let (sy, sx) = (2 * j + dy, 2 * i + dx);
+                        if sx < blocks_x
+                            && sy < blocks_y
+                            && let Some(&v) = sigma.get(sy * blocks_x + sx)
+                        {
+                            sum += v;
+                            count += 1;
+                        }
+                    }
+                    *out = if count > 0 { sum / count as f32 } else { 0.0 };
+                }
+            }
+            (hw, hh, hdims, hlen, hplanes, hsigma, hbx, hby)
+        } else {
+            (width, height, dims, len, planes, sigma, blocks_x, blocks_y)
+        };
+
         // Annex J. Both stages ping-pong between `planes` and `aux`: each
         // writes every sample of its output before any is read, so the
         // recycled buffer's stale contents cannot reach a rendered sample.
@@ -1213,6 +1298,40 @@ impl<'a> RowBands<'a> {
 }
 
 /// Cuts three equally sized planes into [`BAND_ROWS`]-row bands.
+/// Box-decimates full-resolution rows into output rows `row0 ..` of one
+/// half-resolution band: each output sample averages its 2×2 source block in
+/// raster order (top-left, top-right, bottom-left, bottom-right) scaled by
+/// exactly `0.25`, replicating the last row/column when a dimension is odd.
+/// Every output depends only on its own source block, so any banding is
+/// bit-identical to a serial pass.
+fn decimate_rows(src: &[f32], src_dims: PlaneDims, row0: usize, out: &mut [f32], out_width: usize) {
+    if src_dims.width == 0 || src_dims.height == 0 || out_width == 0 {
+        return;
+    }
+    let last_x = src_dims.width - 1;
+    let last_y = src_dims.height - 1;
+    for (dy, out_row) in out.chunks_exact_mut(out_width).enumerate() {
+        let oy = row0 + dy;
+        let y0 = (oy * 2).min(last_y);
+        let y1 = (oy * 2 + 1).min(last_y);
+        let row0 = src
+            .get(y0 * src_dims.width..(y0 + 1) * src_dims.width)
+            .unwrap_or(&[]);
+        let row1 = src
+            .get(y1 * src_dims.width..(y1 + 1) * src_dims.width)
+            .unwrap_or(&[]);
+        for (ox, out) in out_row.iter_mut().enumerate() {
+            let x0 = (ox * 2).min(last_x);
+            let x1 = (ox * 2 + 1).min(last_x);
+            let a = row0.get(x0).copied().unwrap_or(0.0);
+            let b = row0.get(x1).copied().unwrap_or(0.0);
+            let c = row1.get(x0).copied().unwrap_or(0.0);
+            let d = row1.get(x1).copied().unwrap_or(0.0);
+            *out = (a + b + c + d) * 0.25;
+        }
+    }
+}
+
 fn row_bands(planes: &mut [Vec<f32>; NUM_CHANNELS], width: usize) -> RowBands<'_> {
     let band_len = width.saturating_mul(BAND_ROWS).max(1);
     let [p0, p1, p2] = planes;

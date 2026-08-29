@@ -211,6 +211,93 @@ impl Ssimulacra2 {
         })
     }
 
+    /// [`Self::score_surrogate`] for a candidate that is *already* at half
+    /// resolution — the Phase S2 decimating-render path, where the renderer
+    /// hands over half-resolution planes and the full-resolution candidate
+    /// never exists.
+    ///
+    /// Fed the exact 2:1 box downscale of a full-resolution candidate, this
+    /// is bit-for-bit [`Self::score_surrogate`] of that candidate (pinned by
+    /// a test). Like every surrogate score it may only propose; the quality
+    /// contract is satisfied exclusively by [`Self::score`] /
+    /// [`Self::score_owned`].
+    ///
+    /// # Errors
+    ///
+    /// [`MetricError::TooSmall`] when the reference pyramid has no scale
+    /// below full resolution; [`MetricError::DimensionMismatch`] when the
+    /// candidate's dimensions differ from the reference's scale-1 planes.
+    pub fn score_surrogate_prescaled(
+        &mut self,
+        reference: &PrecomputedReference,
+        candidate: LinearRgbView<'_>,
+        executor: &dyn BandExecutor,
+    ) -> Result<Ssimulacra2Result, MetricError> {
+        let Some(first) = reference.scales().get(1) else {
+            return Err(MetricError::TooSmall {
+                width: reference.width().div_ceil(2),
+                height: reference.height().div_ceil(2),
+            });
+        };
+        let (mut w, mut h) = (first.width, first.height);
+        if (candidate.width(), candidate.height())
+            != (
+                u32::try_from(w).unwrap_or(u32::MAX),
+                u32::try_from(h).unwrap_or(u32::MAX),
+            )
+        {
+            return Err(MetricError::DimensionMismatch {
+                reference: (
+                    u32::try_from(w).unwrap_or(u32::MAX),
+                    u32::try_from(h).unwrap_or(u32::MAX),
+                ),
+                candidate: (candidate.width(), candidate.height()),
+            });
+        }
+        let mut scales = Vec::with_capacity(reference.scale_count() - 1);
+        for (scale, rs) in reference.scales().iter().enumerate().skip(1) {
+            if scale > 1 {
+                core::mem::swap(&mut self.prev_rgb, &mut self.cur_rgb);
+                let [pr, pg, pb] = &self.prev_rgb;
+                let src: [&[f32]; 3] = if scale == 2 {
+                    [candidate.r(), candidate.g(), candidate.b()]
+                } else {
+                    [pr, pg, pb]
+                };
+                downscale_planes(src, w, h, &mut self.cur_rgb, executor);
+                w = pyramid::half(w);
+                h = pyramid::half(h);
+            }
+            debug_assert_eq!((w, h), (rs.width, rs.height));
+            let pixels = w * h;
+            for plane in self.xyb.iter_mut() {
+                plane.clear();
+                plane.resize(pixels, 0.0);
+            }
+            {
+                let src: [&[f32]; 3] = if scale == 1 {
+                    [candidate.r(), candidate.g(), candidate.b()]
+                } else {
+                    let [cr, cg, cb] = &self.cur_rgb;
+                    [cr, cg, cb]
+                };
+                convert_planes(src, &mut self.xyb, w, executor);
+            }
+            let channels = self.score_converted_scale(rs, reference.retention(), w, h, executor);
+            scales.push(ScaleTerms {
+                width: u32::try_from(w).unwrap_or(u32::MAX),
+                height: u32::try_from(h).unwrap_or(u32::MAX),
+                channels,
+            });
+        }
+        let raw_error = weighted_error(&scales);
+        Ok(Ssimulacra2Result {
+            score: remap(raw_error),
+            raw_error,
+            scales,
+        })
+    }
+
     /// Scores owned candidate planes, reusing their allocations as the
     /// positive-XYB destination at each scale.
     ///
@@ -537,6 +624,17 @@ mod tests {
             )
             .expect("the half-resolution pair should score");
         assert_eq!(surrogate, native);
+
+        // The prescaled entry point fed the exact 2:1 downscale is the
+        // surrogate itself, bit for bit.
+        let prescaled = Ssimulacra2::new()
+            .score_surrogate_prescaled(
+                &full_reference,
+                view(&half_candidate, hw, hh),
+                &crate::executor::SerialExecutor,
+            )
+            .expect("the prescaled surrogate should score");
+        assert_eq!(prescaled, surrogate);
     }
 
     #[cfg(feature = "evaluator")]

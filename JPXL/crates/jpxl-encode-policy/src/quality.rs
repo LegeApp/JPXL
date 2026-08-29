@@ -187,11 +187,14 @@ pub const SURROGATE_INTERVAL_WIDTH_GATE: f64 = 0.3;
 
 /// Smallest requested score that routes to the surrogate bracket search.
 /// The calibrated estimate must land proposals inside the 1-point accept
-/// band ([`MET_OVERSHOOT_BAND`]); on the shadow corpus its mean error is
-/// 0.70 at a target of 85 and 5.8 at 30 — only the high-quality region,
-/// where the surrogate tracks the canonical curve nearly 1:1, clears the
-/// band. (Coincidentally the region real encodes ask for.)
-pub const SURROGATE_TARGET_FLOOR: f64 = 85.0;
+/// band ([`MET_OVERSHOOT_BAND`]); on the Phase S2 decimated-surrogate
+/// shadow corpus (development split) its mean error is 0.66 at a target of
+/// 90, 1.26 at 85 and 4.6 at 30 — only the top band, where the surrogate
+/// tracks the canonical curve most tightly, clears the accept band. (The
+/// interim shrink-after-reconstruct surrogate cleared 85; the decimated
+/// observation is coarser and buys its ~0.4× probe cost with this narrower
+/// routing.)
+pub const SURROGATE_TARGET_FLOOR: f64 = 90.0;
 
 /// Most surrogate probes one baseline solve may spend (Phase S1). Surrogate
 /// probes aim; they never satisfy the quality contract, so this cap trades
@@ -201,18 +204,21 @@ pub const SURROGATE_PROBE_CAP: u32 = 2;
 /// Slope `k` relating canonical to surrogate log-loss movement:
 /// `Δln(loss_canonical) ≈ k · Δln(loss_surrogate)`, by the surrogate's own
 /// score band. Fitted on the ext calibration/development shadow-trace corpus
-/// (2026-08-29): the half-resolution surrogate under-moves mid-range (its
-/// blindness to finest-scale loss is largest there) and tracks nearly 1:1 in
-/// the high-quality band.
+/// of the Phase S2 *decimated* surrogate (2026-08-29, 1127 cells,
+/// `.agent/scratch/s2-banded-metric-20260829/fit_bands.py`): the decimated
+/// observation under-moves everywhere — its restoration filters act at the
+/// half scale, deepening the blindness to finest-scale loss — so every
+/// band's slope sits higher than the interim shrink-after-reconstruct
+/// surrogate's did.
 fn surrogate_slope(surrogate_score: f64) -> f64 {
     if surrogate_score >= 90.0 {
-        1.26
+        1.85
     } else if surrogate_score >= 80.0 {
-        1.60
+        1.98
     } else if surrogate_score >= 60.0 {
-        1.74
+        1.93
     } else {
-        2.05
+        2.20
     }
 }
 
