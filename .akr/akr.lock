@@ -5,7 +5,7 @@ build {
     tool "akr 0.4.0"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:9c6a93798557d79cdab5e56bdd34ab5e6d498bd8b6e53760aa41ac9371a6a2e2"
+    source_graph "sha256:61961d149fb481137916f2fdfca5887b003eacf90cacae8d184107d841f72873"
 }
 
 source ".akr/project.akr" {
@@ -14,8 +14,8 @@ source ".akr/project.akr" {
 }
 
 source ".akr/records/jpegxl-rs/assessments.akr" {
-    hash "sha256:043e52fb6cf29ca75c8f7bab4d50bcdb8d5b7cd77e962be6f0d44d0ee3430235"
-    records 11
+    hash "sha256:735e52d6695a542d857075e7c89d112ae9cfdaa82734f3da3ef22e4775341f5e"
+    records 12
 }
 
 source ".akr/records/jpegxl-rs/constraints.akr" {
@@ -3857,6 +3857,11 @@ seal @jpegxl-rs.assessment.gap-bridge-2026-08-21/1 {
 seal @jpegxl-rs.assessment.modular-effort-lean-default/1 {
     state verified
     hash "sha256:e948ab24dc9e276105bed890096ab2601faeac60faba5c22bf9b5d743e602080"
+}
+
+seal @jpegxl-rs.assessment.n2-navigator-does-not-pay-for-itself/1 {
+    state verified
+    hash "sha256:ad6b15138b10fa7ba150531db2abc980a008f4c4e4e1e20e7988b991cdf49893"
 }
 
 seal @jpegxl-rs.assessment.phase4-density-gap-is-vs-e7-only/1 {

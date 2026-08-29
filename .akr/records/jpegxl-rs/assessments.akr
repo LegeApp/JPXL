@@ -168,6 +168,37 @@ record jpegxl-rs.assessment.modular-effort-lean-default/1 : assessment {
     author "GitHub Uploader"
 }
 
+record jpegxl-rs.assessment.n2-navigator-does-not-pay-for-itself/1 : assessment {
+    title "N2's stateful LadderNavigator does not pay for itself once N0 and N1 have landed"
+    state verified
+    scope [ path "JPXL/crates/jpxl-encode-policy/src/**" ]
+    statement """
+        Read against the tree after N0 and N1 (see @jpegxl-rs.work.ladder-navigator-unification), the residual duplication N2 would remove is small and its reducers genuinely differ, while the cost is a restructuring of the two most parity-sensitive files in the crate.
+
+        What N0 and N1 already removed is the real duplication: one quantizer ladder, and one copy of the log-domain crossing mathematics. What is left in the two controllers is bookkeeping, and it is not the same bookkeeping.
+
+        1. The reducers are deliberately opposite. rate.rs keeps the largest feasible *byte count* ever priced, tie-broken toward the finer rung (rate.rs Search::eval), precisely so a non-monotone entropy pocket cannot lose a candidate already proved to fit. quality.rs keeps the *coarsest feasible rung* (Navigator::coarsest_feasible), because a perceptual candidate that meets the floor at a coarser quantizer is strictly better. A shared observation store cannot own either reducer.
+
+        2. The no-repeat caches differ in kind. rate.rs's is a lookup into the priced trace that returns the cached byte count so the caller can tighten a bracket without a second encode, and the trace itself is the hard budget counter. quality.rs's returns a bool and its counter is separate, because its store also carries retained ValidatedPixelPlan payloads under a two-finalist retention rule.
+
+        3. The step rules are structurally different, and the plan's next_action() loop cannot drive both without pushing the arithmetic back out to an adapter. The rate loop brackets by integer octaves of effective scale and bisects by false position with the fraction clamped into the bracket; the perceptual loop expands by a loss ratio raised to 1/alpha with a margin that compounds per attempt, then tightens at the crossing. Reproducing the perceptual expansion inside a generic navigator would have to recompute the ratio as exp(y_thr - y_from)^(1/alpha) instead of (loss_from/loss_thr)^(1/alpha) - mathematically equal, not bit-equal - which is exactly the parity drift the plan's own risk section names.
+
+        Subtracting all of that leaves roughly sixty lines of linear-scan bookkeeping to share, in exchange for restructuring rate.rs (2900 lines) and quality.rs (2650 lines) around a common observation type. The stated justification for sequencing N0-N2 first - that they make every subsequent speed feature single-implementation - is already discharged by N0 and N1 for the mathematics, which is the part every later phase actually reuses.
+
+        Consequence for the sequence: N3 (confidence-adaptive probe budgets) does not depend on N2. It needs predict_v2's interval, saturation_risk and ood_flags routed into QualityBudget, which is entirely inside quality.rs, and R1 (RenderScratch) is independent of both. The Authority and NavigationPrior types N2 was to introduce are worth keeping as a design commitment for S1, but they belong where S1 puts them, not in a navigator with no other consumer.
+        """
+    confidence high
+    as_of git:760a3e057e5539effe6c4f4f20d4e0531ac50d6a
+    source {
+        kind internal
+        role origin
+        path "JPXL/docs/scheduler-unification-and-multifidelity-plan.md"
+        use """
+            The N2 phase this assessment evaluates, and the parity-drift risk it names.
+            """
+    }
+}
+
 record jpegxl-rs.assessment.phase4-density-gap-is-vs-e7-only/1 : assessment {
     title "Correction: the '118x' figure is a wall-time ratio, not a density gap; jpxl-modular already beats cjxl -e1 on bytes"
     state verified
