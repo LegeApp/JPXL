@@ -6998,7 +6998,7 @@ record jpegxl-rs.work.multifidelity-quality-search/2 : work {
 
 record jpegxl-rs.work.multifidelity-quality-search/3 : work {
     title "Multi-fidelity perceptual search: surrogates propose, canonical evaluation accepts"
-    state active
+    state superseded
     scope [
         path "JPXL/crates/jpxl-encode-policy/src/**",
         path "JPXL/crates/jpxl-perceptual/**",
@@ -7013,6 +7013,39 @@ record jpegxl-rs.work.multifidelity-quality-search/3 : work {
     depends_on [ @jpegxl-rs.work.ladder-navigator-unification ]
     part_of [ @jpegxl-rs.track.perceptual-quality-controller ]
     supersedes [ @jpegxl-rs.work.multifidelity-quality-search/2 ]
+    verified_by [
+        @jpegxl-rs.evidence.n3-confident-stop-byte-identical-holdouts,
+        @jpegxl-rs.evidence.r1-render-scratch-exact-and-measured,
+        @jpegxl-rs.evidence.s1-surrogate-navigation-holdout-gate,
+        @jpegxl-rs.evidence.s1-surrogate-sizing-shadow-corpus
+    ]
+    source {
+        kind internal
+        role origin
+        path "JPXL/docs/scheduler-unification-and-multifidelity-plan.md"
+        use """
+            Advisor proposal-verification architecture adopted after verification against current profiling attribution and predict_v2 capabilities.
+            """
+    }
+}
+
+record jpegxl-rs.work.multifidelity-quality-search/4 : work {
+    title "Multi-fidelity perceptual search: surrogates propose, canonical evaluation accepts"
+    state active
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/src/**",
+        path "JPXL/crates/jpxl-perceptual/**",
+        path "JPXL/crates/jpxl-plan-render/**"
+    ]
+    intent """
+        On top of the N0/N1-unified ladder mathematics, make most navigation probes cheap while every accepted result stays exact. Phases: N3 confidence-adaptive probe budgets driven by predict_v2; S1 a surrogate NavigationEvaluator (half-resolution surrogate observations that may only propose - QualityOutcome must be backed by a canonical full-resolution SSIMULACRA2 score, with one canonical correction on miss then fallback to the full navigator); S2 a banded renderer-to-metric pipeline built exact first, then a decimating surrogate variant that replaces S1's interim shrink-after-reconstruct implementation. Independent exact work R1 (landed): render-scratch reuse in jpxl-plan-render. Conditional later: B1, E1, RT1/RT2. Narrative plan: JPXL/docs/scheduler-unification-and-multifidelity-plan.md.
+        """
+    note """
+        R1 landed 2026-08-29 (a9d421c, 8f3192e). N3 first slice landed (ea65364). S1 LANDED default-off behind the surrogate-navigation feature (767f080; gate @jpegxl-rs.evidence.s1-surrogate-navigation-holdout-gate) - a surrogate probe still pays the full-resolution render (~0.6x canonical), so the wall win waits on cheap surrogate observations. S2 EXACT VARIANT LANDED 2026-08-29 (41db766, @jpegxl-rs.evidence.s2-exact-banded-metric-identity-and-rss): streamed::channel_terms pipelines every scale's moment maps in 32-row batches (superstep: horizontal blur of batch s, persisted per-column f64 vertical recursion emitting batch s-2, band pooling folding batch s-3, all items of one executor fan-out), so mu2/s22/s12, the blur temps, and the recomputed source moments above the 24 MP retention cap never exist as full-frame planes - O(width) rings only. Bit-identical by construction and by test (streamed::tests vs the full-plane walk; 16/16 gate cells byte-identical with bit-identical probe scores). Metric-only 12 MP peak -247 MiB (Moments) / -411 MiB (PlanesOnly); encoder-level 4.3 MP -76 MiB, 50 MP -109 MiB, 12 MP unchanged because that peak is planning-side; wall 0.94-1.02 loaded-host interleaved. NEXT - S2 SURROGATE VARIANT: teach the renderer to hand the evaluator decimated pixels (decimate as pixels leave reconstruction, replacing shrink-after-reconstruct) so a surrogate probe stops paying the full-resolution render; then re-run the S1 holdout gate, and if the economics flip, enable surrogate-navigation by default and unlock the rest of N3's routing table. Remaining full frames on the candidate side are the rendered linear planes and their in-place XYB conversion; the reference retention is by design. Closed directions in the plan doc must not be revisited. Harnesses kept at .agent/scratch/s2-banded-metric-20260829 (and s1-surrogate-20260829, n3-probe-budgets-20260829, n0-ladder-extract-20260829).
+        """
+    depends_on [ @jpegxl-rs.work.ladder-navigator-unification ]
+    part_of [ @jpegxl-rs.track.perceptual-quality-controller ]
+    supersedes [ @jpegxl-rs.work.multifidelity-quality-search/3 ]
     verified_by [
         @jpegxl-rs.evidence.n3-confident-stop-byte-identical-holdouts,
         @jpegxl-rs.evidence.r1-render-scratch-exact-and-measured,

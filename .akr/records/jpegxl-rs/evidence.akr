@@ -6780,6 +6780,18 @@ record jpegxl-rs.evidence.s1-surrogate-sizing-shadow-corpus/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.s2-exact-banded-metric-identity-and-rss/1 : evidence {
+    title "S2 exact variant gate: bit-identity, RSS reduction, wall neutral-or-better"
+    state verified
+    result pass
+    method command
+    observed_at git:41db7666191d4fd3ad6aa8d36b3df78e3162fe78
+    command "python3 .agent/scratch/s2-banded-metric-20260829/identity_s2.py && python3 .agent/scratch/s2-banded-metric-20260829/measure_rss_wall.py; JPXL_RETENTION={moments,planes} cargo test --release -p jpxl-perceptual --test metric -- --ignored --nocapture twelve_megapixel_memory"
+    summary """
+        S2 exact banded moment pipeline: 16/16 cells byte-identical with bit-identical probe scores (canonical + shadow surrogate, shortest-round-trip f64 trace strings) vs the S1 baseline binary (767f080 default features); metric-only 12 MP peak 1349580→1096964 kB Moments and 1162416→741560 kB PlanesOnly; encoder-level peak 4.3 MP −76 MiB, 50 MP −109 MiB, 12 MP unchanged (peak there is planning-side); wall ratios 0.940–1.016 interleaved on a loaded host. Harnesses and results kept at .agent/scratch/s2-banded-metric-20260829 (akr scratch keep).
+        """
+}
+
 record jpegxl-rs.evidence.s8-cover-lane-simd-postcommit/1 : evidence {
     title "S8 landed state re-verified against commit 170677c"
     state verified
