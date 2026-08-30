@@ -17,6 +17,19 @@ record jpegxl-rs.evidence.avx2-pooling-bit-identity-2026-08-26/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.b1-multi-probe-frequency-2026-08-30/1 : evidence {
+    title "B1 frequency gate: 97.4% of encodes still take 2+ canonical probes post-N3"
+    state verified
+    result pass
+    method command
+    observed_at git:4a12436b862e710d5c7d38bb5db5c0aa03c6be54
+    command "python3 .agent/scratch/phase0-remainder-20260830/q2_b1_frequency.py"
+    artifact ".agent/scratch/phase0-remainder-20260830/README.md"
+    summary """
+        2772 existing Balanced trace cells (n3 sizing 1127 + mixed 518 + s2 shadow 1127): 97.4% of encodes at pixel_probes>=2 carrying 97.7% of wall (gates 50%/60%); wall-weighted mean 3.09 probes; >=8MP cells 2.95 mean. B1's frequency premise holds; the pairability+amortization gate (h>=0.7, a>=0.25) remains before implementation.
+        """
+}
+
 record jpegxl-rs.evidence.bench-vs-libjxl-reproducible-2026-08-25/1 : evidence {
     title "One documented command compares JPXL and native cjxl/djxl on the same inputs with recorded provenance"
     state verified
@@ -50,6 +63,45 @@ record jpegxl-rs.evidence.cli-netpbm-workspace-gates-2026-08-21/1 : evidence {
     command "cd JPXL && cargo build --workspace && cargo test --workspace --profile fast-debug && cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all --check"
     summary """
         The full JPXL build, optimized test suite, strict clippy, and formatting gates passed after the Netpbm subtype fix.
+        """
+}
+
+record jpegxl-rs.evidence.e1a-scratch-retention-breaches-memory-anchor-2026-08-30/1 : evidence {
+    title "E1-a: 12 MP probe-scratch retention breaches the 2.0 GB memory anchor; closed"
+    state verified
+    result fail
+    method command
+    observed_at git:4a12436b862e710d5c7d38bb5db5c0aa03c6be54
+    command "python3 .agent/scratch/phase0-remainder-20260830/rss_e1a.py"
+    artifact ".agent/scratch/phase0-remainder-20260830/README.md"
+    summary """
+        Two variants, both 16/16 byte+score identical (identity_e1a.py vs the kept 146fbd5 baseline binary): full retention (LOW_MEMORY_PIXELS 8->24 MP) gives 12 MP wall 0.938 fast / 0.956 balanced but RSS +458/+434 MiB (balanced 2.34 GiB vs <=2.0 GiB memory-12mp check, baseline 1.915 GiB, ~87 MiB headroom); retention with a release-before-exact-pricing hook still +392/+367 MiB - the resident peak overlaps the probe planning loop, so any cross-probe retention sits on top of it. Code reverted (rebuilt binary byte-identical to baseline). Durable trade recorded: -4..-6% 12 MP wall is available for +~380 MiB peak only if the memory ceiling is ever renegotiated.
+        """
+}
+
+record jpegxl-rs.evidence.e1b1-epf-parallel-pad-gates-2026-08-30/1 : evidence {
+    title "E1-b1: parallel EPF halo pads are byte-identical with unchanged RSS"
+    state verified
+    result pass
+    method command
+    observed_at git:4a12436b862e710d5c7d38bb5db5c0aa03c6be54
+    command "python3 .agent/scratch/phase0-remainder-20260830/identity_e1a.py && python3 .agent/scratch/phase0-remainder-20260830/rss_e1a.py"
+    artifact ".agent/scratch/phase0-remainder-20260830/README.md"
+    summary """
+        d1a00c9 builds the three per-step PaddedPlane halo copies as parallel executor items. 16/16 locked cells byte-identical with bit-identical canonical+surrogate probe scores vs the 146fbd5 baseline binary; RSS +-0 MiB at 4.3/12/50 MP. Wall delta within loaded-host noise; no quiet-host wall claim is made. The sigma-field hoist the plan doc listed (E1-b0) was already present at HEAD.
+        """
+}
+
+record jpegxl-rs.evidence.e1d-eight-lane-horizontal-blur-2026-08-30/1 : evidence {
+    title "E1-d: 8-lane horizontal blur recursion is 36-39% faster on the kernel, bit-identical"
+    state verified
+    result pass
+    method command
+    observed_at git:4a12436b862e710d5c7d38bb5db5c0aa03c6be54
+    command "cargo test -p jpxl-perceptual --release row_lanes_bench -- --ignored --nocapture && python3 .agent/scratch/phase0-remainder-20260830/identity_e1a.py"
+    artifact ".agent/scratch/phase0-remainder-20260830/README.md"
+    summary """
+        ROW_LANES 4->8 (259b728): four lanes were one f64x4 vector on a serial dependency chain (latency-bound); eight lanes are two independent chains. horizontal_band microbench 4000x512: plane 4.06->2.61 ns/sample (-36%), product 4.39->2.66 (-39%), far past the 10% keep threshold. New lane-vs-scalar equality test pins every height remainder of both input kinds; 16/16 locked identity cells byte-identical with bit-identical canonical+surrogate probe scores vs the 146fbd5 baseline binary. Kernel runs on the reference build and every probe's metric blur; whole-wall effect deliberately unclaimed until a quiet-host run.
         """
 }
 
@@ -6742,6 +6794,45 @@ record jpegxl-rs.evidence.retire-handoff-tombstone-2026-08-11/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.rt1-fused-trial-pricing-closed-2026-08-30/1 : evidence {
+    title "RT1 fused multi-rung trial pricing has no viable premise or magnitude"
+    state verified
+    result pass
+    method command
+    observed_at git:4a12436b862e710d5c7d38bb5db5c0aa03c6be54
+    command "python3 .agent/scratch/phase0-remainder-20260830/b0_rate_diag.py"
+    artifact ".agent/scratch/phase0-remainder-20260830/b0-results.jsonl"
+    summary """
+        48-cell grid (8 images x 0.5/1/2 bpp x fast/balanced, bench vardct-rate --diag): every cell prices exactly 2 serially dependent rungs (bracket=2, bisect=0), so no rung pair exists to fuse without a predictor; fused-kernel ceiling U=0.35*(quantize_ms/2)/wall is median 1.14%, p90 2.07%, max 2.66% - all under the 3% close threshold. RT1 closes on independent structural and magnitude grounds.
+        """
+}
+
+record jpegxl-rs.evidence.rt2-j2b-slope-not-learnable-2026-08-30/1 : evidence {
+    title "RT2 J2b: the rate slope is not learnable at band precision; the skip closes"
+    state verified
+    result fail
+    method command
+    observed_at git:4a12436b862e710d5c7d38bb5db5c0aa03c6be54
+    command "python3 .agent/scratch/phase0-remainder-20260830/j2b_learnability.py && python3 .agent/scratch/phase0-remainder-20260830/j2b_conditional.py"
+    artifact ".agent/scratch/phase0-remainder-20260830/rate-ladders.jsonl"
+    summary """
+        472-ladder corpus (236 images x 2 presets x 8 rungs, quality-corpus + ext-polart cal+dev), ridge fit of the anchor1->crossing secant on 974 calibration cells, evaluated on 589 image-disjoint development cells: median slope error 11.5% (gate <=10%), p90 37%. Bias-free arm comparison on the same ladder curve: the skip finalist differs from today's two-anchor finalist by median 7.8% of bytes (p75 21%) against a +-3% acceptance band; P(skip hits band | today's arm hits band) = 38% vs the 80% kill floor. Even oracle-best 60% selection still pays a correction on 73% of cells, and a correction is an exact price - it consumes the anchor the skip saved. The second anchor's job is a LOCAL slope measurement near the target; a global feature model cannot match it at 2-3% precision. RT2-4/5 close before any bitstream change; the rate-ladder sweep (4a12436) stays as the measurement instrument, and a re-attempt is only worth opening if the tolerance band is ever loosened materially.
+        """
+}
+
+record jpegxl-rs.evidence.rt2-second-anchor-headroom-2026-08-30/1 : evidence {
+    title "RT2 J2a: the second anchor is a median 22.6% of the rate-search wall"
+    state verified
+    result pass
+    method command
+    observed_at git:4a12436b862e710d5c7d38bb5db5c0aa03c6be54
+    command "python3 .agent/scratch/phase0-remainder-20260830/b0_rate_diag.py"
+    artifact ".agent/scratch/phase0-remainder-20260830/b0-results.jsonl"
+    summary """
+        Same 48-cell grid: second-anchor marginal cost ((quantize+entropy)/2 + count/2 + tape/2) is median 22.6% of search wall, p10 16.8%, over the 12% proceed gate. Two low outliers (2.6%/4.5%) are 2 bpp balanced cells dominated by entropy-tier work. RT2 proceeds to the J2b offline learnability gate.
+        """
+}
+
 record jpegxl-rs.evidence.rulings-captured/1 : evidence {
     title "HANDOFF Already-fixed and Traps plus LESSONS captured as 5 decisions, 12 policies, 6 constraints"
     state verified
@@ -6996,6 +7087,112 @@ record jpegxl-rs.evidence.spine-conventions/1 : evidence {
         jpegxl-rs.decision.ledger-conventions fixes namespace, scope convention, and the kind crosswalk
         """
     author "GitHub Uploader"
+}
+
+record jpegxl-rs.evidence.three-way-clean-room-boundary-2026-08-29/1 : evidence {
+    title "ZenJXL was used only through the documented LossyConfig public API in a generated external adapter under gitignored scratch. No ZenJXL implementation source was inspected or copied and no AGPL dependency entered JPXL's workspace or runtime crates."
+    state verified
+    result pass
+    method manual
+    observed_at git:146fbd5e960825768fbb5e4e200230c4d7b5eef4
+    summary """
+        ZenJXL was used only through the documented LossyConfig public API in a generated external adapter under gitignored scratch. No ZenJXL implementation source was inspected or copied and no AGPL dependency entered JPXL's workspace or runtime crates.
+        """
+}
+
+record jpegxl-rs.evidence.three-way-clippy-preexisting-failure-2026-08-29/1 : evidence {
+    title "The mandatory clippy gate stops on pre-existing test-only indexing at crates/jpxl-perceptual/src/ssimulacra2.rs:583; the benchmark changes contain no Rust logic and did not touch that file."
+    state verified
+    result fail
+    method command
+    observed_at git:146fbd5e960825768fbb5e4e200230c4d7b5eef4
+    command "cd JPXL && cargo clippy --workspace --all-targets -- -D warnings"
+    summary """
+        The mandatory clippy gate stops on pre-existing test-only indexing at crates/jpxl-perceptual/src/ssimulacra2.rs:583; the benchmark changes contain no Rust logic and did not touch that file.
+        """
+}
+
+record jpegxl-rs.evidence.three-way-five-image-run-2026-08-29/1 : evidence {
+    title "All 45 cells succeeded across five 0.26-12 MP images, three operating points, three best-of fresh-process timed runs, four threads, and common djxl plus ssimulacra2-jpxl-1 grading; raw JSONL, streams, host state, hashes, and limitations are retained."
+    state verified
+    result pass
+    method observation
+    observed_at git:146fbd5e960825768fbb5e4e200230c4d7b5eef4
+    artifact ".agent/scratch/three-way-encoder-bench-20260829/full/summary-v2.txt"
+    summary """
+        All 45 cells succeeded across five 0.26-12 MP images, three operating points, three best-of fresh-process timed runs, four threads, and common djxl plus ssimulacra2-jpxl-1 grading; raw JSONL, streams, host state, hashes, and limitations are retained.
+        """
+}
+
+record jpegxl-rs.evidence.three-way-followup-memo-clean-room-2026-08-29/1 : evidence {
+    title "Recommendations use competitor binaries only for black-box syntax and behavior experiments, preserve canonical SSIMULACRA2 as feasibility proof, and derive implementation suggestions solely from JPXL code, standards-first work, and AKR evidence."
+    state verified
+    result pass
+    method manual
+    observed_at git:146fbd5e960825768fbb5e4e200230c4d7b5eef4
+    summary """
+        Recommendations use competitor binaries only for black-box syntax and behavior experiments, preserve canonical SSIMULACRA2 as feasibility proof, and derive implementation suggestions solely from JPXL code, standards-first work, and AKR evidence.
+        """
+}
+
+record jpegxl-rs.evidence.three-way-followup-memo-gates-2026-08-29/1 : evidence {
+    title "The memo separates general verified-quality speed work from classifier-routed text/UI work, orders A0-A4 and B0-B5 experiments, and gives explicit continuation, promotion, and kill gates for each."
+    state verified
+    result pass
+    method manual
+    observed_at git:146fbd5e960825768fbb5e4e200230c4d7b5eef4
+    summary """
+        The memo separates general verified-quality speed work from classifier-routed text/UI work, orders A0-A4 and B0-B5 experiments, and gives explicit continuation, promotion, and kill gates for each.
+        """
+}
+
+record jpegxl-rs.evidence.three-way-followup-memo-grounding-2026-08-29/1 : evidence {
+    title "The advisory memo accurately carries the diagnostic three-way speed and quality-size results, distinguishes them from promoted baselines, and cross-references the governing performance, quality, clean-room, controller, corpus, surrogate, and Modular AKR records."
+    state verified
+    result pass
+    method manual
+    observed_at git:146fbd5e960825768fbb5e4e200230c4d7b5eef4
+    summary """
+        The advisory memo accurately carries the diagnostic three-way speed and quality-size results, distinguishes them from promoted baselines, and cross-references the governing performance, quality, clean-room, controller, corpus, surrogate, and Modular AKR records.
+        """
+}
+
+record jpegxl-rs.evidence.three-way-followup-source-registered-2026-08-29/1 : evidence {
+    title "AKR registered the immutable 18,908-byte memo as source jpxl-speed-text-ui-followup-2026-08-29-3e081d10 with sha256 3e081d10...be0e5, and all registered sources verified."
+    state verified
+    result pass
+    method command
+    observed_at git:146fbd5e960825768fbb5e4e200230c4d7b5eef4
+    command "knowledge.source_add sources/external/jpxl-speed-text-ui-followup-2026-08-29.md && knowledge.source_verify"
+    artifact "sources/external/jpxl-speed-text-ui-followup-2026-08-29-3e081d10--3e081d10.md"
+    summary """
+        AKR registered the immutable 18,908-byte memo as source jpxl-speed-text-ui-followup-2026-08-29-3e081d10 with sha256 3e081d10...be0e5, and all registered sources verified.
+        """
+}
+
+record jpegxl-rs.evidence.three-way-harness-smoke-2026-08-29/1 : evidence {
+    title "The external ZenJXL adapter built against pinned zenjxl 0.2.1; shell syntax/help passed; one three-way smoke cell produced valid JPXL, ZenJXL, and cjxl JSONL rows after common djxl decode and SSIMULACRA2 scoring."
+    state verified
+    result pass
+    method command
+    observed_at git:146fbd5e960825768fbb5e4e200230c4d7b5eef4
+    command "bash -n JPXL/tools/bench_vs_libjxl.sh JPXL/tools/setup-zenjxl-bench.sh && JPXL/tools/setup-zenjxl-bench.sh && JPXL/tools/bench_vs_libjxl.sh --quality 85 --distance 1.5 --runs 1 --threads 4 ..."
+    artifact ".agent/scratch/three-way-encoder-bench-20260829/smoke/results.jsonl"
+    summary """
+        The external ZenJXL adapter built against pinned zenjxl 0.2.1; shell syntax/help passed; one three-way smoke cell produced valid JPXL, ZenJXL, and cjxl JSONL rows after common djxl decode and SSIMULACRA2 scoring.
+        """
+}
+
+record jpegxl-rs.evidence.three-way-workspace-tests-2026-08-29/1 : evidence {
+    title "Workspace build, full release tests, and rustfmt check passed after the harness change; bash syntax and generated-adapter build also passed."
+    state verified
+    result pass
+    method command
+    observed_at git:146fbd5e960825768fbb5e4e200230c4d7b5eef4
+    command "cd JPXL && cargo build --workspace && cargo test --workspace --release && cargo fmt --all --check"
+    summary """
+        Workspace build, full release tests, and rustfmt check passed after the harness change; bash syntax and generated-adapter build also passed.
+        """
 }
 
 record jpegxl-rs.evidence.workspace-gates-2026-08-25/1 : evidence {

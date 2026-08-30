@@ -5,7 +5,7 @@ build {
     tool "akr 0.4.0"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:6945015df7ab5b61197ed3f63703f8a3a15fabb3f572dc1b00d3d37db49a66cd"
+    source_graph "sha256:87e7f2f6a15e473f5b58d550baee4e5fefc01f84d1a8be6406dd27229678de49"
 }
 
 source ".akr/project.akr" {
@@ -24,13 +24,13 @@ source ".akr/records/jpegxl-rs/constraints.akr" {
 }
 
 source ".akr/records/jpegxl-rs/decisions.akr" {
-    hash "sha256:f1449763eb3c69cbeb31c594de5f8164ac38eb73fce22dc1c0e845efee744c95"
-    records 24
+    hash "sha256:e79e889dcb3ff0e7663bf72cd75bf49bdb1f246e5be206388eaa79a538caa39b"
+    records 25
 }
 
 source ".akr/records/jpegxl-rs/evidence.akr" {
-    hash "sha256:e63470766db5e31c0862c30f6d0d0adea68b64380c4f6cf1ab877755277ce60f"
-    records 577
+    hash "sha256:4c071bd01f06494f5e4c5eda63dfd0bfd8a658f8b88e714a3b4c73f7e33a9e3d"
+    records 593
 }
 
 source ".akr/records/jpegxl-rs/milestones.akr" {
@@ -39,13 +39,13 @@ source ".akr/records/jpegxl-rs/milestones.akr" {
 }
 
 source ".akr/records/jpegxl-rs/observations.akr" {
-    hash "sha256:d3ec2be0fc4cae601c78adc536b0ffe0077f0997b9cf8ad1315714479d843b92"
-    records 104
+    hash "sha256:69fa148628eb4ff255a91c76480d2ff750bc60d63c0b681a058b6b9bfec6be0d"
+    records 107
 }
 
 source ".akr/records/jpegxl-rs/papercuts.akr" {
-    hash "sha256:5ef7b252be9748a1505f9d11324b9fd25a192c507f59db7e4ce0011ea745cf5d"
-    records 46
+    hash "sha256:8ee49947292e5349c365a521e4761e51446fb555a387adfe81505ca75a48526e"
+    records 47
 }
 
 source ".akr/records/jpegxl-rs/policies.akr" {
@@ -69,14 +69,14 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:e133678f574f1c216864224218caa411a6d78adb817b2dc18e07203bcc9cd026"
-    records 197
+    hash "sha256:0bba85386fc92f9f70f05f176074821998c70e5652d1eb47236b011bcc4342ba"
+    records 203
 }
 
 resolution @jpegxl-rs.assessment.surrogate-navigation-does-not-pay-for-wall/1 {
     slot derived_from
-    to @jpegxl-rs.work.multifidelity-quality-search/5
-    hash "sha256:2614d8925e63a108e2d6f58ddadc41c13b400114f980cdd20428ef27e2f2d094"
+    to @jpegxl-rs.work.multifidelity-quality-search/6
+    hash "sha256:9ba753560dde0b40ffc328c684f8de1625f6a22cf959452ee7096c5250f331ba"
 }
 
 resolution @jpegxl-rs.assessment.surrogate-navigation-does-not-pay-for-wall/1 {
@@ -199,10 +199,28 @@ resolution @jpegxl-rs.decision.optimization-pass-opened/1 {
     hash "sha256:8548505b7e04728e0c442fc78e178335cd58ed6cb481f7df9a9a751db20f0d04"
 }
 
+resolution @jpegxl-rs.decision.pqc-wall-target-renegotiation-shape/1 {
+    slot depends_on
+    to @jpegxl-rs.work.pqc-usable-efforts-cost/10
+    hash "sha256:2491235d755d1cc0616426b02213e474d51ca8101346096021cc5bbdd8b44626"
+}
+
+resolution @jpegxl-rs.decision.pqc-wall-target-renegotiation-shape/1 {
+    slot derived_from
+    to @jpegxl-rs.assessment.surrogate-navigation-does-not-pay-for-wall/1
+    hash "sha256:ee4449917f5b7bd16c867a67a085ba40c7698a1a2603d1f4e0256f6e752a59c6"
+}
+
+resolution @jpegxl-rs.decision.pqc-wall-target-renegotiation-shape/1 {
+    slot derived_from
+    to @jpegxl-rs.observation.pqc-wall-attribution-post-s2-2026-08-30/1
+    hash "sha256:fba40eae1fd43bf06f657ae356a8dd9bc6496b227d35cf94a75ffd66819cffee"
+}
+
 resolution @jpegxl-rs.decision.s3-coefficient-domain-decimated-surrogate/1 {
     slot depends_on
-    to @jpegxl-rs.work.multifidelity-quality-search/5
-    hash "sha256:2614d8925e63a108e2d6f58ddadc41c13b400114f980cdd20428ef27e2f2d094"
+    to @jpegxl-rs.work.multifidelity-quality-search/6
+    hash "sha256:9ba753560dde0b40ffc328c684f8de1625f6a22cf959452ee7096c5250f331ba"
 }
 
 resolution @jpegxl-rs.decision.s3-coefficient-domain-decimated-surrogate/1 {
@@ -1481,6 +1499,12 @@ resolution @jpegxl-rs.observation.pqc-one-shot-gate-fails-on-corpus-coverage-202
     slot verified_by
     to @jpegxl-rs.evidence.pqc-one-shot-falsification-screen-2026-08-24/1
     hash "sha256:9ec7485c35348921be8ac2b3b07ae600325b4d9a13138ff0e6ea28abb6551730"
+}
+
+resolution @jpegxl-rs.observation.pqc-wall-attribution-post-s2-2026-08-30/1 {
+    slot derived_from
+    to @jpegxl-rs.work.pqc-usable-efforts-cost/10
+    hash "sha256:2491235d755d1cc0616426b02213e474d51ca8101346096021cc5bbdd8b44626"
 }
 
 resolution @jpegxl-rs.observation.quality-corpus-critical-class-families-2026-08-25/1 {
@@ -3895,6 +3919,60 @@ resolution @jpegxl-rs.work.multifidelity-quality-search/5 {
     hash "sha256:f5aa7bd1cc6df0d039a64c7ba48f350837d6a5bb885eb279db045564edad976d"
 }
 
+resolution @jpegxl-rs.work.multifidelity-quality-search/6 {
+    slot depends_on
+    to @jpegxl-rs.work.ladder-navigator-unification/4
+    hash "sha256:4a8be156fdb9e2860fbebb59e3906666deb998923cf14958552f8c3da17c31a9"
+}
+
+resolution @jpegxl-rs.work.multifidelity-quality-search/6 {
+    slot part_of
+    to @jpegxl-rs.track.perceptual-quality-controller/1
+    hash "sha256:ee46ea6ea41bbe6b52ee4962868f2ed858f276a6e2455fd361c4086cc0aee1c0"
+}
+
+resolution @jpegxl-rs.work.multifidelity-quality-search/6 {
+    slot verified_by
+    to @jpegxl-rs.evidence.n3-confident-stop-byte-identical-holdouts/1
+    hash "sha256:ce970478247a5453bea5dc75ff4aba58cddac3c54ffa6c2a84d1c1202ae924e4"
+}
+
+resolution @jpegxl-rs.work.multifidelity-quality-search/6 {
+    slot verified_by
+    to @jpegxl-rs.evidence.r1-render-scratch-exact-and-measured/1
+    hash "sha256:6803f8cfbc3f5e63cf1520df24b48831fc444dfb8a808f6a6c28277207f42a6a"
+}
+
+resolution @jpegxl-rs.work.multifidelity-quality-search/6 {
+    slot verified_by
+    to @jpegxl-rs.evidence.s1-surrogate-navigation-holdout-gate/1
+    hash "sha256:c64517cb7a5f306125b78024190e5553b4b594874c5cb18153f058246dc85f81"
+}
+
+resolution @jpegxl-rs.work.multifidelity-quality-search/6 {
+    slot verified_by
+    to @jpegxl-rs.evidence.s1-surrogate-sizing-shadow-corpus/1
+    hash "sha256:34a2be58cdae0b20812a04d804b51005969ae59c7d6088e36ab6486aa21bdf0e"
+}
+
+resolution @jpegxl-rs.work.multifidelity-quality-search/6 {
+    slot verified_by
+    to @jpegxl-rs.evidence.s2-decimated-surrogate-holdout-gate/1
+    hash "sha256:948e8b450709fee31061af49569c5abb1d7c4174a8c052a51ba4ef1544e8ae9f"
+}
+
+resolution @jpegxl-rs.work.multifidelity-quality-search/6 {
+    slot verified_by
+    to @jpegxl-rs.evidence.s2-decimated-surrogate-sizing-corpus/1
+    hash "sha256:cc5ea82fd8d569f9a9fb5a19300e3718c88a3815e97ff4c4eb331dcadea03cb5"
+}
+
+resolution @jpegxl-rs.work.multifidelity-quality-search/6 {
+    slot verified_by
+    to @jpegxl-rs.evidence.s2-exact-banded-metric-identity-and-rss/1
+    hash "sha256:f5aa7bd1cc6df0d039a64c7ba48f350837d6a5bb885eb279db045564edad976d"
+}
+
 resolution @jpegxl-rs.work.opt-benches-and-counters/1 {
     slot implements
     to @jpegxl-rs.decision.optimization-ordering/1
@@ -4051,6 +4129,18 @@ resolution @jpegxl-rs.work.pqc-usable-efforts-cost/9 {
     hash "sha256:7cc5c06e34773ef0692dacc6763c8e677730dd1172aede7d96d744eceec361ec"
 }
 
+resolution @jpegxl-rs.work.pqc-usable-efforts-cost/10 {
+    slot supported_by
+    to @jpegxl-rs.observation.pqc-large-frame-render-parallel-2026-08-25/1
+    hash "sha256:2b6173b98676727bede354bb3488928d0ec58c1efd7dcbbf4ef927ea0ec4c51f"
+}
+
+resolution @jpegxl-rs.work.pqc-usable-efforts-cost/10 {
+    slot supported_by
+    to @jpegxl-rs.observation.pqc-wall-quiet-host-attribution-2026-08-25/1
+    hash "sha256:7cc5c06e34773ef0692dacc6763c8e677730dd1172aede7d96d744eceec361ec"
+}
+
 resolution @jpegxl-rs.work.quality-q0-harness-attribution/1 {
     slot part_of
     to @jpegxl-rs.track.encoder-optimization/1
@@ -4174,6 +4264,11 @@ seal @jpegxl-rs.evidence.avx2-pooling-bit-identity-2026-08-26/1 {
     hash "sha256:3cdec63fc9c4af853f3e0245c9ad125c5ba23ce1b0fdf612aca20fa4f0d8d42b"
 }
 
+seal @jpegxl-rs.evidence.b1-multi-probe-frequency-2026-08-30/1 {
+    state verified
+    hash "sha256:587c08e3a49b58f9edaddec70826c438c347c202c59cf9dc9cc0227928ee53c5"
+}
+
 seal @jpegxl-rs.evidence.bench-vs-libjxl-reproducible-2026-08-25/1 {
     state verified
     hash "sha256:a24dfed6aab83df6837b4ebe83c0a2bf6aa28a646df346c2b6f84175fe267b3b"
@@ -4187,6 +4282,21 @@ seal @jpegxl-rs.evidence.cli-netpbm-subtypes-2026-08-21/1 {
 seal @jpegxl-rs.evidence.cli-netpbm-workspace-gates-2026-08-21/1 {
     state verified
     hash "sha256:48a5ec34bc10a4d82dd2cb325034c1caa683b5672c0361ce0f2fd629641e23e5"
+}
+
+seal @jpegxl-rs.evidence.e1a-scratch-retention-breaches-memory-anchor-2026-08-30/1 {
+    state verified
+    hash "sha256:ef6a15166f74678239b4615ac75ba87b974aed731a353aa642b6c91172a918c3"
+}
+
+seal @jpegxl-rs.evidence.e1b1-epf-parallel-pad-gates-2026-08-30/1 {
+    state verified
+    hash "sha256:24baf2eb7cb60d651cf43742d5b4256400dc4102d12fc232857a3abf1326ad2d"
+}
+
+seal @jpegxl-rs.evidence.e1d-eight-lane-horizontal-blur-2026-08-30/1 {
+    state verified
+    hash "sha256:16b75c75599b0d05bebc06ebbe65797b1233bbfa49f75c7743e7e8fa05956ea6"
 }
 
 seal @jpegxl-rs.evidence.experiments-captured/1 {
@@ -6944,6 +7054,21 @@ seal @jpegxl-rs.evidence.retire-handoff-tombstone-2026-08-11/1 {
     hash "sha256:2e2cba23cb42747027375aa3ca9cae955ef4e75d39dd79b7741e428833409880"
 }
 
+seal @jpegxl-rs.evidence.rt1-fused-trial-pricing-closed-2026-08-30/1 {
+    state verified
+    hash "sha256:858ac883a40037562555739b43bfc52860d8b4585a6003288823ea753d92c6c0"
+}
+
+seal @jpegxl-rs.evidence.rt2-j2b-slope-not-learnable-2026-08-30/1 {
+    state verified
+    hash "sha256:c2735baee061d265de1f6a4acda617e969489c10333f7aac249e6e79b8cf14e7"
+}
+
+seal @jpegxl-rs.evidence.rt2-second-anchor-headroom-2026-08-30/1 {
+    state verified
+    hash "sha256:be78db95a2945a04c78ac00f1785d44722a4dc63b2c23b3e9edbc8b15329205a"
+}
+
 seal @jpegxl-rs.evidence.rulings-captured/1 {
     state verified
     hash "sha256:6fa0b4ff5fc5ab2005d848d8cd8d938b136f6299bc9c158bf7488c5353bf3d48"
@@ -7047,6 +7172,51 @@ seal @jpegxl-rs.evidence.spine-builds/1 {
 seal @jpegxl-rs.evidence.spine-conventions/1 {
     state verified
     hash "sha256:5793d09f02a73315418bdbcd130b2116fba1c79ae1b09148cc2deb782032c0d3"
+}
+
+seal @jpegxl-rs.evidence.three-way-clean-room-boundary-2026-08-29/1 {
+    state verified
+    hash "sha256:17acb9f44e84592e6681c1a4a29002f15231e44b144cf623919b6c0dc03e62f2"
+}
+
+seal @jpegxl-rs.evidence.three-way-clippy-preexisting-failure-2026-08-29/1 {
+    state verified
+    hash "sha256:48e90ec11c4e9973552e0e4e8772813b1a96e2f1829b1afdea8ae221e82617a2"
+}
+
+seal @jpegxl-rs.evidence.three-way-five-image-run-2026-08-29/1 {
+    state verified
+    hash "sha256:4dfd2e885bae4e621de2e8746902841211104169999f270c821e741bdc9adec2"
+}
+
+seal @jpegxl-rs.evidence.three-way-followup-memo-clean-room-2026-08-29/1 {
+    state verified
+    hash "sha256:c1a0c7c0b230eb68f6203caef1a01a143bd1be66761f859ccc0fb3dbd687d2ee"
+}
+
+seal @jpegxl-rs.evidence.three-way-followup-memo-gates-2026-08-29/1 {
+    state verified
+    hash "sha256:06dcf455ce74f0148f6ed947d2472a60ef9604a0cc46b7ec78ffb41e12fa067e"
+}
+
+seal @jpegxl-rs.evidence.three-way-followup-memo-grounding-2026-08-29/1 {
+    state verified
+    hash "sha256:9094f587db5912053ad80f08f638ae36b3b94a6d3f30216b9f65b0d0bb63b0a2"
+}
+
+seal @jpegxl-rs.evidence.three-way-followup-source-registered-2026-08-29/1 {
+    state verified
+    hash "sha256:f1d6eac82431eaea4caf881a4fc5bad80c6db02aebd9866150f627f6aed938f0"
+}
+
+seal @jpegxl-rs.evidence.three-way-harness-smoke-2026-08-29/1 {
+    state verified
+    hash "sha256:f60f1b4656d349a89e719046ab02a32094c9ada227c6aab47c5377a3fa0e6e19"
+}
+
+seal @jpegxl-rs.evidence.three-way-workspace-tests-2026-08-29/1 {
+    state verified
+    hash "sha256:df54c867700d3bb105a98c52153099747881be571dfeb419b161a4f7a59d2da1"
 }
 
 seal @jpegxl-rs.evidence.workspace-gates-2026-08-25/1 {
@@ -7499,6 +7669,11 @@ seal @jpegxl-rs.observation.pqc-pr7-full-holdout-quality-rejected-2026-08-24/1 {
     hash "sha256:1109634526a1ddc0fa6bb5b91274107c3d16b335ed5c6b8e6c1bbd72cd89b882"
 }
 
+seal @jpegxl-rs.observation.pqc-wall-attribution-post-s2-2026-08-30/1 {
+    state verified
+    hash "sha256:fba40eae1fd43bf06f657ae356a8dd9bc6496b227d35cf94a75ffd66819cffee"
+}
+
 seal @jpegxl-rs.observation.pqc-wall-quiet-host-attribution-2026-08-25/1 {
     state verified
     hash "sha256:7cc5c06e34773ef0692dacc6763c8e677730dd1172aede7d96d744eceec361ec"
@@ -7642,6 +7817,16 @@ seal @jpegxl-rs.observation.the-quantizer-is-the-lever-and-its-rate-proxy-is-the
 seal @jpegxl-rs.observation.the-rate-proxy-is-blind-to-most-symbols-and-the-lever-is-truncation-2026-08-12/1 {
     state verified
     hash "sha256:deaf60105f0498bb23df491b84b151337b49e063b5e78bf43c6187b86b8a7494"
+}
+
+seal @jpegxl-rs.observation.three-way-encoder-comparison-2026-08-29/1 {
+    state superseded
+    hash "sha256:427850f0408a6aa7be7ba69e8972863cd06ff7defa7c074d5bdf809076e82bb5"
+}
+
+seal @jpegxl-rs.observation.three-way-encoder-comparison-2026-08-29/2 {
+    state verified
+    hash "sha256:a2e55afb215e067a5481bb4294e831a34cd6b3609d6e26283db43db8fc6f562e"
 }
 
 seal @jpegxl-rs.observation.transform-size-axis-is-not-the-deficit-2026-08-12/1 {
@@ -7812,6 +7997,11 @@ seal @jpegxl-rs.papercut.knowledge-propose-exposes-scope-as-array/1 {
 seal @jpegxl-rs.papercut.knowledge-propose-exposes-topic-for-every/1 {
     state verified
     hash "sha256:b99598934c10fe506bb7e86efdd5010c579d466bb4f4f315ad679a1de6b81e28"
+}
+
+seal @jpegxl-rs.papercut.knowledge-propose-rejected-a-work-record/1 {
+    state verified
+    hash "sha256:4f452cf0073da8852826d0020d8703ce9e7882bdcb3c5685740ecbab1dfba881"
 }
 
 seal @jpegxl-rs.papercut.knowledge-propose-s-generic-slots-schema-does/1 {
@@ -8655,8 +8845,13 @@ seal @jpegxl-rs.work.multifidelity-quality-search/4 {
 }
 
 seal @jpegxl-rs.work.multifidelity-quality-search/5 {
+    state superseded
+    hash "sha256:2aa6d8232ea767a774aa88e4ec7b1aa84070e37b0818fe1a081482734df71001"
+}
+
+seal @jpegxl-rs.work.multifidelity-quality-search/6 {
     state active
-    hash "sha256:2614d8925e63a108e2d6f58ddadc41c13b400114f980cdd20428ef27e2f2d094"
+    hash "sha256:9ba753560dde0b40ffc328c684f8de1625f6a22cf959452ee7096c5250f331ba"
 }
 
 seal @jpegxl-rs.work.native-windows-quality-tooling/1 {
@@ -8825,8 +9020,13 @@ seal @jpegxl-rs.work.pqc-usable-efforts-cost/8 {
 }
 
 seal @jpegxl-rs.work.pqc-usable-efforts-cost/9 {
+    state superseded
+    hash "sha256:20a332520a86bc545aed56d5bdb1a98e0ff43674c420804b191b4467089cba65"
+}
+
+seal @jpegxl-rs.work.pqc-usable-efforts-cost/10 {
     state active
-    hash "sha256:a0dd993d34e6e6b53af2c95644e83482dbd8aa80efa966d60dcc808f8b775fb3"
+    hash "sha256:2491235d755d1cc0616426b02213e474d51ca8101346096021cc5bbdd8b44626"
 }
 
 seal @jpegxl-rs.work.publish-readme-benchmark-mit/1 {
@@ -8897,4 +9097,24 @@ seal @jpegxl-rs.work.quality-q9-production-presets/1 {
 seal @jpegxl-rs.work.retire-handoff-ledger/1 {
     state completed
     hash "sha256:7cb933a0f13411e238b970e6ae2daa4edfa50ea8b3ba31ec18ac277d43822c47"
+}
+
+seal @jpegxl-rs.work.three-way-encoder-benchmark/1 {
+    state superseded
+    hash "sha256:7350e1fc8ae3c70f770f0ce6f492758808749f2ad3c7c6d3cd2cf92e8a9362a0"
+}
+
+seal @jpegxl-rs.work.three-way-encoder-benchmark/2 {
+    state completed
+    hash "sha256:81074992e7b3ff56369f6e55404e1b7133ba9d5d5bf345f05de76968aceeff60"
+}
+
+seal @jpegxl-rs.work.three-way-followup-recommendations/1 {
+    state superseded
+    hash "sha256:e997da4b706ec8a869120c6e799497fb9b494269f6341d57938b3cdac914977a"
+}
+
+seal @jpegxl-rs.work.three-way-followup-recommendations/2 {
+    state completed
+    hash "sha256:9d2364e70ca0184c8c4bf910da340eec28980b9f6a2ee3d58adf2fd94aceb438"
 }

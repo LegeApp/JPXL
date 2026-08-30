@@ -35,6 +35,19 @@
     "title": "One-shot quality-controller design memo (advisor response, 2026-08-24)"
   },
   {
+    "added_at": "2026-08-29",
+    "availability": "full",
+    "byte_len": 18908,
+    "content_hash": "sha256:3e081d1046ec056c854a2b67525604cdff2aaad991a860d1ecae7a46569be0e5",
+    "id": "jpxl-speed-text-ui-followup-2026-08-29-3e081d10",
+    "media_type": "text/markdown",
+    "observed_at": "146fbd5e960825768fbb5e4e200230c4d7b5eef4",
+    "origin": "external",
+    "path": "sources/external/jpxl-speed-text-ui-followup-2026-08-29-3e081d10--3e081d10.md",
+    "scope": "JPXL/**",
+    "title": "JPXL speed and text/UI follow-up after three-way comparison"
+  },
+  {
     "added_at": "2026-08-22",
     "availability": "full",
     "byte_len": 37908,

@@ -1945,6 +1945,23 @@ record jpegxl-rs.observation.pqc-pr7-full-holdout-quality-rejected-2026-08-24/1 
     ]
 }
 
+record jpegxl-rs.observation.pqc-wall-attribution-post-s2-2026-08-30/1 : observation {
+    title "Post-S2 quality-vs-rate wall structure at threads 1/4/8 (provisional: loaded host, no cycle profile)"
+    state verified
+    scope [ path "JPXL/crates/jpxl-perceptual/**", path "JPXL/crates/jpxl-plan-render/**" ]
+    statement """
+        Interleaved Balanced quality-vs-matched-rate walls on the two locked anchors at HEAD (release, current tree), threads 1/4/8, 3 probes both anchors: 4.3 MP ratio 7.09/2.82/2.49, 12 MP ratio 11.71/4.37/3.45. Amdahl over the thread sweep puts the quality path's serial fraction at ~17-20% of the single-thread wall. Per-probe split at 12 MP 8t: render+metric ~470 ms/probe; traced phases sum to 1.86 s of a 2.74 s process wall, so ~0.9 s sits outside the controller (source load, reference build, feature extraction, IO) - material to how the wall-anchors ratio is defined. Arithmetic single-probe floors: ~2.07x at 12 MP 8t, ~1.3x at 4.3 MP 8t. CAVEATS: host load 3.8-6.7 during runs, so ratios are indicative, not gate-grade; cycle-level leaf shares (Q0a) are blocked until kernel.perf_event_paranoid <= 2 - the 2026-08-25 hot-leaf attribution remains without a current replacement.
+        """
+    observed_at git:4a12436b862e710d5c7d38bb5db5c0aa03c6be54
+    method command
+    watches [
+        "JPXL/crates/jpxl-perceptual/src/**",
+        "JPXL/crates/jpxl-plan-render/src/**",
+        "JPXL/crates/jpxl-encode-policy/src/quality.rs"
+    ]
+    derived_from [ @jpegxl-rs.work.pqc-usable-efforts-cost ]
+}
+
 record jpegxl-rs.observation.pqc-wall-quiet-host-attribution-2026-08-25/1 : observation {
     title "Quiet-host wall anchors: 12 MP 5.42x (4t) / 4.25x (8t); the quality path's fixed costs alone sit near 2x, so the 2.0x target is unreachable by search improvements"
     state verified
@@ -2642,6 +2659,62 @@ record jpegxl-rs.observation.the-rate-proxy-is-blind-to-most-symbols-and-the-lev
             The walk's charging model, the three-rate symbol classification and the truncation-lever arithmetic.
             """
     }
+}
+
+record jpegxl-rs.observation.three-way-encoder-comparison-2026-08-29/1 : observation {
+    title "Current JPXL, ZenJXL, and libjxl quality-path comparison on five images"
+    state superseded
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/**",
+        path "JPXL/tools/bench_vs_libjxl.sh",
+        path "JPXL/tools/setup-zenjxl-bench.sh"
+    ]
+    statement """
+        On five 0.26-12 MP images at four threads, three best-of fresh-process runs per point, all 45 JPXL Balanced q70/q85/q90, ZenJXL 0.2.1 e7 d3/d1.5/d1, and cjxl 0.13.0 e7 cells encoded, decoded with djxl, and scored with ssimulacra2-jpxl-1. At the raw middle controls (not quality matched), JPXL q85 was 1.57x ZenJXL d1.5 and 2.23x cjxl d1.5 wall by five-image geomean. ZenJXL versus cjxl at identical distances was 1.293x wall overall; excluding the text screenshot it used 1.025x bytes with mean score -0.870. JPXL q85 used 11-30% fewer bytes than the first measured equal-or-better competitor points on the saturated crop, natural scene, and 12 MP photo, and at virtually equal bytes on the 4.3 MP photo scored +2.32 over ZenJXL and +2.09 over cjxl. The text screenshot is the decisive weakness: JPXL q85 used 7.21x ZenJXL d3 bytes and 9.23x cjxl d3 bytes while those outputs scored 5.5-5.9 points higher. These are diagnostic best-of timings, not a promoted baseline: runs were batched by encoder rather than interleaved, use different quality controls, report no dispersion, and host load was 2.9-6.7.
+        """
+    observed_at git:146fbd5e960825768fbb5e4e200230c4d7b5eef4
+    method command
+    watches [
+        "JPXL/tools/bench_vs_libjxl.sh",
+        "JPXL/tools/setup-zenjxl-bench.sh",
+        "JPXL/crates/jpxl-encode-policy/**",
+        "JPXL/crates/jpxl-plan-render/**",
+        "JPXL/crates/jpxl-perceptual/**"
+    ]
+    derived_from [
+        @jpegxl-rs.policy.performance-baseline-rules/1,
+        @jpegxl-rs.work.three-way-encoder-benchmark/2
+    ]
+    verified_by [
+        @jpegxl-rs.evidence.three-way-five-image-run-2026-08-29/1,
+        @jpegxl-rs.evidence.three-way-harness-smoke-2026-08-29/1
+    ]
+}
+
+record jpegxl-rs.observation.three-way-encoder-comparison-2026-08-29/2 : observation {
+    title "Current JPXL, ZenJXL, and libjxl quality-path comparison on five images"
+    state verified
+    scope [ path "JPXL/crates/jpxl-encode-policy/**", path "JPXL/tools/**" ]
+    statement """
+        On five 0.26-12 MP images at four threads, three best-of fresh-process runs per point, all 45 JPXL Balanced q70/q85/q90, ZenJXL 0.2.1 e7 d3/d1.5/d1, and cjxl 0.13.0 e7 cells encoded, decoded with djxl, and scored with ssimulacra2-jpxl-1. At the raw middle controls (not quality matched), JPXL q85 was 1.57x ZenJXL d1.5 and 2.23x cjxl d1.5 wall by five-image geomean. ZenJXL versus cjxl at identical distances was 1.293x wall overall; excluding the text screenshot it used 1.025x bytes with mean score -0.870. JPXL q85 used 11-30% fewer bytes than the first measured equal-or-better competitor points on the saturated crop, natural scene, and 12 MP photo, and at virtually equal bytes on the 4.3 MP photo scored +2.32 over ZenJXL and +2.09 over cjxl. The text screenshot is the decisive weakness: JPXL q85 used 7.21x ZenJXL d3 bytes and 9.23x cjxl d3 bytes while those outputs scored 5.5-5.9 points higher. These are diagnostic best-of timings, not a promoted baseline: runs were batched by encoder rather than interleaved, use different quality controls, report no dispersion, and host load was 2.9-6.7.
+        """
+    observed_at git:146fbd5e960825768fbb5e4e200230c4d7b5eef4
+    method command
+    watches [
+        "JPXL/tools/**",
+        "JPXL/crates/jpxl-encode-policy/**",
+        "JPXL/crates/jpxl-plan-render/**",
+        "JPXL/crates/jpxl-perceptual/**"
+    ]
+    derived_from [
+        @jpegxl-rs.policy.performance-baseline-rules/1,
+        @jpegxl-rs.work.three-way-encoder-benchmark/2
+    ]
+    supersedes [ @jpegxl-rs.observation.three-way-encoder-comparison-2026-08-29/1 ]
+    verified_by [
+        @jpegxl-rs.evidence.three-way-five-image-run-2026-08-29/1,
+        @jpegxl-rs.evidence.three-way-harness-smoke-2026-08-29/1
+    ]
 }
 
 record jpegxl-rs.observation.transform-size-axis-is-not-the-deficit-2026-08-12/1 : observation {
