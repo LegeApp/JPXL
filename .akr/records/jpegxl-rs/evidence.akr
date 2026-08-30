@@ -30,6 +30,19 @@ record jpegxl-rs.evidence.b1-multi-probe-frequency-2026-08-30/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.b1g-pairability-hit-rate-2026-08-30/1 : evidence {
+    title "B1-G: exact pairability hit rate is ~0 on the dense rung ladder — B1 closed"
+    state verified
+    result fail
+    method command
+    observed_at git:e48312207f59f6dfc5fddf1da26e74205ec79929
+    command "python3 .agent/scratch/phase0-remainder-20260830/b1g_hitrate.py (644 cells, 1213 paired probes, targets 70/80/85/90)"
+    artifact ".agent/scratch/phase0-remainder-20260830/b1g-traces.jsonl"
+    summary """
+        B1-G pairability gate fails structurally: exact-rung speculation hits 1/1213 (h~0.001 vs the >=0.7 gate) for all three rules. The rung ladder is dense (scale integers), so the deterministic navigation's next rung is essentially never exactly guessable without the previous score: probe-1 expansion median 33% relative error, tighten probes median 1.8-2.8% - close, but pairing exactly requires equality. Only a Contract-B policy change (probe the guess instead of the aim) could pair, at the finalist-drift cost class that closed RT2. B1 closes.
+        """
+}
+
 record jpegxl-rs.evidence.b1g-shadow-identity-2026-08-30/1 : evidence {
     title "B1-G shadow is byte-identical on the 16-cell grid"
     state verified
@@ -141,6 +154,32 @@ record jpegxl-rs.evidence.e1d-eight-lane-horizontal-blur-2026-08-30/1 : evidence
     artifact ".agent/scratch/phase0-remainder-20260830/README.md"
     summary """
         ROW_LANES 4->8 (259b728): four lanes were one f64x4 vector on a serial dependency chain (latency-bound); eight lanes are two independent chains. horizontal_band microbench 4000x512: plane 4.06->2.61 ns/sample (-36%), product 4.39->2.66 (-39%), far past the 10% keep threshold. New lane-vs-scalar equality test pins every height remainder of both input kinds; 16/16 locked identity cells byte-identical with bit-identical canonical+surrogate probe scores vs the 146fbd5 baseline binary. Kernel runs on the reference build and every probe's metric blur; whole-wall effect deliberately unclaimed until a quiet-host run.
+        """
+}
+
+record jpegxl-rs.evidence.e1e-two-chain-xyb-negative-2026-08-30/1 : evidence {
+    title "E1-e two-chain XYB regroup does not pay — reverted, closed"
+    state verified
+    result fail
+    method command
+    observed_at git:4be088eceb3e911945e1e5001ffc92ebb97f5f14
+    command "python3 .agent/scratch/phase0-remainder-20260830/wall_e1e.py; perf record -F 997 on both binaries"
+    artifact ".agent/scratch/phase0-remainder-20260830/wall-e1e.json"
+    summary """
+        E1-e (8-pixel two-chain regroup of the XYB cbrt Newton loop) is bit-identical (16/16) but does not pay: the planes_to_positive_xyb leaf share does not drop (7.99->7.50 / 5.65->6.38 across CPU sections) and the loaded-host interleaved wall reads +0.8..1.4%. The vdivpd chain is throughput-bound, not latency-bound, so extra ILP buys nothing. Kill rule fired; code reverted (rebuilt binary byte-identical to HEAD 4be088e). E1-e closed permanently.
+        """
+}
+
+record jpegxl-rs.evidence.e1g-direct-depth-classification-2026-08-30/1 : evidence {
+    title "E1-g direct-table classification: bit-exact, -2.7..-3.1% wall"
+    state verified
+    result pass
+    method command
+    observed_at git:4be088eceb3e911945e1e5001ffc92ebb97f5f14
+    command "python3 .agent/scratch/phase0-remainder-20260830/identity_e1g.py; python3 .agent/scratch/phase0-remainder-20260830/wall_e1g.py"
+    artifact ".agent/scratch/phase0-remainder-20260830/wall-e1g.json"
+    summary """
+        E1-g (commit 4be088e): direct-table depth classification is byte-identical on the 16-cell grid and cuts the interleaved quality wall to 0.973 (4.3MP t8), 0.972 (12MP t8), 0.969 (12MP t4) vs the pre-change binary. Direct table resolves 99.6% of buckets at 8-bit; equality + resolution-floor tests added.
         """
 }
 

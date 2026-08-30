@@ -199,6 +199,47 @@ record jpegxl-rs.assessment.n2-navigator-does-not-pay-for-itself/1 : assessment 
     }
 }
 
+record jpegxl-rs.assessment.paired-candidate-lanes-cannot-speculate-exactly/1 : assessment {
+    title "Paired candidate lanes cannot speculate the next rung exactly; B1 is closed"
+    state superseded
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/src/quality.rs",
+        path "JPXL/crates/jpxl-perceptual/**"
+    ]
+    statement """
+        B1 (paired-candidate evaluation, CandidateLanes<2>) is closed at its pairability gate. The quality navigation chooses rungs on a dense integer scale ladder as a deterministic function of the previous probe's exact score; without that score, the best in-process replay of the navigator's own decision core guesses the next rung exactly 1 time in 1213 across 644 corpus cells (gate h >= 0.7). The guesses are often close (tighten probes median 1.8-2.8% relative scale error; the probe-1 expansion is unguessable at median 33%), but B1's exactness contract discards a mis-speculated lane, so closeness pays nothing. The only pairing that could work - probing the speculated rung instead of the aim - is a Contract-B policy change that moves finalists, the same cost class the RT2 J2b gate closed. The frequency premise (97.4% multi-probe encodes) was never the constraint; determinism-without-the-score is.
+        """
+    confidence high
+    as_of git:e483122acc21633ee1c62d99f96ae15353d80ec3
+    derived_from [ @jpegxl-rs.work.multifidelity-quality-search ]
+    supported_by [
+        @jpegxl-rs.evidence.b1-multi-probe-frequency-2026-08-30,
+        @jpegxl-rs.evidence.b1g-pairability-hit-rate-2026-08-30,
+        @jpegxl-rs.evidence.b1g-shadow-identity-2026-08-30
+    ]
+}
+
+record jpegxl-rs.assessment.paired-candidate-lanes-cannot-speculate-exactly/2 : assessment {
+    title "Paired candidate lanes cannot speculate the next rung exactly; B1 is closed"
+    state verified
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/src/quality.rs",
+        path "JPXL/crates/jpxl-perceptual/**"
+    ]
+    statement """
+        B1 (paired-candidate evaluation, CandidateLanes<2>) is closed at its pairability gate. The quality navigation chooses rungs on a dense integer scale ladder as a deterministic function of the previous probe's exact score; without that score, the best in-process replay of the navigator's own decision core guesses the next rung exactly 1 time in 1213 across 644 corpus cells (gate h >= 0.7). The guesses are often close (tighten probes median 1.8-2.8% relative scale error; the probe-1 expansion is unguessable at median 33%), but B1's exactness contract discards a mis-speculated lane, so closeness pays nothing. The only pairing that could work - probing the speculated rung instead of the aim - is a Contract-B policy change that moves finalists, the same cost class the RT2 J2b gate closed. The frequency premise (97.4% multi-probe encodes) was never the constraint; determinism-without-the-score is.
+        """
+    confidence high
+    as_of git:e48312207f59f6dfc5fddf1da26e74205ec79929
+    derived_from [ @jpegxl-rs.work.multifidelity-quality-search ]
+    supersedes [ @jpegxl-rs.assessment.paired-candidate-lanes-cannot-speculate-exactly/1 ]
+    supported_by [
+        @jpegxl-rs.evidence.b1-multi-probe-frequency-2026-08-30,
+        @jpegxl-rs.evidence.b1g-pairability-hit-rate-2026-08-30,
+        @jpegxl-rs.evidence.b1g-shadow-identity-2026-08-30
+    ]
+}
+
 record jpegxl-rs.assessment.phase4-density-gap-is-vs-e7-only/1 : assessment {
     title "Correction: the '118x' figure is a wall-time ratio, not a density gap; jpxl-modular already beats cjxl -e1 on bytes"
     state verified
