@@ -1018,6 +1018,100 @@ fn emit_exact_full_candidate(
     Ok((plan, emission))
 }
 
+/// One fresh-anchor trial price of the rate ladder (Phase RT2 oracle label).
+#[cfg(feature = "anchor-sketch")]
+#[derive(Debug, Clone, Copy)]
+pub struct RateLadderPoint {
+    /// The rung that was planned and priced.
+    pub rung: Rung,
+    /// The quantizer at that rung (with the request's `quant_lf` coupling).
+    pub quantizer: QuantizerChoice,
+    /// `global_scale * HfMul` of that quantizer.
+    pub effective_scale: u64,
+    /// The Fast-entropy Count price of the fresh anchor plan. No Store is
+    /// emitted; this is the byte currency the bounded controller's crossing
+    /// mathematics navigates in.
+    pub bytes: u64,
+    /// Milliseconds in pixel planning.
+    pub plan_ms: u64,
+    /// Milliseconds in pricing.
+    pub price_ms: u64,
+}
+
+/// Fresh-anchor trial prices at each requested rung, for the offline
+/// rate-prior trainer's corpus (Phase RT2).
+///
+/// Every point is planned exactly as [`search_frame_two_anchor`]'s first
+/// anchor — fresh structure, the preset's CfL policy, [`EntropySearch::Fast`]
+/// — and priced without emitting a Store, so slopes between adjacent points'
+/// `ln(bytes)` are measured in the controller's own crossing currency.
+/// Measurement only: no encode path calls this.
+///
+/// # Errors
+///
+/// Whatever planning or pricing refuses, and a Quality-preset request, which
+/// has no bounded rate controller to be an oracle for.
+#[cfg(feature = "anchor-sketch")]
+pub fn sweep_frame_rate(
+    frame: &crate::PreparedFrame,
+    atlas: &crate::AnalysisAtlas,
+    request: &EncodeRequest,
+    rungs: &[Rung],
+    executor: &jpxl_encode::EncodeExecutor,
+) -> Result<Vec<RateLadderPoint>> {
+    let transform_owned = if request.restoration.gaborish {
+        Some(crate::prepare_gaborish_frame(frame)?)
+    } else {
+        None
+    };
+    let transform_frame = transform_owned.as_ref().unwrap_or(frame);
+    let enable_cfl = match request.rate_preset {
+        RateSearchPreset::Fast => false,
+        RateSearchPreset::Balanced => true,
+        RateSearchPreset::Quality => {
+            return Err(PolicyError::Unsupported {
+                what: "a Quality request routed into the rate ladder sweep",
+            });
+        }
+    };
+    let mut prepared = PreparedSearch {
+        frame,
+        transform_frame,
+        atlas,
+        request,
+        executor,
+        fwd_cache: CandidateForwardCache::new(),
+        quant_workspace: crate::QuantizationWorkspace::new(),
+        stats: RateProbeStats::default(),
+    };
+    let mut points = Vec::with_capacity(rungs.len());
+    for &rung in rungs {
+        let quantizer = QuantizerChoice::at(rung, request.quant_lf)?;
+        let plan_start = std::time::Instant::now();
+        let plan = prepared.plan_anchor(
+            quantizer,
+            enable_cfl,
+            EntropySearch::Fast,
+            AnchorReuse::None,
+            None,
+        )?;
+        let plan_ms = u64::try_from(plan_start.elapsed().as_millis()).unwrap_or(u64::MAX);
+        let price_start = std::time::Instant::now();
+        let sizing = price_codestream_with(&plan, executor)?;
+        let price_ms = u64::try_from(price_start.elapsed().as_millis()).unwrap_or(u64::MAX);
+        drop(plan);
+        points.push(RateLadderPoint {
+            rung,
+            quantizer,
+            effective_scale: effective_scale(rung),
+            bytes: sizing.total,
+            plan_ms,
+            price_ms,
+        });
+    }
+    Ok(points)
+}
+
 /// Whether every G.2.2 `LfQuant` sample fits the legacy signed-16-bit range.
 ///
 /// D.3 permits signed 32-bit Modular samples when

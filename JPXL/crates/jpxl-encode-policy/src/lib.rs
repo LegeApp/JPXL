@@ -142,6 +142,8 @@ pub use quantizer_ladder::{
 pub use rate::{
     LadderSearch, RateOutcome, RatePhase, RateProbeStats, RateStatus, RateStep, search_frame,
 };
+#[cfg(feature = "anchor-sketch")]
+pub use rate::{RateLadderPoint, sweep_frame_rate};
 pub use request::{
     AdaptiveSharpness, ChromaHfPolicy, CoverFrequencyWeight, CoverMode, CoverRateModel,
     CoverSizePenalty, EncodeRequest, EpfSharpnessMode, QuantizerChoiceMode, RateSearchBudget,

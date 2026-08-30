@@ -58,6 +58,13 @@ Usage:
                                   fresh at each effective scale, score each
                                   canonically, optionally exact-price it, and
                                   print JSONL (oracle-label calibration tool)
+    jpxl rate-ladder --scales s1,s2,... [--preset fast|balanced]
+                     [--threads N] <in>
+                                  Trial-price a fresh anchored rate plan at
+                                  each effective scale, exactly as the bounded
+                                  controller's first anchor, and print JSONL
+                                  (rate-prior calibration tool; no output
+                                  file, no Store)
     jpxl bench <mode> [opts]      Time one encode path (see `jpxl bench --help`)
     jpxl --help                   Show this message
     jpxl --version                Show the version
@@ -271,6 +278,7 @@ fn run(args: &[String]) -> u8 {
         "analyze-atlas" => cmd_analyze_atlas(rest),
         "features" => cmd_features(rest),
         "quality-ladder" => cmd_quality_ladder(rest),
+        "rate-ladder" => cmd_rate_ladder(rest),
         "bench" => cmd_bench(rest),
         other => {
             fail(&format!("unknown command `{other}`"));
@@ -2435,6 +2443,176 @@ fn cmd_quality_ladder(args: &[String]) -> u8 {
                 .map_or_else(|| "null".to_owned(), |b| format!("{b}")),
             p.plan_ms,
             p.render_metric_ms,
+            p.price_ms,
+        );
+    }
+    EXIT_OK
+}
+
+/// `jpxl rate-ladder --scales s1,s2,... [--preset fast|balanced]
+/// [--threads N] <raster>`: the rate-prior trainer's oracle-label sweep
+/// (Phase RT2).
+///
+/// Trial-prices a fresh anchored rate plan at every requested effective
+/// scale — the same plan and Fast-entropy Count price the bounded
+/// controller's first anchor pays — and prints one `jpxl.rate-ladder/1`
+/// JSONL record per point after a header carrying the source features.
+/// No navigation, no Store, no output file: measurement only.
+fn cmd_rate_ladder(args: &[String]) -> u8 {
+    let mut scales: Vec<u64> = Vec::new();
+    let mut preset = jpxl_encode_policy::RateSearchPreset::default();
+    let mut threads: Option<usize> = None;
+    let mut positional: Vec<&String> = Vec::new();
+    let mut rest = args.iter();
+    while let Some(arg) = rest.next() {
+        match arg.as_str() {
+            "--scales" => {
+                let Some(list) = rest.next() else {
+                    fail("`--scales` needs a comma-separated list of effective scales");
+                    return EXIT_ERROR;
+                };
+                for part in list.split(',') {
+                    match part.trim().parse::<u64>() {
+                        Ok(scale) if scale >= 1 => scales.push(scale),
+                        _ => {
+                            fail("`--scales` entries must be positive integers");
+                            return EXIT_ERROR;
+                        }
+                    }
+                }
+            }
+            "--preset" => {
+                let Some(mode) = rest.next() else {
+                    fail("`--preset` needs fast or balanced");
+                    return EXIT_ERROR;
+                };
+                preset = match mode.as_str() {
+                    "fast" => jpxl_encode_policy::RateSearchPreset::Fast,
+                    "balanced" => jpxl_encode_policy::RateSearchPreset::Balanced,
+                    _ => {
+                        fail("`--preset` needs fast or balanced");
+                        return EXIT_ERROR;
+                    }
+                };
+            }
+            "--threads" => {
+                let Some(value) = rest.next().and_then(|v| v.parse::<usize>().ok()) else {
+                    fail("`--threads` needs a positive worker count");
+                    return EXIT_ERROR;
+                };
+                if value == 0 {
+                    fail("`--threads` needs a positive worker count");
+                    return EXIT_ERROR;
+                }
+                threads = Some(value);
+            }
+            other if other.starts_with("--") => {
+                fail(&format!("unknown rate-ladder option `{other}`"));
+                return EXIT_ERROR;
+            }
+            _ => positional.push(arg),
+        }
+    }
+    let [input] = positional.as_slice() else {
+        fail("`rate-ladder` takes exactly one input raster");
+        return EXIT_ERROR;
+    };
+    if scales.is_empty() {
+        fail("`rate-ladder` needs `--scales s1,s2,...`");
+        return EXIT_ERROR;
+    }
+    if scales.len() > 4096 {
+        fail("`rate-ladder` caps a sweep at 4096 points");
+        return EXIT_ERROR;
+    }
+
+    let bytes = match read_path(input) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            fail(&format!("{input}: {error}"));
+            return EXIT_ERROR;
+        }
+    };
+    let image = match image_io::decode_input(&bytes, None) {
+        Ok(image) => image,
+        Err(error) => {
+            fail(&format!("{input}: {error}"));
+            return EXIT_ERROR;
+        }
+    };
+    let (width, height, bits_per_sample, rgb) = match image_to_rgb16(&image) {
+        Ok(parts) => parts,
+        Err(error) => {
+            fail(&format!("{input}: {error}"));
+            return EXIT_ERROR;
+        }
+    };
+
+    let mut rungs: Vec<jpxl_encode_policy::Rung> = scales
+        .iter()
+        .map(|&scale| jpxl_encode_policy::rung_for_effective_scale(scale))
+        .collect();
+    rungs.sort_unstable();
+    rungs.dedup();
+
+    // The target is never navigated to — only per-rung anchor prices are
+    // taken — but the request shape (restoration, quant_lf coupling, preset
+    // policies) must be the bounded controller's own.
+    let target = jpxl_encode_policy::RateTarget::BitsPerPixel(1.0);
+    let mut request = jpxl_encode_policy::EncodeRequest::for_target(target);
+    request.rate_preset = preset;
+    request.bits_per_sample = bits_per_sample;
+    if let Some(threads) = threads {
+        request.resources = jpxl_encode::EncodeResources::groups(threads);
+    }
+    let executor = request.resources.executor();
+    let frame = match jpxl_encode_policy::PreparedFrame::from_srgb16_with(
+        width,
+        height,
+        &rgb,
+        bits_per_sample,
+        Some(&executor),
+    ) {
+        Ok(frame) => frame,
+        Err(error) => {
+            fail(&format!("{input}: {error}"));
+            return EXIT_ERROR;
+        }
+    };
+    let atlas = jpxl_encode_policy::AnalysisAtlas::analyze(&frame);
+    let features = jpxl_encode_policy::source_features(&atlas, width, height, frame.is_grayscale());
+    println!(
+        "{{\"schema\":\"jpxl.rate-ladder/1\",\"input\":\"{}\",\"width\":{width},\
+         \"height\":{height},\"bit_depth\":{bits_per_sample},\"preset\":\"{}\",\
+         \"points\":{},\"source_features\":{}}}",
+        input.replace('\\', "/"),
+        match preset {
+            jpxl_encode_policy::RateSearchPreset::Fast => "fast",
+            jpxl_encode_policy::RateSearchPreset::Balanced => "balanced",
+            jpxl_encode_policy::RateSearchPreset::Quality => "quality",
+        },
+        rungs.len(),
+        features.to_json(),
+    );
+    let points =
+        match jpxl_encode_policy::sweep_frame_rate(&frame, &atlas, &request, &rungs, &executor) {
+            Ok(points) => points,
+            Err(error) => {
+                fail(&format!("{input}: {error}"));
+                return EXIT_ERROR;
+            }
+        };
+    for p in points {
+        println!(
+            "{{\"rung\":{},\"global_scale\":{},\"hf_mul\":{},\"quant_lf\":{},\
+             \"effective_scale\":{},\"bytes\":{},\"plan_ms\":{},\"price_ms\":{}}}",
+            p.rung.get(),
+            p.quantizer.global_scale.get(),
+            p.quantizer.hf_mul.get(),
+            p.quantizer.quant_lf.get(),
+            p.effective_scale,
+            p.bytes,
+            p.plan_ms,
             p.price_ms,
         );
     }
