@@ -1476,8 +1476,11 @@ mod tests {
                     );
                 } else {
                     let peak = want.as_slice().iter().fold(1.0f32, |m, v| m.max(v.abs()));
-                    for (i, (g, w)) in
-                        got.as_slice().iter().zip(want.as_slice().iter()).enumerate()
+                    for (i, (g, w)) in got
+                        .as_slice()
+                        .iter()
+                        .zip(want.as_slice().iter())
+                        .enumerate()
                     {
                         assert_close(
                             *g,
