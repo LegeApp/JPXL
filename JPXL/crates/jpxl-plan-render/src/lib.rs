@@ -873,19 +873,20 @@ impl PlanRenderer {
                     // kernel's own low-pass predicate then holds on exactly
                     // the matrix the unhoisted path would have built.
                     let (hr, hc) = (rows / 2, cols / 2);
-                    let lowpass = decimate
-                        && transform.dct_shape().is_some()
-                        && (0..NUM_CHANNELS).all(|c| {
-                            coeffs.channel(c).is_some_and(|quant| {
-                                quant.chunks_exact(cols).enumerate().take(rows).all(
-                                    |(y, row)| {
-                                        row.iter().enumerate().all(|(x, &q)| {
-                                            (x < hc && y < hr) || q == 0
-                                        })
-                                    },
-                                )
-                            })
-                        });
+                    let lowpass =
+                        decimate
+                            && transform.dct_shape().is_some()
+                            && (0..NUM_CHANNELS).all(|c| {
+                                coeffs.channel(c).is_some_and(|quant| {
+                                    quant.chunks_exact(cols).enumerate().take(rows).all(
+                                        |(y, row)| {
+                                            row.iter()
+                                                .enumerate()
+                                                .all(|(x, &q)| (x < hc && y < hr) || q == 0)
+                                        },
+                                    )
+                                })
+                            });
                     let (dq_rows, dq_cols) = if lowpass { (hr, hc) } else { (rows, cols) };
                     let WorkerScratch {
                         coeff,
@@ -973,10 +974,8 @@ impl PlanRenderer {
                             Some(matrix) => {
                                 transform.samples_from_coefficients_into(matrix, block, idct);
                             }
-                            None if decimate => block.reset(
-                                transform.half_sample_rows(),
-                                transform.half_sample_cols(),
-                            ),
+                            None if decimate => block
+                                .reset(transform.half_sample_rows(), transform.half_sample_cols()),
                             None => block.reset(transform.sample_rows(), transform.sample_cols()),
                         }
                     }
@@ -1302,7 +1301,13 @@ fn lf_planes(
 /// `rows x cols` cells (the full matrix on the canonical path; the low
 /// quarter on the decimated fast path, whose remaining cells are all zero and
 /// CfL over zeros is zeros).
-fn apply_hf_cfl(coeffs: &mut [CoeffMatrix; NUM_CHANNELS], k_x: f32, k_b: f32, rows: usize, cols: usize) {
+fn apply_hf_cfl(
+    coeffs: &mut [CoeffMatrix; NUM_CHANNELS],
+    k_x: f32,
+    k_b: f32,
+    rows: usize,
+    cols: usize,
+) {
     for y in 0..rows {
         for x in 0..cols {
             let d_y = coeffs[1].at(x, y);
