@@ -375,6 +375,11 @@ struct DepthClassifier {
     lut: Vec<f32>,
     /// Per bucket, the levels of the bucket's smallest and largest values.
     guide: Vec<(u32, u32)>,
+    /// Per bucket, the level's linear value when every sample in the bucket
+    /// takes the same level (`lo == hi` in the guide), else a NaN sentinel
+    /// sending the sample to the guided threshold scan. Classification is
+    /// one load for every sample outside a threshold-straddling bucket.
+    direct: Vec<f32>,
     /// `bit pattern >> shift` is the bucket of a value in `[0, 2.0)`.
     shift: u32,
 }
@@ -389,9 +394,12 @@ impl DepthClassifier {
         let max = RenderedFrame::full_scale(bits);
         let lut = RenderedFrame::linear_lut(bits, max);
         let thresholds = quantize_thresholds(max, lut.len());
-        let buckets = (lut.len() * 8).next_power_of_two().clamp(4096, 65_536);
+        // Dense enough that almost every bucket sits between two adjacent
+        // thresholds (`lo == hi`) and resolves through `direct` in one load;
+        // built once per bit depth and reused across every probe's render.
+        let buckets = 65_536usize;
         let shift = DEPTH_GUIDE_END.trailing_zeros() - buckets.trailing_zeros();
-        let guide = (0..buckets)
+        let guide: Vec<(u32, u32)> = (0..buckets)
             .map(|b| {
                 let lo_bits = u32::try_from(b).unwrap_or(0) << shift;
                 let hi_bits = lo_bits + ((1u32 << shift) - 1);
@@ -403,11 +411,22 @@ impl DepthClassifier {
                 )
             })
             .collect();
+        let direct = guide
+            .iter()
+            .map(|&(lo, hi)| {
+                if lo == hi {
+                    lut.get(lo as usize).copied().unwrap_or(0.0)
+                } else {
+                    f32::NAN
+                }
+            })
+            .collect();
         Self {
             bits,
             thresholds,
             lut,
             guide,
+            direct,
             shift,
         }
     }
@@ -428,11 +447,14 @@ impl DepthClassifier {
             // At least 2.0: above every threshold.
             return self.lut.last().copied().unwrap_or(0.0);
         }
-        let (lo, hi) = self
-            .guide
-            .get((pattern >> self.shift) as usize)
-            .copied()
-            .unwrap_or((0, 0));
+        let bucket = (pattern >> self.shift) as usize;
+        // The common path: the whole bucket takes one level. (A NaN sentinel
+        // is unambiguous — every level's linear value is finite.)
+        let resolved = self.direct.get(bucket).copied().unwrap_or(f32::NAN);
+        if !resolved.is_nan() {
+            return resolved;
+        }
+        let (lo, hi) = self.guide.get(bucket).copied().unwrap_or((0, 0));
         let mut level = lo as usize;
         for &t in self.thresholds.get(lo as usize..hi as usize).unwrap_or(&[]) {
             if t <= x {
@@ -1557,6 +1579,28 @@ mod tests {
             ] {
                 check(x);
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod depth_direct_stats {
+    use super::*;
+
+    /// The direct table is the classifier's whole point: almost every bucket
+    /// must sit between two adjacent thresholds and resolve in one load.
+    /// (Measured at introduction: 99.6% at 8 bits, 95.2% at 12, 90.9% at 16.)
+    #[test]
+    fn most_buckets_resolve_through_the_direct_table() {
+        for (bits, floor) in [(8u32, 0.99), (12, 0.94), (16, 0.90)] {
+            let c = DepthClassifier::new(bits);
+            let resolved = c.direct.iter().filter(|d| !d.is_nan()).count();
+            let fraction = resolved as f64 / c.direct.len() as f64;
+            assert!(
+                fraction >= floor,
+                "bits {bits}: {resolved}/{} buckets direct ({fraction:.3})",
+                c.direct.len()
+            );
         }
     }
 }
