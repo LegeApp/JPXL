@@ -187,6 +187,36 @@ impl<'e> PlanRenderEvaluator<'e> {
         (score, score.map(|_| millis))
     }
 
+    /// Scores an arbitrary interleaved 8-bit sRGB frame against the retained
+    /// source reference with the canonical metric.
+    ///
+    /// The routed text/UI candidate competition uses this to price its
+    /// colour-reduced rasters: the pixels are linearised exactly as
+    /// [`Self::from_srgb8`] linearised the source, so the score is the one
+    /// `jpxl compare` would report between the decoded lossless stream of
+    /// this raster and the original.
+    ///
+    /// # Errors
+    ///
+    /// [`MetricError`] if the dimensions do not match the reference.
+    pub fn score_srgb8_candidate(
+        &mut self,
+        width: u32,
+        height: u32,
+        rgb: &[u8],
+    ) -> Result<f64, MetricError> {
+        let lut: [f32; 256] =
+            core::array::from_fn(|v| jpxl_core::color::srgb_to_linear(v as f32 / 255.0));
+        let planes = deinterleave(rgb.chunks_exact(3), |v| {
+            lut.get(usize::from(v)).copied().unwrap_or(0.0)
+        });
+        let [r, g, b] = &planes;
+        let view = LinearRgbView::new(width, height, r, g, b)?;
+        let result = self.metric.score(&self.reference, view, self.executor)?;
+        self.evaluations = self.evaluations.saturating_add(1);
+        Ok(result.score)
+    }
+
     /// How many candidates have been scored.
     #[must_use]
     pub const fn evaluations(&self) -> u32 {

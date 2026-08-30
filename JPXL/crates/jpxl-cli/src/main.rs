@@ -103,6 +103,10 @@ Lossy options (8- or 16-bit RGB; any one selects the VarDCT path):
                                   stream, reported by its true score). Without
                                   this flag such an encode fails, exits 1, and
                                   writes nothing.
+    --text-routing                Experimental: on census-sparse text/UI/line-
+                                  art sources, also price colour-reduced
+                                  lossless Modular candidates and emit the
+                                  smallest stream holding the requested score.
     --effort <mode>               Lossy effort fast|balanced (search-latency
                                   budget, also picks the --quality default), or
                                   a digit 1..9 for lossless Modular effort.
@@ -502,6 +506,8 @@ fn cmd_encode(args: &[String]) -> u8 {
     // What `--quality` emits when the bounded search cannot verify the score;
     // `Refuse` (fail, write nothing) unless `--quality-fallback` says otherwise.
     let mut quality_fallback = jpxl::QualityFallback::Refuse;
+    // Experimental text/UI routed candidate competition (`--text-routing`).
+    let mut text_routing = false;
     // Fixed-quantizer expert mode.
     let mut global_scale: Option<u32> = None;
     // Lossy effort (search-latency budget); also picks the `--quality` default.
@@ -552,6 +558,7 @@ fn cmd_encode(args: &[String]) -> u8 {
                 }
             }
             "--lossy" => quality = Some(None),
+            "--text-routing" => text_routing = true,
             "--quality-fallback" => {
                 let Some(mode) = rest.next() else {
                     fail("`--quality-fallback` needs `lossless` or `best-effort`");
@@ -966,7 +973,14 @@ fn cmd_encode(args: &[String]) -> u8 {
     let mut mode_label: Option<String> = None;
     let encoded = if let Some(explicit) = quality {
         let score = explicit.unwrap_or_else(|| lossy_effort.default_score());
-        match encode_quality(&image, score, &options, lossy_effort, quality_fallback) {
+        match encode_quality(
+            &image,
+            score,
+            &options,
+            lossy_effort,
+            quality_fallback,
+            text_routing,
+        ) {
             Ok((bytes, line, mode)) => {
                 perceptual_line = Some(line);
                 mode_label = Some(mode);
@@ -2907,6 +2921,7 @@ fn encode_quality(
     options: &jpxl_encode::EncodeOptions,
     effort: jpxl::Effort,
     fallback: jpxl::QualityFallback,
+    text_routing: bool,
 ) -> Result<(Vec<u8>, String, String), String> {
     let (width, height, bits_per_sample, rgb) = image_to_rgb16(image)?;
     let encoder = jpxl::Encoder::new()
@@ -2915,6 +2930,7 @@ fn encode_quality(
         .with_jxlp_fragment_size(options.jxlp_fragment_size)
         .with_effort(effort)
         .with_quality_fallback(fallback)
+        .with_text_routing(text_routing)
         .with_ssimulacra2_score(score)
         .map_err(|error| error.to_string())?;
     match encoder.encode_rgb16_reported(width, height, bits_per_sample, &rgb) {

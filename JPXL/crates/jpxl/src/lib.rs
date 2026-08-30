@@ -372,6 +372,25 @@ enum Mode {
 
 /// Builder for lossless or lossy JPEG XL encoding.
 ///
+/// The lossless Modular effort every routed text/UI candidate is encoded at:
+/// dense enough that the palette/squeeze search engages (effort 1 leaves
+/// ~3x bytes on paletteable screens), cheap enough to price two or three
+/// candidates per routed frame.
+const TEXT_CANDIDATE_EFFORT: u8 = 5;
+
+/// One priced candidate of the routed text/UI ladder.
+struct TextCandidate {
+    codestream: Vec<u8>,
+    score: f64,
+}
+
+/// The routed ladder's outcome: the winning candidate (if any survived
+/// encoding) and the attempts as a JSON array for the quality trace.
+struct TextCompetition {
+    winner: Option<TextCandidate>,
+    attempts_json: String,
+}
+
 /// The default is lossless Modular encoding at effort 1, automatic worker
 /// count, and a naked codestream. Select lossy VarDCT with exactly one of
 /// [`with_ssimulacra2_score`](Self::with_ssimulacra2_score) (the normal
@@ -389,6 +408,7 @@ pub struct Encoder {
     quality_fallback: QualityFallback,
     colour_space: ColourSpace,
     exif: Option<Vec<u8>>,
+    text_routing: bool,
 }
 
 impl Default for Encoder {
@@ -403,6 +423,7 @@ impl Default for Encoder {
             quality_fallback: QualityFallback::Refuse,
             colour_space: ColourSpace::Srgb,
             exif: None,
+            text_routing: false,
         }
     }
 }
@@ -541,6 +562,21 @@ impl Encoder {
     #[must_use]
     pub const fn with_quality_fallback(mut self, fallback: QualityFallback) -> Self {
         self.quality_fallback = fallback;
+        self
+    }
+
+    /// Enable the text/UI routed candidate competition (experimental).
+    ///
+    /// On a lossy encode whose source the content classifier labels
+    /// `TextUiLineArt` (census-sparse screenshots, diagrams, line art), the
+    /// encoder also prices a small ladder of colour-reduced lossless Modular
+    /// candidates, scores each canonically against the original, and emits
+    /// the smallest stream that holds the requested SSIMULACRA2 floor. The
+    /// competition can only shrink the output or leave it unchanged;
+    /// classifier-negative sources are untouched.
+    #[must_use]
+    pub const fn with_text_routing(mut self, enabled: bool) -> Self {
+        self.text_routing = enabled;
         self
     }
 
@@ -897,16 +933,68 @@ impl Encoder {
             #[cfg(feature = "quality-effort")]
             Effort::Quality => "quality",
         };
-        // The content hint rides the quality trace as an additive field
-        // (`jpxl.quality-trace/2` consumers match known fields and tolerate
-        // extras, the same contract the speculation shadow used).
+        // The routed text/UI candidate competition (opt-in): on a
+        // classifier-positive frame, price a small ladder of colour-reduced
+        // lossless Modular candidates against the search's result. The
+        // canonical metric arbitrates; a candidate can only replace the
+        // VarDCT stream when it holds the requested floor AND is smaller (or
+        // the search itself came in under target).
+        let routed_competition = if self.text_routing
+            && content_hint.class == jpxl_encode_policy::content_class::ContentClass::TextUiLineArt
+        {
+            self.text_candidate_competition(source, target.minimum_score, &mut evaluator)
+        } else {
+            None
+        };
+
+        // The content hint (and the competition's attempts, when it ran) ride
+        // the quality trace as additive fields (`jpxl.quality-trace/2`
+        // consumers match known fields and tolerate extras, the same contract
+        // the speculation shadow used).
         let trace_json = Some({
             let trace = outcome.trace_json(effort_name);
             match trace.strip_suffix('}') {
-                Some(rest) => format!("{rest},\"content_hint\":{}}}", content_hint.to_json()),
+                Some(rest) => {
+                    let mut extended =
+                        format!("{rest},\"content_hint\":{}", content_hint.to_json());
+                    if let Some(ref competition) = routed_competition {
+                        extended.push_str(",\"routed_candidates\":");
+                        extended.push_str(&competition.attempts_json);
+                    }
+                    extended.push('}');
+                    extended
+                }
                 None => trace,
             }
         });
+
+        // A routed candidate that holds the floor replaces the search result
+        // when it is smaller, or when the search itself missed the target.
+        let search_missed = matches!(
+            outcome.status,
+            jpxl_encode_policy::QualityStatus::SaturatedTop
+                | jpxl_encode_policy::QualityStatus::UnderTargetWorkCap
+        );
+        if let Some(TextCompetition {
+            winner: Some(winner),
+            ..
+        }) = routed_competition
+            && (search_missed || winner.codestream.len() < outcome.codestream.len())
+        {
+            let bytes = self.finish(winner.codestream, bits);
+            let report = PerceptualOutcome {
+                requested_score: target.minimum_score,
+                achieved_score: Some(winner.score),
+                exact_bytes: u64::try_from(bytes.len()).unwrap_or(u64::MAX),
+                metric_version: target.metric.version(),
+                status: PerceptualStatus::Met,
+                probes: outcome.stats.pixel_probes,
+                prices: outcome.stats.exact_prices,
+                saturated: false,
+                trace_json,
+            };
+            return Ok((bytes, EncodeReport::Perceptual(report)));
+        }
 
         // The hard floor: a stream the controller verified below the request
         // is never an ordinary success. What happens instead is the encoder's
@@ -970,6 +1058,115 @@ impl Encoder {
             trace_json,
         };
         Ok((bytes, EncodeReport::Perceptual(report)))
+    }
+
+    /// Runs the routed text/UI candidate ladder for
+    /// [`Self::perceptual_encode`]: colour-reduce, score canonically, encode
+    /// losslessly, first candidate that holds `floor` wins the ladder.
+    ///
+    /// Byte monotonicity makes the early exit sound: a 64-colour raster's
+    /// lossless stream is never materially larger than a 256-colour or
+    /// full-colour one of the same frame, so the first floor-holding rung is
+    /// also the smallest. The final arm — the source itself, exactly
+    /// lossless — always holds the floor, so a `Some` return always carries
+    /// a winner; whether it beats the VarDCT stream is the caller's check.
+    /// `None` means the ladder does not apply (deep samples, or a census the
+    /// classifier should not have passed).
+    fn text_candidate_competition(
+        &self,
+        source: PerceptualSource<'_>,
+        floor: f64,
+        evaluator: &mut jpxl_perceptual::PlanRenderEvaluator<'_>,
+    ) -> Option<TextCompetition> {
+        use jpxl_encode_policy::colour_reduce::reduce_to_k_colours;
+        use jpxl_encode_policy::content_class::ROUTE_MAX_COLOURS;
+
+        let (width, height, bits) = source.dimensions();
+        if bits != 8 {
+            return None;
+        }
+        let rgb8: std::borrow::Cow<'_, [u8]> = match source {
+            PerceptualSource::Rgb8 { rgb, .. } => std::borrow::Cow::Borrowed(rgb),
+            PerceptualSource::Rgb16 { rgb, .. } =>
+            {
+                #[allow(
+                    clippy::cast_possible_truncation,
+                    reason = "bits_per_sample == 8 bounds every sample to 0..=255"
+                )]
+                std::borrow::Cow::Owned(rgb.iter().map(|&s| s.min(255) as u8).collect())
+            }
+        };
+
+        let mut attempts = Vec::new();
+        let mut winner = None;
+        for k in [64u32, 256] {
+            let reduced = reduce_to_k_colours(&rgb8, k, ROUTE_MAX_COLOURS)?;
+            let score = if reduced.exact {
+                100.0
+            } else {
+                match evaluator.score_srgb8_candidate(width, height, &reduced.rgb) {
+                    Ok(score) => score,
+                    Err(_) => continue,
+                }
+            };
+            let holds = score >= floor;
+            let bytes = if holds {
+                self.encode_text_candidate(width, height, &reduced.rgb).ok()
+            } else {
+                None
+            };
+            attempts.push(format!(
+                "{{\"k\":{k},\"palette_len\":{},\"exact\":{},\"score\":{score},\"bytes\":{}}}",
+                reduced.palette_len,
+                reduced.exact,
+                bytes
+                    .as_ref()
+                    .map_or_else(|| "null".into(), |b: &Vec<u8>| b.len().to_string()),
+            ));
+            if holds {
+                if let Some(codestream) = bytes {
+                    winner = Some(TextCandidate { codestream, score });
+                }
+                // `exact` already IS the lossless source; a coarser pass
+                // met the floor, so finer (larger) rungs cannot win.
+                break;
+            }
+            if reduced.exact {
+                break;
+            }
+        }
+        if winner.is_none() {
+            // The exactly-lossless source always holds the floor.
+            if let Ok(codestream) = self.encode_text_candidate(width, height, &rgb8) {
+                attempts.push(format!(
+                    "{{\"k\":null,\"palette_len\":null,\"exact\":true,\"score\":100.0,\"bytes\":{}}}",
+                    codestream.len()
+                ));
+                winner = Some(TextCandidate {
+                    codestream,
+                    score: 100.0,
+                });
+            }
+        }
+        Some(TextCompetition {
+            winner,
+            attempts_json: format!("[{}]", attempts.join(",")),
+        })
+    }
+
+    /// Encodes one 8-bit candidate raster as a naked lossless codestream at
+    /// the ladder's fixed Modular effort.
+    fn encode_text_candidate(&self, width: u32, height: u32, rgb: &[u8]) -> Result<Vec<u8>> {
+        let image = jpxl_encode::Image::from_interleaved(width, height, 3, 8, rgb)?;
+        let options = jpxl_encode::EncodeOptions {
+            container: false,
+            jxlp_fragment_size: None,
+            resources: self.resources,
+            effort: jpxl_encode::Effort::new(TEXT_CANDIDATE_EFFORT)?,
+            colour_space: self.colour_space,
+            ..jpxl_encode::EncodeOptions::default()
+        };
+        Ok(jpxl_encode::encode(&image, &options)?)
     }
 
     fn encode_lossless<S: Copy + Into<i32>>(

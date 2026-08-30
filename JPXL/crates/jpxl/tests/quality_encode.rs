@@ -470,3 +470,90 @@ fn the_terminal_reducer_keeps_the_target_and_never_grows_the_stream() {
     let independent = rescore(w, h, &rgb, &reduced.codestream);
     assert!((independent - reduced.achieved_score).abs() < 1e-6);
 }
+
+/// A dense two-colour stroke pattern: census-sparse, crisp-edged — the
+/// routed text/UI ladder's home turf.
+fn text_like(width: u32, height: u32) -> Vec<u8> {
+    let mut rgb = Vec::with_capacity((width * height * 3) as usize);
+    for y in 0..height {
+        for x in 0..width {
+            if (x / 3 + y / 7) % 2 == 0 {
+                rgb.extend_from_slice(&[20, 20, 20]);
+            } else {
+                rgb.extend_from_slice(&[250, 250, 245]);
+            }
+        }
+    }
+    rgb
+}
+
+#[test]
+fn text_routing_replaces_vardct_with_a_smaller_exact_candidate() {
+    let (w, h) = (256, 256);
+    let rgb = text_like(w, h);
+    let base = Encoder::new()
+        .with_ssimulacra2_score(85.0)
+        .unwrap()
+        .with_quality_fallback(QualityFallback::BestEffort)
+        .encode_rgb8_reported(w, h, &rgb)
+        .expect("base encode");
+    let routed = Encoder::new()
+        .with_ssimulacra2_score(85.0)
+        .unwrap()
+        .with_quality_fallback(QualityFallback::BestEffort)
+        .with_text_routing(true)
+        .encode_rgb8_reported(w, h, &rgb)
+        .expect("routed encode");
+    let base_report = perceptual(&base.1);
+    let routed_report = perceptual(&routed.1);
+    // The two-colour frame fits the coarsest palette rung exactly, so the
+    // winning candidate is the mathematically lossless source.
+    assert!(
+        routed.0.len() <= base.0.len(),
+        "routed {} > base {}",
+        routed.0.len(),
+        base.0.len()
+    );
+    assert_eq!(routed_report.achieved_score, Some(100.0));
+    assert_eq!(routed_report.status, PerceptualStatus::Met);
+    assert!(
+        routed_report
+            .trace_json
+            .as_deref()
+            .is_some_and(|t| t.contains("\"routed_candidates\":[")),
+        "trace records the ladder"
+    );
+    assert!(base_report.trace_json.as_deref().is_some_and(|t| {
+        t.contains("\"content_hint\":") && !t.contains("\"routed_candidates\"")
+    }));
+    // The emitted stream really is lossless.
+    let decoded = Decoder::new().decode(&routed.0).expect("decodes");
+    assert_eq!(decoded.planes.len(), 3, "expected three integer planes");
+    let plane_rgb: Vec<u8> = (0..(w * h) as usize)
+        .flat_map(|i| decoded.planes.iter().map(move |p| p.samples[i] as u8))
+        .collect();
+    assert_eq!(plane_rgb, rgb, "routed stream is exactly lossless");
+}
+
+#[test]
+fn text_routing_leaves_a_photographic_frame_byte_identical() {
+    let (w, h) = (192, 160);
+    let rgb = synthetic(w, h, 77);
+    let plain = Encoder::new()
+        .with_ssimulacra2_score(80.0)
+        .unwrap()
+        .with_quality_fallback(QualityFallback::BestEffort)
+        .encode_rgb8_reported(w, h, &rgb)
+        .expect("plain encode");
+    let flagged = Encoder::new()
+        .with_ssimulacra2_score(80.0)
+        .unwrap()
+        .with_quality_fallback(QualityFallback::BestEffort)
+        .with_text_routing(true)
+        .encode_rgb8_reported(w, h, &rgb)
+        .expect("flagged encode");
+    assert_eq!(
+        plain.0, flagged.0,
+        "classifier-negative output must not move"
+    );
+}
