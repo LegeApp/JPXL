@@ -65,6 +65,7 @@
 pub mod analysis;
 pub mod block;
 pub mod candidate;
+pub mod content_class;
 pub mod csf;
 pub mod diagnostics;
 mod entropy;

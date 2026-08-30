@@ -824,6 +824,25 @@ impl Encoder {
         let mut request = jpxl_encode_policy::EncodeRequest::for_quality(self.effort.into());
         request.resources = self.resources;
         request.bits_per_sample = bits;
+        // Shadow content classification (text/UI-aware routing, stage B1):
+        // computed from the source alone and recorded in the trace. It does
+        // not touch the search and cannot change a single emitted byte.
+        let content_hint = match source {
+            PerceptualSource::Rgb8 { width, height, rgb } => {
+                jpxl_encode_policy::content_class::classify_srgb8(width, height, rgb)
+            }
+            PerceptualSource::Rgb16 {
+                width,
+                height,
+                rgb,
+                bits_per_sample,
+            } => jpxl_encode_policy::content_class::classify_srgb16(
+                width,
+                height,
+                rgb,
+                bits_per_sample,
+            ),
+        };
         let executor = request.resources.executor();
         let (frame, mut evaluator) = match source {
             PerceptualSource::Rgb8 { width, height, rgb } => (
@@ -878,7 +897,16 @@ impl Encoder {
             #[cfg(feature = "quality-effort")]
             Effort::Quality => "quality",
         };
-        let trace_json = Some(outcome.trace_json(effort_name));
+        // The content hint rides the quality trace as an additive field
+        // (`jpxl.quality-trace/2` consumers match known fields and tolerate
+        // extras, the same contract the speculation shadow used).
+        let trace_json = Some({
+            let trace = outcome.trace_json(effort_name);
+            match trace.strip_suffix('}') {
+                Some(rest) => format!("{rest},\"content_hint\":{}}}", content_hint.to_json()),
+                None => trace,
+            }
+        });
 
         // The hard floor: a stream the controller verified below the request
         // is never an ordinary success. What happens instead is the encoder's
