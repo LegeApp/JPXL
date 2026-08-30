@@ -8973,7 +8973,7 @@ record jpegxl-rs.work.pqc-usable-efforts-cost/12 : work {
 
 record jpegxl-rs.work.pqc-usable-efforts-cost/13 : work {
     title "PQC usable efforts: reduce Fast/Balanced wall time and peak memory"
-    state active
+    state superseded
     scope [
         path "JPXL/crates/jpxl-encode-policy/src/quality.rs",
         path "JPXL/crates/jpxl-perceptual/src/**",
@@ -9023,6 +9023,74 @@ record jpegxl-rs.work.pqc-usable-efforts-cost/13 : work {
     implements [ @jpegxl-rs.decision.perceptual-quality-contract/1 ]
     part_of [ @jpegxl-rs.track.perceptual-quality-controller/1 ]
     supersedes [ @jpegxl-rs.work.pqc-usable-efforts-cost/12 ]
+    supported_by [
+        @jpegxl-rs.evidence.pqc-fused-render-wall-anchors-2026-08-25/1,
+        @jpegxl-rs.evidence.pqc-low-memory-wall-anchors-2026-08-23/1,
+        @jpegxl-rs.evidence.pqc-metric-cuts-wall-anchors-2026-08-25/1,
+        @jpegxl-rs.evidence.pqc-pr4-holdout-wall-reported-2026-08-22/1,
+        @jpegxl-rs.evidence.pqc-pr4b-memory-12mp-2026-08-22/1,
+        @jpegxl-rs.evidence.pqc-pr4b-probe-speed-2026-08-22/1,
+        @jpegxl-rs.observation.pqc-large-frame-render-parallel-2026-08-25,
+        @jpegxl-rs.observation.pqc-wall-quiet-host-attribution-2026-08-25
+    ]
+}
+
+record jpegxl-rs.work.pqc-usable-efforts-cost/14 : work {
+    title "PQC usable efforts: reduce Fast/Balanced wall time and peak memory"
+    state completed
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/src/quality.rs",
+        path "JPXL/crates/jpxl-perceptual/src/**",
+        path "JPXL/crates/jpxl-plan-render/src/**",
+        path "JPXL/crates/jpxl/src/lib.rs"
+    ]
+    intent """
+        Profile and reduce the production Fast and Balanced perceptual path's full-frame render/metric allocation and rescue-probe cost. Work only on usable efforts: do not spend measurement time on the feature-gated Quality reference effort. Pure scorer, renderer, and lifetime changes must preserve Fast/Balanced codestream bytes; any deliberate search-policy change requires the standing Contract B screen.
+        """
+    note """
+        CLOSED 2026-08-30: the operator accepted the renegotiated ceilings (2.5x/3.5x t8) and the wall-anchors check moved to v2, which current HEAD satisfies (2.30x/3.21x with E1-g). Landed exact cuts since 146fbd5: E1-b1 (d1a00c9), E1-d (259b728), E1-g (4be088e); cumulative ~ -4.4% at 12 MP Balanced t8. All other E1 items closed with evidence (see rev 13). Further wall movement requires Contract B policy changes or the declined memory trade; the next cost frontier is content-adaptive routing (text/line-art), tracked separately.
+        """
+    acceptance {
+        check memory-12mp {
+            statement """
+                Balanced q85 on the locked 12 MP anchor peaks at no more than 2.0 GB RSS, with the measurement serialized and process-capped.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.pqc-fused-render-memory-12mp-2026-08-25/1 ]
+        }
+        check production-identity {
+            statement """
+                Pure scorer/renderer/lifetime changes leave Fast and Balanced codestreams byte-identical across the locked identity cells, threads 1/4, and AVX2 on/off; any search-policy change instead passes the standing Contract B gate.
+                """
+            method command
+            command "python3 .agent/scratch/pqc-metric-cuts-20260825/identity_scatter.py"
+            verified_by [
+                @jpegxl-rs.evidence.pqc-fused-render-production-identity-2026-08-25/1
+            ]
+        }
+        check wall-anchors-v2 {
+            statement """
+                At matched achieved SSIMULACRA2 on a quiet host, Balanced end-to-end wall is no more than 2.5x the rate path on the 4.3 MP anchor and 3.5x on the 12 MP anchor at 8 threads (3.0x/4.5x at 4 threads), per the operator-accepted @jpegxl-rs.decision.pqc-wall-target-renegotiation-shape. Retires the pre-measurement 2.0x check: 2.0x was set before any floor measurement and is unreachable by exact means (surrogate assessment thrice-confirmed; RT2 closed at J2b). Measured 2026-08-30: 2.36x and 3.30x pre-E1-g, ~2.30x/3.21x with E1-g — under both ceilings.
+                """
+            method observation
+            verified_by [
+                @jpegxl-rs.evidence.e1g-direct-depth-classification-2026-08-30/1,
+                @jpegxl-rs.evidence.w1b-quiet-host-floors-2026-08-30/1
+            ]
+        }
+        check workspace-gates {
+            statement """
+                The workspace release tests, clippy, and formatting gates pass.
+                """
+            method command
+            command "cd JPXL && cargo test --workspace --release && cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all --check"
+            verified_by [ @jpegxl-rs.evidence.pqc-fused-render-workspace-gates-2026-08-25/1 ]
+        }
+    }
+    depends_on [ @jpegxl-rs.work.pqc-pr4-quality-navigator/1 ]
+    implements [ @jpegxl-rs.decision.perceptual-quality-contract/1 ]
+    part_of [ @jpegxl-rs.track.perceptual-quality-controller/1 ]
+    supersedes [ @jpegxl-rs.work.pqc-usable-efforts-cost/13 ]
     supported_by [
         @jpegxl-rs.evidence.pqc-fused-render-wall-anchors-2026-08-25/1,
         @jpegxl-rs.evidence.pqc-low-memory-wall-anchors-2026-08-23/1,
@@ -9709,6 +9777,83 @@ record jpegxl-rs.work.retire-handoff-ledger/1 : work {
         }
     }
     implements [ @jpegxl-rs.decision.ledger-conventions/1 ]
+}
+
+record jpegxl-rs.work.text-aware-routing/1 : work {
+    title "Text/UI-aware routing: detect text/line-art content and route it to a competing encoding profile"
+    state superseded
+    intent """
+        Close the text/UI density gap (JPXL q85 used 7.2x ZenJXL-d3 and 9.2x cjxl-d3 bytes on the text screenshot at lower score). Stage 1: measure the gap on the operator's real screenshot corpus (~126 PNGs) against ZenJXL and cjxl as black boxes under the clean-room policy. Stage 2: port the operator's bpg-rs still265 preanalysis TextLike classifier (operator-owned code, no clean-room concern) as an in-tree routing signal that only enables an extra candidate, never suppresses VarDCT. Stage 3: candidate competition per the followup memo - exact Modular (B2) first, near-palette ladder (B3) if needed - both scored canonically, smallest candidate meeting the SSIMULACRA2 floor wins. Classifier-negative photo output must stay byte-identical.
+        """
+    note """
+        Operator directive 2026-08-30: text-aware processing is the next program; identifying text is most of the battle, then a text encoding profile. ZenJXL remains black-box (AGPL lineage). Routing that changes emitted streams is a Contract-B policy change and passes the standing A/B screen.
+        """
+    acceptance {
+        check classifier-routes-corpus {
+            statement """
+                The in-tree classifier labels the locked text/UI families as intended, costs at most 2% of normal photo wall, and classifier-negative photo output is byte-identical.
+                """
+            method observation
+        }
+        check corpus-gap-measured {
+            statement """
+                The screenshot-corpus three-way gap (bytes at matched-or-better achieved SSIMULACRA2 vs ZenJXL and cjxl) is measured and recorded with the standard harness.
+                """
+            method observation
+        }
+        check routed-candidate-wins {
+            statement """
+                On classifier-positive inputs the routed candidate competition never emits a larger stream than VarDCT alone, never violates the SSIMULACRA2 floor, and materially closes the measured byte gap on the text/UI subset.
+                """
+            method observation
+        }
+    }
+    derived_from [
+        @jpegxl-rs.observation.three-way-encoder-comparison-2026-08-29,
+        @jpegxl-rs.work.three-way-followup-recommendations
+    ]
+    part_of [ @jpegxl-rs.track.perceptual-quality-controller/1 ]
+    resolves [ @jpegxl-rs.question.route-text-lineart-via-bpg-preanalysis ]
+}
+
+record jpegxl-rs.work.text-aware-routing/2 : work {
+    title "Text/UI-aware routing: detect text/line-art content and route it to a competing encoding profile"
+    state active
+    intent """
+        Close the text/UI density gap. Stage 1 (DONE): measured on the operator's real screenshot corpus - geomean 1.15x ZenJXL / 1.39x cjxl at matched-or-better score, p90 ~2.2x, max 4.7x; the tail is the payoff. Stage 2 (DONE, shadow): in-tree content classifier (content_class.rs, commit 4e10611) - census-first (unique colours) with bpg-rs cell statistics as diagnostics; routes 104/121 screens covering every gap>=1.4x image, ~3 ms and byte-identical on photos. Stage 3 (measured offline, next to implement): candidate competition {VarDCT, lossless Modular, 256/64-colour undithered reduced rasters via Modular palette}, smallest candidate meeting the canonical floor wins - offline this saves 28.7% of routed bytes and puts JPXL ahead of ZenJXL (0.82x geomean) on the routed corpus. Remaining to ship: a deterministic in-tree colour quantizer (no external tools), candidate pruning to bound wall (median offline overhead 1.9 s), the facade competition itself behind the hint, and the Contract-B A/B screen. Beyond this work: the residual worst-case gap (~2-3x on a few screens) needs a lossy-smooth text representation (competitor streams decode to 21k colours from 252-colour sources; cjxl's d3-beats-d1.5 behavior on text suggests patches/mode switching) - a separate future feature.
+        """
+    note """
+        Operator directive 2026-08-30: text-aware processing is the next program. ZenJXL stays black-box (AGPL lineage); all black-box observations are decoded-pixel/size facts only. Routing that changes emitted streams is a Contract-B policy change and passes the standing A/B screen before default-on.
+        """
+    acceptance {
+        check classifier-routes-corpus {
+            statement """
+                The in-tree classifier labels the locked text/UI families as intended, costs at most 2% of normal photo wall, and classifier-negative photo output is byte-identical.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.content-classifier-shadow-2026-08-30/1 ]
+        }
+        check corpus-gap-measured {
+            statement """
+                The screenshot-corpus three-way gap (bytes at matched-or-better achieved SSIMULACRA2 vs ZenJXL and cjxl) is measured and recorded with the standard harness.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.screenshot-corpus-three-way-gap-2026-08-30/1 ]
+        }
+        check routed-candidate-wins {
+            statement """
+                On classifier-positive inputs the shipped routed candidate competition never emits a larger stream than VarDCT alone, never violates the SSIMULACRA2 floor, and materially closes the measured byte gap on the text/UI subset (offline bound: -28.7% routed bytes, ZenJXL gap 1.22x -> 0.82x).
+                """
+            method observation
+        }
+    }
+    derived_from [
+        @jpegxl-rs.observation.three-way-encoder-comparison-2026-08-29,
+        @jpegxl-rs.work.three-way-followup-recommendations
+    ]
+    part_of [ @jpegxl-rs.track.perceptual-quality-controller/1 ]
+    resolves [ @jpegxl-rs.question.route-text-lineart-via-bpg-preanalysis ]
+    supersedes [ @jpegxl-rs.work.text-aware-routing/1 ]
 }
 
 record jpegxl-rs.work.three-way-encoder-benchmark/1 : work {

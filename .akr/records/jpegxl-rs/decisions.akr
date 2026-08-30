@@ -436,8 +436,8 @@ record jpegxl-rs.decision.perceptual-quality-contract/1 : decision {
 }
 
 record jpegxl-rs.decision.pqc-wall-target-renegotiation-shape/1 : decision {
-    title "Renegotiate the 2.0x wall-anchors ceiling: derived Balanced ceilings 2.5x (4.3 MP) and 3.5x (12 MP) at 8 threads (awaits operator sign-off)"
-    state proposed
+    title "Renegotiated wall-anchors ceiling (operator-accepted 2026-08-30): derived Balanced ceilings 2.5x (4.3 MP) and 3.5x (12 MP) at 8 threads"
+    state active
     scope [ path "JPXL/crates/jpxl-encode-policy/**", path "JPXL/crates/jpxl-perceptual/**" ]
     decision """
         Replace the wall-anchors acceptance check's fixed 2.0x constant with the derived ceiling ceiling(anchor, effort) = round_up_0.25(floor_ratio x (1 + margin)), margin = (mean pixel_probes - 1) x per-probe share of the single-probe quality wall. With quiet-host post-E1 inputs (2026-08-30) the Balanced constants are: 2.5x at the 4.3 MP anchor and 3.5x at the 12 MP anchor at 8 threads (3.0x and 4.5x at 4 threads). Measured floors: 1.42x and 2.04x (t8); per-probe shares 0.332 and 0.308; wall-weighted mean canonical probes 3.09. Current HEAD ratios 2.36x and 3.30x already sit under these ceilings. Re-open trigger: any change moving the measured floor by >10% re-derives the ceiling rather than inheriting it.
@@ -453,6 +453,7 @@ record jpegxl-rs.decision.pqc-wall-target-renegotiation-shape/1 : decision {
         @jpegxl-rs.assessment.surrogate-navigation-does-not-pay-for-wall,
         @jpegxl-rs.observation.pqc-wall-attribution-post-s2-2026-08-30
     ]
+    supported_by [ @jpegxl-rs.evidence.w1b-quiet-host-floors-2026-08-30 ]
 }
 
 record jpegxl-rs.decision.quality-miss-fallback-semantics/1 : decision {

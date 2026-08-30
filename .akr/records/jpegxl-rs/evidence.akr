@@ -92,6 +92,19 @@ record jpegxl-rs.evidence.cli-netpbm-workspace-gates-2026-08-21/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.content-classifier-shadow-2026-08-30/1 : evidence {
+    title "Shadow classifier: full gap coverage, ~3 ms photo cost, byte-identical"
+    state verified
+    result pass
+    method command
+    observed_at git:4e10611c952b112cf2c6da25c53da35bdd8b0ac1
+    command "python3 .agent/scratch/text-aware-20260830/identity_shadow.py"
+    artifact ".agent/scratch/text-aware-20260830/gap-summary.txt"
+    summary """
+        Shadow content classifier (content_class.rs, commit 4e10611): census-first rule (uncapped, <=65536 colours, <=1 colour per 50 px) routes 104/121 screenshots and covers every image with a >=1.4x gap (zero misses); the 15-17 unrouted screens are ones JPXL already wins (geomean 0.77x vs ZenJXL). Photo negative controls classify PhotoLike via the early census cap in ~3 ms on a 4.3 MP photo (~0.05% of wall, gate <=2%); a routed 1.1 MP screenshot costs ~8-13 ms. Byte identity 16/16 cells (bytes + probe scores) vs the kept HEAD binary; workspace release tests, clippy -D warnings, fmt all pass. bpg-rs TextLike per-cell rule ported faithfully but its orientation-entropy arm does not fire on anti-aliased text (textlike_share ~0 on true screenshots); the census carries the routing signal, cell crisp/structure shares kept as trace diagnostics.
+        """
+}
+
 record jpegxl-rs.evidence.e1a-relaxed-cap-below-10pct-2026-08-30/1 : evidence {
     title "E1-a under a relaxed cap: ~6% wall for +0.42 GiB — below the operator's 10% bar"
     state verified
@@ -1058,6 +1071,19 @@ record jpegxl-rs.evidence.native-tooling-no-codec-change-2026-08-19/1 : evidence
     command "cargo fmt --all --check; cargo build --workspace (native Windows), git show --stat"
     summary """
         The change adds JPXL/tools/fetch-conformance.ps1 and doc notes plus gitignored scratch cjxl-match.ps1; no crate source, preset, or codestream output changed, and cargo fmt --check and cargo build --workspace stay green.
+        """
+}
+
+record jpegxl-rs.evidence.near-palette-competition-offline-2026-08-30/1 : evidence {
+    title "Offline near-palette competition: -28.7% routed bytes, flips the ZenJXL gap"
+    state verified
+    result pass
+    method command
+    observed_at git:4e10611c952b112cf2c6da25c53da35bdd8b0ac1
+    command "python3 .agent/scratch/text-aware-20260830/b3_ladder.py"
+    artifact ".agent/scratch/text-aware-20260830/b3-competition.txt"
+    summary """
+        Offline B3 candidate competition on the 101 routed q85-met screenshots: candidates {VarDCT q85, lossless Modular e5, 256- and 64-colour reduced rasters (undithered) encoded lossless e5}, smallest candidate with canonical SSIMULACRA2 >= 85 wins. Corpus bytes 9.29 MB -> 6.62 MB (-28.7%); per-image geomean 1.43x, med 1.37x, max 5.96x, 71/101 improved, 0 floor violations, never larger than VarDCT by construction. Winners: k64 x51, VarDCT x30, k256 x18, lossless x2. Gap vs ZenJXL at matched-or-better score flips from geomean 1.22x to 0.82x. Cost: extra candidates median 1.94 s / max 7.5 s per routed image (unoptimized: external quantizer + two full lossless e5 encodes) - the in-tree implementation needs a deterministic colour quantizer and early candidate pruning (B4) to fit a wall budget.
         """
 }
 
@@ -7152,6 +7178,19 @@ record jpegxl-rs.evidence.s8-phase-d-prune-wired-verified-postcommit/1 : evidenc
     observed_at git:b6b12abd8a2798bf3556609003e61ccac09f158c
     summary """
         Re-anchor of jpegxl-rs.evidence.s8-phase-d-prune-wired-verified at the commit that actually contains the Phase D code (b6b12ab), per the known AKR-R022/V-020 gotcha (evidence authored before `git commit` runs defaults observed_at to the parent commit).
+        """
+}
+
+record jpegxl-rs.evidence.screenshot-corpus-three-way-gap-2026-08-30/1 : evidence {
+    title "Screenshot-corpus three-way byte gap at matched-or-better score"
+    state verified
+    result pass
+    method command
+    observed_at git:4e10611c952b112cf2c6da25c53da35bdd8b0ac1
+    command "python3 .agent/scratch/text-aware-20260830/sweep.py"
+    artifact ".agent/scratch/text-aware-20260830/sweep-results.jsonl"
+    summary """
+        Real-screenshot corpus (121 of the operator's PNGs, >=64k px): JPXL Balanced q85 bytes vs the smallest matched-or-better competitor stream: geomean 1.15x / p90 2.12x / max 4.66x vs ZenJXL (black box), 1.39x / 2.36x / 4.72x vs cjxl e7; 0 encode failures. Pure lossless (min e1/e5) beats q85 on only 11/121. On the worst image ZenJXL's winning stream decodes to 21k colours from a 252-colour source: the competitor win is a lossy smooth representation, not palette; cjxl lossless e9 (159 KB) vs JPXL lossless e9 (208 KB) bounds our Modular density deficit at ~1.3x on that image.
         """
 }
 
