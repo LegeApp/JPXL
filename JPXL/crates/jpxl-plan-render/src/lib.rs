@@ -1190,11 +1190,18 @@ impl PlanRenderer {
                 let built: [std::sync::Mutex<Option<PaddedPlane>>; NUM_CHANNELS] =
                     core::array::from_fn(|_| std::sync::Mutex::new(None));
                 run_items(executor, NUM_CHANNELS, &|index| {
-                    let Some(storage) = jobs[index].lock().ok().and_then(|mut s| s.take()) else {
+                    let Some(storage) = jobs
+                        .get(index)
+                        .and_then(|j| j.lock().ok())
+                        .and_then(|mut s| s.take())
+                    else {
                         return;
                     };
-                    let plane = PaddedPlane::new_in(&planes[index], dims, EPF_PAD, storage);
-                    if let Ok(mut slot) = built[index].lock() {
+                    let Some(source) = planes.get(index) else {
+                        return;
+                    };
+                    let plane = PaddedPlane::new_in(source, dims, EPF_PAD, storage);
+                    if let Some(Ok(mut slot)) = built.get(index).map(std::sync::Mutex::lock) {
                         *slot = plane;
                     }
                 });
