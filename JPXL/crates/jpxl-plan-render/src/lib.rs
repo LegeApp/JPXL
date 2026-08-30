@@ -1182,12 +1182,23 @@ impl PlanRenderer {
                 RenderError::Unsupported("a sigma field that does not match the block grid"),
             )?;
             for step in epf_steps(spatial.restoration.epf_iters).iter().copied() {
-                let [s0, s1, s2] = padded_storage;
-                let padded = [
-                    PaddedPlane::new_in(&planes[0], dims, EPF_PAD, s0),
-                    PaddedPlane::new_in(&planes[1], dims, EPF_PAD, s1),
-                    PaddedPlane::new_in(&planes[2], dims, EPF_PAD, s2),
-                ];
+                // Each plane's mirrored-halo copy is a full-frame serial row
+                // walk; building the three as executor items overlaps them
+                // instead of paying three copies back-to-back on one thread.
+                let jobs: [std::sync::Mutex<Option<Vec<f32>>>; NUM_CHANNELS] =
+                    padded_storage.map(|s| std::sync::Mutex::new(Some(s)));
+                let built: [std::sync::Mutex<Option<PaddedPlane>>; NUM_CHANNELS] =
+                    core::array::from_fn(|_| std::sync::Mutex::new(None));
+                run_items(executor, NUM_CHANNELS, &|index| {
+                    let Some(storage) = jobs[index].lock().ok().and_then(|mut s| s.take()) else {
+                        return;
+                    };
+                    let plane = PaddedPlane::new_in(&planes[index], dims, EPF_PAD, storage);
+                    if let Ok(mut slot) = built[index].lock() {
+                        *slot = plane;
+                    }
+                });
+                let padded = built.map(|slot| slot.into_inner().ok().flatten());
                 let [Some(p0), Some(p1), Some(p2)] = padded else {
                     return Err(RenderError::Unsupported(
                         "EPF planes that do not match the frame",
