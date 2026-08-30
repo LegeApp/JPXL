@@ -438,6 +438,13 @@ pub struct QualityProbe {
     /// Wall time of the shadow surrogate evaluation, in milliseconds
     /// (included in `millis`, which times the whole evaluator call).
     pub surrogate_millis: Option<u64>,
+    /// B1-G shadow: the rung a paired speculative lane would have launched
+    /// alongside the *previous* canonical probe — this probe's rung guessed
+    /// by the ladder-next rule before the previous probe's score was known.
+    /// Never used by the search; `None` where no lane would have launched
+    /// (first probe, non-pixel work, or the rule aimed at an already-probed
+    /// rung).
+    pub spec_rung: Option<u32>,
 }
 
 /// One policy-bank trial's summary, for the trace and telemetry.
@@ -617,7 +624,8 @@ impl QualityOutcome {
                 format!(
                     "{{\"kind\":\"{}\",\"policy_id\":{},\"rung\":{},\"global_scale\":{},\"hf_mul\":{},\
                      \"effective_scale\":{},\"score\":{},\"bytes\":{},\"structure\":\"{}\",\
-                     \"feasible\":{},\"millis\":{},\"surrogate_score\":{},\"surrogate_millis\":{}}}",
+                     \"feasible\":{},\"millis\":{},\"surrogate_score\":{},\"surrogate_millis\":{},\
+                     \"spec_rung\":{}}}",
                     match p.kind {
                         ProbeKind::Pixel => "pixel",
                         ProbeKind::Exact => "exact",
@@ -640,6 +648,8 @@ impl QualityOutcome {
                         .map_or_else(|| "null".to_owned(), |s| format!("{s}")),
                     p.surrogate_millis
                         .map_or_else(|| "null".to_owned(), |m| format!("{m}")),
+                    p.spec_rung
+                        .map_or_else(|| "null".to_owned(), |r| format!("{r}")),
                 )
             })
             .collect();
@@ -823,6 +833,87 @@ pub(crate) fn geometric_step(from: Rung, finer: bool) -> Rung {
     force_progress(rung_for_scale(next), from, finer, Progress::NudgeWhenStuck)
 }
 
+/// The next rung to probe while every point lies on one side of the target:
+/// extrapolate the crossing from the measured loss slope (or the prior
+/// exponent after a single point) and aim past it by a margin that grows
+/// with each attempt, clamped to one bounded jump. The pure core of
+/// [`Navigator::extrapolated_step`], shared with the B1-G speculation
+/// shadow.
+fn extrapolated_step_from(
+    unsorted: &[(Rung, f64)],
+    threshold: f64,
+    prior_beta: Option<f64>,
+    finer: bool,
+    attempt: u32,
+) -> Option<Rung> {
+    let mut points: Vec<(Rung, f64)> = unsorted.to_vec();
+    points.sort_by_key(|p| p.0);
+    let (from, other) = if finer {
+        (
+            points.last().copied()?,
+            points
+                .len()
+                .checked_sub(2)
+                .and_then(|i| points.get(i).copied()),
+        )
+    } else {
+        (points.first().copied()?, points.get(1).copied())
+    };
+    if (finer && from.0 == Rung::TOP) || (!finer && from.0 == Rung::FLOOR) {
+        return None;
+    }
+    // The local slope in the shared `(x, -ln loss)` coordinate: positive
+    // when the finer probe really did lose less. Rejected unless the two
+    // points are far enough apart in `x` to fit through, and unless the
+    // loss actually fell; otherwise the prior exponent stands in.
+    let alpha = other
+        .and_then(|o| {
+            let model = LocalModel::through(
+                (ln_scale(o.0), neg_ln_loss(o.1)),
+                (ln_scale(from.0), neg_ln_loss(from.1)),
+            );
+            ((ln_scale(from.0) - ln_scale(o.0)).abs() > f64::EPSILON && model.slope > 0.0)
+                .then(|| model.slope.clamp(0.2, 3.0))
+        })
+        .unwrap_or_else(|| prior_beta.unwrap_or(PRIOR_LOSS_EXPONENT));
+    let margin = EXPANSION_MARGIN.powi(i32::try_from(attempt.saturating_add(1)).unwrap_or(1));
+    let mut ratio = (loss(from.1) / loss(threshold)).powf(1.0 / alpha);
+    ratio = if finer {
+        ratio * margin
+    } else {
+        ratio / margin
+    };
+    ratio = ratio.clamp(1.0 / MAX_EXPANSION_JUMP, MAX_EXPANSION_JUMP);
+    if (finer && ratio <= 1.0) || (!finer && ratio >= 1.0) {
+        return Some(geometric_step(from.0, finer));
+    }
+    let rung = rung_for_scale(ln_scale(from.0).exp() * ratio);
+    Some(if rung == from.0 {
+        geometric_step(from.0, finer)
+    } else {
+        rung
+    })
+}
+
+/// The rung the crossing aim (with the effort's reserve) points at from a
+/// bracket. The pure core of [`Navigator::tighten_aim`], shared with the
+/// B1-G speculation shadow.
+fn crossing_aim_from(
+    lo: (Rung, f64),
+    hi: (Rung, f64),
+    threshold: f64,
+    reserve: f64,
+) -> Option<Rung> {
+    let relative = 100.0 - loss(threshold) * (1.0 - reserve);
+    let aim_score = relative.max(threshold + MIN_AIM_MARGIN);
+    // Aiming at (or past) the feasible end of the bracket would only
+    // re-probe its neighbour: the bracket is as tight as the aim.
+    if aim_score >= hi.1 {
+        return None;
+    }
+    log_loss_crossing(lo, hi, aim_score)
+}
+
 /// Whether a finalist at `rung` is too far from the structure anchor to
 /// reuse its cover and CfL.
 fn structure_is_far(anchor: Rung, rung: Rung) -> bool {
@@ -963,6 +1054,7 @@ impl Navigator<'_, '_, '_, '_, '_> {
     /// this rung (and makes it the structure anchor when none exists yet);
     /// otherwise the anchor's structure is reused.
     fn probe(&mut self, rung: Rung, fresh: bool) -> Result<usize> {
+        let spec_rung = self.speculate_next().map(|r| r.get());
         let quantizer = QuantizerChoice::at(rung, self.request.quant_lf)?;
         let plan_start = Instant::now();
         let (pixels, geometry, structure) = if fresh || self.anchor.is_none() {
@@ -1029,6 +1121,7 @@ impl Navigator<'_, '_, '_, '_, '_> {
             millis,
             surrogate_score,
             surrogate_millis,
+            spec_rung,
         });
         self.probes.push(ProbeRecord {
             rung,
@@ -1095,6 +1188,7 @@ impl Navigator<'_, '_, '_, '_, '_> {
             millis,
             surrogate_score: Some(surrogate),
             surrogate_millis: observation.surrogate_millis,
+            spec_rung: None,
         });
         self.probes.push(ProbeRecord {
             rung,
@@ -1169,53 +1263,8 @@ impl Navigator<'_, '_, '_, '_, '_> {
     /// the prior exponent after a single probe) and aim past it by a margin
     /// that grows with each attempt, clamped to one bounded jump.
     fn extrapolated_step(&self, finer: bool, attempt: u32) -> Option<Rung> {
-        let mut points: Vec<(Rung, f64)> = self.probes.iter().map(|p| (p.rung, p.score)).collect();
-        points.sort_by_key(|p| p.0);
-        let (from, other) = if finer {
-            (
-                points.last().copied()?,
-                points
-                    .len()
-                    .checked_sub(2)
-                    .and_then(|i| points.get(i).copied()),
-            )
-        } else {
-            (points.first().copied()?, points.get(1).copied())
-        };
-        if (finer && from.0 == Rung::TOP) || (!finer && from.0 == Rung::FLOOR) {
-            return None;
-        }
-        // The local slope in the shared `(x, -ln loss)` coordinate: positive
-        // when the finer probe really did lose less. Rejected unless the two
-        // points are far enough apart in `x` to fit through, and unless the
-        // loss actually fell; otherwise the prior exponent stands in.
-        let alpha = other
-            .and_then(|o| {
-                let model = LocalModel::through(
-                    (ln_scale(o.0), neg_ln_loss(o.1)),
-                    (ln_scale(from.0), neg_ln_loss(from.1)),
-                );
-                ((ln_scale(from.0) - ln_scale(o.0)).abs() > f64::EPSILON && model.slope > 0.0)
-                    .then(|| model.slope.clamp(0.2, 3.0))
-            })
-            .unwrap_or_else(|| self.prior_beta.unwrap_or(PRIOR_LOSS_EXPONENT));
-        let margin = EXPANSION_MARGIN.powi(i32::try_from(attempt.saturating_add(1)).unwrap_or(1));
-        let mut ratio = (loss(from.1) / loss(self.threshold())).powf(1.0 / alpha);
-        ratio = if finer {
-            ratio * margin
-        } else {
-            ratio / margin
-        };
-        ratio = ratio.clamp(1.0 / MAX_EXPANSION_JUMP, MAX_EXPANSION_JUMP);
-        if (finer && ratio <= 1.0) || (!finer && ratio >= 1.0) {
-            return Some(geometric_step(from.0, finer));
-        }
-        let rung = rung_for_scale(ln_scale(from.0).exp() * ratio);
-        Some(if rung == from.0 {
-            geometric_step(from.0, finer)
-        } else {
-            rung
-        })
+        let points: Vec<(Rung, f64)> = self.probes.iter().map(|p| (p.rung, p.score)).collect();
+        extrapolated_step_from(&points, self.threshold(), self.prior_beta, finer, attempt)
     }
 
     /// Expands from the current extreme until a bracket exists, the ladder
@@ -1273,15 +1322,89 @@ impl Navigator<'_, '_, '_, '_, '_> {
     /// the current bracket, when one is worth probing.
     fn tighten_aim(&self) -> Option<Rung> {
         let (lo, hi) = self.bracket()?;
-        let relative = 100.0 - loss(self.threshold()) * (1.0 - self.budget.reserve);
-        let aim_score = relative.max(self.threshold() + MIN_AIM_MARGIN);
-        // Aiming at (or past) the feasible end of the bracket would only
-        // re-probe its neighbour: the bracket is as tight as the aim.
-        if aim_score >= hi.1 {
-            return None;
-        }
-        let rung = log_loss_crossing(lo, hi, aim_score)?;
+        let rung = crossing_aim_from(lo, hi, self.threshold(), self.budget.reserve)?;
         (!self.already_probed(rung)).then_some(rung)
+    }
+
+    /// B1-G shadow: the rung the *ladder-next* speculation rule would have
+    /// launched in a paired lane alongside the previous probe — this probe's
+    /// rung guessed before the previous probe's score was known.
+    ///
+    /// The rule replays the navigator's own decision core over the probes
+    /// minus the last one, standing in for the hidden score with the
+    /// hidden-state expectation: the local model through the two points
+    /// nearest the previous rung, the prior exponent from a single point,
+    /// or — for the very first pair — the prediction's own aim (the
+    /// threshold). Purely observational: reads state, changes nothing.
+    fn speculate_next(&self) -> Option<Rung> {
+        let (hidden, last) = self.probes.split_at(self.probes.len().checked_sub(1)?);
+        let last = last.first()?;
+        let x_last = ln_scale(last.rung);
+        let mut points: Vec<(f64, f64)> = hidden
+            .iter()
+            .map(|p| (ln_scale(p.rung), neg_ln_loss(p.score)))
+            .collect();
+        points.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let prior = self.prior_beta.unwrap_or(PRIOR_LOSS_EXPONENT);
+        let y_expected = match points.as_slice() {
+            [] => neg_ln_loss(self.threshold()),
+            [only] => only.1 + prior * (x_last - only.0),
+            _ => {
+                // The segment containing the previous rung, or the nearest
+                // end segment, with the same slope guard the expansion uses.
+                let idx = points.partition_point(|p| p.0 < x_last);
+                let (a, b) = if idx == 0 {
+                    (points.first()?, points.get(1)?)
+                } else if idx >= points.len() {
+                    (points.get(points.len().checked_sub(2)?)?, points.last()?)
+                } else {
+                    (points.get(idx.checked_sub(1)?)?, points.get(idx)?)
+                };
+                let slope = ((b.0 - a.0).abs() > f64::EPSILON)
+                    .then(|| LocalModel::through(*a, *b).slope)
+                    .filter(|s| *s > 0.0)
+                    .map_or(prior, |s| s.clamp(0.2, 3.0));
+                a.1 + slope * (x_last - a.0)
+            }
+        };
+        let synth_score = 100.0 - (-y_expected).exp();
+        let synth_feasible = synth_score >= self.threshold();
+        let synth = (last.rung, synth_score);
+        // Bracket over the hidden probes plus the synthetic point.
+        let lo = hidden
+            .iter()
+            .filter(|p| !p.feasible)
+            .map(|p| (p.rung, p.score))
+            .chain((!synth_feasible).then_some(synth))
+            .max_by_key(|p| p.0);
+        let hi = hidden
+            .iter()
+            .filter(|p| p.feasible)
+            .map(|p| (p.rung, p.score))
+            .chain(synth_feasible.then_some(synth))
+            .min_by_key(|p| p.0);
+        let guess = match (lo, hi) {
+            (Some(lo), Some(hi)) if lo.0 < hi.0 => {
+                crossing_aim_from(lo, hi, self.threshold(), self.budget.reserve)
+            }
+            _ => {
+                let set: Vec<(Rung, f64)> = hidden
+                    .iter()
+                    .map(|p| (p.rung, p.score))
+                    .chain(core::iter::once(synth))
+                    .collect();
+                let attempt = u32::try_from(hidden.len()).unwrap_or(u32::MAX);
+                extrapolated_step_from(
+                    &set,
+                    self.threshold(),
+                    self.prior_beta,
+                    !synth_feasible,
+                    attempt,
+                )
+            }
+        }?;
+        // A lane aimed at a rung the pair already covers would not launch.
+        (guess != last.rung && !self.already_probed(guess)).then_some(guess)
     }
 
     /// Aims at the log-loss crossing (with the effort's reserve) and probes
@@ -1401,6 +1524,7 @@ fn price_pixels(
         millis: entropy_ms.saturating_add(emit_ms),
         surrogate_score: None,
         surrogate_millis: None,
+        spec_rung: None,
     });
     Ok(PricedFinalist {
         quantizer,
@@ -1920,6 +2044,7 @@ fn reduce_winner(
         millis: entropy_ms.saturating_add(emit_ms),
         surrogate_score: None,
         surrogate_millis: None,
+        spec_rung: None,
     });
     if kept {
         stats.reducer_edits = reduced.stats.edits_applied;
@@ -2559,6 +2684,42 @@ mod tests {
         // The one rescue probe beyond the navigation cap stays the maximum.
         assert!(outcome.stats.pixel_probes <= budget.pixel_probes + 1);
         assert!(outcome.prediction.is_some(), "the shadow trace still fills");
+    }
+
+    /// The B1-G speculation shadow annotates every baseline pixel probe
+    /// after the first with the ladder-next rule's guess (or an explicit
+    /// `None` when no lane would launch), never annotates the first probe or
+    /// exact prices, and reaches the trace record — without changing what
+    /// the search does.
+    #[test]
+    fn the_speculation_shadow_annotates_pixel_probes_only() {
+        let (outcome, _) = run(RateSearchPreset::Balanced, 85.0);
+        let baseline_pixels: Vec<&QualityProbe> = outcome
+            .trace
+            .iter()
+            .filter(|p| p.policy_id == 0 && p.kind == ProbeKind::Pixel)
+            .collect();
+        assert!(baseline_pixels.len() >= 2, "need a multi-probe solve");
+        assert_eq!(
+            baseline_pixels.first().and_then(|p| p.spec_rung),
+            None,
+            "no previous probe exists to pair with"
+        );
+        for probe in &outcome.trace {
+            if probe.kind != ProbeKind::Pixel {
+                assert_eq!(probe.spec_rung, None, "only pixel probes speculate");
+            }
+            if let Some(spec) = probe.spec_rung {
+                assert!(
+                    (Rung::FLOOR.get()..=Rung::TOP.get()).contains(&spec),
+                    "a speculated rung stays on the ladder"
+                );
+            }
+        }
+        assert!(
+            outcome.trace_json("balanced").contains("\"spec_rung\":"),
+            "the shadow reaches the trace record"
+        );
     }
 
     /// A solve that runs out of probes before anything meets a reachable
