@@ -180,8 +180,12 @@ const RADIUS_USIZE: usize = 5;
 
 /// Rows processed together in the horizontal pass: each is one independent
 /// recursion lane (the row analogue of the vertical pass's column lanes), so
-/// the compiler vectorises the lane loop.
-const ROW_LANES: usize = 4;
+/// the compiler vectorises the lane loop. Eight lanes are two 4-wide `f64`
+/// vectors in flight: the recursion is a serial dependency chain per vector,
+/// so the second, independent chain roughly doubles the ILP the poles'
+/// latency otherwise wastes (the vertical pass gets the same effect from its
+/// 64-column strips).
+const ROW_LANES: usize = 8;
 
 /// Horizontal pass over one band: groups of [`ROW_LANES`] rows through the
 /// lane recursion, remainder rows through the scalar one. Every row's output
@@ -322,23 +326,39 @@ fn horizontal_padded_lanes(out: &mut [f32], width: usize, padded_t: &[f32]) {
         step_lanes(lane_sum(i), &mut prev, &mut prev2);
     }
     let mut rows = out.chunks_exact_mut(width);
-    let (Some(o0), Some(o1), Some(o2), Some(o3)) =
-        (rows.next(), rows.next(), rows.next(), rows.next())
-    else {
+    let (Some(o0), Some(o1), Some(o2), Some(o3), Some(o4), Some(o5), Some(o6), Some(o7)) = (
+        rows.next(),
+        rows.next(),
+        rows.next(),
+        rows.next(),
+        rows.next(),
+        rows.next(),
+        rows.next(),
+        rows.next(),
+    ) else {
         return;
     };
-    for ((((s0, s1), s2), s3), n) in o0
+    for ((((((((s0, s1), s2), s3), s4), s5), s6), s7), n) in o0
         .iter_mut()
         .zip(o1.iter_mut())
         .zip(o2.iter_mut())
         .zip(o3.iter_mut())
+        .zip(o4.iter_mut())
+        .zip(o5.iter_mut())
+        .zip(o6.iter_mut())
+        .zip(o7.iter_mut())
         .zip(0..width)
     {
-        let [v0, v1, v2, v3] = step_lanes(lane_sum(n + warm), &mut prev, &mut prev2);
+        let [v0, v1, v2, v3, v4, v5, v6, v7] =
+            step_lanes(lane_sum(n + warm), &mut prev, &mut prev2);
         *s0 = v0;
         *s1 = v1;
         *s2 = v2;
         *s3 = v3;
+        *s4 = v4;
+        *s5 = v5;
+        *s6 = v6;
+        *s7 = v7;
     }
 }
 
@@ -697,6 +717,46 @@ mod tests {
     }
 
     #[test]
+    fn the_lane_grouping_does_not_change_the_result() {
+        // Each row's recursion depends on that row alone and the lane
+        // arithmetic is exactly `step`'s, so grouping rows into lanes cannot
+        // change a value — including every remainder count a band height not
+        // divisible by `ROW_LANES` can produce. Both input kinds.
+        let w = 53usize;
+        for h in 1..=(2 * ROW_LANES + 1) {
+            let a: Vec<f32> = (0..w * h).map(|i| ((i * 131) % 89) as f32 / 89.0).collect();
+            let b: Vec<f32> = (0..w * h).map(|i| ((i * 37) % 71) as f32 / 71.0).collect();
+            for input in [BlurInput::Plane(&a), BlurInput::Product(&a, &b)] {
+                let mut grouped = vec![0.0f32; w * h];
+                horizontal_band(input, &mut grouped, w);
+                let mut scalar = vec![0.0f32; w * h];
+                let mut padded = Vec::new();
+                match input {
+                    BlurInput::Plane(rows) => {
+                        for (ri, ro) in rows.chunks_exact(w).zip(scalar.chunks_exact_mut(w)) {
+                            horizontal_row(ri, ro, &mut padded);
+                        }
+                    }
+                    BlurInput::Product(ra, rb) => {
+                        for ((ia, ib), ro) in rows_pair(ra, rb, w).zip(scalar.chunks_exact_mut(w)) {
+                            horizontal_product_row(ia, ib, ro, &mut padded);
+                        }
+                    }
+                }
+                assert_eq!(grouped, scalar, "height {h}");
+            }
+        }
+    }
+
+    fn rows_pair<'a>(
+        a: &'a [f32],
+        b: &'a [f32],
+        w: usize,
+    ) -> impl Iterator<Item = (&'a [f32], &'a [f32])> {
+        a.chunks_exact(w).zip(b.chunks_exact(w))
+    }
+
+    #[test]
     fn the_executor_does_not_change_the_result() {
         let (w, h) = (37usize, 130usize);
         let input: Vec<f32> = (0..w * h)
@@ -730,5 +790,43 @@ mod tests {
         let mut fused = vec![0.0f32; w * h];
         Blur::new().blur_product_plane(&a, &b, &mut fused, w, h, &SerialExecutor);
         assert_eq!(fused, materialised);
+    }
+}
+
+#[cfg(test)]
+mod row_lanes_bench {
+    use super::*;
+
+    /// Temporary E1-d microbench: `cargo test -p jpxl-perceptual --release
+    /// row_lanes_bench -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn horizontal_band_timing() {
+        let width = 4000usize;
+        let rows = 512usize;
+        let input: Vec<f32> = (0..width * rows)
+            .map(|i| ((i * 2_654_435_761usize) & 0xffff) as f32 / 65_535.0)
+            .collect();
+        let mut out = vec![0.0f32; width * rows];
+        // warm-up
+        horizontal_band(BlurInput::Plane(&input), &mut out, width);
+        let mut best = u128::MAX;
+        for _ in 0..30 {
+            let t = std::time::Instant::now();
+            horizontal_band(BlurInput::Plane(&input), &mut out, width);
+            best = best.min(t.elapsed().as_nanos());
+        }
+        let mut best_prod = u128::MAX;
+        for _ in 0..30 {
+            let t = std::time::Instant::now();
+            horizontal_band(BlurInput::Product(&input, &input), &mut out, width);
+            best_prod = best_prod.min(t.elapsed().as_nanos());
+        }
+        println!(
+            "ROW_LANES={} plane={:.3}ns/sample product={:.3}ns/sample",
+            ROW_LANES,
+            best as f64 / (width * rows) as f64,
+            best_prod as f64 / (width * rows) as f64,
+        );
     }
 }
