@@ -7100,7 +7100,7 @@ record jpegxl-rs.work.multifidelity-quality-search/5 : work {
 
 record jpegxl-rs.work.multifidelity-quality-search/6 : work {
     title "Multi-fidelity perceptual search: surrogates propose, canonical evaluation accepts"
-    state active
+    state superseded
     scope [
         path "JPXL/crates/jpxl-encode-policy/src/**",
         path "JPXL/crates/jpxl-perceptual/**",
@@ -7115,6 +7115,42 @@ record jpegxl-rs.work.multifidelity-quality-search/6 : work {
     depends_on [ @jpegxl-rs.work.ladder-navigator-unification ]
     part_of [ @jpegxl-rs.track.perceptual-quality-controller ]
     supersedes [ @jpegxl-rs.work.multifidelity-quality-search/5 ]
+    verified_by [
+        @jpegxl-rs.evidence.n3-confident-stop-byte-identical-holdouts,
+        @jpegxl-rs.evidence.r1-render-scratch-exact-and-measured,
+        @jpegxl-rs.evidence.s1-surrogate-navigation-holdout-gate,
+        @jpegxl-rs.evidence.s1-surrogate-sizing-shadow-corpus,
+        @jpegxl-rs.evidence.s2-decimated-surrogate-holdout-gate,
+        @jpegxl-rs.evidence.s2-decimated-surrogate-sizing-corpus,
+        @jpegxl-rs.evidence.s2-exact-banded-metric-identity-and-rss
+    ]
+    source {
+        kind internal
+        role origin
+        path "JPXL/docs/scheduler-unification-and-multifidelity-plan.md"
+        use """
+            Advisor proposal-verification architecture adopted after verification against current profiling attribution and predict_v2 capabilities.
+            """
+    }
+}
+
+record jpegxl-rs.work.multifidelity-quality-search/7 : work {
+    title "Multi-fidelity perceptual search: surrogates propose, canonical evaluation accepts"
+    state active
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/src/**",
+        path "JPXL/crates/jpxl-perceptual/**",
+        path "JPXL/crates/jpxl-plan-render/**"
+    ]
+    intent """
+        On top of the N0/N1-unified ladder mathematics, make most navigation probes cheap while every accepted result stays exact. Delivered phases N3/R1/S1/S2 stand as rev 5 recorded them. The remainder programme (2026-08-30, operator-approved): each conditional item gets a justification measurement with explicit kill criteria before implementation; the 2.0x wall-anchors target is to be renegotiated as an explicit decision from measured floors.
+        """
+    note """
+        REMAINDER PROGRAMME STATUS 2026-08-30 evening: RT1 CLOSED permanently (@jpegxl-rs.evidence.rt1-fused-trial-pricing-closed-2026-08-30). RT2 CLOSED at the J2b offline learnability gate: ridge slope fit median error 11.5% (gate <=10%), skip-vs-today finalists differ median 7.8% of bytes against a +/-3% band, band agreement 38% vs the 80% floor - the second anchor is a local slope measurement no global feature model matches; the rate-ladder instrument (4a12436) stays. B1: frequency gate PASSED (@jpegxl-rs.evidence.b1-multi-probe-frequency-2026-08-30); the B1-G pairability shadow is LANDED at afebb8b (spec_rung on every baseline pixel probe, byte-identical 16/16 - @jpegxl-rs.evidence.b1g-shadow-identity-2026-08-30); corpus traces collecting at .agent/scratch/phase0-remainder-20260830/b1g-traces.jsonl; gate to evaluate: hit rate h>=0.7 wall-weighted, amortizable share a>=0.25, modeled net <=0.95 at 12 MP Balanced, else close B1 like the surrogate assessment. E1-side closures and the new profile leaves are under @jpegxl-rs.work.pqc-usable-efforts-cost and @jpegxl-rs.observation.pqc-wall-attribution-post-s2-2026-08-30/2.
+        """
+    depends_on [ @jpegxl-rs.work.ladder-navigator-unification ]
+    part_of [ @jpegxl-rs.track.perceptual-quality-controller ]
+    supersedes [ @jpegxl-rs.work.multifidelity-quality-search/6 ]
     verified_by [
         @jpegxl-rs.evidence.n3-confident-stop-byte-identical-holdouts,
         @jpegxl-rs.evidence.r1-render-scratch-exact-and-measured,
@@ -8709,7 +8745,7 @@ record jpegxl-rs.work.pqc-usable-efforts-cost/9 : work {
 
 record jpegxl-rs.work.pqc-usable-efforts-cost/10 : work {
     title "PQC usable efforts: reduce Fast/Balanced wall time and peak memory"
-    state active
+    state superseded
     scope [
         path "JPXL/crates/jpxl-encode-policy/src/quality.rs",
         path "JPXL/crates/jpxl-perceptual/src/**",
@@ -8759,6 +8795,70 @@ record jpegxl-rs.work.pqc-usable-efforts-cost/10 : work {
     implements [ @jpegxl-rs.decision.perceptual-quality-contract/1 ]
     part_of [ @jpegxl-rs.track.perceptual-quality-controller/1 ]
     supersedes [ @jpegxl-rs.work.pqc-usable-efforts-cost/9 ]
+    supported_by [
+        @jpegxl-rs.evidence.pqc-fused-render-wall-anchors-2026-08-25/1,
+        @jpegxl-rs.evidence.pqc-low-memory-wall-anchors-2026-08-23/1,
+        @jpegxl-rs.evidence.pqc-metric-cuts-wall-anchors-2026-08-25/1,
+        @jpegxl-rs.evidence.pqc-pr4-holdout-wall-reported-2026-08-22/1,
+        @jpegxl-rs.evidence.pqc-pr4b-memory-12mp-2026-08-22/1,
+        @jpegxl-rs.evidence.pqc-pr4b-probe-speed-2026-08-22/1,
+        @jpegxl-rs.observation.pqc-large-frame-render-parallel-2026-08-25,
+        @jpegxl-rs.observation.pqc-wall-quiet-host-attribution-2026-08-25
+    ]
+}
+
+record jpegxl-rs.work.pqc-usable-efforts-cost/11 : work {
+    title "PQC usable efforts: reduce Fast/Balanced wall time and peak memory"
+    state active
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/src/quality.rs",
+        path "JPXL/crates/jpxl-perceptual/src/**",
+        path "JPXL/crates/jpxl-plan-render/src/**",
+        path "JPXL/crates/jpxl/src/lib.rs"
+    ]
+    intent """
+        Profile and reduce the production Fast and Balanced perceptual path's full-frame render/metric allocation and rescue-probe cost. Work only on usable efforts: do not spend measurement time on the feature-gated Quality reference effort. Pure scorer, renderer, and lifetime changes must preserve Fast/Balanced codestream bytes; any deliberate search-policy change requires the standing Contract B screen.
+        """
+    note """
+        E1 STREAM 2026-08-30 evening (cycle profile unblocked, perf_event_paranoid=1): landed cuts E1-b1+E1-d measured on a quiet host at -1.5..-1.7% of the 12 MP Balanced wall, -0.4% at 4.3 MP (@jpegxl-rs.evidence.wall-ab3-landed-cuts-2026-08-30). E1-b2/b3 CLOSED: the whole EPF halo pad is 1.19% of wall after E1-b1, under the 4% gate (@jpegxl-rs.evidence.e1b2-pad-share-below-gate-2026-08-30). E1-a stays CLOSED even under the operator's relaxed 2.2-2.5 GB offer: retention buys ~6% of 12 MP wall, below the operator's stated 10% bar (@jpegxl-rs.evidence.e1a-relaxed-cap-below-10pct-2026-08-30). E1-f effectively closed: the reference build is 3-4% of wall but compute-bound; its scratch churn is invisible at t8. STILL OPEN, gates met (@jpegxl-rs.evidence.q0a-cycle-leaf-shares-2026-08-30): (new) E1-g DepthClassifier::linear_at_depth ~7% of 12 MP Balanced wall, a scalar per-sample threshold/LUT walk run on every probe's render - bit-exact rework (finer guide so lo==hi almost everywhere, or SIMD classify) is the largest remaining exact lever; E1-e XYB two-chain ILP at 7.3% (gate >=5% met). W1 constants derived from quiet-host floors: Balanced ceilings 2.5x (4.3 MP) / 3.5x (12 MP) at 8 threads (@jpegxl-rs.evidence.w1b-quiet-host-floors-2026-08-30, @jpegxl-rs.decision.pqc-wall-target-renegotiation-shape) - awaiting operator sign-off; current ratios 2.36x/3.30x already sit under them.
+        """
+    acceptance {
+        check memory-12mp {
+            statement """
+                Balanced q85 on the locked 12 MP anchor peaks at no more than 2.0 GB RSS, with the measurement serialized and process-capped.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.pqc-fused-render-memory-12mp-2026-08-25/1 ]
+        }
+        check production-identity {
+            statement """
+                Pure scorer/renderer/lifetime changes leave Fast and Balanced codestreams byte-identical across the locked identity cells, threads 1/4, and AVX2 on/off; any search-policy change instead passes the standing Contract B gate.
+                """
+            method command
+            command "python3 .agent/scratch/pqc-metric-cuts-20260825/identity_scatter.py"
+            verified_by [
+                @jpegxl-rs.evidence.pqc-fused-render-production-identity-2026-08-25/1
+            ]
+        }
+        check wall-anchors {
+            statement """
+                At matched achieved SSIMULACRA2, Balanced end-to-end wall is no more than 2.0x the rate path on both the 4.3 MP and 12 MP anchors; phase timings identify any remaining gap.
+                """
+            method observation
+        }
+        check workspace-gates {
+            statement """
+                The workspace release tests, clippy, and formatting gates pass.
+                """
+            method command
+            command "cd JPXL && cargo test --workspace --release && cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all --check"
+            verified_by [ @jpegxl-rs.evidence.pqc-fused-render-workspace-gates-2026-08-25/1 ]
+        }
+    }
+    depends_on [ @jpegxl-rs.work.pqc-pr4-quality-navigator/1 ]
+    implements [ @jpegxl-rs.decision.perceptual-quality-contract/1 ]
+    part_of [ @jpegxl-rs.track.perceptual-quality-controller/1 ]
+    supersedes [ @jpegxl-rs.work.pqc-usable-efforts-cost/10 ]
     supported_by [
         @jpegxl-rs.evidence.pqc-fused-render-wall-anchors-2026-08-25/1,
         @jpegxl-rs.evidence.pqc-low-memory-wall-anchors-2026-08-23/1,

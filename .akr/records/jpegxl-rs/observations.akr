@@ -1947,7 +1947,7 @@ record jpegxl-rs.observation.pqc-pr7-full-holdout-quality-rejected-2026-08-24/1 
 
 record jpegxl-rs.observation.pqc-wall-attribution-post-s2-2026-08-30/1 : observation {
     title "Post-S2 quality-vs-rate wall structure at threads 1/4/8 (provisional: loaded host, no cycle profile)"
-    state verified
+    state superseded
     scope [ path "JPXL/crates/jpxl-perceptual/**", path "JPXL/crates/jpxl-plan-render/**" ]
     statement """
         Interleaved Balanced quality-vs-matched-rate walls on the two locked anchors at HEAD (release, current tree), threads 1/4/8, 3 probes both anchors: 4.3 MP ratio 7.09/2.82/2.49, 12 MP ratio 11.71/4.37/3.45. Amdahl over the thread sweep puts the quality path's serial fraction at ~17-20% of the single-thread wall. Per-probe split at 12 MP 8t: render+metric ~470 ms/probe; traced phases sum to 1.86 s of a 2.74 s process wall, so ~0.9 s sits outside the controller (source load, reference build, feature extraction, IO) - material to how the wall-anchors ratio is defined. Arithmetic single-probe floors: ~2.07x at 12 MP 8t, ~1.3x at 4.3 MP 8t. CAVEATS: host load 3.8-6.7 during runs, so ratios are indicative, not gate-grade; cycle-level leaf shares (Q0a) are blocked until kernel.perf_event_paranoid <= 2 - the 2026-08-25 hot-leaf attribution remains without a current replacement.
@@ -1960,6 +1960,24 @@ record jpegxl-rs.observation.pqc-wall-attribution-post-s2-2026-08-30/1 : observa
         "JPXL/crates/jpxl-encode-policy/src/quality.rs"
     ]
     derived_from [ @jpegxl-rs.work.pqc-usable-efforts-cost ]
+}
+
+record jpegxl-rs.observation.pqc-wall-attribution-post-s2-2026-08-30/2 : observation {
+    title "Post-E1 quality-wall attribution: quiet-host walls and the first real cycle profile"
+    state verified
+    scope [ path "JPXL/crates/jpxl-perceptual/**", path "JPXL/crates/jpxl-plan-render/**" ]
+    statement """
+        Quiet-host (load 1.3-1.8) interleaved Balanced quality-vs-matched-rate walls at HEAD afebb8b (E1-b1/E1-d landed), 3 probes both anchors: 4.3 MP ratio 6.84/2.87/2.36 at threads 1/4/8, 12 MP 12.03/4.31/3.30. Cycle profile (perf -F 997, perf_event_paranoid=1, 12 MP Balanced t8, cpu_core): horizontal_band_avx2 15-21% (still top after E1-d), epf_step_rows_fma 9.6%, planes_to_positive_xyb_avx2 7.3%, DepthClassifier::linear_at_depth ~7% (scalar per-sample threshold/LUT walk in render_inner, runs on every probe's render), choose_run_avx2 5.8%, vert_batch_avx2 4.5-7.3%, accumulate_band_avx2 2.5-4.5%. EPF halo pad (PaddedPlane::new_in) 1.19% after E1-b1; reference-side Blur::blur_input 1.8-2.9% and downscale 1.1% (compute-bound, scratch churn invisible at t8). Largest unattacked exact leaves: linear_at_depth (branchy scalar, bit-exact rework possible) and the XYB cbrt divider chain (E1-e two-chain lever, gate >=5% met).
+        """
+    observed_at git:afebb8b4cacd413aadc784cf0ad3741a54353541
+    method command
+    watches [
+        "JPXL/crates/jpxl-perceptual/src/**",
+        "JPXL/crates/jpxl-plan-render/src/lib.rs",
+        "JPXL/crates/jpxl-core/src/restoration.rs"
+    ]
+    derived_from [ @jpegxl-rs.work.pqc-usable-efforts-cost ]
+    supersedes [ @jpegxl-rs.observation.pqc-wall-attribution-post-s2-2026-08-30/1 ]
 }
 
 record jpegxl-rs.observation.pqc-wall-quiet-host-attribution-2026-08-25/1 : observation {

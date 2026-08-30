@@ -30,6 +30,19 @@ record jpegxl-rs.evidence.b1-multi-probe-frequency-2026-08-30/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.b1g-shadow-identity-2026-08-30/1 : evidence {
+    title "B1-G shadow is byte-identical on the 16-cell grid"
+    state verified
+    result pass
+    method command
+    observed_at git:afebb8b4cacd413aadc784cf0ad3741a54353541
+    command "python3 .agent/scratch/phase0-remainder-20260830/identity_b1g.py (16 cells vs jpxl-head-4f573b7)"
+    artifact ".agent/scratch/phase0-remainder-20260830/identity_b1g.py"
+    summary """
+        B1-G speculation shadow (commit afebb8b): 16/16 cells byte-identical codestreams and bit-identical probe scores vs the pre-change binary.
+        """
+}
+
 record jpegxl-rs.evidence.bench-vs-libjxl-reproducible-2026-08-25/1 : evidence {
     title "One documented command compares JPXL and native cjxl/djxl on the same inputs with recorded provenance"
     state verified
@@ -66,6 +79,19 @@ record jpegxl-rs.evidence.cli-netpbm-workspace-gates-2026-08-21/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.e1a-relaxed-cap-below-10pct-2026-08-30/1 : evidence {
+    title "E1-a under a relaxed cap: ~6% wall for +0.42 GiB — below the operator's 10% bar"
+    state verified
+    result fail
+    method command
+    observed_at git:afebb8b4cacd413aadc784cf0ad3741a54353541
+    command "python3 .agent/scratch/phase0-remainder-20260830/wall_ab3.py (jpxl-e1a-24m = HEAD + LOW_MEMORY_PIXELS 24M)"
+    artifact ".agent/scratch/phase0-remainder-20260830/wall-ab3.json"
+    summary """
+        Operator offered a 2.2-2.5 GB memory cap if it buys ~10% wall. Measured: E1-a retention saves 5.8% (12MP t8) / 6.2% (t4) for ~2.34 GiB peak, nothing below 8MP. Below the 10% bar — LOW_MEMORY_PIXELS stays 8M; variant binary kept in scratch.
+        """
+}
+
 record jpegxl-rs.evidence.e1a-scratch-retention-breaches-memory-anchor-2026-08-30/1 : evidence {
     title "E1-a: 12 MP probe-scratch retention breaches the 2.0 GB memory anchor; closed"
     state verified
@@ -89,6 +115,19 @@ record jpegxl-rs.evidence.e1b1-epf-parallel-pad-gates-2026-08-30/1 : evidence {
     artifact ".agent/scratch/phase0-remainder-20260830/README.md"
     summary """
         d1a00c9 builds the three per-step PaddedPlane halo copies as parallel executor items. 16/16 locked cells byte-identical with bit-identical canonical+surrogate probe scores vs the 146fbd5 baseline binary; RSS +-0 MiB at 4.3/12/50 MP. Wall delta within loaded-host noise; no quiet-host wall claim is made. The sigma-field hoist the plan doc listed (E1-b0) was already present at HEAD.
+        """
+}
+
+record jpegxl-rs.evidence.e1b2-pad-share-below-gate-2026-08-30/1 : evidence {
+    title "E1-b2 gate: EPF pad share 1.19% < 4% — closed"
+    state verified
+    result fail
+    method command
+    observed_at git:afebb8b4cacd413aadc784cf0ad3741a54353541
+    command "perf report -i q12-t8-cg.data --children (PaddedPlane::new_in 1.19% vs the >=4% E1-b2 gate)"
+    artifact ".agent/scratch/phase0-remainder-20260830/q0a-perf/q12-t8-cg.children.txt"
+    summary """
+        E1-b2 band-parallel halo pad gate fails: the whole EPF pad is 1.19% of the 12MP Balanced wall after E1-b1 parallelized it (gate >=4%). E1-b2 and b3 close permanently.
         """
 }
 
@@ -5983,6 +6022,19 @@ record jpegxl-rs.evidence.q0-harness-and-sections-2026-08-17/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.q0a-cycle-leaf-shares-2026-08-30/1 : evidence {
+    title "Q0(a) cycle profile: post-E1-d leaf shares at 12MP Balanced"
+    state verified
+    result pass
+    method command
+    observed_at git:afebb8b4cacd413aadc784cf0ad3741a54353541
+    command "bash .agent/scratch/phase0-remainder-20260830/q0a_perf.sh (perf record -F 997, perf_event_paranoid=1)"
+    artifact ".agent/scratch/phase0-remainder-20260830/q0a-perf/"
+    summary """
+        12MP Balanced q85 t8 cycle leaf shares (cpu_core): horizontal_band_avx2 15-21%, epf_step_rows_fma 9.6%, planes_to_positive_xyb_avx2 7.3%, render_inner closure#11 = DepthClassifier::linear_at_depth ~7%, choose_run_avx2 5.8%, vert_batch_avx2 4.5-7.3%; PaddedPlane::new_in 1.19% (children); Blur::blur_input (reference-side) 1.8-2.9%, downscale_planes 1.1%.
+        """
+}
+
 record jpegxl-rs.evidence.q0b-identity-safety-2026-08-17/1 : evidence {
     title "Gates green in both profiles, no-default-features and AVX2-disabled suites, strict Clippy and fmt; new tests/control_image_roundtrip.rs decodes every control-image shape (LF triple with and without previous-channel properties, HF metadata set, zero-size channel, wide residuals) sample-exactly through jpxl-decode; codestreams identical across 1 and 4 threads and with AVX2 disabled (mid 476b068fba443d4f, large 963e08c7ce6b8ac6); the lossless Modular path is byte-identical to Phase 42; the loop's price equals its emission for a fixed plan; djxl and jxl-oxide 0.12.6 accept every stream of the ladder and the seven scenes (after switching the previous-channel properties off, see the jxl-oxide observation)."
     state verified
@@ -7192,6 +7244,32 @@ record jpegxl-rs.evidence.three-way-workspace-tests-2026-08-29/1 : evidence {
     command "cd JPXL && cargo build --workspace && cargo test --workspace --release && cargo fmt --all --check"
     summary """
         Workspace build, full release tests, and rustfmt check passed after the harness change; bash syntax and generated-adapter build also passed.
+        """
+}
+
+record jpegxl-rs.evidence.w1b-quiet-host-floors-2026-08-30/1 : evidence {
+    title "W1b inputs: quiet-host floors and derived ceiling constants"
+    state verified
+    result pass
+    method command
+    observed_at git:afebb8b4cacd413aadc784cf0ad3741a54353541
+    command "python3 .agent/scratch/phase0-remainder-20260830/q0_wall.py (interleaved quality/rate, load 1.3-1.8)"
+    artifact ".agent/scratch/phase0-remainder-20260830/q0-wall.json"
+    summary """
+        Quiet-host Balanced ratios at HEAD (post E1-b1/d): 4.3MP 6.84/2.87/2.36 (t1/4/8), 12MP 12.03/4.31/3.30. Derived single-probe floors 1.42x (4.3MP t8) and 2.04x (12MP t8); per-probe shares 0.33/0.31; formula ceilings 2.5x and 3.5x (t8), 3.0x and 4.5x (t4).
+        """
+}
+
+record jpegxl-rs.evidence.wall-ab3-landed-cuts-2026-08-30/1 : evidence {
+    title "E1-b1+E1-d wall claim: -1.5-1.7% at 12MP Balanced"
+    state verified
+    result pass
+    method command
+    observed_at git:afebb8b4cacd413aadc784cf0ad3741a54353541
+    command "python3 .agent/scratch/phase0-remainder-20260830/wall_ab3.py (interleaved base/head/e1a, 7 reps, load 0.7-3.7)"
+    artifact ".agent/scratch/phase0-remainder-20260830/wall-ab3.json"
+    summary """
+        Landed E1-b1+E1-d vs baseline 146fbd5: quality wall ratio 0.983 (12MP t8), 0.985 (12MP t4), 0.996 (4.3MP t8) — a ~1.5-1.7% cut at 12MP Balanced.
         """
 }
 
