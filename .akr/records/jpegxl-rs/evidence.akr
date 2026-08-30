@@ -5304,6 +5304,19 @@ record jpegxl-rs.evidence.pipeline-metadata-seam-2026-08-26/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.pqc-cost-close-reverification-2026-08-30/1 : evidence {
+    title "pqc-usable-efforts-cost closing re-verification at 94e8dc4"
+    state verified
+    result pass
+    method command
+    observed_at git:94e8dc4cb3bf8a82e312eb5a47e57886af447ea1
+    command "python3 .agent/scratch/text-aware-20260830/identity_shadow.py && cd JPXL && cargo test --workspace --release && cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all --check"
+    artifact ".agent/scratch/phase0-remainder-20260830/wall-e1g.json"
+    summary """
+        Closing re-verification of all four pqc-usable-efforts-cost checks at HEAD 94e8dc4: (1) wall-anchors-v2 - quiet-host Balanced/rate ratios ~2.30x (4.3 MP) and ~3.21x (12 MP) at 8 threads with E1-g landed (wall-e1g.json + w1b floors), under the operator-accepted 2.5x/3.5x ceilings; (2) memory-12mp - the 2026-08-25 2.0 GB measurement stands: no allocation-lifetime change since touched the 12 MP Balanced peak (E1-g adds a 65k-entry f32 table ~256 KB; the shadow classifier a transient 2 MiB bitset); (3) production-identity - 16/16 locked cells byte-identical with bit-identical probe scores vs the kept HEAD binary; (4) workspace-gates - release tests, clippy -D warnings, fmt all pass at this commit.
+        """
+}
+
 record jpegxl-rs.evidence.pqc-fused-render-memory-12mp-2026-08-25/1 : evidence {
     title "Fused-render 12 MP memory: peak 2,008,408 KiB under the 2 GiB ceiling"
     state verified
@@ -7217,6 +7230,19 @@ record jpegxl-rs.evidence.spine-conventions/1 : evidence {
         jpegxl-rs.decision.ledger-conventions fixes namespace, scope convention, and the kind crosswalk
         """
     author "GitHub Uploader"
+}
+
+record jpegxl-rs.evidence.text-routing-shipped-ab-2026-08-30/1 : evidence {
+    title "Shipped text-routing A/B: -21% corpus bytes, 0 violations, 0 growth"
+    state verified
+    result pass
+    method command
+    observed_at git:94e8dc4cb3bf8a82e312eb5a47e57886af447ea1
+    command "python3 .agent/scratch/text-aware-20260830/ab_routing.py"
+    artifact ".agent/scratch/text-aware-20260830/ab-routing-summary.txt"
+    summary """
+        Shipped --text-routing competition (commit 94e8dc4), A/B over the 121-screenshot corpus at q85 Balanced: 69 outputs smaller, 52 unchanged, 0 grew; every changed stream decoded with djxl and independently re-scored - 0 floor violations, 0 decode failures; corpus bytes 11.81 -> 9.32 MB (-21.0%), per-image geomean 1.33x, max 5.96x. Photo negative control byte-identical with the flag on (12 MP-class photo pays ~3 ms census). Flag-off default path byte-identical: 16/16 identity cells vs the kept HEAD binary. Reported-vs-decoded score deltas up to ~1.0 exist only on unchanged VarDCT streams (pre-existing in-loop vs djxl reconstruction difference); routed lossless streams agree exactly. Wall on routed frames is unoptimized: median +0.77 s, p90 +2.3 s (median ratio 3.2x on these small fast frames) - candidate pruning (B4) is required before any default-on proposal.
+        """
 }
 
 record jpegxl-rs.evidence.three-way-clean-room-boundary-2026-08-29/1 : evidence {
