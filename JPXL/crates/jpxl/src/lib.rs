@@ -372,11 +372,13 @@ enum Mode {
 
 /// Builder for lossless or lossy JPEG XL encoding.
 ///
-/// The lossless Modular effort every routed text/UI candidate is encoded at:
-/// dense enough that the palette/squeeze search engages (effort 1 leaves
-/// ~3x bytes on paletteable screens), cheap enough to price two or three
-/// candidates per routed frame.
-const TEXT_CANDIDATE_EFFORT: u8 = 5;
+/// The lossless Modular effort every routed text/UI candidate is encoded at.
+/// Effort 2 is the lowest level that trials the exact-colour palette
+/// transform, and on the screenshot corpus the palette plan wins at every
+/// level: candidate bytes were identical at efforts 2, 3, and 5 for all 121
+/// frames while effort 2 encoded 1.6x faster (B4 sweep, 2026-08-30).
+/// Effort 1 skips the palette trial and leaves ~3x bytes on the table.
+const TEXT_CANDIDATE_EFFORT: u8 = 2;
 
 /// One priced candidate of the routed text/UI ladder.
 struct TextCandidate {
@@ -939,10 +941,19 @@ impl Encoder {
         // canonical metric arbitrates; a candidate can only replace the
         // VarDCT stream when it holds the requested floor AND is smaller (or
         // the search itself came in under target).
+        let search_missed = matches!(
+            outcome.status,
+            jpxl_encode_policy::QualityStatus::SaturatedTop
+                | jpxl_encode_policy::QualityStatus::UnderTargetWorkCap
+        );
         let routed_competition = if self.text_routing
             && content_hint.class == jpxl_encode_policy::content_class::ContentClass::TextUiLineArt
         {
-            self.text_candidate_competition(source, target.minimum_score, &mut evaluator)
+            // When the search met target the candidate must be smaller to
+            // win, so its byte count caps the ladder; a missed search takes
+            // any floor-holding candidate.
+            let byte_cap = (!search_missed).then_some(outcome.codestream.len());
+            self.text_candidate_competition(source, target.minimum_score, byte_cap, &mut evaluator)
         } else {
             None
         };
@@ -970,11 +981,6 @@ impl Encoder {
 
         // A routed candidate that holds the floor replaces the search result
         // when it is smaller, or when the search itself missed the target.
-        let search_missed = matches!(
-            outcome.status,
-            jpxl_encode_policy::QualityStatus::SaturatedTop
-                | jpxl_encode_policy::QualityStatus::UnderTargetWorkCap
-        );
         if let Some(TextCompetition {
             winner: Some(winner),
             ..
@@ -1061,24 +1067,29 @@ impl Encoder {
     }
 
     /// Runs the routed text/UI candidate ladder for
-    /// [`Self::perceptual_encode`]: colour-reduce, score canonically, encode
-    /// losslessly, first candidate that holds `floor` wins the ladder.
+    /// [`Self::perceptual_encode`]: colour-reduce over one shared histogram,
+    /// encode losslessly, prune on bytes, and score canonically only the
+    /// rungs whose bytes could still win. The first candidate that holds
+    /// `floor` wins the ladder.
     ///
-    /// Byte monotonicity makes the early exit sound: a 64-colour raster's
+    /// Byte monotonicity makes both early exits sound: a 64-colour raster's
     /// lossless stream is never materially larger than a 256-colour or
-    /// full-colour one of the same frame, so the first floor-holding rung is
-    /// also the smallest. The final arm — the source itself, exactly
-    /// lossless — always holds the floor, so a `Some` return always carries
-    /// a winner; whether it beats the VarDCT stream is the caller's check.
+    /// full-colour one of the same frame. So the first floor-holding rung is
+    /// also the smallest — and, symmetrically, once a rung's bytes already
+    /// reach `byte_cap` (the search's own stream, when it met target),
+    /// nothing finer up the ladder can win and the whole competition stops
+    /// without paying a single metric probe. `byte_cap` is `None` when the
+    /// search missed, where a floor-holding candidate wins at any size.
     /// `None` means the ladder does not apply (deep samples, or a census the
     /// classifier should not have passed).
     fn text_candidate_competition(
         &self,
         source: PerceptualSource<'_>,
         floor: f64,
+        byte_cap: Option<usize>,
         evaluator: &mut jpxl_perceptual::PlanRenderEvaluator<'_>,
     ) -> Option<TextCompetition> {
-        use jpxl_encode_policy::colour_reduce::reduce_to_k_colours;
+        use jpxl_encode_policy::colour_reduce::{ColourHistogram, reduce_with_histogram};
         use jpxl_encode_policy::content_class::ROUTE_MAX_COLOURS;
 
         let (width, height, bits) = source.dimensions();
@@ -1096,32 +1107,47 @@ impl Encoder {
                 std::borrow::Cow::Owned(rgb.iter().map(|&s| s.min(255) as u8).collect())
             }
         };
+        let histogram = ColourHistogram::build(&rgb8, ROUTE_MAX_COLOURS)?;
+        let over_cap = |bytes: usize| byte_cap.is_some_and(|cap| bytes >= cap);
 
+        // Score-first, one encode per frame: the canonical probe on these
+        // frames costs ~35 ms while a lossless Modular candidate encode
+        // costs ~1 s (measured over the screenshot corpus, 2026-08-30), so
+        // the ladder selects its rung entirely by score and only the
+        // selected rung — or the lossless arm — is ever encoded.
         let mut attempts = Vec::new();
         let mut winner = None;
         for k in [64u32, 256] {
-            let reduced = reduce_to_k_colours(&rgb8, k, ROUTE_MAX_COLOURS)?;
-            let score = if reduced.exact {
-                100.0
+            let start = std::time::Instant::now();
+            let reduced = reduce_with_histogram(&rgb8, &histogram, k);
+            let reduce_us = start.elapsed().as_micros();
+            let (score, score_us) = if reduced.exact {
+                (100.0, 0u128)
             } else {
+                let start = std::time::Instant::now();
                 match evaluator.score_srgb8_candidate(width, height, &reduced.rgb) {
-                    Ok(score) => score,
+                    Ok(score) => (score, start.elapsed().as_micros()),
                     Err(_) => continue,
                 }
             };
             let holds = score >= floor;
-            let bytes = if holds {
-                self.encode_text_candidate(width, height, &reduced.rgb).ok()
+            let (bytes, encode_us) = if holds {
+                let start = std::time::Instant::now();
+                (
+                    self.encode_text_candidate(width, height, &reduced.rgb).ok(),
+                    start.elapsed().as_micros(),
+                )
             } else {
-                None
+                (None, 0)
             };
+            let rung_pruned = bytes.as_ref().is_some_and(|cs| over_cap(cs.len()));
             attempts.push(format!(
-                "{{\"k\":{k},\"palette_len\":{},\"exact\":{},\"score\":{score},\"bytes\":{}}}",
+                "{{\"k\":{k},\"palette_len\":{},\"exact\":{},\"score\":{score},\"bytes\":{},\"pruned\":{rung_pruned},\"reduce_us\":{reduce_us},\"encode_us\":{encode_us},\"score_us\":{score_us}}}",
                 reduced.palette_len,
                 reduced.exact,
                 bytes
                     .as_ref()
-                    .map_or_else(|| "null".into(), |b: &Vec<u8>| b.len().to_string()),
+                    .map_or_else(|| "null".into(), |cs: &Vec<u8>| cs.len().to_string()),
             ));
             if holds {
                 if let Some(codestream) = bytes {
@@ -1136,10 +1162,15 @@ impl Encoder {
             }
         }
         if winner.is_none() {
-            // The exactly-lossless source always holds the floor.
+            // The exactly-lossless source always holds the floor; whether
+            // its bytes beat the search is the caller's check, mirrored
+            // here in the trace's `pruned` flag.
+            let start = std::time::Instant::now();
             if let Ok(codestream) = self.encode_text_candidate(width, height, &rgb8) {
+                let encode_us = start.elapsed().as_micros();
+                let lossless_pruned = over_cap(codestream.len());
                 attempts.push(format!(
-                    "{{\"k\":null,\"palette_len\":null,\"exact\":true,\"score\":100.0,\"bytes\":{}}}",
+                    "{{\"k\":null,\"palette_len\":null,\"exact\":true,\"score\":100.0,\"bytes\":{},\"pruned\":{lossless_pruned},\"encode_us\":{encode_us}}}",
                     codestream.len()
                 ));
                 winner = Some(TextCandidate {

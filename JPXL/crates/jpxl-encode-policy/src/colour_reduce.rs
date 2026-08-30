@@ -37,6 +37,45 @@ pub struct ReducedFrame {
     pub exact: bool,
 }
 
+/// The frame's exact colour histogram, built once and shared by every rung
+/// of the candidate ladder (the pixel pass is the only part of a reduction
+/// that scales with the frame, so paying it per rung doubles the ladder's
+/// fixed cost for nothing).
+pub struct ColourHistogram {
+    /// Unique colours with their pixel counts, sorted by packed RGB key.
+    colours: Vec<([u8; 3], u64)>,
+}
+
+impl ColourHistogram {
+    /// Builds the exact histogram, or `None` when the frame has more than
+    /// `colour_cap` unique colours — the caller routed something the
+    /// classifier should not have passed, so a misrouted dense frame
+    /// degrades to "no candidate", never to a slow one.
+    #[must_use]
+    pub fn build(rgb: &[u8], colour_cap: u32) -> Option<Self> {
+        let mut histogram: HashMap<u32, u64> = HashMap::new();
+        for px in rgb.chunks_exact(3) {
+            let key = (u32::from(px[0]) << 16) | (u32::from(px[1]) << 8) | u32::from(px[2]);
+            *histogram.entry(key).or_insert(0) += 1;
+            if histogram.len() > colour_cap as usize {
+                return None;
+            }
+        }
+        let mut colours: Vec<([u8; 3], u64)> = histogram
+            .iter()
+            .map(|(&key, &w)| ([(key >> 16) as u8, (key >> 8) as u8, key as u8], w))
+            .collect();
+        colours.sort_unstable_by_key(|(c, _)| (c[0], c[1], c[2]));
+        Some(Self { colours })
+    }
+
+    /// The number of unique colours in the frame.
+    #[must_use]
+    pub fn unique_colours(&self) -> usize {
+        self.colours.len()
+    }
+}
+
 /// One box of the median cut: a range of the colour array plus its bounds.
 struct CutBox {
     start: usize,
@@ -91,28 +130,28 @@ impl CutBox {
 /// misrouted dense frame degrades to "no candidate", never to a slow one.
 #[must_use]
 pub fn reduce_to_k_colours(rgb: &[u8], k: u32, colour_cap: u32) -> Option<ReducedFrame> {
+    let histogram = ColourHistogram::build(rgb, colour_cap)?;
+    Some(reduce_with_histogram(rgb, &histogram, k))
+}
+
+/// Reduces a frame to at most `k` colours over a prebuilt histogram.
+///
+/// The ladder builds one [`ColourHistogram`] and calls this per rung, so
+/// only the remap pass (and the cut, which runs over unique colours, not
+/// pixels) is paid again.
+#[must_use]
+pub fn reduce_with_histogram(rgb: &[u8], histogram: &ColourHistogram, k: u32) -> ReducedFrame {
     let k = k.max(2);
-    // Exact histogram over unique colours, keyed and sorted by packed RGB.
-    let mut histogram: HashMap<u32, u64> = HashMap::new();
-    for px in rgb.chunks_exact(3) {
-        let key = (u32::from(px[0]) << 16) | (u32::from(px[1]) << 8) | u32::from(px[2]);
-        *histogram.entry(key).or_insert(0) += 1;
-        if histogram.len() > colour_cap as usize {
-            return None;
-        }
-    }
-    let mut colours: Vec<([u8; 3], u64)> = histogram
-        .iter()
-        .map(|(&key, &w)| ([(key >> 16) as u8, (key >> 8) as u8, key as u8], w))
-        .collect();
-    colours.sort_unstable_by_key(|(c, _)| (c[0], c[1], c[2]));
+    // The cut re-sorts ranges of the colour array in place; work on a copy
+    // so the shared histogram stays canonically ordered for later rungs.
+    let mut colours = histogram.colours.clone();
 
     if colours.len() <= k as usize {
-        return Some(ReducedFrame {
+        return ReducedFrame {
             rgb: rgb.to_vec(),
             palette_len: colours.len() as u32,
             exact: true,
-        });
+        };
     }
 
     // Weighted median cut: repeatedly split the box with the widest colour
@@ -223,11 +262,11 @@ pub fn reduce_to_k_colours(rgb: &[u8], k: u32, colour_cap: u32) -> Option<Reduce
         let mapped = mapping.get(&key).copied().unwrap_or([px[0], px[1], px[2]]);
         out.extend_from_slice(&mapped);
     }
-    Some(ReducedFrame {
+    ReducedFrame {
         rgb: out,
         palette_len: palette.len() as u32,
         exact: false,
-    })
+    }
 }
 
 #[cfg(test)]
