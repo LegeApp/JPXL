@@ -5,7 +5,7 @@ build {
     tool "akr 0.4.0"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:ea0cc040f7619bc1bbc0a3e22b1f561ab0e1a7f1ea126b711805160c8b8d5cec"
+    source_graph "sha256:139a7bbf886b4c061d882f403b1be0cfd49ac0fd5136bb459217af92762a2bd3"
 }
 
 source ".akr/project.akr" {
@@ -29,8 +29,8 @@ source ".akr/records/jpegxl-rs/decisions.akr" {
 }
 
 source ".akr/records/jpegxl-rs/evidence.akr" {
-    hash "sha256:da8b3b12316a1b6a6e98f6c8c6e90533e733736177e2957269698f16eef72680"
-    records 607
+    hash "sha256:7cc19963dbb0e88523715f928ed2d39d6ae5d15d4a2bc6a248451c62bc13606e"
+    records 608
 }
 
 source ".akr/records/jpegxl-rs/milestones.akr" {
@@ -69,8 +69,8 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:b5449c11303740bd3f8df101af40c8ec45f7a597e66e8746163d5461bc0ca6f8"
-    records 213
+    hash "sha256:5ae7b5954f255e4aabff0d31eb6b2e29138d98415bed74f6e3dc29e5fa1f88c0"
+    records 214
 }
 
 resolution @jpegxl-rs.assessment.paired-candidate-lanes-cannot-speculate-exactly/1 {
@@ -4447,6 +4447,24 @@ resolution @jpegxl-rs.work.text-aware-routing/3 {
     hash "sha256:cd5e87e5f72c05ae6f6001e88171cc24b916e2b9a622e2dbd5aa2381706e5431"
 }
 
+resolution @jpegxl-rs.work.text-aware-routing/4 {
+    slot derived_from
+    to @jpegxl-rs.observation.three-way-encoder-comparison-2026-08-29/2
+    hash "sha256:a2e55afb215e067a5481bb4294e831a34cd6b3609d6e26283db43db8fc6f562e"
+}
+
+resolution @jpegxl-rs.work.text-aware-routing/4 {
+    slot derived_from
+    to @jpegxl-rs.work.three-way-followup-recommendations/2
+    hash "sha256:9d2364e70ca0184c8c4bf910da340eec28980b9f6a2ee3d58adf2fd94aceb438"
+}
+
+resolution @jpegxl-rs.work.text-aware-routing/4 {
+    slot resolves
+    to @jpegxl-rs.question.route-text-lineart-via-bpg-preanalysis/1
+    hash "sha256:cd5e87e5f72c05ae6f6001e88171cc24b916e2b9a622e2dbd5aa2381706e5431"
+}
+
 seal @jpegxl-rs.assessment.encoder-architecture-outside-advice/1 {
     state superseded
     hash "sha256:0a37a3cb309ca3bcb05226868e926b9884292fe703ee7ec56a1fe6159ed1b335"
@@ -7532,6 +7550,11 @@ seal @jpegxl-rs.evidence.spine-conventions/1 {
     hash "sha256:5793d09f02a73315418bdbcd130b2116fba1c79ae1b09148cc2deb782032c0d3"
 }
 
+seal @jpegxl-rs.evidence.text-routing-b4-wall-bound-2026-08-30/1 {
+    state verified
+    hash "sha256:f291ca8426ed6773a725033738b6a504ded58b271145cc4460545cbef209ce53"
+}
+
 seal @jpegxl-rs.evidence.text-routing-shipped-ab-2026-08-30/1 {
     state verified
     hash "sha256:f646ed00c24a7da7afb97e5e877fc35072aca78099fb3b5a7500ccb434ed6f5c"
@@ -9528,8 +9551,13 @@ seal @jpegxl-rs.work.text-aware-routing/2 {
 }
 
 seal @jpegxl-rs.work.text-aware-routing/3 {
+    state superseded
+    hash "sha256:1576eeef255a17c6edb8a198dac719be947fc84d96621ade6e60c88770bac2f9"
+}
+
+seal @jpegxl-rs.work.text-aware-routing/4 {
     state active
-    hash "sha256:7eaa66eb1228208b073e0fc752e3b2adc745112b01ce2efc5a39b225732acaed"
+    hash "sha256:5343286c00b25d222d70d755464b2b19472760239ee520328f50aae70b92fce4"
 }
 
 seal @jpegxl-rs.work.three-way-encoder-benchmark/1 {

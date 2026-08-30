@@ -9934,7 +9934,7 @@ record jpegxl-rs.work.text-aware-routing/2 : work {
 
 record jpegxl-rs.work.text-aware-routing/3 : work {
     title "Text/UI-aware routing: detect text/line-art content and route it to a competing encoding profile"
-    state active
+    state superseded
     intent """
         Close the text/UI density gap. Stage 1 (DONE): corpus gap measured - geomean 1.15x ZenJXL / 1.39x cjxl, max 4.7x. Stage 2 (DONE): shadow content classifier (content_class.rs, 4e10611). Stage 3 (SHIPPED opt-in, 94e8dc4): --text-routing / Encoder::with_text_routing - deterministic median-cut colour reduction (colour_reduce.rs), canonical scoring through the evaluator's retained reference, lossless Modular e5 candidates at k=64/256 plus the exact source, first floor-holding rung wins, replaces VarDCT only when smaller or the search missed. Corpus A/B: -21% bytes, 69/121 smaller, 0 grew, 0 floor violations (external djxl re-score), photo controls byte-identical, flag-off default 16/16 identity. REMAINING before default-on: bound the routed wall (candidate pruning / cheaper candidate pricing; today median +0.77 s, ratio ~3.2x on small fast frames) and the Contract-B A/B screen. Beyond this work: the residual worst-case gap (~2-3x on a few screens vs ZenJXL) needs a lossy-smooth text representation (competitor streams decode to 21k colours from 252-colour sources; cjxl d3-beats-d1.5 on text suggests patches/mode switching) - a separate future feature.
         """
@@ -9977,6 +9977,54 @@ record jpegxl-rs.work.text-aware-routing/3 : work {
     part_of [ @jpegxl-rs.track.perceptual-quality-controller/1 ]
     resolves [ @jpegxl-rs.question.route-text-lineart-via-bpg-preanalysis ]
     supersedes [ @jpegxl-rs.work.text-aware-routing/2 ]
+}
+
+record jpegxl-rs.work.text-aware-routing/4 : work {
+    title "Text/UI-aware routing: detect text/line-art content and route it to a competing encoding profile"
+    state active
+    intent """
+        Close the text/UI density gap. Stage 1 (DONE): corpus gap measured - geomean 1.15x ZenJXL / 1.39x cjxl, max 4.7x. Stage 2 (DONE): shadow content classifier (content_class.rs, 4e10611). Stage 3 (SHIPPED opt-in, 94e8dc4): --text-routing / Encoder::with_text_routing - deterministic median-cut colour reduction, canonical scoring through the evaluator's retained reference, lossless Modular candidates, first floor-holding rung wins, replaces VarDCT only when smaller or the search missed. Corpus A/B: -21% bytes, 69/121 smaller, 0 grew, 0 floor violations. Stage 4 B4 (DONE, cf94f5f): wall bounded - trace attribution showed candidate encode = 96% of competition wall, so the ladder is score-first over one shared colour histogram with exactly one encode per frame at Modular effort 2 (palette plan wins at every effort: candidate bytes identical e2/e3/e5 across the corpus). Routed overhead median 0.77->0.58 s, p90 2.27->1.33 s, max 7.20->2.30 s; VarDCT-wins premium median 0.75 s. REMAINING: the default-on decision is the operator's - it needs the standing Contract-B A/B screen when proposed. Beyond this work: the residual worst-case gap (~2-3x on a few screens vs ZenJXL) needs a lossy-smooth text representation (patches/mode switching) - a separate future feature; a CIELAB Wu-style quantizer (operator's own WuElast reference is portable) is a possible palette-quality upgrade if k-rung floor failures ever matter.
+        """
+    note """
+        Operator directive 2026-08-30: text-aware processing is the next program. ZenJXL stays black-box (AGPL lineage). The competition is opt-in until routed-wall-bounded and the Contract-B screen pass.
+        """
+    acceptance {
+        check classifier-routes-corpus {
+            statement """
+                The in-tree classifier labels the locked text/UI families as intended, costs at most 2% of normal photo wall, and classifier-negative photo output is byte-identical.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.content-classifier-shadow-2026-08-30/1 ]
+        }
+        check corpus-gap-measured {
+            statement """
+                The screenshot-corpus three-way gap (bytes at matched-or-better achieved SSIMULACRA2 vs ZenJXL and cjxl) is measured and recorded with the standard harness.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.screenshot-corpus-three-way-gap-2026-08-30/1 ]
+        }
+        check routed-candidate-wins {
+            statement """
+                On classifier-positive inputs the shipped routed candidate competition never emits a larger stream than VarDCT alone, never violates the SSIMULACRA2 floor (externally re-scored on djxl-decoded output), and materially closes the measured byte gap on the text/UI subset.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.text-routing-shipped-ab-2026-08-30/1 ]
+        }
+        check routed-wall-bounded {
+            statement """
+                Candidate pruning bounds the routed competition's wall overhead (classifier-positive frames where VarDCT still wins pay a bounded, measured premium) before any default-on proposal; default-on additionally passes the standing Contract B A/B screen.
+                """
+            method observation
+            verified_by [ @jpegxl-rs.evidence.text-routing-b4-wall-bound-2026-08-30/1 ]
+        }
+    }
+    derived_from [
+        @jpegxl-rs.observation.three-way-encoder-comparison-2026-08-29,
+        @jpegxl-rs.work.three-way-followup-recommendations
+    ]
+    part_of [ @jpegxl-rs.track.perceptual-quality-controller/1 ]
+    resolves [ @jpegxl-rs.question.route-text-lineart-via-bpg-preanalysis ]
+    supersedes [ @jpegxl-rs.work.text-aware-routing/3 ]
 }
 
 record jpegxl-rs.work.three-way-encoder-benchmark/1 : work {
