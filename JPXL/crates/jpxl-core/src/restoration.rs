@@ -363,6 +363,39 @@ pub fn epf_weight(
     at_border: bool,
     params: &EpfParams,
 ) -> f32 {
+    epf_weight_with_inv_sigma(
+        distance,
+        epf_inv_sigma(sigma, step, params),
+        at_border,
+        params,
+    )
+}
+
+/// The reciprocal-sigma factor [`epf_weight`] applies, which depends only on
+/// the step, the parameters, and the block's sigma — never on the pixel.
+///
+/// Split out so the row filter can compute it once per 8×8 block instead of
+/// once per tap per pixel. The filter evaluates a dozen taps at every pixel,
+/// so the inlined form issued that many identical `divss`es per pixel; the
+/// divide was visible in the kernel's profile.
+#[must_use]
+#[inline]
+pub fn epf_inv_sigma(sigma: f32, step: EpfStep, params: &EpfParams) -> f32 {
+    step.step_multiplier(params) * 4.0 * (1.0 - 0.5f32.sqrt()) / sigma
+}
+
+/// [`epf_weight`] with the reciprocal-sigma factor already computed.
+///
+/// Same arithmetic in the same order on the same values, so hoisting the
+/// factor out of a loop cannot change a weight.
+#[must_use]
+#[inline]
+pub fn epf_weight_with_inv_sigma(
+    distance: f32,
+    inv_sigma: f32,
+    at_border: bool,
+    params: &EpfParams,
+) -> f32 {
     let position_multiplier = if at_border {
         params.border_sad_mul
     } else {
@@ -372,7 +405,6 @@ pub fn epf_weight(
     if scaled_distance == 0.0 {
         return 1.0;
     }
-    let inv_sigma = step.step_multiplier(params) * 4.0 * (1.0 - 0.5f32.sqrt()) / sigma;
     let v = scaled_distance.mul_add(-inv_sigma, 1.0);
     if v > 0.0 { v } else { 0.0 }
 }
@@ -644,34 +676,53 @@ fn epf_step_rows_impl(
             input[1].row_from(yi, 0),
             input[2].row_from(yi, 0),
         ];
-        for x in 0..width {
-            let idx = row_index * width + x;
-            let block_sigma = sigma.sigma_at(x / EPF_BLOCK_DIM, by);
+        // Walk the row a block at a time. Everything the weight needs besides
+        // the pixel's own distance is constant across an 8x8 block: the
+        // sigma, the skip decision, and the reciprocal-sigma factor whose
+        // divide used to be re-issued for every tap of every pixel. The
+        // border test splits too — `at_block_border` is true for the whole
+        // row on the block's first and last row, and otherwise only at the
+        // block's first and last column.
+        let ry = yi.rem_euclid(BLOCK_DIM_I);
+        let border_row = ry == 0 || ry == BLOCK_DIM_I - 1;
+        for x0 in (0..width).step_by(EPF_BLOCK_DIM) {
+            let x_end = (x0 + EPF_BLOCK_DIM).min(width);
+            let block_sigma = sigma.sigma_at(x0 / EPF_BLOCK_DIM, by);
             if block_sigma < EPF_SIGMA_SKIP_THRESHOLD {
-                for (c, plane) in out.iter_mut().enumerate() {
-                    if let (Some(v), Some(slot)) =
-                        (centre.get(c).and_then(|r| r.get(x)), plane.get_mut(idx))
-                    {
-                        *slot = *v;
+                for x in x0..x_end {
+                    let idx = row_index * width + x;
+                    for (c, plane) in out.iter_mut().enumerate() {
+                        if let (Some(v), Some(slot)) =
+                            (centre.get(c).and_then(|r| r.get(x)), plane.get_mut(idx))
+                        {
+                            *slot = *v;
+                        }
                     }
                 }
                 continue;
             }
-            let at_border = at_block_border(as_i64(x), yi);
-            let mut sum_weights = 0.0f32;
-            let mut acc = [0.0f32; 3];
-            for (d, rows3) in dist.iter().zip(&tap_rows) {
-                let distance = d.get(x).copied().unwrap_or(0.0);
-                let weight = epf_weight(distance, block_sigma, step, at_border, params);
-                sum_weights += weight;
-                for (c, slot) in acc.iter_mut().enumerate() {
-                    let v = rows3.get(c).and_then(|r| r.get(x)).copied().unwrap_or(0.0);
-                    *slot = v.mul_add(weight, *slot);
+            // Guarded by the skip test above, so `block_sigma` is at least
+            // EPF_SIGMA_SKIP_THRESHOLD and this cannot divide by zero.
+            let inv_sigma = epf_inv_sigma(block_sigma, step, params);
+            for x in x0..x_end {
+                let idx = row_index * width + x;
+                let rx = as_i64(x).rem_euclid(BLOCK_DIM_I);
+                let at_border = border_row || rx == 0 || rx == BLOCK_DIM_I - 1;
+                let mut sum_weights = 0.0f32;
+                let mut acc = [0.0f32; 3];
+                for (d, rows3) in dist.iter().zip(&tap_rows) {
+                    let distance = d.get(x).copied().unwrap_or(0.0);
+                    let weight = epf_weight_with_inv_sigma(distance, inv_sigma, at_border, params);
+                    sum_weights += weight;
+                    for (c, slot) in acc.iter_mut().enumerate() {
+                        let v = rows3.get(c).and_then(|r| r.get(x)).copied().unwrap_or(0.0);
+                        *slot = v.mul_add(weight, *slot);
+                    }
                 }
-            }
-            for (c, plane) in out.iter_mut().enumerate() {
-                if let (Some(v), Some(slot)) = (acc.get(c), plane.get_mut(idx)) {
-                    *slot = v / sum_weights;
+                for (c, plane) in out.iter_mut().enumerate() {
+                    if let (Some(v), Some(slot)) = (acc.get(c), plane.get_mut(idx)) {
+                        *slot = v / sum_weights;
+                    }
                 }
             }
         }

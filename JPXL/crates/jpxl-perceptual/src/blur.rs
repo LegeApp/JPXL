@@ -180,12 +180,31 @@ const RADIUS_USIZE: usize = 5;
 
 /// Rows processed together in the horizontal pass: each is one independent
 /// recursion lane (the row analogue of the vertical pass's column lanes), so
-/// the compiler vectorises the lane loop. Eight lanes are two 4-wide `f64`
-/// vectors in flight: the recursion is a serial dependency chain per vector,
-/// so the second, independent chain roughly doubles the ILP the poles'
-/// latency otherwise wastes (the vertical pass gets the same effect from its
-/// 64-column strips).
-const ROW_LANES: usize = 8;
+/// the compiler vectorises the lane loop.
+///
+/// The count trades instruction-level parallelism against register pressure,
+/// and the balance is sharp. One step keeps six live `[f64; ROW_LANES]`
+/// arrays — `prev` and `prev2` for each of the three poles — plus `sum` and
+/// `acc`. At eight lanes that is twelve of the sixteen `ymm` registers AVX2
+/// has, before addressing, loads, or the `f32` conversion, so the recursion
+/// spilled its whole state to the stack every sample: profiling put
+/// `horizontal_band_avx2`, the encoder's hottest leaf, at 26% stack traffic
+/// and 22% shuffles against under 10% real vector work. Six lanes fit, and
+/// still carry more than one dependency chain.
+///
+/// Measured with the `row_lanes_bench` microbench below, ns/sample on a
+/// 4000-wide band, plane / product: 2 lanes 2.06/2.18, 4 lanes 1.99/2.15,
+/// 6 lanes 1.66/1.98, 8 lanes 2.65/2.62, 12 lanes 2.63/2.74, 16 lanes
+/// 3.36/3.40. The curve is not monotonic in either direction, so re-run the
+/// microbench before changing this for a different microarchitecture — and
+/// note that a host with AVX-512 has twice the register file and will want a
+/// different optimum.
+///
+/// The value cannot change a result. Each row is an independent recursion,
+/// and rows past the last full group go through the scalar path;
+/// `the_lane_grouping_does_not_change_the_result` pins that against every
+/// remainder count a band height can produce.
+const ROW_LANES: usize = 6;
 
 /// Horizontal pass over one band: groups of [`ROW_LANES`] rows through the
 /// lane recursion, remainder rows through the scalar one. Every row's output
@@ -325,40 +344,23 @@ fn horizontal_padded_lanes(out: &mut [f32], width: usize, padded_t: &[f32]) {
     for i in 0..warm {
         step_lanes(lane_sum(i), &mut prev, &mut prev2);
     }
-    let mut rows = out.chunks_exact_mut(width);
-    let (Some(o0), Some(o1), Some(o2), Some(o3), Some(o4), Some(o5), Some(o6), Some(o7)) = (
-        rows.next(),
-        rows.next(),
-        rows.next(),
-        rows.next(),
-        rows.next(),
-        rows.next(),
-        rows.next(),
-        rows.next(),
-    ) else {
+    // One `&mut` row per lane, so each lane's output is a plain sequential
+    // walk rather than a stride-`width` scatter. Held as an array of
+    // `Option`s so the lane count follows `ROW_LANES` instead of being spelled
+    // out eight times; a short band that cannot fill every lane returns, as
+    // the eight-way destructuring did.
+    let mut chunks = out.chunks_exact_mut(width);
+    let mut rows: [Option<&mut [f32]>; ROW_LANES] = core::array::from_fn(|_| chunks.next());
+    if rows.iter().any(Option::is_none) {
         return;
-    };
-    for ((((((((s0, s1), s2), s3), s4), s5), s6), s7), n) in o0
-        .iter_mut()
-        .zip(o1.iter_mut())
-        .zip(o2.iter_mut())
-        .zip(o3.iter_mut())
-        .zip(o4.iter_mut())
-        .zip(o5.iter_mut())
-        .zip(o6.iter_mut())
-        .zip(o7.iter_mut())
-        .zip(0..width)
-    {
-        let [v0, v1, v2, v3, v4, v5, v6, v7] =
-            step_lanes(lane_sum(n + warm), &mut prev, &mut prev2);
-        *s0 = v0;
-        *s1 = v1;
-        *s2 = v2;
-        *s3 = v3;
-        *s4 = v4;
-        *s5 = v5;
-        *s6 = v6;
-        *s7 = v7;
+    }
+    for n in 0..width {
+        let v = step_lanes(lane_sum(n + warm), &mut prev, &mut prev2);
+        for (row, &val) in rows.iter_mut().zip(v.iter()) {
+            if let Some(slot) = row.as_mut().and_then(|r| r.get_mut(n)) {
+                *slot = val;
+            }
+        }
     }
 }
 

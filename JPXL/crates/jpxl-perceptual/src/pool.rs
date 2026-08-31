@@ -172,11 +172,25 @@ fn accumulate_band_impl(bands: &MomentBands<'_>, sums: &mut MapSums) {
         .zip(v22c)
         .zip(v12c)
     {
-        // Stage 1, lane-parallel: both per-pixel error terms. Nothing here
-        // reads the running sums, so the lanes are independent and the
-        // compiler is free to keep the two divides eight and four wide.
+        // Stage 1, lane-parallel: both per-pixel error terms *and* everything
+        // derived from them. Nothing here reads the running sums, so the lanes
+        // are independent and the compiler is free to keep the two divides
+        // eight and four wide.
+        //
+        // The fourth powers and the two rectifications used to sit in stage 2,
+        // where the ordered fold forced them to run one lane at a time: nine
+        // multiplies and two clamps per lane, which is most of why this kernel
+        // measured 30.8% scalar-double FP against 8.7% vector work. Each
+        // depends on its own pixel alone, so computing them here is the same
+        // expression on the same value and cannot change a result; it leaves
+        // stage 2 doing only the six additions that genuinely have to be
+        // ordered.
         let mut ssim_d = [0.0f64; POOL_LANES];
-        let mut asym = [0.0f64; POOL_LANES];
+        let mut ssim_d4 = [0.0f64; POOL_LANES];
+        let mut artifact = [0.0f64; POOL_LANES];
+        let mut artifact4 = [0.0f64; POOL_LANES];
+        let mut lost = [0.0f64; POOL_LANES];
+        let mut lost4 = [0.0f64; POOL_LANES];
         for lane in 0..POOL_LANES {
             let (i1, m1, v11) = (i1[lane], m1[lane], v11[lane]);
             let (i2, m2, v22) = (i2[lane], m2[lane], v22[lane]);
@@ -191,24 +205,27 @@ fn accumulate_band_impl(bands: &MomentBands<'_>, sums: &mut MapSums) {
             let num_m = 1.0 - mu_diff * mu_diff;
             let num_s = 2.0 * (v12 - mu12) + SSIM_C2;
             let denom_s = (v11 - mu11) + (v22 - mu22) + SSIM_C2;
-            ssim_d[lane] = (1.0 - f64::from((num_m * num_s) / denom_s)).max(0.0);
+            let d = (1.0 - f64::from((num_m * num_s) / denom_s)).max(0.0);
+            ssim_d[lane] = d;
+            ssim_d4[lane] = d * d * d * d;
             // Edge asymmetry: ratio of local high-pass magnitudes, minus one.
-            asym[lane] =
-                (1.0 + f64::from((i2 - m2).abs())) / (1.0 + f64::from((i1 - m1).abs())) - 1.0;
+            let d1 = (1.0 + f64::from((i2 - m2).abs())) / (1.0 + f64::from((i1 - m1).abs())) - 1.0;
+            let a = d1.max(0.0);
+            artifact[lane] = a;
+            artifact4[lane] = a * a * a * a;
+            let l = (-d1).max(0.0);
+            lost[lane] = l;
+            lost4[lane] = l * l * l * l;
         }
         // Stage 2, ordered: fold into the running sums in pixel order, which
         // keeps the result bit-identical to the fully scalar walk.
         for lane in 0..POOL_LANES {
-            let d = ssim_d[lane];
-            sums.ssim[0] += d;
-            sums.ssim[1] += d * d * d * d;
-            let d1 = asym[lane];
-            let artifact = d1.max(0.0);
-            sums.artifact[0] += artifact;
-            sums.artifact[1] += artifact * artifact * artifact * artifact;
-            let lost = (-d1).max(0.0);
-            sums.detail_lost[0] += lost;
-            sums.detail_lost[1] += lost * lost * lost * lost;
+            sums.ssim[0] += ssim_d[lane];
+            sums.ssim[1] += ssim_d4[lane];
+            sums.artifact[0] += artifact[lane];
+            sums.artifact[1] += artifact4[lane];
+            sums.detail_lost[0] += lost[lane];
+            sums.detail_lost[1] += lost4[lane];
         }
     }
 

@@ -10,10 +10,23 @@ use crate::blur::Blur;
 use crate::executor::BandExecutor;
 use crate::{LinearRgbView, MIN_DIMENSION, MetricError, SCALES, color, pyramid};
 
-/// Large-image floor for lifetime-first evaluator behavior. This covers the
-/// locked 12 MP memory anchor while leaving the 4.3 MP wall-time anchor on the
-/// allocation-reuse path.
-pub(crate) const LOW_MEMORY_PIXELS: u64 = 8_000_000;
+/// Pixel count at or above which the evaluator switches to the lifetime-first,
+/// release-early path instead of retaining allocations between probes.
+///
+/// Raised from 8 MP to 24 MP on 2026-08-31 (operator-approved memory trade).
+/// The 12 MP anchor now keeps its allocations across probes: measured
+/// -8.9% wall at 6 threads and -10.2% at 4, for a peak of 2.40 GiB against
+/// 1.98 GiB before. This was tried once before and reverted when the win read
+/// as only 4-6%; that measurement was taken on a loaded host, and re-measuring
+/// it pinned and interleaved put the real figure at the operator's 10% bar.
+///
+/// The cost scales with the frame, so note what this admits: between 8 and
+/// 24 MP the quality path now runs at roughly 210 bytes per pixel rather than
+/// 173, which puts a 24 MP source near 5 GB. Sources above the cap keep the
+/// bounded path, which is what stops a 50 MP encode from reaching the ~12 GB
+/// that once OOM-killed a 31 GB host
+/// (@jpegxl-rs.observation.pqc-memory-50mp-oom-2026-08-22).
+pub(crate) const LOW_MEMORY_PIXELS: u64 = 24_000_000;
 
 /// How much of the source-only work the reference retains.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
