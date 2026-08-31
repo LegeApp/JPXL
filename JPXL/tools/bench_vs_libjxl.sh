@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # bench_vs_libjxl.sh — reproducible size / SSIMULACRA2 / wall comparison of the
-# JPXL encoder against the libjxl oracle (cjxl / djxl), with full provenance.
+# JPXL encoder against ZenJXL and the libjxl oracle (cjxl / djxl), with full
+# provenance.
 #
 # WHAT IT DOES
 #   For every input image and every requested setting it emits one table row:
 #     encoder  setting  bytes  bpp  ssimulacra2  wall_s  status
-#   JPXL rows come from `jpxl encode --quality Q`; cjxl rows from `cjxl -d D`.
+#   JPXL rows come from `jpxl encode --quality Q`; ZenJXL and cjxl rows use
+#   their native distance controls.
 #   Every stream is decoded back to pixels and scored with the SAME metric —
-#   the in-tree production SSIMULACRA2 exposed by `jpxl compare` — so the two
+#   the in-tree production SSIMULACRA2 exposed by `jpxl compare` — so all three
 #   encoders are graded on one identical yardstick. Sizes are the real encoded
 #   byte counts; wall is the best of N encode runs.
 #
@@ -22,7 +24,7 @@
 #   sha256 and dimensions. With --jsonl the same data is written as one JSON
 #   object per row (schema "jpxl.bench-vs-libjxl/1") for machine consumption.
 #
-# ORACLES
+# EXTERNAL ENCODERS / ORACLE
 #   cjxl / djxl are looked up in tools/oracle-bin/ first (where
 #   setup-oracles.sh installs them), then on $PATH, then via --cjxl/--djxl.
 #   If they cannot run on this host (e.g. only the Windows .exe oracle is
@@ -30,14 +32,20 @@
 #   rows, clearly marked — the table stays reproducible and simply fills the
 #   cjxl columns when a working oracle is available.
 #
+#   ZenJXL is invoked through a small external adapter implementing:
+#     adapter --distance D --effort N input.ppm output.jxl
+#   Build the reference adapter with tools/setup-zenjxl-bench.sh. It lives in
+#   .agent/scratch because ZenJXL is AGPL-3.0-or-commercial; it is benchmark
+#   tooling, not a JPXL runtime dependency.
+#
 # CLEAN ROOM (AGENTS.md §2)
-#   cjxl/djxl are used strictly as black boxes: this script only *runs* them.
-#   No libjxl source is read.
+#   ZenJXL, cjxl, and djxl are used strictly as black boxes. No implementation
+#   source or constants from those projects are read or copied.
 #
 # INPUTS
 #   Any raster JPXL can read (PNG, PPM, JPEG, ...). Each input is first
 #   normalised to a canonical P6 PPM via a *lossless* JPXL round-trip
-#   (encode → decode), so both encoders and the scorer see identical source
+#   (encode → decode), so every encoder and the scorer see identical source
 #   pixels with no external image tool required. RGB (3-channel) inputs only;
 #   images with alpha are skipped with a note (the lossy encoder has no alpha).
 #
@@ -46,14 +54,16 @@
 #
 # OPTIONS
 #   --quality "Q ..."   SSIMULACRA2 target(s) for JPXL     (default: "70 85 90")
-#   --distance "D ..."  Butteraugli distance(s) for cjxl   (default: "3.0 1.5 1.0")
+#   --distance "D ..."  Distance(s) for ZenJXL and cjxl    (default: "3.0 1.5 1.0")
 #   --effort E          JPXL lossy effort: fast|balanced   (default: balanced)
 #   --cjxl-effort N     cjxl -e effort 1..9                (default: 7)
-#   --threads N         thread cap for both encoders       (default: 4)
+#   --zenjxl-effort N   ZenJXL effort                      (default: 7)
+#   --threads N         thread cap for all encoders        (default: 4)
 #   --runs N            encode timing runs, best is kept   (default: 1)
 #   --jpxl PATH         jpxl binary (default: target/fast-debug or release)
 #   --cjxl PATH         cjxl binary override
 #   --djxl PATH         djxl binary override
+#   --zenjxl PATH       ZenJXL benchmark adapter override
 #   --work-dir DIR      scratch dir (default: a mktemp under $TMPDIR)
 #   --jsonl PATH        also write one JSON object per row to PATH
 #   -h, --help          this help
@@ -71,11 +81,13 @@ qualities="70 85 90"
 distances="3.0 1.5 1.0"
 effort="balanced"
 cjxl_effort="7"
+zenjxl_effort="7"
 threads="4"
 runs="1"
 jpxl_bin=""
 cjxl_bin=""
 djxl_bin=""
+zenjxl_bin=""
 work_dir=""
 jsonl_path=""
 inputs=()
@@ -90,14 +102,20 @@ while [[ $# -gt 0 ]]; do
     --distance)    distances="$2"; shift 2 ;;
     --effort)      effort="$2"; shift 2 ;;
     --cjxl-effort) cjxl_effort="$2"; shift 2 ;;
+    --zenjxl-effort) zenjxl_effort="$2"; shift 2 ;;
     --threads)     threads="$2"; shift 2 ;;
     --runs)        runs="$2"; shift 2 ;;
     --jpxl)        jpxl_bin="$2"; shift 2 ;;
     --cjxl)        cjxl_bin="$2"; shift 2 ;;
     --djxl)        djxl_bin="$2"; shift 2 ;;
+    --zenjxl)      zenjxl_bin="$2"; shift 2 ;;
     --work-dir)    work_dir="$2"; shift 2 ;;
     --jsonl)       jsonl_path="$2"; shift 2 ;;
-    -h|--help)     sed -n '2,72p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help)
+      awk 'NR == 1 { next } /^set -uo pipefail$/ { exit } { sub(/^# ?/, ""); print }' \
+        "${BASH_SOURCE[0]}"
+      exit 0
+      ;;
     --*)           die "unknown option: $1" ;;
     *)             inputs+=("$1"); shift ;;
   esac
@@ -136,6 +154,17 @@ cjxl_path="$(find_oracle cjxl "${cjxl_bin}" || true)"
 djxl_path="$(find_oracle djxl "${djxl_bin}" || true)"
 have_oracle=0
 [[ -n "${cjxl_path}" && -n "${djxl_path}" ]] && have_oracle=1
+
+# ZenJXL stays outside the JPXL workspace. Its adapter is runnable as a normal
+# black-box encoder and djxl provides the common decode path used for scoring.
+if [[ -z "${zenjxl_bin}" ]]; then
+  zenjxl_candidate="${jpxl_root}/../.agent/scratch/zenjxl-bench-adapter/target/release/zenjxl-bench-adapter"
+  [[ -x "${zenjxl_candidate}" ]] && zenjxl_bin="${zenjxl_candidate}"
+fi
+have_zenjxl=0
+if [[ -n "${zenjxl_bin}" ]] && runnable "${zenjxl_bin}" && [[ -n "${djxl_path}" ]]; then
+  have_zenjxl=1
+fi
 
 # --------------------------------------------------------------- work dir
 if [[ -z "${work_dir}" ]]; then
@@ -184,8 +213,9 @@ json_escape() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
 
 emit_jsonl() {
   [[ -n "${jsonl_path}" ]] || return 0
-  printf '{"schema":"jpxl.bench-vs-libjxl/1","image":"%s","encoder":"%s","setting":"%s","bytes":%s,"bpp":%s,"ssimulacra2":"%s","wall_s":%s,"status":"%s"}\n' \
-    "$(json_escape "$1")" "$2" "$3" "$4" "$5" "$6" "$7" "$8" >> "${jsonl_path}"
+  printf '{"schema":"jpxl.bench-vs-libjxl/1","image":"%s","input_sha256":"%s","width":%s,"height":%s,"encoder":"%s","setting":"%s","bytes":%s,"bpp":%s,"ssimulacra2":"%s","wall_s":%s,"status":"%s"}\n' \
+    "$(json_escape "$1")" "${current_input_sha}" "${w}" "${h}" \
+    "$2" "$3" "$4" "$5" "$6" "$7" "$8" >> "${jsonl_path}"
 }
 
 # --------------------------------------------------------------- gather inputs
@@ -224,9 +254,18 @@ else
   note "cjxl/djxl:   NOT AVAILABLE on this host — emitting JPXL-only rows."
   note "             (Run tools/setup-oracles.sh on this platform to enable them.)"
 fi
-note "jpxl_effort: ${effort}    cjxl_effort: -e ${cjxl_effort}    threads: ${threads}    runs: ${runs}"
+if [[ ${have_zenjxl} -eq 1 ]]; then
+  note "zenjxl:     ${zenjxl_bin}"
+  note "zenjxl_version: $("${zenjxl_bin}" --version 2>&1 | head -1)"
+  note "zenjxl_sha256: $(sha "${zenjxl_bin}")"
+else
+  note "zenjxl:     NOT AVAILABLE — omitting ZenJXL rows."
+  note "             (Run tools/setup-zenjxl-bench.sh or pass --zenjxl.)"
+fi
+note "jpxl_effort: ${effort}    zenjxl_effort: ${zenjxl_effort}    cjxl_effort: -e ${cjxl_effort}"
+note "threads: ${threads}    runs: ${runs}    timing: best-of-N, warm filesystem cache, fresh process"
 note "jpxl_qualities:  ${qualities}"
-note "cjxl_distances:  ${distances}"
+note "zenjxl_cjxl_distances: ${distances}"
 note ""
 
 # --------------------------------------------------------------- table header
@@ -254,6 +293,8 @@ for src in "${files[@]}"; do
   [[ -n "${w}" && -n "${h}" && "${w}" -gt 0 && "${h}" -gt 0 ]] \
     || { printf 'warning: bad PPM dims for %s — skipping\n' "${src}" >&2; continue; }
   pixels=$(( w * h ))
+  current_input_sha="$(sha "${src}")"
+  note "input: ${src}    sha256=${current_input_sha}    dimensions=${w}x${h}"
   [[ "${metric_ver}" == "?" ]] && metric_ver="$(metric_version "${ref_ppm}")"
 
   # ------------------------------------------------------------- JPXL rows
@@ -272,7 +313,11 @@ for src in "${files[@]}"; do
     [[ -n "${status}" ]] || status="ok"
     wall="$(best_wall "${runs}" "${jpxl_bin}" encode --quality "${q}" --effort "${effort}" \
               --quality-fallback best-effort --threads "${threads}" "${ref_ppm}" "${out_jxl}")"
-    "${jpxl_bin}" decode "${out_jxl}" "${dec_ppm}" >/dev/null 2>&1
+    if [[ -n "${djxl_path}" ]]; then
+      "${djxl_path}" "${out_jxl}" "${dec_ppm}" >/dev/null 2>&1
+    else
+      "${jpxl_bin}" decode "${out_jxl}" "${dec_ppm}" >/dev/null 2>&1
+    fi
     s2="$(score_ssimulacra2 "${ref_ppm}" "${dec_ppm}")"
     b="$(size "${out_jxl}")"
     bpp="$(awk "BEGIN{printf \"%.4f\", ${b}*8/${pixels}}")"
@@ -281,6 +326,31 @@ for src in "${files[@]}"; do
     emit_jsonl "${base}" jpxl "q${q}" "${b}" "${bpp}" "${s2}" "${wall}" "${status}"
     produced=1
   done
+
+  # ---------------------------------------------------------- ZenJXL rows
+  if [[ ${have_zenjxl} -eq 1 ]]; then
+    for d in ${distances}; do
+      out_jxl="${work_dir}/${stem}.zen.d${d}.jxl"
+      dec_ppm="${work_dir}/${stem}.zen.d${d}.ppm"
+      if ! env RAYON_NUM_THREADS="${threads}" "${zenjxl_bin}" \
+             --distance "${d}" --effort "${zenjxl_effort}" \
+             "${ref_ppm}" "${out_jxl}" >/dev/null 2>&1 || [[ ! -s "${out_jxl}" ]]; then
+        printf '%-28s  %-8s  %-10s  %10s  %7s  %12s  %8s  %s\n' \
+          "${stem}" zenjxl "d${d}" - - - - "encode-failed"
+        continue
+      fi
+      wall="$(best_wall "${runs}" env RAYON_NUM_THREADS="${threads}" "${zenjxl_bin}" \
+                --distance "${d}" --effort "${zenjxl_effort}" "${ref_ppm}" "${out_jxl}")"
+      "${djxl_path}" "${out_jxl}" "${dec_ppm}" >/dev/null 2>&1
+      s2="$(score_ssimulacra2 "${ref_ppm}" "${dec_ppm}")"
+      b="$(size "${out_jxl}")"
+      bpp="$(awk "BEGIN{printf \"%.4f\", ${b}*8/${pixels}}")"
+      printf '%-28s  %-8s  %-10s  %10s  %7s  %12s  %8s  %s\n' \
+        "${stem}" zenjxl "d${d}" "${b}" "${bpp}" "${s2}" "${wall}" "ok"
+      emit_jsonl "${base}" zenjxl "d${d}" "${b}" "${bpp}" "${s2}" "${wall}" "ok"
+      produced=1
+    done
+  fi
 
   # ------------------------------------------------------------- cjxl rows
   if [[ ${have_oracle} -eq 1 ]]; then

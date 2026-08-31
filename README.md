@@ -212,15 +212,21 @@ The project has two distinct comparison modes. They must not be conflated.
 Two reproduction entry points exist. The portable, dependency-light one is
 `JPXL/tools/bench_vs_libjxl.sh`: given a corpus and the oracle binaries from
 `tools/setup-oracles.sh`, it emits a `bytes / bpp / SSIMULACRA2 / wall` row per
-image and setting for both encoders — every stream decoded and scored with the
-*same* in-tree production SSIMULACRA2 — behind a provenance header (UTC date,
-host, each binary's version and sha256, the exact flags, per-input hashes and
-dimensions), with optional `--jsonl` output. It grades JPXL alone, clearly
-marked, when no runnable oracle is present on the host.
+image and setting for JPXL and `cjxl`. It can also include ZenJXL through the
+external adapter built by `tools/setup-zenjxl-bench.sh`. When `djxl` is present,
+every stream is decoded with it; all decoded pixels are scored with the *same*
+in-tree production SSIMULACRA2, behind a
+provenance header (UTC date, host, each binary's version and sha256, the exact
+flags, per-input hashes and dimensions), with optional `--jsonl` output. It
+grades only the runnable encoders and clearly marks unavailable competitors.
+ZenJXL is AGPL-3.0-or-commercial, so its generated adapter stays under
+`.agent/scratch/` and is never a JPXL workspace or runtime dependency.
 
 ```sh
 cd JPXL
-# JPXL quality targets vs cjxl distances, one identical PPM corpus, 4 threads:
+# Optional third encoder; builds outside the JPXL workspace:
+tools/setup-zenjxl-bench.sh
+# JPXL quality targets vs ZenJXL/cjxl distances, identical PPMs, 4 threads:
 tools/bench_vs_libjxl.sh --quality "70 85 90" --distance "3.0 1.5 1.0" \
   --effort balanced --threads 4 --runs 3 --jsonl bench.jsonl <corpus-dir>
 ```
