@@ -289,6 +289,22 @@ record jpegxl-rs.observation.donor-weight-wins-at-low-rate-and-fades-2026-08-12/
     ]
 }
 
+record jpegxl-rs.observation.encoder-memory-convention-2026-08-31/1 : observation {
+    title "Peak-memory convention: JPXL sits between cjxl e7 and cjxl e9, and below e9 at 12 MP"
+    state verified
+    scope [ path "JPXL/crates/jpxl-perceptual/**" ]
+    statement """
+        Peak RSS measured per child through os.wait4 (not the cumulative RUSAGE_CHILDREN high-water mark), all encoders pinned to the same six physical P-cores at six threads, on the two locked anchors. At 12 MP (4000x3000): cjxl -e 7 -d 1.0 uses 365 MiB (32 bytes/pixel) in 0.86 s and -d 1.5 uses 353 MiB; JPXL Balanced q85 uses 1978 MiB (173 B/px) in 2.38 s; JPXL Balanced q85 with the E1-a retention raised to 24 MP uses 2404 MiB (210 B/px) in 1.97 s; cjxl -e 9 -d 1.0 uses 3227 MiB (282 B/px) in 16.05 s. At 4.3 MP: cjxl -e 7 252-253 MiB (61-62 B/px), JPXL 923 MiB (225 B/px, unaffected by E1-a because 4.32 M pixels never crossed even the old 8 MP threshold), cjxl -e 9 1198 MiB (292 B/px) in 5.59 s. There is therefore no single library convention to compare against, only a tier: against libjxl's comparable-speed single-pass tier (e7) JPXL uses about 5.4x the memory at 12 MP, while against its high-effort tier JPXL uses less than libjxl does (2404 MiB versus 3227 MiB with E1-a engaged, and 1978 MiB without) at roughly one eighth the wall time. libjxl's own footprint spans an order of magnitude across its effort range (32 to 282 B/px at 12 MP), which is the relevant context for the quality path's cost: JPXL's profile resembles a searching encoder because it is one, running several probe encodes plus a full decode-side render and metric evaluation per probe. Note the per-pixel figure is not flat -- JPXL is 225 B/px at 4.3 MP against 173 B/px at 12 MP -- so a fixed overhead dominates smaller frames, and the E1-a band between 8 and 24 MP now runs near 210 B/px, putting a 24 MP source close to 5 GB.
+        """
+    observed_at git:70626bfc1deec08f10bbd52d24a41061388e2657
+    method command
+    watches [
+        "JPXL/crates/jpxl-perceptual/src/reference.rs",
+        "JPXL/crates/jpxl-perceptual/src/evaluator.rs"
+    ]
+    derived_from [ @jpegxl-rs.evidence.e1a-retention-retest-quiet-2026-08-31 ]
+}
+
 record jpegxl-rs.observation.epf-flip-points/1 : observation {
     title "J.4 EPF has four flip points"
     state verified
@@ -454,6 +470,31 @@ record jpegxl-rs.observation.h52-clamp/1 : observation {
             H.5.2's clamp guard is XOR: one scan read closes three sessions of chasing
             """
     }
+}
+
+record jpegxl-rs.observation.hot-kernel-instruction-mix-2026-08-31/1 : observation {
+    title "Instruction-mix profiling contradicts \"no exact lever left\": the top metric kernels are dominated by spill, shuffle and scalar FP"
+    state verified
+    scope [
+        path "JPXL/crates/jpxl-core/src/restoration.rs",
+        path "JPXL/crates/jpxl-perceptual/src/**"
+    ]
+    statement """
+        perf record -F 997 --call-graph=dwarf -e cpu_core/cycles/ on a 12 MP Balanced q85 t8 encode at HEAD 70626bf (probes=3, prices=2, 9051 samples) reproduces the recorded leaf shares: horizontal_band_avx2 14.08%, epf_step_rows_fma 9.17%, vert_batch_avx2 7.77%, planes_to_positive_xyb_avx2 5.76%, accumulate_band_avx2 4.73%, choose_run_avx2 3.74%, vertical_strip_avx2 2.09%. Render plus metric is about 51% of the whole encode. Categorising each kernel's own samples by instruction class (perf annotate) shows the leaf-share reading that closed the E1 stream was incomplete. horizontal_band_avx2, the top leaf, spends only 9.6% of its cycles on vector work: 25.9% stack spill/fill, 21.9% shuffle/lane-transfer, 16.7% scalar-double FP (vaddsd/vmulsd/vcvtsd2ss), 12.9% scalar load/store, 13.0% scalar int/control. Two mechanisms are visible in the disassembly. First, blur::pole_step takes &[f64]/&mut [f64] slice parameters, erasing the statically known length 8 of step_lanes' state, so LLVM cannot keep prev/prev2/acc in registers across the three pole calls and spills every step. Second, blur::build_padded_lanes performs its 8-row lane interleave as eight strided scalar passes (body.iter_mut().skip(r).step_by(8)), emitted as vmovss %xmm0,(%r10,%rbx,8) and accounting for roughly 20% of the leaf. accumulate_band_avx2 shows the same shape (8.7% ymm against 30.8% scalar FP, 31.4% half-width xmm, 23.9% shuffle, plus a half-width vdivps). epf_step_rows_fma spends 35.6% on scalar int/control against 27.5% ymm, an indexing/bounds profile rather than a compute one. planes_to_positive_xyb_avx2 is properly 4-wide (61.4% ymm) but loses 16.1% to spills and 14.2% to shuffles, which qualifies the E1-e conclusion: the divider chain is throughput-bound, but a third of that kernel is not the divider. vert_batch_avx2 is the healthiest (62.4% ymm) with 21% still at half width on the f32 side. None of these are measured wall wins; they are codegen defects on kernels whose combined share is about 41% of wall, and each candidate fix is per-lane arithmetic-preserving and therefore gated by the existing byte-identity harness. The host is an i7-13700H with no AVX-512, so widening the f64 recursion beyond 4 lanes is not testable here.
+        """
+    observed_at git:70626bfc1deec08f10bbd52d24a41061388e2657
+    method command
+    watches [
+        "JPXL/crates/jpxl-perceptual/src/blur.rs",
+        "JPXL/crates/jpxl-perceptual/src/pool.rs",
+        "JPXL/crates/jpxl-perceptual/src/streamed.rs",
+        "JPXL/crates/jpxl-perceptual/src/color.rs",
+        "JPXL/crates/jpxl-core/src/restoration.rs"
+    ]
+    derived_from [
+        @jpegxl-rs.observation.pqc-wall-attribution-post-s2-2026-08-30,
+        @jpegxl-rs.work.pqc-usable-efforts-cost
+    ]
 }
 
 record jpegxl-rs.observation.i25-dequant-constants/1 : observation {
@@ -965,6 +1006,35 @@ record jpegxl-rs.observation.lossy-vardct-headsup-2026-08-10/3 : observation {
     observed_at git:315e763d72e164a36a890ce3f3660f6eb7f62dc3
     method command
     supersedes [ @jpegxl-rs.observation.lossy-vardct-headsup-2026-08-10/2 ]
+}
+
+record jpegxl-rs.observation.measuring-host-cannot-resolve-small-effects-2026-08-31/1 : observation {
+    title "The measuring host is a thermally-constrained hybrid laptop part; unpinned wall A/Bs cannot resolve the 1-3% effects several reverts were decided on"
+    state superseded
+    scope [ path "JPXL/tools/**" ]
+    statement """
+        The measurement host is a 13th Gen Intel Core i7-13700H: 6 P-cores exposed as cpu0-11 with SMT (4.8-5.0 GHz) and 8 E-cores as cpu12-19 (3.7 GHz), no AVX-512, scaling governor powersave, turbo enabled, 24 MiB L3. Three consequences for every wall measurement recorded on this host. First, there is no clean 8-thread operating point: the standing t8 anchor necessarily places workers on E-cores or SMT siblings, whose throughput differs from a P-core by roughly 40%, and which worker lands where varies run to run. Second, the part is thermally constrained, so a schedule that runs one arm's repetitions before the other charges the entire thermal drift to the second arm; the package was observed at 97 C with the pinned P-cores clocked at 2485 MHz against a 4800 MHz maximum, and clock drift of +26.8% was recorded across a single short measurement block. Third, harnesses in this tree read getrusage(RUSAGE_CHILDREN).ru_maxrss after each child, which is a cumulative high-water mark across every child ever reaped and therefore reports the largest run so far rather than that run; wall_e1g.py compounds this by taking a running max of it, so its per-arm RSS columns cannot distinguish the arms. JPXL/tools/quiet_ab.py was written to address these: it pins to the 6 physical P-cores with SMT siblings excluded, interleaves arms in palindromic ABBA order so linear drift cancels within a repetition, takes per-child rusage through os.wait4, reports a percentile-bootstrap 95% confidence interval on the paired ratio, and refuses to run above load 0.7 or alongside a live cargo/rustc/jpxl. A null A/B of the release binary against a byte-identical copy of itself, run deliberately on a loaded 97 C host, returned ratio 1.0111 with CI [0.9179, 1.0470] at 5 repetitions: a plus or minus 5% noise floor from a pair of arms that are the same program. Any verdict on this host at an effect size inside that band, taken without pinning and interleaving, measured the host rather than the change. @jpegxl-rs.evidence.e1e-two-chain-xyb-negative-2026-08-30 (+0.8-1.4%, loaded host) falls inside it.
+        """
+    observed_at git:70626bfc1deec08f10bbd52d24a41061388e2657
+    method command
+    watches [ "JPXL/tools/quiet_ab.py" ]
+    derived_from [ @jpegxl-rs.policy.performance-baseline-rules ]
+}
+
+record jpegxl-rs.observation.measuring-host-cannot-resolve-small-effects-2026-08-31/2 : observation {
+    title "The measuring host is a thermally-constrained hybrid laptop part; unpinned wall A/Bs cannot resolve the 1-3% effects several reverts were decided on"
+    state verified
+    scope [ path "JPXL/tools/**" ]
+    statement """
+        The measurement host is a 13th Gen Intel Core i7-13700H: 6 P-cores exposed as cpu0-11 with SMT (4.8-5.0 GHz) and 8 E-cores as cpu12-19 (3.7 GHz), no AVX-512, scaling governor powersave, turbo enabled, 24 MiB L3. Three consequences for every wall measurement recorded on this host. First, there is no clean 8-thread operating point: the standing t8 anchor necessarily places workers on E-cores or SMT siblings, whose throughput differs from a P-core by roughly 40%, and which worker lands where varies run to run. Second, the part is thermally constrained, so a schedule that runs one arm's repetitions before the other charges the entire thermal drift to the second arm; the package was observed at 97 C with the pinned P-cores clocked at 2485 MHz against a 4800 MHz maximum, and clock drift of +26.8% was recorded across a single short measurement block. Third, harnesses in this tree read getrusage(RUSAGE_CHILDREN).ru_maxrss after each child, which is a cumulative high-water mark across every child ever reaped and therefore reports the largest run so far rather than that run; wall_e1g.py compounds this by taking a running max of it, so its per-arm RSS columns cannot distinguish the arms. JPXL/tools/quiet_ab.py was written to address these: it pins to the 6 physical P-cores with SMT siblings excluded, interleaves arms in palindromic ABBA order so linear drift cancels within a repetition, takes per-child rusage through os.wait4, reports a percentile-bootstrap 95% confidence interval on the paired ratio, and refuses to run above load 0.7 or alongside a live cargo/rustc/jpxl. A null A/B of the release binary against a byte-identical copy of itself, run deliberately on a loaded 97 C host, returned ratio 1.0111 with CI [0.9179, 1.0470] at 5 repetitions: a plus or minus 5% noise floor from a pair of arms that are the same program. Any verdict on this host at an effect size inside that band, taken without pinning and interleaving, measured the host rather than the change. @jpegxl-rs.evidence.e1e-two-chain-xyb-negative-2026-08-30 (+0.8-1.4%, loaded host) falls inside it.
+        """
+    observed_at git:70626bfc1deec08f10bbd52d24a41061388e2657
+    method command
+    watches [ "JPXL/tools/**" ]
+    derived_from [ @jpegxl-rs.policy.performance-baseline-rules ]
+    supersedes [
+        @jpegxl-rs.observation.measuring-host-cannot-resolve-small-effects-2026-08-31/1
+    ]
 }
 
 record jpegxl-rs.observation.modular-depth-is-not-the-lever-2026-08-10/1 : observation {
@@ -2816,6 +2886,25 @@ record jpegxl-rs.observation.vardct-flip-point-probe/1 : observation {
             VarDCT flip-point probe pass (slice 8F)
             """
     }
+}
+
+record jpegxl-rs.observation.wall-anchors-after-2026-08-31-cuts/1 : observation {
+    title "Quality-vs-rate wall anchors after the 2026-08-31 cuts: 2.27x and 3.17x at 4 threads, against 3.0x and 4.5x ceilings"
+    state verified
+    scope [
+        path "JPXL/crates/jpxl-core/src/restoration.rs",
+        path "JPXL/crates/jpxl-perceptual/**"
+    ]
+    statement """
+        Interleaved quality-versus-matched-rate walls measured with JPXL/tools/quiet_ab.py --mode both, pinned to the six physical P-cores, ABBA-ordered, 12 repetitions per arm per cell, comparing unmodified HEAD against the four 2026-08-31 changes (ROW_LANES=6, pool fourth-power hoist, E1-a retention, EPF per-block inv_sigma). Quality-path medians and the derived ratio: at 4.3 MP t4, 1.043 s over 0.446 s = 2.34x for HEAD against 0.999 s over 0.441 s = 2.27x after, versus the wall-anchors-v2 ceiling of 3.0x at four threads; at 12 MP t4, 3.315 s over 0.930 s = 3.56x for HEAD against 2.917 s over 0.921 s = 3.17x after, versus the 4.5x ceiling. At six threads (informational, no ceiling defined): 4.3 MP 2.19x to 2.04x, 12 MP 3.03x to 2.65x, the last of which is under even the 3.5x eight-thread ceiling. The rate path is statistically unchanged across all four rate cells (ratios 1.0017 to 1.0119, every interval spanning 1.0), which independently confirms the four changes touch only the quality path: blur, pool and reference are perceptual-only, and although restoration.rs is shared with the decoder and plan renderer, the rate path performs no perceptual probing and so never renders through it. Both anchors clear their ceilings with margin, so wall-anchors-v2 on @jpegxl-rs.work.pqc-usable-efforts-cost remains satisfied and its margin has widened.
+        """
+    observed_at git:70626bfc1deec08f10bbd52d24a41061388e2657
+    method command
+    watches [ "JPXL/crates/jpxl-perceptual/src/**", "JPXL/crates/jpxl-core/src/restoration.rs" ]
+    derived_from [
+        @jpegxl-rs.decision.pqc-wall-target-renegotiation-shape,
+        @jpegxl-rs.evidence.epf-per-block-inv-sigma-2026-08-31
+    ]
 }
 
 record jpegxl-rs.observation.windows-msvc-avx2-fallback-not-bit-identical-2026-08-18/1 : observation {

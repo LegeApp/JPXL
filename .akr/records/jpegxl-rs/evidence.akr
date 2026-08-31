@@ -68,6 +68,25 @@ record jpegxl-rs.evidence.bench-vs-libjxl-reproducible-2026-08-25/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.blur-row-lanes-register-pressure-2026-08-31/1 : evidence {
+    title "ROW_LANES 8 to 6 in the horizontal blur is byte-identical and cuts Balanced quality wall 2.8-3.9% on both anchors"
+    state verified
+    result pass
+    method command
+    observed_at git:70626bfc1deec08f10bbd52d24a41061388e2657
+    command """
+        cargo test -p jpxl-perceptual --release row_lanes_bench -- --ignored --nocapture (lane sweep); python3 JPXL/tools/quiet_ab.py --arm base=<HEAD> --arm l6=<ROW_LANES=6> --arm l4=<ROW_LANES=4> --threads 4,6 --reps 12 --identity
+        """
+    artifact ".agent/scratch/blur-row-lanes-20260831/lanes-ab.json"
+    summary """
+        One horizontal-blur recursion step keeps six live [f64; ROW_LANES] arrays (prev and prev2 per pole, plus sum and acc). At the previous ROW_LANES=8 that is twelve of AVX2's sixteen ymm registers before addressing, loads or the f32 conversion, and the state spilled to the stack every sample: the instruction mix of horizontal_band_avx2, the encoder's top leaf at 14.1% of wall, was 25.9% stack spill/fill, 21.9% shuffle, 16.7% scalar-double FP and only 9.6% vector work. A first fix that gave pole_step fixed-size array parameters instead of slices changed the mix by less than a point and was reverted -- inline(always) had already exposed the lengths, so slice erasure was not the mechanism. Sweeping the lane count with the in-tree row_lanes_bench (4000-wide band, ns/sample, plane/product) gave 2: 2.06/2.18, 4: 1.99/2.15, 6: 1.66/1.98, 8: 2.65/2.62, 12: 2.63/2.74, 16: 3.36/3.40 -- a sharp non-monotonic optimum at 6, worth -37.6% plane and -24.6% product against the shipped 8. Making horizontal_padded_lanes lane-count-generic (it previously spelled out eight outputs) was separately measured as neutral at 8 lanes, so the win is the lane count alone. End-to-end three-arm A/B through JPXL/tools/quiet_ab.py, pinned to the six physical P-cores, ABBA-interleaved, 12 repetitions, percentile-bootstrap CI on the paired ratio: ROW_LANES=6 versus HEAD gives 0.9685 [0.9583, 0.9780] at 4.3 MP t4, 0.9606 [0.9499, 0.9794] at 4.3 MP t6, 0.9702 [0.9586, 0.9836] at 12 MP t4 and 0.9725 [0.9677, 0.9837] at 12 MP t6 -- four of four FASTER with every interval excluding 1.0. ROW_LANES=4 is materially weaker (0.988-0.995), matching the microbench ordering. Codestreams are byte-identical. Wall moves less than the kernel because horizontal_band is 14.1% of wall and BAND_ROWS=64 leaves a four-row remainder per band on the scalar path at six lanes; routing that remainder through a narrower lane group is the obvious follow-up. Measured on a thermally saturated host (96 C, 1050-1920 MHz, load ~3.5), which the harness reports: the effect is far outside the harness's demonstrated noise floor of about 0.5%, established by a null A/B of the release binary against a copy of itself returning 1.0004 [0.9922, 1.0052].
+        """
+    derived_from [
+        @jpegxl-rs.observation.hot-kernel-instruction-mix-2026-08-31,
+        @jpegxl-rs.observation.measuring-host-cannot-resolve-small-effects-2026-08-31
+    ]
+}
+
 record jpegxl-rs.evidence.cli-netpbm-subtypes-2026-08-21/1 : evidence {
     title "Focused CLI tests passed: explicit PPM/PGM output uses P6/P5 and incompatible channel layouts error."
     state verified
@@ -116,6 +135,25 @@ record jpegxl-rs.evidence.e1a-relaxed-cap-below-10pct-2026-08-30/1 : evidence {
     summary """
         Operator offered a 2.2-2.5 GB memory cap if it buys ~10% wall. Measured: E1-a retention saves 5.8% (12MP t8) / 6.2% (t4) for ~2.34 GiB peak, nothing below 8MP. Below the 10% bar — LOW_MEMORY_PIXELS stays 8M; variant binary kept in scratch.
         """
+}
+
+record jpegxl-rs.evidence.e1a-retention-retest-quiet-2026-08-31/1 : evidence {
+    title "E1-a retested on a quiet pinned host buys 8.9-10.2% at 12 MP for 2.36 GiB, not the ~6% the closure recorded"
+    state verified
+    result pass
+    method command
+    observed_at git:70626bfc1deec08f10bbd52d24a41061388e2657
+    command """
+        python3 JPXL/tools/quiet_ab.py --arm base=<HEAD> --arm l6=<ROW_LANES=6> --arm l6e1a=<ROW_LANES=6 + LOW_MEMORY_PIXELS=24M> --threads 4,6 --reps 16 --rss --identity
+        """
+    artifact ".agent/scratch/blur-row-lanes-20260831/quiet-ab-final.json"
+    summary """
+        E1-a (reference::LOW_MEMORY_PIXELS 8 MP to 24 MP, retaining the source-side blurred moments at 12 MP) was closed 2026-08-30 on a loaded-host reading of -4..-6% wall against the operator's ~10% bar for the relaxed 2.2-2.5 GB memory envelope. Retested on an idle host (3.2% CPU busy at the start; load average is not a usable idleness gate here because the repo's ntfs-3g FUSE mount parks tasks in D state and reads 1.5-2.0 when idle), pinned to the six physical P-cores, ABBA-interleaved, 16 repetitions, per-child peak RSS via os.wait4, stacked on top of the ROW_LANES=6 blur fix: 12 MP t4 ratio 0.8985 [0.8842, 0.9102] and 12 MP t6 0.9111 [0.8999, 0.9219] against unmodified HEAD, both intervals excluding 1.0. Isolating E1-a from the lane fix by dividing the two candidate arms gives roughly -8.0% (t4) and -5.8% (t6) for E1-a alone, so the combined -10.2%/-8.9% is what actually clears the bar. Peak RSS at 12 MP is 2396 MiB (t4) and 2416 MiB (t6) against a 1979 MiB baseline: +417/+438 MiB, landing at 2.34-2.36 GiB, inside the operator's stated 2.2-2.5 GB envelope. The 4.3 MP anchor is unaffected as expected (4.32 M pixels never crossed the old 8 MP threshold, so both arms take the same path: 0.9830 and 0.9652, statistically the lane fix alone). Codestreams byte-identical. This does not by itself promote E1-a: it re-opens the trade the 2026-08-30 closure decided against, on a measurement the closure could not have made, and the memory-12mp acceptance check on @jpegxl-rs.work.pqc-usable-efforts-cost still states a 2.0 GB cap that this would breach and that the operator would have to renegotiate explicitly.
+        """
+    derived_from [
+        @jpegxl-rs.evidence.blur-row-lanes-register-pressure-2026-08-31,
+        @jpegxl-rs.observation.measuring-host-cannot-resolve-small-effects-2026-08-31
+    ]
 }
 
 record jpegxl-rs.evidence.e1a-scratch-retention-breaches-memory-anchor-2026-08-30/1 : evidence {
@@ -194,6 +232,43 @@ record jpegxl-rs.evidence.e1g-direct-depth-classification-2026-08-30/1 : evidenc
     summary """
         E1-g (commit 4be088e): direct-table depth classification is byte-identical on the 16-cell grid and cuts the interleaved quality wall to 0.973 (4.3MP t8), 0.972 (12MP t8), 0.969 (12MP t4) vs the pre-change binary. Direct table resolves 99.6% of buckets at 8-bit; equality + resolution-floor tests added.
         """
+}
+
+record jpegxl-rs.evidence.epf-bounds-check-removal-negative-2026-08-31/1 : evidence {
+    title "Removing EPF's per-access bounds checks does not pay — the 35% scalar int/control share is not bounds checking"
+    state verified
+    result fail
+    method command
+    observed_at git:70626bfc1deec08f10bbd52d24a41061388e2657
+    command """
+        python3 JPXL/tools/quiet_ab.py --arm prev=<lanes+pool+E1a+inv_sigma> --arm bc=<+bounds-check removal> --threads 4,6 --reps 16 --identity
+        """
+    artifact """
+        .agent/scratch/blur-row-lanes-20260831/epf-boundscheck-ab.json
+        """
+    summary """
+        After the inv_sigma hoist, epf_step_rows_fma still measured 34.7% of its cycles as scalar integer and control instructions against 30.5% ymm, which read as a bounds-checking profile: the pixel loop issued roughly ninety checked accesses per pixel (d.get(x) per tap, rows3.get(c).and_then(|r| r.get(x)) per tap per channel, acc.get(c) and plane.get_mut(idx) per channel). The tested change trimmed every row the loop reads to exactly `width` once per row via .get(..width), replaced the enumerate-plus-get channel walks with direct zips, and indexed directly under an #[allow(clippy::indexing_slicing)] with a justification, on the grounds that x is bounded by width and the output index by the already-validated out.len() == width * rows.len(). jpxl-core's 159 tests passed and clippy was clean after rewriting one let-else as ?. Wall, pinned ABBA A/B at 16 repetitions: 0.9948 [0.9917, 1.0041] at 4.3 MP t4, 0.9956 [0.9820, 1.0064] at 4.3 MP t6, 0.9981 [0.9890, 1.0106] at 12 MP t4, 0.9931 [0.9878, 1.0084] at 12 MP t6 -- four of four INCONCLUSIVE, every interval spanning 1.0. All four point the same direction, so a real effect near 0.5% cannot be excluded, but that is at or under the harness's demonstrated resolution and well under the effect sizes this programme has been landing. The conclusion is that the scalar int/control share is loop control and index arithmetic that LLVM had already handled, not bounds checks. Reverted: the change bought nothing measurable while adding an indexing_slicing allow and direct indexing to a kernel shared by the decoder and the plan renderer. Recorded so the profile share is not read this way again. The instruction-mix share moved the wrong way when measured (34.7% to 45.7% int/control), which is consistent with the symbol's other work shrinking rather than the integer work growing, and is a reminder that within-symbol shares cannot rank a change on their own.
+        """
+    derived_from [ @jpegxl-rs.evidence.epf-per-block-inv-sigma-2026-08-31 ]
+}
+
+record jpegxl-rs.evidence.epf-per-block-inv-sigma-2026-08-31/1 : evidence {
+    title "Hoisting the EPF reciprocal-sigma divide to once per 8x8 block is byte-identical and worth 0.6-3.3%"
+    state verified
+    result pass
+    method command
+    observed_at git:70626bfc1deec08f10bbd52d24a41061388e2657
+    command """
+        perf record -F 997 -e cpu_core/cycles/ with perf annotate instruction-mix classification; python3 JPXL/tools/quiet_ab.py --arm base=<HEAD> --arm prev=<lanes+pool+E1a> --arm epf=<+EPF hoist> --threads 4,6 --reps 16 --identity
+        """
+    artifact ".agent/scratch/blur-row-lanes-20260831/epf-ab.json"
+    summary """
+        restoration::epf_weight computed inv_sigma = step_multiplier(params) * 4.0 * (1 - sqrt(0.5)) / sigma inline, once per tap per pixel, although it depends only on the step, the parameters and the block's sigma -- all constant across an 8x8 EPF block. With a dozen taps that is roughly ninety-six identical f32 divides per block, and the divss was visible in the kernel's profile. The factor is now split into epf_inv_sigma() and epf_weight_with_inv_sigma(); epf_weight keeps its signature and calls both, so the public API and its semantics are unchanged. epf_step_rows_impl walks each row a block at a time, computing the sigma lookup, the skip decision and inv_sigma once per block, and the at_block_border test is split into its row-constant part (true for the whole row on a block's first and last row) and its column part. The hoist is guarded by the existing skip test, so block_sigma is at least EPF_SIGMA_SKIP_THRESHOLD and the divide cannot see zero. Instruction mix of epf_step_rows_fma before and after: scalar-double FP 15.8% to 8.3%, ymm 25.1% to 30.5%, scalar int/control 38.0% to 34.7%. The int/control share barely moves because the per-access bounds checks are untouched -- that remains the kernel's largest single component and the obvious next lever. Wall, three-arm pinned ABBA A/B at 16 repetitions on a host at 1.8% CPU busy and 71 C at start: isolating the hoist by dividing the epf arm by the prev arm gives -2.5% and -3.3% at 4.3 MP (t4, t6) and -1.3% and -0.6% at 12 MP, positive on all four cells. The 4.3 MP anchor gains more because EPF is a larger share of its wall. Codestreams byte-identical; jpxl-core's 159 tests pass. Cumulative for the four changes of 2026-08-31 (ROW_LANES=6, pool fourth-power hoist, E1-a retention, this) against unmodified HEAD: 0.9501/0.9429 at 4.3 MP t4/t6 and 0.8691/0.8895 at 12 MP t4/t6; the canonical rebuild confirms 0.9485 [0.9257, 0.9628] and 0.8882 [0.8754, 0.9019] at t6 with peak RSS 931 MiB and 2415 MiB.
+        """
+    derived_from [
+        @jpegxl-rs.evidence.pool-fourth-power-hoist-2026-08-31,
+        @jpegxl-rs.observation.hot-kernel-instruction-mix-2026-08-31
+    ]
 }
 
 record jpegxl-rs.evidence.experiments-captured/1 : evidence {
@@ -5302,6 +5377,25 @@ record jpegxl-rs.evidence.pipeline-metadata-seam-2026-08-26/1 : evidence {
         raw-autotune develop, JPXL encode, openarc archive and extract
         byte-identically (recorded on the openarc ledger).
         """
+}
+
+record jpegxl-rs.evidence.pool-fourth-power-hoist-2026-08-31/1 : evidence {
+    title "Hoisting the pooled fourth powers out of the ordered fold removes all scalar FP from accumulate_band and is byte-identical"
+    state verified
+    result pass
+    method command
+    observed_at git:70626bfc1deec08f10bbd52d24a41061388e2657
+    command """
+        perf record -F 997 -e cpu_core/cycles/ then perf annotate instruction-mix classification; python3 JPXL/tools/quiet_ab.py --arm base=<HEAD> --arm l6=<ROW_LANES=6> --arm pool=<l6 + hoist> --threads 4,6 --reps 16 --identity
+        """
+    artifact ".agent/scratch/blur-row-lanes-20260831/pool-ab.json"
+    summary """
+        pool::accumulate_band_impl computes each pixel's two error terms in a lane-parallel stage, then folds them into six running f64 sums in pixel order -- an ordering the bit-identity contract requires. The fourth powers (d*d*d*d, artifact^4, lost^4) and the two rectifications sat inside that ordered fold, so nine multiplies and two clamps per lane executed one lane at a time. Each depends on its own pixel alone, so they move into the lane-parallel stage as the same expressions on the same values, leaving stage 2 with only the six ordered additions; the addition order is untouched. Instruction mix of accumulate_band_avx2 before and after: scalar-double FP 30.8% to 0.0%, ymm vector work 8.7% to 50.3%, stack spill 4.3% to 0.6%, shuffle 23.9% to 20.6%. The symbol leaves the top six leaves (was 4.73% of wall). Wall, three-arm pinned ABBA A/B at 16 repetitions against unmodified HEAD, with the ROW_LANES=6 blur fix in both candidate arms: l6+hoist gives 0.9579 (4.3 MP t4), 0.9520 (4.3 MP t6), 0.9708 (12 MP t4) and 0.9561 (12 MP t6), all FASTER with intervals excluding 1.0. Dividing out the lane fix isolates the hoist at roughly -2.6% and -1.7% on the 12 MP cells, -1.2% at 4.3 MP t6 and +0.4% at 4.3 MP t4 -- consistent with prediction, since accumulate_band is 4.7% of wall and removing a third of it is worth about 1.5%. The isolated per-cell effect sits near the harness's resolution and is mixed in sign, so the hoist is supported mainly by the unambiguous codegen change and the consistent combined result rather than by any single cell. Codestreams byte-identical. Note one inconsistent reading: the l6 arm measured 0.9968 at 12 MP t4 in this run against 0.9702 and 0.9764 in two earlier runs, while the pool arm containing it measured 0.9708 in the same cell; that l6 cell is treated as an artifact, not a regression. Combined final binary (both changes) against HEAD at t6: 0.9751 (4.3 MP) and 0.9672 (12 MP), byte-identical.
+        """
+    derived_from [
+        @jpegxl-rs.evidence.blur-row-lanes-register-pressure-2026-08-31,
+        @jpegxl-rs.observation.hot-kernel-instruction-mix-2026-08-31
+    ]
 }
 
 record jpegxl-rs.evidence.pqc-cost-close-reverification-2026-08-30/1 : evidence {

@@ -524,6 +524,17 @@ record jpegxl-rs.papercut.the-standing-quality-track-scripts-hard-coded/1 : pape
     created_at 2026-08-18
 }
 
+record jpegxl-rs.papercut.the-workspace-clippy-gate-that-jpegxl-rs-work/1 : papercut {
+    title "The workspace clippy gate that @jpegxl-rs.work.pqc-usable-efforts-cost…"
+    state verified
+    statement """
+        The workspace clippy gate that @jpegxl-rs.work.pqc-usable-efforts-cost records as satisfied ("cargo clippy --workspace --all-targets -- -D warnings") has been failing since commit 520289b: one indexing_slicing error at crates/jpxl-perceptual/src/ssimulacra2.rs:583, inside a #[cfg(test)] helper closure. Confirmed pre-existing by stashing all working-tree changes and re-running (rc=101 on both). Anyone using that acceptance check as a green baseline before their own change will misattribute the failure to themselves, as I initially did.
+        """
+    observed_at git:70626bfc1deec08f10bbd52d24a41061388e2657
+    author "claude"
+    created_at 2026-08-31
+}
+
 record jpegxl-rs.papercut.while-checking-an-in-progress-akr-change-akr/1 : papercut {
     title "While checking an in-progress AKR change, `akr change status` was…"
     state verified

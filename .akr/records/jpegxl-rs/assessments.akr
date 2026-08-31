@@ -129,6 +129,34 @@ record jpegxl-rs.assessment.encoder-static-optimization/1 : assessment {
     }
 }
 
+record jpegxl-rs.assessment.exact-codegen-frontier-closed-2026-08-31/1 : assessment {
+    title "Handoff: the exact-codegen frontier on the quality path is closed; the only remaining lever of size is probe count, which needs a Contract B decision"
+    state verified
+    scope [
+        path "JPXL/crates/jpxl-core/src/restoration.rs",
+        path "JPXL/crates/jpxl-perceptual/**",
+        path "JPXL/tools/**"
+    ]
+    statement """
+        State at handoff. The 2026-08-31 round landed four byte-identical changes worth -5% at 4.3 MP and -11 to -13% at 12 MP against HEAD 70626bf, roughly three times the -4.4% the whole preceding E1 stream achieved: ROW_LANES 8 to 6 in the horizontal blur (register pressure - six live [f64; N] arrays needed twelve of AVX2's sixteen ymm at eight lanes and spilled every sample), the pooled fourth powers hoisted out of accumulate_band's ordered fold, E1-a reference retention re-adopted under the renegotiated memory budget, and EPF's reciprocal-sigma divide hoisted to once per 8x8 block. Wall anchors are now 2.27x and 3.17x at four threads against 3.0x and 4.5x ceilings, with the rate path statistically unchanged.
+
+        Why this frontier is closed. The round began because instruction-mix profiling contradicted the E1 closure's claim that no exact lever remained; that was correct, and the defects it exposed are now fixed. What is left is fine-grained tuning with expected effects at or under the measurement floor: the build_padded_lanes transpose (~2%, and made harder by this round, since a six-wide interleave does not map onto the 8x8 shuffle networks that make an AVX2 transpose cheap), vert_batch's f32 side still at 128-bit (~1%), planes_to_positive_xyb's spill and shuffle overhead (~1-1.5%, with no lane constant to sweep - it is a scalar zip LLVM autovectorises - and E1-e already failed there), and the four-row-per-band scalar remainder that ROW_LANES=6 introduces (~0.8%). Each needs a full measurement round against a harness floor of about 0.5%. The expected value per item no longer justifies the measurement cost.
+
+        Where the remaining size actually is. Render plus metric is about 51% of a Balanced encode: the controller runs roughly three probe encodes, each followed by a full decode-side render and a full SSIMULACRA2 evaluation, where libjxl runs one encode. Probe count is worth more than any remaining kernel. Every exact route to cutting it is closed with evidence - surrogate navigation three times (S1, S2, S3), exact-rung speculation at the pairability gate (B1, 1/1213), and the slope-prior skip (RT2, J2b). So the next real step is a deliberate search-policy change screened by the standing Contract B gate, which is an operator decision about accepting a different quality-risk profile, not a measurement anyone can settle by profiling.
+
+        Method note for whoever picks this up. Two of five hypotheses this round were wrong and both looked persuasive first: pole_step's slice parameters erasing the lane count (inline(always) had already exposed it) and EPF's per-access bounds checks (the 35% scalar int/control is loop control LLVM had handled). Both were caught by A/B rather than shipped on a plausible story. Within-symbol instruction shares rank codegen defects but cannot rank a change - when the bounds-check removal was measured, the int/control share moved the wrong way because the symbol's other work shrank. Use JPXL/tools/quiet_ab.py and believe the interval, not the point estimate.
+        """
+    confidence high
+    as_of git:70626bfc1deec08f10bbd52d24a41061388e2657
+    derived_from [
+        @jpegxl-rs.evidence.blur-row-lanes-register-pressure-2026-08-31,
+        @jpegxl-rs.evidence.epf-bounds-check-removal-negative-2026-08-31,
+        @jpegxl-rs.evidence.epf-per-block-inv-sigma-2026-08-31,
+        @jpegxl-rs.evidence.pool-fourth-power-hoist-2026-08-31,
+        @jpegxl-rs.observation.wall-anchors-after-2026-08-31-cuts
+    ]
+}
+
 record jpegxl-rs.assessment.gap-bridge-2026-08-21/1 : assessment {
     title "Assess the 2026-08-21 libjxl-gap bridge against current JPXL"
     state verified
