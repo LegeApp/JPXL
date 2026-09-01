@@ -53,7 +53,7 @@ Investigate the next probe-simplification lever for the Balanced quality control
 | `exact-simplification-screen` | command | not satisfied — no evidence |
 | `probe-attribution` | observation | not satisfied — no evidence |
 
-> **At risk** at depth 3 via `derived_from` → `@jpegxl-rs.assessment.exact-base-encoder-frontier-2026-09-01/1` → `@jpegxl-rs.assessment.exact-codegen-frontier-closed-2026-08-31/1` → `@jpegxl-rs.observation.wall-anchors-after-2026-08-31-cuts/1` (stale: `watches "JPXL/crates/jpxl-perceptual/src/**"` was matched by `d00097bd`, which touched `JPXL/crates/jpxl-perceptual/src/blur.rs`.). See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#scope-the-next-probe-simplification-investigation-with-contract-b-gates).
+> **At risk** at depth 2 via `derived_from` → `@jpegxl-rs.assessment.exact-base-encoder-frontier-2026-09-01/1` → `@jpegxl-rs.observation.current-head-quality-rate-profile-2026-09-01/1` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/quantize.rs"` was matched by `b53da037`, which touched `JPXL/crates/jpxl-encode-policy/src/quantize.rs`.). See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#scope-the-next-probe-simplification-investigation-with-contract-b-gates).
 
 ## [Perceptual quality controller: SSIMULACRA2 score target for Fast and Balanced, gated Quality effort](ROADMAP.md#perceptual-quality-controller-ssimulacra2-score-target-for-fast-and-balanced-gated-quality-effort) `@jpegxl-rs.track.perceptual-quality-controller/1`
 

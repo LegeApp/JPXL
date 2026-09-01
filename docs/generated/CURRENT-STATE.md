@@ -263,7 +263,7 @@ On the working tree atop 45d948630dec1bac11bc98e6a9ea727e33c2e2a8 plus the retai
 
 **derived_from** `@jpegxl-rs.assessment.exact-base-encoder-frontier-2026-09-01/1`
 
-> **At risk** at depth 3 via `derived_from` → `@jpegxl-rs.assessment.exact-base-encoder-frontier-2026-09-01/1` → `@jpegxl-rs.assessment.exact-codegen-frontier-closed-2026-08-31/1` → `@jpegxl-rs.observation.wall-anchors-after-2026-08-31-cuts/1` (stale: `watches "JPXL/crates/jpxl-perceptual/src/**"` was matched by `d00097bd`, which touched `JPXL/crates/jpxl-perceptual/src/blur.rs`.). See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#prevalidated-inline-ans-slot-lookup-is-byte-identical-with-a-small-consistent-wall-gain-retained).
+> **Stale** — `watches "JPXL/crates/jpxl-entropy/src/encode/ans.rs"` was matched by `b53da037`, which touched `JPXL/crates/jpxl-entropy/src/encode/ans.rs`. See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#prevalidated-inline-ans-slot-lookup-is-byte-identical-with-a-small-consistent-wall-gain-retained).
 
 ### At matched bitrate our single-pass activity AQ field is a net perceptual loss: off beats every tuning tried, on both metrics
 
@@ -337,7 +337,7 @@ At HEAD 45d948630dec1bac11bc98e6a9ea727e33c2e2a8, fresh `cpu_core/cycles/u` prof
 
 **derived_from** `@jpegxl-rs.assessment.exact-codegen-frontier-closed-2026-08-31/1`, `@jpegxl-rs.policy.performance-baseline-rules/1`
 
-> **At risk** at depth 2 via `derived_from` → `@jpegxl-rs.assessment.exact-codegen-frontier-closed-2026-08-31/1` → `@jpegxl-rs.observation.wall-anchors-after-2026-08-31-cuts/1` (stale: `watches "JPXL/crates/jpxl-perceptual/src/**"` was matched by `d00097bd`, which touched `JPXL/crates/jpxl-perceptual/src/blur.rs`.). See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#current-head-profiles-reproduce-the-perceptual-closure-and-expose-an-exact-base-encoder-frontier).
+> **Stale** — `watches "JPXL/crates/jpxl-encode-policy/src/quantize.rs"` was matched by `b53da037`, which touched `JPXL/crates/jpxl-encode-policy/src/quantize.rs`. See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#current-head-profiles-reproduce-the-perceptual-closure-and-expose-an-exact-base-encoder-frontier).
 
 ### The cover/CfL objective misprices Y-channel error by 2.65x across DCT8x8 frequency; the mispricing is in the ruler, not the lever
 
@@ -417,7 +417,7 @@ On the working tree atop 45d948630dec1bac11bc98e6a9ea727e33c2e2a8 plus the retai
 
 **derived_from** `@jpegxl-rs.assessment.exact-base-encoder-frontier-2026-09-01/1`
 
-> **At risk** at depth 3 via `derived_from` → `@jpegxl-rs.assessment.exact-base-encoder-frontier-2026-09-01/1` → `@jpegxl-rs.assessment.exact-codegen-frontier-closed-2026-08-31/1` → `@jpegxl-rs.observation.wall-anchors-after-2026-08-31-cuts/1` (stale: `watches "JPXL/crates/jpxl-perceptual/src/**"` was matched by `d00097bd`, which touched `JPXL/crates/jpxl-perceptual/src/blur.rs`.). See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#census-raw-event-replay-is-byte-identical-but-wall-slower-with-a-11-14-mib-memory-cost-reverted).
+> **At risk** at depth 2 via `derived_from` → `@jpegxl-rs.assessment.exact-base-encoder-frontier-2026-09-01/1` → `@jpegxl-rs.observation.current-head-quality-rate-profile-2026-09-01/1` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/quantize.rs"` was matched by `b53da037`, which touched `JPXL/crates/jpxl-encode-policy/src/quantize.rs`.). See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#census-raw-event-replay-is-byte-identical-but-wall-slower-with-a-11-14-mib-memory-cost-reverted).
 
 ### Exact sample-domain special transforms regress quality: honest negative, research mode removed
 
@@ -1017,7 +1017,7 @@ On the working tree atop 45d948630dec1bac11bc98e6a9ea727e33c2e2a8, replacing tru
 
 **derived_from** `@jpegxl-rs.assessment.exact-base-encoder-frontier-2026-09-01/1`
 
-> **At risk** at depth 3 via `derived_from` → `@jpegxl-rs.assessment.exact-base-encoder-frontier-2026-09-01/1` → `@jpegxl-rs.assessment.exact-codegen-frontier-closed-2026-08-31/1` → `@jpegxl-rs.observation.wall-anchors-after-2026-08-31-cuts/1` (stale: `watches "JPXL/crates/jpxl-perceptual/src/**"` was matched by `d00097bd`, which touched `JPXL/crates/jpxl-perceptual/src/blur.rs`.). See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#allocation-free-trailing-truncation-is-byte-identical-and-faster-in-all-four-pinned-rate-cells).
+> **Stale** — `watches "JPXL/crates/jpxl-encode-policy/src/quantize.rs"` was matched by `b53da037`, which touched `JPXL/crates/jpxl-encode-policy/src/quantize.rs`. See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#allocation-free-trailing-truncation-is-byte-identical-and-faster-in-all-four-pinned-rate-cells).
 
 ### Quality-corpus generator now provides 26 saturated and 25 gradient/banding families; locked holdout fixtures byte-unchanged
 
@@ -1268,7 +1268,7 @@ The 2026-08-31 exact-codegen closure remains the right conclusion for the percep
 
 **derived_from** `@jpegxl-rs.assessment.exact-codegen-frontier-closed-2026-08-31/1`, `@jpegxl-rs.observation.current-head-quality-rate-profile-2026-09-01/1`
 
-> **At risk** at depth 2 via `derived_from` → `@jpegxl-rs.assessment.exact-codegen-frontier-closed-2026-08-31/1` → `@jpegxl-rs.observation.wall-anchors-after-2026-08-31-cuts/1` (stale: `watches "JPXL/crates/jpxl-perceptual/src/**"` was matched by `d00097bd`, which touched `JPXL/crates/jpxl-perceptual/src/blur.rs`.). See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#the-perceptual-closure-stands-but-three-exact-base-encoder-candidates-merit-measurement).
+> **At risk** at depth 1 via `derived_from` → `@jpegxl-rs.observation.current-head-quality-rate-profile-2026-09-01/1` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/quantize.rs"` was matched by `b53da037`, which touched `JPXL/crates/jpxl-encode-policy/src/quantize.rs`.). See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#the-perceptual-closure-stands-but-three-exact-base-encoder-candidates-merit-measurement).
 
 ### Handoff: the exact-codegen frontier on the quality path is closed; the only remaining lever of size is probe count, which needs a Contract B decision
 
@@ -1433,7 +1433,7 @@ The prevalidated inline ANS slot lookup preserved codestream bytes across all 16
 
 - `completed` `@jpegxl-rs.work.exact-base-encoder-frontier-2026-09-01/3` — check `ans-byte-identity`
 
-> **At risk** at depth 4 via `derived_from` → `@jpegxl-rs.observation.ans-slot-lookup-2026-09-01/1` → `@jpegxl-rs.assessment.exact-base-encoder-frontier-2026-09-01/1` → `@jpegxl-rs.assessment.exact-codegen-frontier-closed-2026-08-31/1` → `@jpegxl-rs.observation.wall-anchors-after-2026-08-31-cuts/1` (stale: `watches "JPXL/crates/jpxl-perceptual/src/**"` was matched by `d00097bd`, which touched `JPXL/crates/jpxl-perceptual/src/blur.rs`.). See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#prevalidated-ans-slot-lookup-preserved-all-32-stream-comparisons).
+> **At risk** at depth 1 via `derived_from` → `@jpegxl-rs.observation.ans-slot-lookup-2026-09-01/1` (stale: `watches "JPXL/crates/jpxl-entropy/src/encode/ans.rs"` was matched by `b53da037`, which touched `JPXL/crates/jpxl-entropy/src/encode/ans.rs`.). See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#prevalidated-ans-slot-lookup-preserved-all-32-stream-comparisons).
 
 ### Prevalidated ANS slot lookup cleared the noise floor on the 12 MP t4 cell with no regression signal
 
@@ -1447,7 +1447,7 @@ The ANS lookup specialization never showed a slower cell across 48 paired matche
 
 - `completed` `@jpegxl-rs.work.exact-base-encoder-frontier-2026-09-01/3` — check `ans-wall-screen`
 
-> **At risk** at depth 4 via `derived_from` → `@jpegxl-rs.observation.ans-slot-lookup-2026-09-01/1` → `@jpegxl-rs.assessment.exact-base-encoder-frontier-2026-09-01/1` → `@jpegxl-rs.assessment.exact-codegen-frontier-closed-2026-08-31/1` → `@jpegxl-rs.observation.wall-anchors-after-2026-08-31-cuts/1` (stale: `watches "JPXL/crates/jpxl-perceptual/src/**"` was matched by `d00097bd`, which touched `JPXL/crates/jpxl-perceptual/src/blur.rs`.). See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#prevalidated-ans-slot-lookup-cleared-the-noise-floor-on-the-12-mp-t4-cell-with-no-regression-signal).
+> **At risk** at depth 1 via `derived_from` → `@jpegxl-rs.observation.ans-slot-lookup-2026-09-01/1` (stale: `watches "JPXL/crates/jpxl-entropy/src/encode/ans.rs"` was matched by `b53da037`, which touched `JPXL/crates/jpxl-entropy/src/encode/ans.rs`.). See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#prevalidated-ans-slot-lookup-cleared-the-noise-floor-on-the-12-mp-t4-cell-with-no-regression-signal).
 
 ### jpegxl-rs.evidence.avx2-pooling-bit-identity-2026-08-26
 
@@ -1619,7 +1619,7 @@ The census raw-event replay preserved codestream bytes across all 16 cells / 32 
 
 - `completed` `@jpegxl-rs.work.exact-base-encoder-frontier-2026-09-01/3` — check `event-replay-byte-identity`
 
-> **At risk** at depth 4 via `derived_from` → `@jpegxl-rs.observation.event-replay-negative-2026-09-01/1` → `@jpegxl-rs.assessment.exact-base-encoder-frontier-2026-09-01/1` → `@jpegxl-rs.assessment.exact-codegen-frontier-closed-2026-08-31/1` → `@jpegxl-rs.observation.wall-anchors-after-2026-08-31-cuts/1` (stale: `watches "JPXL/crates/jpxl-perceptual/src/**"` was matched by `d00097bd`, which touched `JPXL/crates/jpxl-perceptual/src/blur.rs`.). See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#census-raw-event-replay-preserved-all-32-stream-comparisons).
+> **At risk** at depth 3 via `derived_from` → `@jpegxl-rs.observation.event-replay-negative-2026-09-01/1` → `@jpegxl-rs.assessment.exact-base-encoder-frontier-2026-09-01/1` → `@jpegxl-rs.observation.current-head-quality-rate-profile-2026-09-01/1` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/quantize.rs"` was matched by `b53da037`, which touched `JPXL/crates/jpxl-encode-policy/src/quantize.rs`.). See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#census-raw-event-replay-preserved-all-32-stream-comparisons).
 
 ### The census raw-event replay noise-floor determination is complete and negative
 
@@ -1633,7 +1633,7 @@ The determination the check requires is complete: two independent pinned ABBA ma
 
 - `completed` `@jpegxl-rs.work.exact-base-encoder-frontier-2026-09-01/3` — check `event-replay-wall-screen`
 
-> **At risk** at depth 4 via `derived_from` → `@jpegxl-rs.observation.event-replay-negative-2026-09-01/1` → `@jpegxl-rs.assessment.exact-base-encoder-frontier-2026-09-01/1` → `@jpegxl-rs.assessment.exact-codegen-frontier-closed-2026-08-31/1` → `@jpegxl-rs.observation.wall-anchors-after-2026-08-31-cuts/1` (stale: `watches "JPXL/crates/jpxl-perceptual/src/**"` was matched by `d00097bd`, which touched `JPXL/crates/jpxl-perceptual/src/blur.rs`.). See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#the-census-raw-event-replay-noise-floor-determination-is-complete-and-negative).
+> **At risk** at depth 3 via `derived_from` → `@jpegxl-rs.observation.event-replay-negative-2026-09-01/1` → `@jpegxl-rs.assessment.exact-base-encoder-frontier-2026-09-01/1` → `@jpegxl-rs.observation.current-head-quality-rate-profile-2026-09-01/1` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/quantize.rs"` was matched by `b53da037`, which touched `JPXL/crates/jpxl-encode-policy/src/quantize.rs`.). See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#the-census-raw-event-replay-noise-floor-determination-is-complete-and-negative).
 
 ### Census raw-event replay was wall-slower with an 11-14 MiB memory cost and was reverted
 
@@ -1643,7 +1643,7 @@ The replay was wall-slower, not faster, on the 12 MP anchor where its 5.48% ceil
 
 **derived_from** `@jpegxl-rs.observation.event-replay-negative-2026-09-01/1`
 
-> **At risk** at depth 4 via `derived_from` → `@jpegxl-rs.observation.event-replay-negative-2026-09-01/1` → `@jpegxl-rs.assessment.exact-base-encoder-frontier-2026-09-01/1` → `@jpegxl-rs.assessment.exact-codegen-frontier-closed-2026-08-31/1` → `@jpegxl-rs.observation.wall-anchors-after-2026-08-31-cuts/1` (stale: `watches "JPXL/crates/jpxl-perceptual/src/**"` was matched by `d00097bd`, which touched `JPXL/crates/jpxl-perceptual/src/blur.rs`.). See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#census-raw-event-replay-was-wall-slower-with-an-11-14-mib-memory-cost-and-was-reverted).
+> **At risk** at depth 3 via `derived_from` → `@jpegxl-rs.observation.event-replay-negative-2026-09-01/1` → `@jpegxl-rs.assessment.exact-base-encoder-frontier-2026-09-01/1` → `@jpegxl-rs.observation.current-head-quality-rate-profile-2026-09-01/1` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/quantize.rs"` was matched by `b53da037`, which touched `JPXL/crates/jpxl-encode-policy/src/quantize.rs`.). See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#census-raw-event-replay-was-wall-slower-with-an-11-14-mib-memory-cost-and-was-reverted).
 
 ### The dated docs/experiments notes are captured as 18 observations that watch the relevant crates; akr review-queue reflects the resulting stale/at-risk set
 
@@ -5912,7 +5912,7 @@ The next probe-simplification investigation is scoped as @jpegxl-rs.work.probe-s
 
 - `completed` `@jpegxl-rs.work.exact-base-encoder-frontier-2026-09-01/3` — check `probe-next-stage`
 
-> **At risk** at depth 3 via `derived_from` → `@jpegxl-rs.assessment.exact-base-encoder-frontier-2026-09-01/1` → `@jpegxl-rs.assessment.exact-codegen-frontier-closed-2026-08-31/1` → `@jpegxl-rs.observation.wall-anchors-after-2026-08-31-cuts/1` (stale: `watches "JPXL/crates/jpxl-perceptual/src/**"` was matched by `d00097bd`, which touched `JPXL/crates/jpxl-perceptual/src/blur.rs`.). See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#the-next-probe-simplification-investigation-is-scoped-with-named-inputs-and-contract-b-gates).
+> **At risk** at depth 2 via `derived_from` → `@jpegxl-rs.assessment.exact-base-encoder-frontier-2026-09-01/1` → `@jpegxl-rs.observation.current-head-quality-rate-profile-2026-09-01/1` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/quantize.rs"` was matched by `b53da037`, which touched `JPXL/crates/jpxl-encode-policy/src/quantize.rs`.). See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#the-next-probe-simplification-investigation-is-scoped-with-named-inputs-and-contract-b-gates).
 
 ### CLI research controls --dead-zone-scale (byte-identical at 1.0 on mid/large x fast/balanced/quality), --tolerance and --sections landed; the standing harness (ladder.sh, scenes.sh, cjxl-match.sh, summarise.py under .agent/scratch/quality-track) ran end to end; --sections attributed 38.1% (mid) / 37.9% (large) of a 1 bpp Balanced stream to the LF-group sections and a temporary trace measured the HF-metadata stream at 44.8 KB of flat-code tokens against 6.4 KB order-0 entropy, which opened Phase Q0b.
 
@@ -5968,7 +5968,7 @@ The allocation-free trailing truncation preserved all 32 pre-change stream compa
 
 - `completed` `@jpegxl-rs.work.exact-base-encoder-frontier-2026-09-01/3` — check `qk4-byte-identity`
 
-> **At risk** at depth 4 via `derived_from` → `@jpegxl-rs.observation.qk4-allocation-free-truncation-2026-09-01/1` → `@jpegxl-rs.assessment.exact-base-encoder-frontier-2026-09-01/1` → `@jpegxl-rs.assessment.exact-codegen-frontier-closed-2026-08-31/1` → `@jpegxl-rs.observation.wall-anchors-after-2026-08-31-cuts/1` (stale: `watches "JPXL/crates/jpxl-perceptual/src/**"` was matched by `d00097bd`, which touched `JPXL/crates/jpxl-perceptual/src/blur.rs`.). See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#qk4-trailing-truncation-preserved-all-32-stream-comparisons).
+> **At risk** at depth 1 via `derived_from` → `@jpegxl-rs.observation.qk4-allocation-free-truncation-2026-09-01/1` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/quantize.rs"` was matched by `b53da037`, which touched `JPXL/crates/jpxl-encode-policy/src/quantize.rs`.). See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#qk4-trailing-truncation-preserved-all-32-stream-comparisons).
 
 ### QK4 trailing truncation was faster in all four pinned rate cells
 
@@ -5982,7 +5982,7 @@ The 12-repetition pinned ABBA matched-rate screen was faster in all four cells: 
 
 - `completed` `@jpegxl-rs.work.exact-base-encoder-frontier-2026-09-01/3` — check `qk4-wall-screen`
 
-> **At risk** at depth 4 via `derived_from` → `@jpegxl-rs.observation.qk4-allocation-free-truncation-2026-09-01/1` → `@jpegxl-rs.assessment.exact-base-encoder-frontier-2026-09-01/1` → `@jpegxl-rs.assessment.exact-codegen-frontier-closed-2026-08-31/1` → `@jpegxl-rs.observation.wall-anchors-after-2026-08-31-cuts/1` (stale: `watches "JPXL/crates/jpxl-perceptual/src/**"` was matched by `d00097bd`, which touched `JPXL/crates/jpxl-perceptual/src/blur.rs`.). See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#qk4-trailing-truncation-was-faster-in-all-four-pinned-rate-cells).
+> **At risk** at depth 1 via `derived_from` → `@jpegxl-rs.observation.qk4-allocation-free-truncation-2026-09-01/1` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/quantize.rs"` was matched by `b53da037`, which touched `JPXL/crates/jpxl-encode-policy/src/quantize.rs`.). See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#qk4-trailing-truncation-was-faster-in-all-four-pinned-rate-cells).
 
 ### Q2 chroma-HF attribution sweep
 
@@ -6808,4 +6808,4 @@ On the screened tree (trailing truncation and the ANS lookup retained, the raw-e
 
 - `completed` `@jpegxl-rs.work.exact-base-encoder-frontier-2026-09-01/3` — check `workspace-gates`
 
-> **At risk** at depth 3 via `derived_from` → `@jpegxl-rs.assessment.exact-base-encoder-frontier-2026-09-01/1` → `@jpegxl-rs.assessment.exact-codegen-frontier-closed-2026-08-31/1` → `@jpegxl-rs.observation.wall-anchors-after-2026-08-31-cuts/1` (stale: `watches "JPXL/crates/jpxl-perceptual/src/**"` was matched by `d00097bd`, which touched `JPXL/crates/jpxl-perceptual/src/blur.rs`.). See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#workspace-gates-pass-with-the-pre-existing-jpxl-perceptual-strict-clippy-failure-isolated).
+> **At risk** at depth 2 via `derived_from` → `@jpegxl-rs.assessment.exact-base-encoder-frontier-2026-09-01/1` → `@jpegxl-rs.observation.current-head-quality-rate-profile-2026-09-01/1` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/quantize.rs"` was matched by `b53da037`, which touched `JPXL/crates/jpxl-encode-policy/src/quantize.rs`.). See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#workspace-gates-pass-with-the-pre-existing-jpxl-perceptual-strict-clippy-failure-isolated).
