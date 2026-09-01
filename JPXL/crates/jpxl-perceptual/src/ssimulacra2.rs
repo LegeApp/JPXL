@@ -539,6 +539,55 @@ pub fn remap(error: f64) -> f64 {
     }
 }
 
+/// The cumulative weighted error after each completed scale, in evaluation
+/// order — the certified early-rejection bound.
+///
+/// Every published weight is non-negative and every term enters as an
+/// absolute value, so the sum after the first `k+1` scales is an exact lower
+/// bound on the final weighted error: the remaining scales can only add to
+/// it. Because [`remap`] is monotone falling, `remap(partial[k])` is an
+/// exact upper bound on the final score, so a consumer holding a threshold
+/// `t` may certify the candidate infeasible the moment
+/// `remap(partial[k]) < t` — no approximation is involved.
+///
+/// Weights are consumed with the same consecutive convention as
+/// [`weighted_error`]: for `n` evaluated scales the weight of
+/// `(component, scale_idx, norm, map)` is `WEIGHTS[component*n*6 +
+/// scale_idx*6 + norm*3 + map]`, so the last entry equals
+/// [`weighted_error`] exactly.
+#[must_use]
+pub fn cumulative_partial_errors(scales: &[ScaleTerms]) -> Vec<f64> {
+    let n = scales.len();
+    let mut partials = Vec::with_capacity(n);
+    let mut running = 0.0f64;
+    for scale_idx in 0..n {
+        for c in 0..3 {
+            let Some(terms) = scales
+                .get(scale_idx)
+                .and_then(|st| st.channels.get(c))
+                .copied()
+            else {
+                continue;
+            };
+            for norm in 0..2 {
+                for (map, plane) in [terms.ssim, terms.artifact, terms.detail_lost]
+                    .into_iter()
+                    .enumerate()
+                {
+                    let weight = WEIGHTS
+                        .get(c * n * 6 + scale_idx * 6 + norm * 3 + map)
+                        .copied()
+                        .unwrap_or(0.0);
+                    let value = plane.get(norm).copied().unwrap_or(0.0);
+                    running += weight * value.abs();
+                }
+            }
+        }
+        partials.push(running);
+    }
+    partials
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -556,6 +605,55 @@ mod tests {
     #[test]
     fn the_weight_table_has_one_entry_per_term() {
         assert_eq!(WEIGHTS.len(), 3 * crate::SCALES * 2 * 3);
+        assert!(
+            WEIGHTS.iter().all(|weight| *weight >= 0.0),
+            "the early-rejection lower bound requires non-negative weights"
+        );
+    }
+
+    /// Partial cumulative errors are a lower bound that closes exactly on
+    /// the final weighted error — the certified early-rejection contract.
+    #[test]
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "the test reads specific partials of arrays it just built and sized itself"
+    )]
+    fn cumulative_partials_bound_and_close_on_the_final_error() {
+        let value = |seed: usize| {
+            let magnitude = f64::from(u32::try_from(seed % 7).unwrap_or(0)) * 0.25;
+            if seed.is_multiple_of(2) {
+                magnitude
+            } else {
+                -magnitude
+            }
+        };
+        for scale_count in [2usize, 6] {
+            let scales: Vec<ScaleTerms> = (0..scale_count)
+                .map(|s| ScaleTerms {
+                    width: 8,
+                    height: 8,
+                    channels: core::array::from_fn(|c| ChannelTerms {
+                        ssim: [value(s * 31 + c + 1), value(s * 31 + c + 2)],
+                        artifact: [value(s * 17 + c + 3), value(s * 17 + c + 4)],
+                        detail_lost: [value(s * 13 + c + 5), value(s * 13 + c + 6)],
+                    }),
+                })
+                .collect();
+            let partials = cumulative_partial_errors(&scales);
+            assert_eq!(partials.len(), scale_count);
+            for w in partials.windows(2) {
+                assert!(w[1] >= w[0], "partials must be non-decreasing");
+            }
+            let final_error = weighted_error(&scales);
+            assert!(
+                (partials[partials.len() - 1] - final_error).abs() < 1e-12,
+                "the last partial must equal the weighted error exactly"
+            );
+            // The bound direction: every prefix bounds the final error below.
+            for p in &partials {
+                assert!(*p <= final_error + 1e-12);
+            }
+        }
     }
 
     #[test]
@@ -577,20 +675,24 @@ mod tests {
                 *value = (*value + offset).min(1.0);
             }
         }
-        let halve = |planes: &[Vec<f32>; 3]| -> [Vec<f32>; 3] {
+        let halve = |[x, y, b]: &[Vec<f32>; 3]| -> [Vec<f32>; 3] {
             core::array::from_fn(|c| {
                 let mut out = vec![0.0f32; pyramid::half(width) * pyramid::half(height)];
-                pyramid::downscale_by_2(&planes[c], width, height, &mut out);
+                let channels = [x, y, b];
+                let plane = channels
+                    .get(c)
+                    .expect("array::from_fn supplies an index in 0..3");
+                pyramid::downscale_by_2(plane, width, height, &mut out);
                 out
             })
         };
-        fn view(planes: &[Vec<f32>; 3], w: usize, h: usize) -> LinearRgbView<'_> {
+        fn view([x, y, b]: &[Vec<f32>; 3], w: usize, h: usize) -> LinearRgbView<'_> {
             LinearRgbView::new(
                 u32::try_from(w).unwrap_or(0),
                 u32::try_from(h).unwrap_or(0),
-                &planes[0],
-                &planes[1],
-                &planes[2],
+                x,
+                y,
+                b,
             )
             .expect("the test planes have the declared shape")
         }

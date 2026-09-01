@@ -51,7 +51,7 @@ pub use evaluator::{EvaluatorError, PlanRenderEvaluator};
 pub use executor::{BandExecutor, ScopedThreadExecutor, SerialExecutor};
 pub use pool::ChannelTerms;
 pub use reference::{PrecomputedReference, ReferenceRetention};
-pub use ssimulacra2::{ScaleTerms, Ssimulacra2, Ssimulacra2Result};
+pub use ssimulacra2::{ScaleTerms, Ssimulacra2, Ssimulacra2Result, cumulative_partial_errors};
 pub use version::{METRIC_VERSION, SCALES};
 
 /// Smallest width and height the metric is defined for.

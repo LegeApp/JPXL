@@ -113,6 +113,44 @@ record jpegxl-rs.evidence.blur-row-lanes-register-pressure-2026-08-31/1 : eviden
     ]
 }
 
+record jpegxl-rs.evidence.certified-rejection-shadow-bound-2026-09-01/1 : evidence {
+    title "The cumulative-error unit test proves every partial is non-decreasing and closes exactly on weighted_error; the weight-table test asserts the non-negative-weight premise."
+    state verified
+    result pass
+    method command
+    observed_at git:f93b79870575797ae9549d66db36c395d2cb8ee3
+    command "cd JPXL && cargo test -p jpxl-perceptual --features evaluator --lib && cargo test -p jpxl-encode-policy --lib"
+    artifact ".agent/scratch/exact-base-encoder-20260901/rejection-shadow-analysis-2026-09-01.txt"
+    summary """
+        The cumulative-error unit test proves every partial is non-decreasing and closes exactly on weighted_error; the weight-table test asserts the non-negative-weight premise.
+        """
+}
+
+record jpegxl-rs.evidence.certified-rejection-shadow-corpus-2026-09-01/1 : evidence {
+    title "The 94-scored-fixture shadow corpus has 129 infeasible probes; all cross before the final scale, with 239 of 752 scale steps omitted in the ideal early-exit model."
+    state verified
+    result pass
+    method command
+    observed_at git:f93b79870575797ae9549d66db36c395d2cb8ee3
+    command "JPXL_REJECTION_SHADOW=1 .agent/scratch/exact-base-encoder-20260901/run-rejection-shadow.sh && python3 .agent/scratch/exact-base-encoder-20260901/analyze_rejection_shadow.py .agent/scratch/exact-base-encoder-20260901/rejection-shadow.jsonl"
+    artifact ".agent/scratch/exact-base-encoder-20260901/rejection-shadow-analysis-2026-09-01.txt"
+    summary """
+        The 94-scored-fixture shadow corpus has 129 infeasible probes; all cross before the final scale, with 239 of 752 scale steps omitted in the ideal early-exit model.
+        """
+}
+
+record jpegxl-rs.evidence.certified-rejection-shadow-workspace-gates-2026-09-01/1 : evidence {
+    title "All four workspace gates pass after replacing the pre-existing test-only unchecked array indexes with safe accesses."
+    state verified
+    result pass
+    method command
+    observed_at git:f93b79870575797ae9549d66db36c395d2cb8ee3
+    command "cd JPXL && cargo build --workspace && cargo test --workspace --release && cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all --check"
+    summary """
+        All four workspace gates pass after replacing the pre-existing test-only unchecked array indexes with safe accesses.
+        """
+}
+
 record jpegxl-rs.evidence.cli-netpbm-subtypes-2026-08-21/1 : evidence {
     title "Focused CLI tests passed: explicit PPM/PGM output uses P6/P5 and incompatible channel layouts error."
     state verified

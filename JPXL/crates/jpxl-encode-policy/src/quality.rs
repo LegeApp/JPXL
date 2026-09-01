@@ -49,7 +49,7 @@ use jpxl_encode::vardct::{
 };
 
 /// What one scored candidate reported.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PerceptualObservation {
     /// The metric's score for the candidate against the source.
     pub score: f64,
@@ -68,6 +68,14 @@ pub struct PerceptualObservation {
     /// Advisory only; `None` when the evaluator does not split its own
     /// phases.
     pub metric_millis: Option<u64>,
+    /// The cumulative weighted metric error after each completed scale, in
+    /// evaluation order (certified early-rejection shadow,
+    /// `JPXL_REJECTION_SHADOW`). Every published weight is non-negative and
+    /// the score remap is monotone falling, so `remap(partial[k])` is an
+    /// exact upper bound on the final score: a consumer holding a threshold
+    /// may certify infeasibility the moment that bound drops below it.
+    /// Advisory only; `None` unless the shadow is enabled.
+    pub partial_errors: Option<Vec<f64>>,
 }
 
 /// Scores a candidate's pixels against the source.
@@ -420,7 +428,7 @@ pub enum StructureSource {
 }
 
 /// One unit of controller work, in order.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct QualityProbe {
     /// Which policy did this work: 0 is the baseline, 1.. are the ranked
     /// policy-bank alternatives in trial order.
@@ -464,6 +472,11 @@ pub struct QualityProbe {
     /// Wall time of this unit's canonical metric pass alone, in
     /// milliseconds (probe attribution shadow). Advisory only.
     pub metric_ms: Option<u64>,
+    /// The cumulative weighted metric error after each completed scale, in
+    /// evaluation order (certified early-rejection shadow,
+    /// `JPXL_REJECTION_SHADOW`); `null` unless the shadow is enabled.
+    /// Advisory only: the search never reads it.
+    pub partial_errors: Option<Vec<f64>>,
 }
 
 /// One policy-bank trial's summary, for the trace and telemetry.
@@ -644,7 +657,7 @@ impl QualityOutcome {
                     "{{\"kind\":\"{}\",\"policy_id\":{},\"rung\":{},\"global_scale\":{},\"hf_mul\":{},\
                      \"effective_scale\":{},\"score\":{},\"bytes\":{},\"structure\":\"{}\",\
                      \"feasible\":{},\"millis\":{},\"surrogate_score\":{},\"surrogate_millis\":{},\
-                     \"spec_rung\":{},\"plan_ms\":{},\"render_ms\":{},\"metric_ms\":{}}}",
+                     \"spec_rung\":{},\"plan_ms\":{},\"render_ms\":{},\"metric_ms\":{},\"partial_errors\":{}}}",
                     match p.kind {
                         ProbeKind::Pixel => "pixel",
                         ProbeKind::Exact => "exact",
@@ -674,6 +687,14 @@ impl QualityOutcome {
                         .map_or_else(|| "null".to_owned(), |m| format!("{m}")),
                     p.metric_ms
                         .map_or_else(|| "null".to_owned(), |m| format!("{m}")),
+                    p.partial_errors.as_ref().map_or_else(
+                        || "null".to_owned(),
+                        |errors| {
+                            let values: Vec<String> =
+                                errors.iter().map(|e| format!("{e}")).collect();
+                            format!("[{}]", values.join(","))
+                        },
+                    ),
                 )
             })
             .collect();
@@ -1123,6 +1144,7 @@ impl Navigator<'_, '_, '_, '_, '_> {
         let surrogate_millis = observation.surrogate_millis;
         let render_ms = observation.render_millis;
         let metric_ms = observation.metric_millis;
+        let partial_errors = observation.partial_errors;
         if let Some(surrogate) = surrogate_score {
             self.calibration = Some((loss(score).ln(), loss(surrogate).ln()));
         }
@@ -1149,6 +1171,7 @@ impl Navigator<'_, '_, '_, '_, '_> {
             plan_ms: plan_millis,
             render_ms,
             metric_ms,
+            partial_errors,
         });
         self.probes.push(ProbeRecord {
             rung,
@@ -1220,6 +1243,7 @@ impl Navigator<'_, '_, '_, '_, '_> {
             // not separately timed and their half-resolution render and metric
             // are reported together as `surrogate_millis`.
             plan_ms: 0,
+            partial_errors: None,
             render_ms: None,
             metric_ms: None,
         });
@@ -1559,6 +1583,7 @@ fn price_pixels(
         surrogate_millis: None,
         spec_rung: None,
         plan_ms: 0,
+        partial_errors: None,
         render_ms: None,
         metric_ms: None,
     });
@@ -2082,6 +2107,7 @@ fn reduce_winner(
         surrogate_millis: None,
         spec_rung: None,
         plan_ms: 0,
+        partial_errors: None,
         render_ms: None,
         metric_ms: None,
     });
@@ -2582,6 +2608,7 @@ mod tests {
                 surrogate_millis: None,
                 render_millis: None,
                 metric_millis: None,
+                partial_errors: None,
             })
         }
 

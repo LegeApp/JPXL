@@ -5835,6 +5835,56 @@ record jpegxl-rs.work.arch-s8-phase-d-prune-wired/1 : work {
     part_of [ @jpegxl-rs.work.arch-s8-full-redesign-scoped ]
 }
 
+record jpegxl-rs.work.certified-rejection-shadow-2026-09-01/1 : work {
+    title "Measure certified early rejection without changing navigation"
+    state completed
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/src/quality.rs",
+        path "JPXL/crates/jpxl-perceptual/src/evaluator.rs",
+        path "JPXL/crates/jpxl-perceptual/src/lib.rs",
+        path "JPXL/crates/jpxl-perceptual/src/ssimulacra2.rs"
+    ]
+    intent """
+        Instrument canonical perceptual probes to report cumulative per-scale
+        weighted errors, then measure whether a mathematically certified
+        infeasibility bound crosses early enough to justify a future Contract-B
+        navigator experiment. The instrumentation must stay advisory and leave
+        the emitted stream unchanged.
+        """
+    acceptance {
+        check certified-bound {
+            statement """
+                Every recorded partial is non-decreasing and its final value is
+                exactly the canonical weighted error, so a partial remap is a
+                sound upper bound on the final score.
+                """
+            method command
+            verified_by [ @jpegxl-rs.evidence.certified-rejection-shadow-bound-2026-09-01/1 ]
+        }
+        check shadow-measurement {
+            statement """
+                A quality-guard shadow corpus records the first certified scale
+                for every infeasible probe and states whether the signal is
+                earlier than the final scale.
+                """
+            method command
+            verified_by [ @jpegxl-rs.evidence.certified-rejection-shadow-corpus-2026-09-01/1 ]
+        }
+        check workspace-gates {
+            statement """
+                The workspace build, release test suite, strict clippy, and
+                formatter checks pass.
+                """
+            method command
+            verified_by [
+                @jpegxl-rs.evidence.certified-rejection-shadow-workspace-gates-2026-09-01/1
+            ]
+        }
+    }
+    derived_from [ @jpegxl-rs.work.probe-simplification-next-stage-2026-09-01/1 ]
+    part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+}
+
 record jpegxl-rs.work.cli-netpbm-subtype-contract/1 : work {
     title "Honor explicit PGM and PPM output subtypes"
     state completed

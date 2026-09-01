@@ -5,8 +5,7 @@ build {
     tool "akr 0.4.0"
     grammar "0.1"
     vocabulary "0.2"
-    commit git:a8e51043fc601c11402f455bfa8a458b1f9fdc1c
-    source_graph "sha256:99eb57ca1e7500eb04527f67d73bc66cc893aedbe98c20633d6d417b347521cf"
+    source_graph "sha256:a4446cf3247d98a2632c391f1b4793d5169fff691a368b7688c5970ce4392555"
 }
 
 source ".akr/project.akr" {
@@ -30,8 +29,8 @@ source ".akr/records/jpegxl-rs/decisions.akr" {
 }
 
 source ".akr/records/jpegxl-rs/evidence.akr" {
-    hash "sha256:4be435bcd925b37712d97154675e4651bdc3f955c7edf430cf29a22412cfdac2"
-    records 625
+    hash "sha256:b6fa87e48ef6fd1b0de112e79e2e960e0b026f58227e39ebd128ac5d44b321a7"
+    records 628
 }
 
 source ".akr/records/jpegxl-rs/milestones.akr" {
@@ -70,8 +69,8 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:72625d9d210fc58204f0ad4246c8c7bd9a977340056c52b997cad41a695fbb6d"
-    records 218
+    hash "sha256:68a925d20214128b33db4c065a6b181e0bd11a93d27cd700192472031c322f92"
+    records 219
 }
 
 resolution @jpegxl-rs.assessment.exact-base-encoder-frontier-2026-09-01/1 {
@@ -4804,6 +4803,21 @@ seal @jpegxl-rs.evidence.blur-row-lanes-register-pressure-2026-08-31/1 {
     hash "sha256:e2da2d182881352e15bffea4cd775e2e11569edf4f10c3d1ef133899475b5b15"
 }
 
+seal @jpegxl-rs.evidence.certified-rejection-shadow-bound-2026-09-01/1 {
+    state verified
+    hash "sha256:576fdf7b2726a19be13a1673b477e640d69c57ba1d4a6e719d245dbbe7d7e175"
+}
+
+seal @jpegxl-rs.evidence.certified-rejection-shadow-corpus-2026-09-01/1 {
+    state verified
+    hash "sha256:4a54f9c6f6081db09587a58e28a923c7e685ef111e66117c53fca7fa47a1912b"
+}
+
+seal @jpegxl-rs.evidence.certified-rejection-shadow-workspace-gates-2026-09-01/1 {
+    state verified
+    hash "sha256:8cd4ec30486a27651052bbe2560ff3060a4f4fc7075fcf61f416d772cf27a8e2"
+}
+
 seal @jpegxl-rs.evidence.cli-netpbm-subtypes-2026-08-21/1 {
     state verified
     hash "sha256:b2c54a89b5174895fb5955a8fedbec20f197f9fb970db914dffd48f3ef55525f"
@@ -9482,6 +9496,11 @@ seal @jpegxl-rs.work.arch-s8-phase-c-prune-bound/1 {
 seal @jpegxl-rs.work.arch-s8-phase-d-prune-wired/1 {
     state completed
     hash "sha256:9540dde47255eb372eef807f864fcaeaf5381e92a255d1291eaf5f15db4ae86f"
+}
+
+seal @jpegxl-rs.work.certified-rejection-shadow-2026-09-01/1 {
+    state completed
+    hash "sha256:395250aa7bc1af276b2ed7602cca623e727f11e8fcddb3162c38afc7fa922882"
 }
 
 seal @jpegxl-rs.work.cli-netpbm-subtype-contract/1 {

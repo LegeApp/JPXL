@@ -19,7 +19,7 @@ use jpxl_plan_render::PlanRenderer;
 use crate::reference::LOW_MEMORY_PIXELS;
 use crate::{
     LinearRgbView, METRIC_VERSION, MetricError, PrecomputedReference, ReferenceRetention,
-    Ssimulacra2,
+    Ssimulacra2, cumulative_partial_errors,
 };
 
 /// Why an evaluator could not be built.
@@ -71,6 +71,11 @@ pub struct PlanRenderEvaluator<'e> {
     /// score of the same rendered planes and reports it alongside. Purely
     /// observational — the canonical score is computed and returned unchanged.
     surrogate_shadow: bool,
+    /// Certified early-rejection shadow (`JPXL_REJECTION_SHADOW`): every
+    /// canonical evaluation also reports the cumulative weighted error after
+    /// each completed metric scale, from which an exact upper bound on the
+    /// final score can be derived offline. Purely observational.
+    rejection_shadow: bool,
 }
 
 impl<'e> PlanRenderEvaluator<'e> {
@@ -143,6 +148,8 @@ impl<'e> PlanRenderEvaluator<'e> {
             evaluations: 0,
             low_memory: u64::from(width).saturating_mul(u64::from(height)) >= LOW_MEMORY_PIXELS,
             surrogate_shadow: std::env::var_os("JPXL_SURROGATE_SHADOW")
+                .is_some_and(|v| v != "0" && !v.is_empty()),
+            rejection_shadow: std::env::var_os("JPXL_REJECTION_SHADOW")
                 .is_some_and(|v| v != "0" && !v.is_empty()),
         })
     }
@@ -270,12 +277,16 @@ impl PlanRenderEvaluator<'_> {
             })?;
         let metric_millis = u64::try_from(metric_start.elapsed().as_millis()).unwrap_or(u64::MAX);
         self.evaluations = self.evaluations.saturating_add(1);
+        let partial_errors = self
+            .rejection_shadow
+            .then(|| cumulative_partial_errors(&result.scales));
         Ok(PerceptualObservation {
             score: result.score,
             surrogate_score,
             surrogate_millis,
             render_millis: Some(render_millis),
             metric_millis: Some(metric_millis),
+            partial_errors,
         })
     }
 }
@@ -334,6 +345,9 @@ impl PerceptualEvaluator for PlanRenderEvaluator<'_> {
         let metric_millis = u64::try_from(metric_start.elapsed().as_millis()).unwrap_or(u64::MAX);
         self.metric.release_scratch();
         self.evaluations = self.evaluations.saturating_add(1);
+        let partial_errors = self
+            .rejection_shadow
+            .then(|| cumulative_partial_errors(&result.scales));
         Ok((
             PerceptualObservation {
                 score: result.score,
@@ -341,6 +355,7 @@ impl PerceptualEvaluator for PlanRenderEvaluator<'_> {
                 surrogate_millis,
                 render_millis: Some(render_millis),
                 metric_millis: Some(metric_millis),
+                partial_errors,
             },
             None,
         ))
@@ -402,6 +417,7 @@ impl PerceptualEvaluator for PlanRenderEvaluator<'_> {
             surrogate_millis: Some(millis),
             render_millis: None,
             metric_millis: None,
+            partial_errors: None,
         }))
     }
 
