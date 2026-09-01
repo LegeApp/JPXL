@@ -2256,6 +2256,36 @@ record jpegxl-rs.observation.preopt-flamegraphs-2026-08-06/2 : observation {
     }
 }
 
+record jpegxl-rs.observation.probe-attribution-2026-09-01/1 : observation {
+    title "Per-probe attribution: reused-probe planning already collapses; metric then render dominate each probe"
+    state verified
+    statement """
+        Advisory per-probe plan/render/metric fields added to PerceptualObservation and QualityProbe (trace-only; schema stays jpxl.quality-trace/2) attribute each canonical pixel probe on both locked anchors at t4 and t6. On the 12 MP anchor the fresh probe is plan 344 ms (the structural build) + render 293 + metric 413, while reused probes pay plan 30-123 + render 180-245 + metric 247-707; on 4.3 MP reused-probe planning is 13-50 ms. The plan share collapses on reused probes, so the structural anchor (cover/CfL capture plus the HfMul overlay) already removes nearly all per-probe planning, and render+metric are irreducibly per-candidate work: no exact structural simplification of measurable size remains in the probe sequence (the reference, evaluator scratch and forward-DCT sharing already exist and the exact-codegen closure on the render/metric kernels stands). The instrumented binary re-emitted the canonical anchor hashes (2a7c4e31 quality mid, 2d8e948e quality large), proving the instrumentation stream-transparent. Walls were unpinned; the shares, not absolute walls, carry the finding. Raw traces under .agent/scratch/exact-base-encoder-20260901/attrib-*.jsonl.
+        """
+    observed_at git:81ac575a8bd6c5cd067b44d100fd741880f93f24
+    method instrumented
+    watches [
+        "JPXL/crates/jpxl-encode-policy/src/quality.rs",
+        "JPXL/crates/jpxl-perceptual/src/evaluator.rs"
+    ]
+    derived_from [ @jpegxl-rs.work.probe-simplification-next-stage-2026-09-01/1 ]
+}
+
+record jpegxl-rs.observation.probe-contract-b-shadow-2026-09-01/1 : observation {
+    title "One-shot stop rate is 4.3% and fully attributable to calibration; finalist non-monotonicity is 1/76"
+    state verified
+    statement """
+        A zero-stream-change shadow corpus run (95 quality-guard fixtures, 94 scored - the 7x7 fixture is below the metric's 8x8 floor; quality 85 balanced, t4, one accumulated jpxl.quality-trace/2 JSONL) measures both Contract B levers. The true one-shot stop rate is 4/94 = 4.3%, exactly equal to the cells that are both confident (decision_path one_shot, 13 cells) and in-band (first probe feasible with overshoot <= 1.0 score point): the two gates fully explain the observed stops. The losses are calibration, not mechanism: 9 of 13 confident cells missed the band and 8 of 12 in-band cells were not confident; overshoot median is +1.14 points and predicted-rung/winner-rung median 1.34 (the upper quantile is systematically conservative). Baseline pixel probes per encode are {1:4, 2:12, 3:40, 4:8, 5:30}, mean about 3.5, with 81/94 cells on the fallback bracket path. Finalist non-monotonicity is 1/76 two-finalist cells (1.3%) - one 700x700 synthetic at adjacent rungs 10006/10150 where entropy training flipped the byte ordering (3635 vs 3617) - while elsewhere the coarsest feasible finalist is also the smaller stream (median 9.3% smaller). So skipping the second exact price buys nothing on ~99% of cells but for a 1.3% rare-byte-change tail, and raising the stop rate is a calibration question on the qpv2 upper quantile and confidence gates, not a new stop rule. Raw: .agent/scratch/exact-base-encoder-20260901/corpus-shadow.jsonl.
+        """
+    observed_at git:81ac575a8bd6c5cd067b44d100fd741880f93f24
+    method instrumented
+    watches [
+        "JPXL/crates/jpxl-encode-policy/src/quality_prediction.rs",
+        "JPXL/crates/jpxl-encode-policy/src/quality.rs"
+    ]
+    derived_from [ @jpegxl-rs.work.probe-simplification-next-stage-2026-09-01/1 ]
+}
+
 record jpegxl-rs.observation.q3-balanced-second-anchor-overshoots-above-the-ceiling-2026-08-18/1 : observation {
     title "Q3: the two-anchor controller's second anchor extrapolates with exponent 2 and overshoots on smooth photos, so Balanced falls back to the exhaustive controller above the ceiling (mid2 2 bpp 5.9 s vs 0.42 s at 1 bpp)"
     state superseded

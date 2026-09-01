@@ -247,6 +247,7 @@ impl PlanRenderEvaluator<'_> {
         // `surrogate_of` recycles them again, so the canonical render below
         // still resizes in place.
         let (surrogate_score, surrogate_millis) = self.surrogate_of(want_surrogate, candidate);
+        let render_start = std::time::Instant::now();
         let (width, height, linear) = self
             .renderer
             .render_linear_at_depth_with(candidate, self.bits_per_sample, self.executor)
@@ -254,22 +255,27 @@ impl PlanRenderEvaluator<'_> {
                 what: "a candidate plan the renderer could not reconstruct",
             })?;
         self.linear = linear;
+        let render_millis = u64::try_from(render_start.elapsed().as_millis()).unwrap_or(u64::MAX);
         let [r, g, b] = &self.linear;
         let view =
             LinearRgbView::new(width, height, r, g, b).map_err(|_| PolicyError::Unsupported {
                 what: "a rendered frame whose planes do not match its dimensions",
             })?;
+        let metric_start = std::time::Instant::now();
         let result = self
             .metric
             .score(&self.reference, view, self.executor)
             .map_err(|_| PolicyError::Unsupported {
                 what: "a candidate whose dimensions differ from the source",
             })?;
+        let metric_millis = u64::try_from(metric_start.elapsed().as_millis()).unwrap_or(u64::MAX);
         self.evaluations = self.evaluations.saturating_add(1);
         Ok(PerceptualObservation {
             score: result.score,
             surrogate_score,
             surrogate_millis,
+            render_millis: Some(render_millis),
+            metric_millis: Some(metric_millis),
         })
     }
 }
@@ -302,12 +308,14 @@ impl PerceptualEvaluator for PlanRenderEvaluator<'_> {
 
         // The decimated surrogate render runs first (see `evaluate_with`).
         let (surrogate_score, surrogate_millis) = self.surrogate_of(want_surrogate, &candidate);
+        let render_start = std::time::Instant::now();
         let (width, height, linear) = self
             .renderer
             .render_linear_at_depth_with(&candidate, self.bits_per_sample, self.executor)
             .map_err(|_| PolicyError::Unsupported {
                 what: "a candidate plan the renderer could not reconstruct",
             })?;
+        let render_millis = u64::try_from(render_start.elapsed().as_millis()).unwrap_or(u64::MAX);
         // Once reconstruction is complete, the coefficient payload is not
         // needed for this score. Exact finalists are rebuilt deterministically
         // by the policy if this rung survives navigation.
@@ -316,12 +324,14 @@ impl PerceptualEvaluator for PlanRenderEvaluator<'_> {
         // probes would raise the search's resident peak, so free the
         // renderer's scratch before the metric allocates its own.
         self.renderer.release_scratch();
+        let metric_start = std::time::Instant::now();
         let result = self
             .metric
             .score_owned(&self.reference, width, height, linear, self.executor)
             .map_err(|_| PolicyError::Unsupported {
                 what: "a candidate whose dimensions differ from the source",
             })?;
+        let metric_millis = u64::try_from(metric_start.elapsed().as_millis()).unwrap_or(u64::MAX);
         self.metric.release_scratch();
         self.evaluations = self.evaluations.saturating_add(1);
         Ok((
@@ -329,6 +339,8 @@ impl PerceptualEvaluator for PlanRenderEvaluator<'_> {
                 score: result.score,
                 surrogate_score,
                 surrogate_millis,
+                render_millis: Some(render_millis),
+                metric_millis: Some(metric_millis),
             },
             None,
         ))
@@ -388,6 +400,8 @@ impl PerceptualEvaluator for PlanRenderEvaluator<'_> {
             score: result.score,
             surrogate_score: Some(result.score),
             surrogate_millis: Some(millis),
+            render_millis: None,
+            metric_millis: None,
         }))
     }
 

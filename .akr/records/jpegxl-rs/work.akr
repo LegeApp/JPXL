@@ -9412,12 +9412,14 @@ record jpegxl-rs.work.pqc-usable-efforts-cost/15 : work {
 
 record jpegxl-rs.work.probe-simplification-next-stage-2026-09-01/1 : work {
     title "Scope the next probe-simplification investigation with Contract B gates"
-    state proposed
+    state completed
     intent """
         Investigate the next probe-simplification lever for the Balanced quality controller: the frontier assessment and the current-HEAD trace agree that one avoided canonical probe (422-489 ms each, roughly 21-25% of the quality phase wall) is worth more than every remaining exact kernel combined. Scope the investigation as measurement, not policy change: re-profile the canonical three-probe sequence on the locked 4.3 MP and 12 MP anchors, attribute each probe's render and SSIMULACRA2 share, and test whether any exact structural simplification (probe batching over one shared render, reference reuse across probes, or render-free surrogate prechecks with an exact final gate) can remove or shrink a probe without changing the emitted codestream. Any change that can alter which rung wins or the emitted bytes is out of scope under this item and requires a separate Contract B decision record with the standing matched-rate and quality A/B screens as promotion gates.
         """
     note """
         Measurement inputs: the locked anchors photo-201839-mid-2400x1800.ppm and photo-201839-large-4000x3000.ppm, JPXL/tools/quiet_ab.py on both anchors at t4/t6 with 12 ABBA repetitions, the quality trace with phase walls (433 ms plan, 1350 ms render+metric, 90 ms entropy, 115 ms emit at 12 MP t6), and the standing Contract B gate: byte-identical codestreams where the change is exact, plus the operator's explicit quality-risk acceptance where it is not.
+
+        Outcome: the attribution is measured (metric then render dominate each probe; reused-probe planning already collapses via the structural anchor, so no exact structural simplification of measurable size exists - the screen is negative, nothing changed), and the two stream-altering levers the measurement exposed are recorded as open Contract B questions (@jpegxl-rs.question.single-finalist-pricing-contract-b, @jpegxl-rs.question.one-shot-calibration-contract-b) with corpus-measured inputs.
         """
     acceptance {
         check contract-b-boundary {
@@ -9425,18 +9427,23 @@ record jpegxl-rs.work.probe-simplification-next-stage-2026-09-01/1 : work {
                 Any probe-count or search-policy change that can alter the emitted stream is recorded as a Contract B decision request, not implemented under this item.
                 """
             method manual
+            verified_by [ @jpegxl-rs.evidence.contract-b-boundary-held-2026-09-01/1 ]
         }
         check exact-simplification-screen {
             statement """
                 Any exact structural simplification screened under this item preserves codestream bytes across t1/t4 and SIMD on/off and clears the quiet_ab.py noise floor on both anchors, or is reverted.
                 """
             method command
+            verified_by [
+                @jpegxl-rs.evidence.exact-simplification-screen-negative-2026-09-01/1
+            ]
         }
         check probe-attribution {
             statement """
                 The per-probe wall attribution (encode, render, metric) is measured on both locked anchors and recorded as evidence.
                 """
             method observation
+            verified_by [ @jpegxl-rs.evidence.probe-attribution-measured-2026-09-01/1 ]
         }
     }
     derived_from [ @jpegxl-rs.assessment.exact-base-encoder-frontier-2026-09-01/1 ]

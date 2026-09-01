@@ -59,6 +59,15 @@ pub struct PerceptualObservation {
     pub surrogate_score: Option<f64>,
     /// Wall time of the surrogate evaluation alone, in milliseconds.
     pub surrogate_millis: Option<u64>,
+    /// Wall time of the candidate reconstruction alone, in milliseconds
+    /// (probe attribution: the render share of this evaluation). Advisory
+    /// only; `None` when the evaluator does not split its own phases.
+    pub render_millis: Option<u64>,
+    /// Wall time of the canonical metric pass alone, in milliseconds
+    /// (probe attribution: the SSIMULACRA2 share of this evaluation).
+    /// Advisory only; `None` when the evaluator does not split its own
+    /// phases.
+    pub metric_millis: Option<u64>,
 }
 
 /// Scores a candidate's pixels against the source.
@@ -445,6 +454,16 @@ pub struct QualityProbe {
     /// (first probe, non-pixel work, or the rule aimed at an already-probed
     /// rung).
     pub spec_rung: Option<u32>,
+    /// Wall time of this unit's pixel planning (cover/CfL/quantization), in
+    /// milliseconds — the `encode` share of a pixel probe's cost. Exact
+    /// prices carry no planning pass, so this is 0 there.
+    pub plan_ms: u64,
+    /// Wall time of this unit's candidate reconstruction alone, in
+    /// milliseconds (probe attribution shadow). Advisory only.
+    pub render_ms: Option<u64>,
+    /// Wall time of this unit's canonical metric pass alone, in
+    /// milliseconds (probe attribution shadow). Advisory only.
+    pub metric_ms: Option<u64>,
 }
 
 /// One policy-bank trial's summary, for the trace and telemetry.
@@ -625,7 +644,7 @@ impl QualityOutcome {
                     "{{\"kind\":\"{}\",\"policy_id\":{},\"rung\":{},\"global_scale\":{},\"hf_mul\":{},\
                      \"effective_scale\":{},\"score\":{},\"bytes\":{},\"structure\":\"{}\",\
                      \"feasible\":{},\"millis\":{},\"surrogate_score\":{},\"surrogate_millis\":{},\
-                     \"spec_rung\":{}}}",
+                     \"spec_rung\":{},\"plan_ms\":{},\"render_ms\":{},\"metric_ms\":{}}}",
                     match p.kind {
                         ProbeKind::Pixel => "pixel",
                         ProbeKind::Exact => "exact",
@@ -650,6 +669,11 @@ impl QualityOutcome {
                         .map_or_else(|| "null".to_owned(), |m| format!("{m}")),
                     p.spec_rung
                         .map_or_else(|| "null".to_owned(), |r| format!("{r}")),
+                    p.plan_ms,
+                    p.render_ms
+                        .map_or_else(|| "null".to_owned(), |m| format!("{m}")),
+                    p.metric_ms
+                        .map_or_else(|| "null".to_owned(), |m| format!("{m}")),
                 )
             })
             .collect();
@@ -1087,10 +1111,8 @@ impl Navigator<'_, '_, '_, '_, '_> {
             )?;
             (planned.0, planned.1, StructureSource::Reused)
         };
-        self.local.plan_ms = self
-            .local
-            .plan_ms
-            .saturating_add(u64::try_from(plan_start.elapsed().as_millis()).unwrap_or(u64::MAX));
+        let plan_millis = u64::try_from(plan_start.elapsed().as_millis()).unwrap_or(u64::MAX);
+        self.local.plan_ms = self.local.plan_ms.saturating_add(plan_millis);
 
         let score_start = Instant::now();
         let (observation, pixels) = self
@@ -1099,6 +1121,8 @@ impl Navigator<'_, '_, '_, '_, '_> {
         let score = observation.score;
         let surrogate_score = observation.surrogate_score;
         let surrogate_millis = observation.surrogate_millis;
+        let render_ms = observation.render_millis;
+        let metric_ms = observation.metric_millis;
         if let Some(surrogate) = surrogate_score {
             self.calibration = Some((loss(score).ln(), loss(surrogate).ln()));
         }
@@ -1122,6 +1146,9 @@ impl Navigator<'_, '_, '_, '_, '_> {
             surrogate_score,
             surrogate_millis,
             spec_rung,
+            plan_ms: plan_millis,
+            render_ms,
+            metric_ms,
         });
         self.probes.push(ProbeRecord {
             rung,
@@ -1189,6 +1216,12 @@ impl Navigator<'_, '_, '_, '_, '_> {
             surrogate_score: Some(surrogate),
             surrogate_millis: observation.surrogate_millis,
             spec_rung: None,
+            // Surrogate probes are off the canonical path; their plan share is
+            // not separately timed and their half-resolution render and metric
+            // are reported together as `surrogate_millis`.
+            plan_ms: 0,
+            render_ms: None,
+            metric_ms: None,
         });
         self.probes.push(ProbeRecord {
             rung,
@@ -1525,6 +1558,9 @@ fn price_pixels(
         surrogate_score: None,
         surrogate_millis: None,
         spec_rung: None,
+        plan_ms: 0,
+        render_ms: None,
+        metric_ms: None,
     });
     Ok(PricedFinalist {
         quantizer,
@@ -2045,6 +2081,9 @@ fn reduce_winner(
         surrogate_score: None,
         surrogate_millis: None,
         spec_rung: None,
+        plan_ms: 0,
+        render_ms: None,
+        metric_ms: None,
     });
     if kept {
         stats.reducer_edits = reduced.stats.edits_applied;
@@ -2541,6 +2580,8 @@ mod tests {
                 score: 100.0 - loss,
                 surrogate_score: None,
                 surrogate_millis: None,
+                render_millis: None,
+                metric_millis: None,
             })
         }
 

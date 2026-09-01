@@ -150,6 +150,18 @@ record jpegxl-rs.evidence.content-classifier-shadow-2026-08-30/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.contract-b-boundary-held-2026-09-01/1 : evidence {
+    title "No stream-altering change was implemented; both levers are open Contract B questions with measured inputs"
+    state verified
+    result pass
+    method manual
+    observed_at git:81ac575a8bd6c5cd067b44d100fd741880f93f24
+    summary """
+        No probe-count or search-policy change that can alter the emitted stream was implemented under this item. Both levers the measurement exposed are recorded as open Contract B decision requests with their measured inputs: @jpegxl-rs.question.single-finalist-pricing-contract-b/1 (skip the second exact price; 1/76 non-monotone cells, median 9.3% coarser savings elsewhere) and @jpegxl-rs.question.one-shot-calibration-contract-b/1 (raise the 4.3% stop rate by recalibrating the qpv2 upper quantile and confidence gates; 9 confident cells missed the band, 8 in-band cells were unconfident).
+        """
+    derived_from [ @jpegxl-rs.observation.probe-contract-b-shadow-2026-09-01/1 ]
+}
+
 record jpegxl-rs.evidence.e1a-relaxed-cap-below-10pct-2026-08-30/1 : evidence {
     title "E1-a under a relaxed cap: ~6% wall for +0.42 GiB — below the operator's 10% bar"
     state verified
@@ -334,6 +346,19 @@ record jpegxl-rs.evidence.event-replay-wall-screen-2026-09-01/1 : evidence {
         The replay was wall-slower, not faster, on the 12 MP anchor where its 5.48% ceiling was: run 1 t4 1.0297 CI [1.0139,1.0454], t6 1.0243 CI [1.0131,1.0463]; run 2 t4 1.0243 CI [1.0038,1.0524], t6 1.0164 inconclusive; 4.3 MP cells straddled 1.0. Peak RSS rose 11-14 MiB (4.3 MP) and 13-14 MiB (12 MP). Reverted per the retain-only-if-beneficial rule; the reverted tree rebuilt to binaries bit-identical (md5) to the retained truncation-only binaries. Raw reports: replay-quiet-ab.json, replay-quiet-ab-2.json under .agent/scratch/exact-base-encoder-20260901/.
         """
     derived_from [ @jpegxl-rs.observation.event-replay-negative-2026-09-01/1 ]
+}
+
+record jpegxl-rs.evidence.exact-simplification-screen-negative-2026-09-01/1 : evidence {
+    title "The exact structural simplification screen found nothing of measurable size; nothing changed"
+    state verified
+    result pass
+    method command
+    observed_at git:81ac575a8bd6c5cd067b44d100fd741880f93f24
+    command "cargo test --workspace --profile fast-debug && both-anchor attribution encodes re-hashed against the canonical digests"
+    summary """
+        The exact-structural-simplification screen ran to a negative outcome: the attribution shows per-probe planning already collapses on reused probes (the structural anchor removes it), render+metric are irreducibly per-candidate, and the reference/scratch/forward-DCT sharing already exists, so no exact simplification of measurable size was found to implement - nothing was changed, so nothing required byte-identity screening or reversion. The workspace suite (76 suites) passed with the instrumentation, and the instrumented binary reproduced the canonical anchor hashes, so the measurement itself is proven stream-transparent.
+        """
+    derived_from [ @jpegxl-rs.observation.probe-attribution-2026-09-01/1 ]
 }
 
 record jpegxl-rs.evidence.experiments-captured/1 : evidence {
@@ -6245,6 +6270,18 @@ record jpegxl-rs.evidence.pqc-workspace-gates-2026-08-22/1 : evidence {
     summary """
         Release test suite green across the workspace (the one failure seen in the background run was the PR 1 placeholder CLI test, rewritten in the same tree), clippy clean under -D warnings with default and extended feature sets, fmt clean. Rate-mode production streams on mid.ppm (--bpp 1.0, 4 threads) hash 05bae79d4c96f77b2bb6bd3b1ad6a794331323d11e7c55903db4c4359798701b (balanced) and 07d71108de1fc69fd4fa5cb9e0e71917ec0887510bd21bc7db5eab4a0bf6bc6b (fast), identical to the pre-change binary.
         """
+}
+
+record jpegxl-rs.evidence.probe-attribution-measured-2026-09-01/1 : evidence {
+    title "Per-probe encode/render/metric attribution measured on both locked anchors"
+    state verified
+    result pass
+    method observation
+    observed_at git:81ac575a8bd6c5cd067b44d100fd741880f93f24
+    summary """
+        Per-probe wall attribution (encode, render, metric) was measured on both locked anchors at t4 and t6 with a stream-transparent trace instrumentation (canonical anchor hashes re-verified). Fresh probe on 12 MP: plan 344 + render 293 + metric 413 ms; reused probes: plan 30-123 + render 180-245 + metric 247-707. Per @jpegxl-rs.observation.probe-attribution-2026-09-01/1; raw traces attrib-*.jsonl under .agent/scratch/exact-base-encoder-20260901/.
+        """
+    derived_from [ @jpegxl-rs.observation.probe-attribution-2026-09-01/1 ]
 }
 
 record jpegxl-rs.evidence.probe-next-stage-scoped-2026-09-01/1 : evidence {
