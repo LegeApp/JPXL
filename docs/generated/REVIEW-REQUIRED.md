@@ -7,7 +7,7 @@
 
 What should not be trusted without re-checking: records the build flagged `stale` or `at_risk`. Neither flag means a record is wrong (D-003); both mean look at it. This view is generated on every successful build, including one that exits 0 with a long queue (D-024). An empty file on an active project is more often a sign the `watches` globs are wrong than a sign the knowledge is perfect.
 
-## Stale (59)
+## Stale (61)
 
 ### The cover/CfL objective misprices Y-channel error by 2.65x across DCT8x8 frequency; the mispricing is in the ruler, not the lever
 
@@ -207,6 +207,24 @@ What should not be trusted without re-checking: records the build flagged `stale
 
 **Cause** — `watches "JPXL/crates/jpxl-perceptual/src/**"` was matched by `94e8dc4c`, which touched `JPXL/crates/jpxl-perceptual/src/evaluator.rs`.
 
+### Per-probe attribution: reused-probe planning already collapses; metric then render dominate each probe
+
+`verified` · `@jpegxl-rs.observation.probe-attribution-2026-09-01/1` · observation · **stale** · [Per-probe attribution: reused-probe planning already collapses; metric then render dominate each probe](CURRENT-STATE.md#per-probe-attribution-reused-probe-planning-already-collapses-metric-then-render-dominate-each-probe)
+
+**Cause** — `watches "JPXL/crates/jpxl-encode-policy/src/quality.rs"` was matched by `a8e51043`, which touched `JPXL/crates/jpxl-encode-policy/src/quality.rs`.
+
+### One-shot stop rate is 4.3% and fully attributable to calibration; finalist non-monotonicity is 1/76
+
+`verified` · `@jpegxl-rs.observation.probe-contract-b-shadow-2026-09-01/1` · observation · **stale** · [One-shot stop rate is 4.3% and fully attributable to calibration; finalist non-monotonicity is 1/76](CURRENT-STATE.md#one-shot-stop-rate-is-43-and-fully-attributable-to-calibration-finalist-non-monotonicity-is-176)
+
+**Cause** — `watches "JPXL/crates/jpxl-encode-policy/src/quality.rs"` was matched by `a8e51043`, which touched `JPXL/crates/jpxl-encode-policy/src/quality.rs`.
+
+### Quality-vs-rate wall anchors after the 2026-08-31 cuts: 2.27x and 3.17x at 4 threads, against 3.0x and 4.5x ceilings
+
+`verified` · `@jpegxl-rs.observation.wall-anchors-after-2026-08-31-cuts/1` · observation · **stale** · [Quality-vs-rate wall anchors after the 2026-08-31 cuts: 2.27x and 3.17x at 4 threads, against 3.0x and 4.5x ceilings](CURRENT-STATE.md#quality-vs-rate-wall-anchors-after-the-2026-08-31-cuts-227x-and-317x-at-4-threads-against-30x-and-45x-ceilings)
+
+**Cause** — `watches "JPXL/crates/jpxl-perceptual/src/**"` was matched by `a8e51043`, which touched `JPXL/crates/jpxl-perceptual/src/evaluator.rs`.
+
 ### Cropped frames, orientation, kBlack channels
 
 `verified` · `@jpegxl-rs.observation.cropped-frames-orientation-kblack/1` · observation · **stale** · [Cropped frames, orientation, kBlack channels](CURRENT-STATE.md#cropped-frames-orientation-kblack-channels)
@@ -351,19 +369,13 @@ What should not be trusted without re-checking: records the build flagged `stale
 
 **Cause** — `watches "JPXL/crates/jpxl-perceptual/src/blur.rs"` was matched by `d00097bd`, which touched `JPXL/crates/jpxl-perceptual/src/blur.rs`.
 
-### Quality-vs-rate wall anchors after the 2026-08-31 cuts: 2.27x and 3.17x at 4 threads, against 3.0x and 4.5x ceilings
-
-`verified` · `@jpegxl-rs.observation.wall-anchors-after-2026-08-31-cuts/1` · observation · **stale** · [Quality-vs-rate wall anchors after the 2026-08-31 cuts: 2.27x and 3.17x at 4 threads, against 3.0x and 4.5x ceilings](CURRENT-STATE.md#quality-vs-rate-wall-anchors-after-the-2026-08-31-cuts-227x-and-317x-at-4-threads-against-30x-and-45x-ceilings)
-
-**Cause** — `watches "JPXL/crates/jpxl-perceptual/src/**"` was matched by `d00097bd`, which touched `JPXL/crates/jpxl-perceptual/src/blur.rs`.
-
 ### Phase Q9 fixes Windows AVX2/fallback cube-root determinism without moving AVX2 production hashes
 
 `verified` · `@jpegxl-rs.observation.windows-msvc-avx2-fallback-not-bit-identical-2026-08-18/3` · observation · **stale** · [Phase Q9 fixes Windows AVX2/fallback cube-root determinism without moving AVX2 production hashes](CURRENT-STATE.md#phase-q9-fixes-windows-avx2fallback-cube-root-determinism-without-moving-avx2-production-hashes)
 
 **Cause** — `watches "JPXL/crates/jpxl-core/src/color.rs"` was matched by `deed1f65`, which touched `JPXL/crates/jpxl-core/src/color.rs`.
 
-## At risk (27)
+## At risk (32)
 
 ### The perceptual closure stands, but three exact base-encoder candidates merit measurement
 
@@ -375,7 +387,7 @@ What should not be trusted without re-checking: records the build flagged `stale
 
 `verified` · `@jpegxl-rs.assessment.exact-codegen-frontier-closed-2026-08-31/1` · assessment · **depth 1** · [Handoff: the exact-codegen frontier on the quality path is closed; the only remaining lever of size is probe count, which needs a Contract B decision](CURRENT-STATE.md#handoff-the-exact-codegen-frontier-on-the-quality-path-is-closed-the-only-remaining-lever-of-size-is-probe-count-which-needs-a-contract-b-decision)
 
-**Via** `derived_from` → `@jpegxl-rs.observation.wall-anchors-after-2026-08-31-cuts/1` (stale: `watches "JPXL/crates/jpxl-perceptual/src/**"` was matched by `d00097bd`, which touched `JPXL/crates/jpxl-perceptual/src/blur.rs`.)
+**Via** `derived_from` → `@jpegxl-rs.observation.wall-anchors-after-2026-08-31-cuts/1` (stale: `watches "JPXL/crates/jpxl-perceptual/src/**"` was matched by `a8e51043`, which touched `JPXL/crates/jpxl-perceptual/src/evaluator.rs`.)
 
 ### Assess the 2026-08-21 libjxl-gap bridge against current JPXL
 
@@ -425,6 +437,12 @@ What should not be trusted without re-checking: records the build flagged `stale
 
 **Via** `derived_from` → `@jpegxl-rs.observation.hot-kernel-instruction-mix-2026-08-31/1` (stale: `watches "JPXL/crates/jpxl-perceptual/src/blur.rs"` was matched by `d00097bd`, which touched `JPXL/crates/jpxl-perceptual/src/blur.rs`.)
 
+### No stream-altering change was implemented; both levers are open Contract B questions with measured inputs
+
+`verified` · `@jpegxl-rs.evidence.contract-b-boundary-held-2026-09-01/1` · evidence · **depth 1** · [No stream-altering change was implemented; both levers are open Contract B questions with measured inputs](CURRENT-STATE.md#no-stream-altering-change-was-implemented-both-levers-are-open-contract-b-questions-with-measured-inputs)
+
+**Via** `derived_from` → `@jpegxl-rs.observation.probe-contract-b-shadow-2026-09-01/1` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/quality.rs"` was matched by `a8e51043`, which touched `JPXL/crates/jpxl-encode-policy/src/quality.rs`.)
+
 ### E1-a retested on a quiet pinned host buys 8.9-10.2% at 12 MP for 2.36 GiB, not the ~6% the closure recorded
 
 `verified` · `@jpegxl-rs.evidence.e1a-retention-retest-quiet-2026-08-31/1` · evidence · **depth 1** · [E1-a retested on a quiet pinned host buys 8.9-10.2% at 12 MP for 2.36 GiB, not the ~6% the closure recorded](CURRENT-STATE.md#e1-a-retested-on-a-quiet-pinned-host-buys-89-102-at-12-mp-for-236-gib-not-the-6-the-closure-recorded)
@@ -437,11 +455,23 @@ What should not be trusted without re-checking: records the build flagged `stale
 
 **Via** `derived_from` → `@jpegxl-rs.observation.hot-kernel-instruction-mix-2026-08-31/1` (stale: `watches "JPXL/crates/jpxl-perceptual/src/blur.rs"` was matched by `d00097bd`, which touched `JPXL/crates/jpxl-perceptual/src/blur.rs`.)
 
+### The exact structural simplification screen found nothing of measurable size; nothing changed
+
+`verified` · `@jpegxl-rs.evidence.exact-simplification-screen-negative-2026-09-01/1` · evidence · **depth 1** · [The exact structural simplification screen found nothing of measurable size; nothing changed](CURRENT-STATE.md#the-exact-structural-simplification-screen-found-nothing-of-measurable-size-nothing-changed)
+
+**Via** `derived_from` → `@jpegxl-rs.observation.probe-attribution-2026-09-01/1` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/quality.rs"` was matched by `a8e51043`, which touched `JPXL/crates/jpxl-encode-policy/src/quality.rs`.)
+
 ### Hoisting the pooled fourth powers out of the ordered fold removes all scalar FP from accumulate_band and is byte-identical
 
 `verified` · `@jpegxl-rs.evidence.pool-fourth-power-hoist-2026-08-31/1` · evidence · **depth 1** · [Hoisting the pooled fourth powers out of the ordered fold removes all scalar FP from accumulate_band and is byte-identical](CURRENT-STATE.md#hoisting-the-pooled-fourth-powers-out-of-the-ordered-fold-removes-all-scalar-fp-from-accumulate_band-and-is-byte-identical)
 
 **Via** `derived_from` → `@jpegxl-rs.observation.hot-kernel-instruction-mix-2026-08-31/1` (stale: `watches "JPXL/crates/jpxl-perceptual/src/blur.rs"` was matched by `d00097bd`, which touched `JPXL/crates/jpxl-perceptual/src/blur.rs`.)
+
+### Per-probe encode/render/metric attribution measured on both locked anchors
+
+`verified` · `@jpegxl-rs.evidence.probe-attribution-measured-2026-09-01/1` · evidence · **depth 1** · [Per-probe encode/render/metric attribution measured on both locked anchors](CURRENT-STATE.md#per-probe-encoderendermetric-attribution-measured-on-both-locked-anchors)
+
+**Via** `derived_from` → `@jpegxl-rs.observation.probe-attribution-2026-09-01/1` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/quality.rs"` was matched by `a8e51043`, which touched `JPXL/crates/jpxl-encode-policy/src/quality.rs`.)
 
 ### QK4 trailing truncation preserved all 32 stream comparisons
 
@@ -466,6 +496,18 @@ What should not be trusted without re-checking: records the build flagged `stale
 `verified` · `@jpegxl-rs.observation.lambda-x4-is-the-operating-point-2026-08-12/2` · observation · **depth 1** · [Lambda×4 under trailing truncation is the first rate-aware quantizer operating point that improves SSIMULACRA2 while keeping butteraugli gain](CURRENT-STATE.md#lambda4-under-trailing-truncation-is-the-first-rate-aware-quantizer-operating-point-that-improves-ssimulacra2-while-keeping-butteraugli-gain)
 
 **Via** `derived_from` → `@jpegxl-rs.observation.selectivity-halves-the-damage-but-lambda-is-the-remaining-term-2026-08-12/1` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/quantize.rs"` was matched by `07fe457f`, which touched `JPXL/crates/jpxl-encode-policy/src/quantize.rs`.)
+
+### Recalibrate qpv2 to raise the 4.3% one-shot stop rate?
+
+`open` · `@jpegxl-rs.question.one-shot-calibration-contract-b/1` · question · **depth 1** · [Recalibrate qpv2 to raise the 4.3% one-shot stop rate?](OPEN-QUESTIONS.md#recalibrate-qpv2-to-raise-the-43-one-shot-stop-rate)
+
+**Via** `supported_by` → `@jpegxl-rs.observation.probe-contract-b-shadow-2026-09-01/1` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/quality.rs"` was matched by `a8e51043`, which touched `JPXL/crates/jpxl-encode-policy/src/quality.rs`.)
+
+### Price only the coarsest feasible finalist? (1.3% rare-byte-change tail)
+
+`open` · `@jpegxl-rs.question.single-finalist-pricing-contract-b/1` · question · **depth 1** · [Price only the coarsest feasible finalist? (1.3% rare-byte-change tail)](OPEN-QUESTIONS.md#price-only-the-coarsest-feasible-finalist-13-rare-byte-change-tail)
+
+**Via** `supported_by` → `@jpegxl-rs.observation.probe-contract-b-shadow-2026-09-01/1` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/quality.rs"` was matched by `a8e51043`, which touched `JPXL/crates/jpxl-encode-policy/src/quality.rs`.)
 
 ### Perceptual quality controller: SSIMULACRA2 score target for Fast and Balanced, gated Quality effort
 

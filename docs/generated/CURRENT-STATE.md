@@ -957,6 +957,8 @@ Advisory per-probe plan/render/metric fields added to PerceptualObservation and 
 
 **derived_from** `@jpegxl-rs.work.probe-simplification-next-stage-2026-09-01/1`
 
+> **Stale** — `watches "JPXL/crates/jpxl-encode-policy/src/quality.rs"` was matched by `a8e51043`, which touched `JPXL/crates/jpxl-encode-policy/src/quality.rs`. See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#per-probe-attribution-reused-probe-planning-already-collapses-metric-then-render-dominate-each-probe).
+
 ### One-shot stop rate is 4.3% and fully attributable to calibration; finalist non-monotonicity is 1/76
 
 `verified` · `@jpegxl-rs.observation.probe-contract-b-shadow-2026-09-01/1`
@@ -964,6 +966,8 @@ Advisory per-probe plan/render/metric fields added to PerceptualObservation and 
 A zero-stream-change shadow corpus run (95 quality-guard fixtures, 94 scored - the 7x7 fixture is below the metric's 8x8 floor; quality 85 balanced, t4, one accumulated jpxl.quality-trace/2 JSONL) measures both Contract B levers. The true one-shot stop rate is 4/94 = 4.3%, exactly equal to the cells that are both confident (decision_path one_shot, 13 cells) and in-band (first probe feasible with overshoot <= 1.0 score point): the two gates fully explain the observed stops. The losses are calibration, not mechanism: 9 of 13 confident cells missed the band and 8 of 12 in-band cells were not confident; overshoot median is +1.14 points and predicted-rung/winner-rung median 1.34 (the upper quantile is systematically conservative). Baseline pixel probes per encode are {1:4, 2:12, 3:40, 4:8, 5:30}, mean about 3.5, with 81/94 cells on the fallback bracket path. Finalist non-monotonicity is 1/76 two-finalist cells (1.3%) - one 700x700 synthetic at adjacent rungs 10006/10150 where entropy training flipped the byte ordering (3635 vs 3617) - while elsewhere the coarsest feasible finalist is also the smaller stream (median 9.3% smaller). So skipping the second exact price buys nothing on ~99% of cells but for a 1.3% rare-byte-change tail, and raising the stop rate is a calibration question on the qpv2 upper quantile and confidence gates, not a new stop rule. Raw: .agent/scratch/exact-base-encoder-20260901/corpus-shadow.jsonl.
 
 **derived_from** `@jpegxl-rs.work.probe-simplification-next-stage-2026-09-01/1`
+
+> **Stale** — `watches "JPXL/crates/jpxl-encode-policy/src/quality.rs"` was matched by `a8e51043`, which touched `JPXL/crates/jpxl-encode-policy/src/quality.rs`. See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#one-shot-stop-rate-is-43-and-fully-attributable-to-calibration-finalist-non-monotonicity-is-176).
 
 ### Q3: the two-anchor controller's second anchor extrapolates with exponent 2 and overshoots on smooth photos, so Balanced falls back to the exhaustive controller above the ceiling (mid2 2 bpp 5.9 s vs 0.42 s at 1 bpp)
 
@@ -1228,7 +1232,7 @@ Interleaved quality-versus-matched-rate walls measured with JPXL/tools/quiet_ab.
 
 **derived_from** `@jpegxl-rs.decision.pqc-wall-target-renegotiation-shape/1`, `@jpegxl-rs.evidence.epf-per-block-inv-sigma-2026-08-31/1`
 
-> **Stale** — `watches "JPXL/crates/jpxl-perceptual/src/**"` was matched by `d00097bd`, which touched `JPXL/crates/jpxl-perceptual/src/blur.rs`. See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#quality-vs-rate-wall-anchors-after-the-2026-08-31-cuts-227x-and-317x-at-4-threads-against-30x-and-45x-ceilings).
+> **Stale** — `watches "JPXL/crates/jpxl-perceptual/src/**"` was matched by `a8e51043`, which touched `JPXL/crates/jpxl-perceptual/src/evaluator.rs`. See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#quality-vs-rate-wall-anchors-after-the-2026-08-31-cuts-227x-and-317x-at-4-threads-against-30x-and-45x-ceilings).
 
 ### Phase Q9 fixes Windows AVX2/fallback cube-root determinism without moving AVX2 production hashes
 
@@ -1300,7 +1304,7 @@ Method note for whoever picks this up. Two of five hypotheses this round were wr
 
 **derived_from** `@jpegxl-rs.evidence.blur-row-lanes-register-pressure-2026-08-31/1`, `@jpegxl-rs.evidence.epf-bounds-check-removal-negative-2026-08-31/1`, `@jpegxl-rs.evidence.epf-per-block-inv-sigma-2026-08-31/1`, `@jpegxl-rs.evidence.pool-fourth-power-hoist-2026-08-31/1`, `@jpegxl-rs.observation.wall-anchors-after-2026-08-31-cuts/1`
 
-> **At risk** at depth 1 via `derived_from` → `@jpegxl-rs.observation.wall-anchors-after-2026-08-31-cuts/1` (stale: `watches "JPXL/crates/jpxl-perceptual/src/**"` was matched by `d00097bd`, which touched `JPXL/crates/jpxl-perceptual/src/blur.rs`.). See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#handoff-the-exact-codegen-frontier-on-the-quality-path-is-closed-the-only-remaining-lever-of-size-is-probe-count-which-needs-a-contract-b-decision).
+> **At risk** at depth 1 via `derived_from` → `@jpegxl-rs.observation.wall-anchors-after-2026-08-31-cuts/1` (stale: `watches "JPXL/crates/jpxl-perceptual/src/**"` was matched by `a8e51043`, which touched `JPXL/crates/jpxl-perceptual/src/evaluator.rs`.). See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#handoff-the-exact-codegen-frontier-on-the-quality-path-is-closed-the-only-remaining-lever-of-size-is-probe-count-which-needs-a-contract-b-decision).
 
 ### Assess the 2026-08-21 libjxl-gap bridge against current JPXL
 
@@ -1558,6 +1562,8 @@ No probe-count or search-policy change that can alter the emitted stream was imp
 
 - `completed` `@jpegxl-rs.work.probe-simplification-next-stage-2026-09-01/1` — check `contract-b-boundary`
 
+> **At risk** at depth 1 via `derived_from` → `@jpegxl-rs.observation.probe-contract-b-shadow-2026-09-01/1` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/quality.rs"` was matched by `a8e51043`, which touched `JPXL/crates/jpxl-encode-policy/src/quality.rs`.). See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#no-stream-altering-change-was-implemented-both-levers-are-open-contract-b-questions-with-measured-inputs).
+
 ### E1-a under a relaxed cap: ~6% wall for +0.42 GiB — below the operator's 10% bar
 
 `verified` · `@jpegxl-rs.evidence.e1a-relaxed-cap-below-10pct-2026-08-30/1`
@@ -1684,6 +1690,8 @@ The exact-structural-simplification screen ran to a negative outcome: the attrib
 **Verifies**
 
 - `completed` `@jpegxl-rs.work.probe-simplification-next-stage-2026-09-01/1` — check `exact-simplification-screen`
+
+> **At risk** at depth 1 via `derived_from` → `@jpegxl-rs.observation.probe-attribution-2026-09-01/1` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/quality.rs"` was matched by `a8e51043`, which touched `JPXL/crates/jpxl-encode-policy/src/quality.rs`.). See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#the-exact-structural-simplification-screen-found-nothing-of-measurable-size-nothing-changed).
 
 ### The dated docs/experiments notes are captured as 18 observations that watch the relevant crates; akr review-queue reflects the resulting stale/at-risk set
 
@@ -5951,6 +5959,8 @@ Per-probe wall attribution (encode, render, metric) was measured on both locked 
 **Verifies**
 
 - `completed` `@jpegxl-rs.work.probe-simplification-next-stage-2026-09-01/1` — check `probe-attribution`
+
+> **At risk** at depth 1 via `derived_from` → `@jpegxl-rs.observation.probe-attribution-2026-09-01/1` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/quality.rs"` was matched by `a8e51043`, which touched `JPXL/crates/jpxl-encode-policy/src/quality.rs`.). See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#per-probe-encoderendermetric-attribution-measured-on-both-locked-anchors).
 
 ### The next probe-simplification investigation is scoped with named inputs and Contract B gates
 
