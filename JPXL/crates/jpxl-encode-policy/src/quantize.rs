@@ -459,6 +459,12 @@ impl HfQuantizer {
     /// which is what the distortion of zeroing is measured against.
     ///
     /// Returns how many coefficients were dropped.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "channel/quant/order/num_blocks locate the trailing run, the token \
+                  bits price it, target_at prices the distortion, and on_drop is \
+                  the incremental Y-reconstruction refresh — all genuinely independent"
+    )]
     pub(crate) fn truncate_trailing(
         &self,
         channel: usize,
@@ -467,33 +473,26 @@ impl HfQuantizer {
         num_blocks: usize,
         zero_token_bits: f32,
         mut target_at: impl FnMut(usize) -> f32,
+        mut on_drop: impl FnMut(usize),
     ) -> usize {
         let size = order.len().min(quant.len());
         if num_blocks >= size {
             return 0;
         }
-        // Positions of the nonzeros, in order. The pass only ever removes from
-        // the end, so this is built once.
-        let mut nonzero_positions: Vec<usize> = (num_blocks..size)
-            .filter(|&k| {
-                order
-                    .get(k)
-                    .and_then(|&c| quant.get(c as usize))
-                    .copied()
-                    .unwrap_or(0)
-                    != 0
-            })
-            .collect();
-
+        // The pass only removes nonzeros from the end. Keep the current last
+        // position and scan backwards for its predecessor instead of building
+        // a per-varblock Vec of every nonzero position. Each order position is
+        // inspected at most once across the whole pass.
+        let mut last = previous_nonzero_position(quant, order, num_blocks, size);
         let mut dropped = 0usize;
-        while let Some(&last) = nonzero_positions.last() {
-            let Some(&cell_u32) = order.get(last) else {
+        while let Some(last_position) = last {
+            let Some(&cell_u32) = order.get(last_position) else {
                 break;
             };
             let cell = cell_u32 as usize;
             let Some(&q) = quant.get(cell) else { break };
             if q == 0 {
-                nonzero_positions.pop();
+                last = previous_nonzero_position(quant, order, num_blocks, last_position);
                 continue;
             }
             let Some(weight) = self.weight_at(channel, cell) else {
@@ -504,13 +503,10 @@ impl HfQuantizer {
             // zero it currently keeps inside the walk. With no nonzero before
             // it, the walk collapses to nothing and every HF position from
             // `num_blocks` is freed.
-            let previous = nonzero_positions
-                .len()
-                .checked_sub(2)
-                .and_then(|i| nonzero_positions.get(i).copied());
+            let previous = previous_nonzero_position(quant, order, num_blocks, last_position);
             let exposed_zeros = match previous {
-                Some(p) => last.saturating_sub(p).saturating_sub(1),
-                None => last.saturating_sub(num_blocks),
+                Some(p) => last_position.saturating_sub(p).saturating_sub(1),
+                None => last_position.saturating_sub(num_blocks),
             };
             #[allow(
                 clippy::cast_precision_loss,
@@ -541,8 +537,9 @@ impl HfQuantizer {
             if let Some(slot) = quant.get_mut(cell) {
                 *slot = 0;
             }
-            nonzero_positions.pop();
+            on_drop(cell);
             dropped += 1;
+            last = previous;
         }
         dropped
     }
@@ -1679,6 +1676,24 @@ impl CflAccumulator {
     }
 }
 
+#[inline]
+fn previous_nonzero_position(
+    quant: &[i32],
+    order: &[u32],
+    first: usize,
+    before: usize,
+) -> Option<usize> {
+    let end = before.min(order.len());
+    (first..end).rev().find(|&position| {
+        order
+            .get(position)
+            .and_then(|&cell| quant.get(cell as usize))
+            .copied()
+            .unwrap_or(0)
+            != 0
+    })
+}
+
 /// Keeps the lower-energy candidate, breaking ties toward the smaller
 /// magnitude and then toward zero (the neutral factor).
 fn consider(
@@ -1826,6 +1841,38 @@ mod tests {
                 assert_eq!(q.reconstruct(0, channel, cell), 0.0);
             }
         }
+    }
+
+    #[test]
+    #[expect(
+        clippy::indexing_slicing,
+        clippy::cast_possible_truncation,
+        reason = "the fixture writes three known positions of a fixed 64-cell array and \
+                  DCT8X8_CELLS is the constant 64"
+    )]
+    fn trailing_truncation_reports_dropped_cells_in_reverse_order_without_storage() {
+        let mut q = HfQuantizer::new(TransformType::Dct8x8, 4096, 1, 2, 2).expect("defaults");
+        q.install_rd_weights(false, |_, _| 1.0);
+        let order: Vec<u32> = (0..DCT8X8_CELLS as u32).collect();
+        let mut quant = vec![0; DCT8X8_CELLS];
+        quant[5] = 1;
+        quant[9] = -2;
+        quant[63] = 3;
+        let mut dropped_cells = Vec::new();
+
+        let dropped = q.truncate_trailing(
+            1,
+            &mut quant,
+            &order,
+            1,
+            1.0,
+            |_| 0.0,
+            |cell| dropped_cells.push(cell),
+        );
+
+        assert_eq!(dropped, 3);
+        assert_eq!(dropped_cells, [63, 9, 5]);
+        assert!(quant.iter().all(|&coefficient| coefficient == 0));
     }
 
     #[test]

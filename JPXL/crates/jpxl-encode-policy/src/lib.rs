@@ -3298,25 +3298,19 @@ fn quantize_square_varblock(
         &[]
     };
     if truncate {
-        let dropped =
-            hf_quant.truncate_trailing(1, qy, order, n * n, hf_quant.zero_token_bits(), |cell| {
-                y_coeff.get(cell).copied().unwrap_or(0.0)
-            });
-        // A truncated cell now reconstructs as `reconstruct(0)`; refresh only
-        // those (a cell whose integer was already zero already holds it).
-        if dropped > 0 {
-            for (cell, (q, slot)) in qy
-                .iter()
-                .copied()
-                .zip(qscratch.d_y_hf.iter_mut())
-                .take(cells)
-                .enumerate()
-            {
-                if q == 0 && *slot != 0.0 {
+        hf_quant.truncate_trailing(
+            1,
+            qy,
+            order,
+            n * n,
+            hf_quant.zero_token_bits(),
+            |cell| y_coeff.get(cell).copied().unwrap_or(0.0),
+            |cell| {
+                if let Some(slot) = qscratch.d_y_hf.get_mut(cell) {
                     *slot = hf_quant.reconstruct(0, 1, cell);
                 }
-            }
-        }
+            },
+        );
     }
 
     // --- X and B: X = dX + kX*dY, B = dB + kB*dY (I.6) ---
@@ -3377,6 +3371,7 @@ fn quantize_square_varblock(
                 n * n,
                 hf_quant.zero_token_bits(),
                 |cell| qscratch.chroma_targets.get(cell).copied().unwrap_or(0.0),
+                |_| {},
             );
         }
     }

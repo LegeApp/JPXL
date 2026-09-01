@@ -1,6 +1,32 @@
 akr 0.1
 project jpegxl-rs
 
+record jpegxl-rs.evidence.ans-identity-matrix-2026-09-01/1 : evidence {
+    title "Prevalidated ANS slot lookup preserved all 32 stream comparisons"
+    state verified
+    result pass
+    method command
+    observed_at git:45d948630dec1bac11bc98e6a9ea727e33c2e2a8
+    command "/mnt/Samsung980_1TB/Rust-projects/jpegXL-rs/.agent/scratch/exact-base-encoder-20260901/identity-matrix.sh ans"
+    summary """
+        The prevalidated inline ANS slot lookup preserved codestream bytes across all 16 cells / 32 encodes (two anchors, quality/rate, t1/t4, default/scalar) against the truncation-only baseline binaries; exit_status=0, large-anchor hashes matched the canonical 2d8e948e and 222358b8. Raw matrix: identity-matrix-ans.txt under .agent/scratch/exact-base-encoder-20260901/.
+        """
+    derived_from [ @jpegxl-rs.observation.ans-slot-lookup-2026-09-01/1 ]
+}
+
+record jpegxl-rs.evidence.ans-wall-screen-2026-09-01/1 : evidence {
+    title "Prevalidated ANS slot lookup cleared the noise floor on the 12 MP t4 cell with no regression signal"
+    state verified
+    result pass
+    method command
+    observed_at git:45d948630dec1bac11bc98e6a9ea727e33c2e2a8
+    command "python3 JPXL/tools/quiet_ab.py --arm qk4=... --arm ans=... --reps 12 --mode rate --rss --identity (two independent runs; pooled paired analysis ans-pooled.txt)"
+    summary """
+        The ANS lookup specialization never showed a slower cell across 48 paired matched-rate reps; pooling both runs (24 pairs per cell) gives medians 0.9954/0.9856/0.9900/0.9916 with large-12MP t4 excluding 1.0 at CI95 [0.9748,0.9981] and the other three cells' upper bounds at or just above 1.0. Peak RSS was unchanged. Retained: byte-identical, no memory cost, no regression signal, and an excluded interval on the anchor hosting the largest ANS share. Raw reports: ans-quiet-ab.json, ans-quiet-ab-2.json, ans-pooled.txt under .agent/scratch/exact-base-encoder-20260901/.
+        """
+    derived_from [ @jpegxl-rs.observation.ans-slot-lookup-2026-09-01/1 ]
+}
+
 record jpegxl-rs.evidence.avx2-pooling-bit-identity-2026-08-26/1 : evidence {
     title "jpegxl-rs.evidence.avx2-pooling-bit-identity-2026-08-26"
     state verified
@@ -269,6 +295,45 @@ record jpegxl-rs.evidence.epf-per-block-inv-sigma-2026-08-31/1 : evidence {
         @jpegxl-rs.evidence.pool-fourth-power-hoist-2026-08-31,
         @jpegxl-rs.observation.hot-kernel-instruction-mix-2026-08-31
     ]
+}
+
+record jpegxl-rs.evidence.event-replay-identity-2026-09-01/1 : evidence {
+    title "Census raw-event replay preserved all 32 stream comparisons"
+    state verified
+    result pass
+    method command
+    observed_at git:45d948630dec1bac11bc98e6a9ea727e33c2e2a8
+    command "/mnt/Samsung980_1TB/Rust-projects/jpegXL-rs/.agent/scratch/exact-base-encoder-20260901/identity-matrix.sh replay"
+    summary """
+        The census raw-event replay preserved codestream bytes across all 16 cells / 32 encodes (two anchors, quality/rate, t1/t4, default/scalar) against the truncation-only baseline binaries; exit_status=0, and the large-anchor hashes matched the canonical 2d8e948e and 222358b8. Raw matrix: identity-matrix.txt under .agent/scratch/exact-base-encoder-20260901/.
+        """
+    derived_from [ @jpegxl-rs.observation.event-replay-negative-2026-09-01/1 ]
+}
+
+record jpegxl-rs.evidence.event-replay-wall-determination-2026-09-01/1 : evidence {
+    title "The census raw-event replay noise-floor determination is complete and negative"
+    state verified
+    result pass
+    method command
+    observed_at git:45d948630dec1bac11bc98e6a9ea727e33c2e2a8
+    command "python3 JPXL/tools/quiet_ab.py --arm qk4=... --arm replay=... --reps 12 --mode rate --rss --identity (two independent runs)"
+    summary """
+        The determination the check requires is complete: two independent pinned ABBA matched-rate screens on the locked 4.3 MP and 12 MP anchors answered whether census raw-event replay clears the host noise floor (it does not: slower on the 12 MP anchor, per @jpegxl-rs.evidence.event-replay-wall-screen-2026-09-01/1) and recorded its transient memory cost (peak RSS +11-14 MiB at 4.3 MP, +13-14 MiB at 12 MP). On that determination the candidate was reverted per the retain-only-if-beneficial rule.
+        """
+    derived_from [ @jpegxl-rs.observation.event-replay-negative-2026-09-01/1 ]
+}
+
+record jpegxl-rs.evidence.event-replay-wall-screen-2026-09-01/1 : evidence {
+    title "Census raw-event replay was wall-slower with an 11-14 MiB memory cost and was reverted"
+    state verified
+    result fail
+    method command
+    observed_at git:45d948630dec1bac11bc98e6a9ea727e33c2e2a8
+    command "python3 JPXL/tools/quiet_ab.py --arm qk4=... --arm replay=... --reps 12 --mode rate --rss --identity (two independent runs)"
+    summary """
+        The replay was wall-slower, not faster, on the 12 MP anchor where its 5.48% ceiling was: run 1 t4 1.0297 CI [1.0139,1.0454], t6 1.0243 CI [1.0131,1.0463]; run 2 t4 1.0243 CI [1.0038,1.0524], t6 1.0164 inconclusive; 4.3 MP cells straddled 1.0. Peak RSS rose 11-14 MiB (4.3 MP) and 13-14 MiB (12 MP). Reverted per the retain-only-if-beneficial rule; the reverted tree rebuilt to binaries bit-identical (md5) to the retained truncation-only binaries. Raw reports: replay-quiet-ab.json, replay-quiet-ab-2.json under .agent/scratch/exact-base-encoder-20260901/.
+        """
+    derived_from [ @jpegxl-rs.observation.event-replay-negative-2026-09-01/1 ]
 }
 
 record jpegxl-rs.evidence.experiments-captured/1 : evidence {
@@ -6182,6 +6247,18 @@ record jpegxl-rs.evidence.pqc-workspace-gates-2026-08-22/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.probe-next-stage-scoped-2026-09-01/1 : evidence {
+    title "The next probe-simplification investigation is scoped with named inputs and Contract B gates"
+    state verified
+    result pass
+    method manual
+    observed_at git:45d948630dec1bac11bc98e6a9ea727e33c2e2a8
+    summary """
+        The next probe-simplification investigation is scoped as @jpegxl-rs.work.probe-simplification-next-stage-2026-09-01/1: it names its measurement inputs (the locked 4.3 MP and 12 MP anchors, quiet_ab.py at t4/t6 with 12 ABBA repetitions, the canonical probe trace with per-probe 422-489 ms walls) and sets the Contract B boundary as an explicit acceptance gate — any change that can alter the emitted stream requires a separate Contract B decision record, not implementation under that item.
+        """
+    derived_from [ @jpegxl-rs.assessment.exact-base-encoder-frontier-2026-09-01/1 ]
+}
+
 record jpegxl-rs.evidence.q0-harness-and-sections-2026-08-17/1 : evidence {
     title "CLI research controls --dead-zone-scale (byte-identical at 1.0 on mid/large x fast/balanced/quality), --tolerance and --sections landed; the standing harness (ladder.sh, scenes.sh, cjxl-match.sh, summarise.py under .agent/scratch/quality-track) ran end to end; --sections attributed 38.1% (mid) / 37.9% (large) of a 1 bpp Balanced stream to the LF-group sections and a temporary trace measured the HF-metadata stream at 44.8 KB of flat-code tokens against 6.4 KB order-0 entropy, which opened Phase Q0b."
     state verified
@@ -6265,6 +6342,32 @@ record jpegxl-rs.evidence.q1-sweeps-2026-08-17/1 : evidence {
     summary """
         Same-binary ladder sweeps (three photos x 0.5/1/2 bpp x Fast/Balanced, 18 cells each): quant_lf held at {2,3,4,5,6,12,16,24} vs 8 gives SSIMULACRA2 mean -0.55/+0.28/+0.41/+0.39/+0.26/-0.43/-0.81/-1.53 with 3-norm Butteraugli -4.9/-4.0/-3.0/-2.2/-1.4/+1.9/+3.5/+6.6%; on the seven scenes quant_lf 4 = +0.67 (worst +0.34), Butteraugli -5.9%, 3-norm -3.3%. --dead-zone-scale 0.85 is an exact no-op and 1.15/1.3/1.5 give SSIMULACRA2 -0.03/-0.13/-0.23 (worst -3.4); --lambda-scale 2/3/6/8 vs 4 give -0.26/-0.08/+0.09/+0.12; --zero-token-bits 0.5/1.5/2/3 vs 1 give +0.04/-0.05/-0.05/-0.10 (the trailing-truncation pass is insensitive to its price). Butteraugli max-norm single cells swung +8% to +18% on settings otherwise neutral or better.
         """
+}
+
+record jpegxl-rs.evidence.qk4-identity-matrix-2026-09-01/1 : evidence {
+    title "QK4 trailing truncation preserved all 32 stream comparisons"
+    state verified
+    result pass
+    method command
+    observed_at git:45d948630dec1bac11bc98e6a9ea727e33c2e2a8
+    command "encode both anchors at quality 85 balanced and matched bpp, t1/t4, default and no-default-feature builds, with the pre-change and truncation-candidate binaries; sha256 every stream"
+    summary """
+        The allocation-free trailing truncation preserved all 32 pre-change stream comparisons (two anchors, quality/rate, t1/t4, default/scalar), per @jpegxl-rs.observation.qk4-allocation-free-truncation-2026-09-01/1. This session's two screening matrices re-used those qk4 binaries as the baseline and re-confirmed the canonical large-anchor hashes (2d8e948e quality, 222358b8 rate) in every default and scalar cell, at t1 and t4, on the working tree atop 45d9486.
+        """
+    derived_from [ @jpegxl-rs.observation.qk4-allocation-free-truncation-2026-09-01/1 ]
+}
+
+record jpegxl-rs.evidence.qk4-wall-screen-2026-09-01/1 : evidence {
+    title "QK4 trailing truncation was faster in all four pinned rate cells"
+    state verified
+    result pass
+    method command
+    observed_at git:45d948630dec1bac11bc98e6a9ea727e33c2e2a8
+    command "python3 JPXL/tools/quiet_ab.py --arm head=... --arm qk4=... --reps 12 --mode rate --identity"
+    summary """
+        The 12-repetition pinned ABBA matched-rate screen was faster in all four cells: 4.3 MP t4 0.9697 CI [0.9512,0.9904], t6 0.9795 [0.9557,0.9997]; 12 MP t4 0.9876 [0.9539,0.9955], t6 0.9859 [0.9615,0.9987], per @jpegxl-rs.observation.qk4-allocation-free-truncation-2026-09-01/1 and the raw report qk4-quiet-ab.json under .agent/scratch/exact-base-encoder-20260901/.
+        """
+    derived_from [ @jpegxl-rs.observation.qk4-allocation-free-truncation-2026-09-01/1 ]
 }
 
 record jpegxl-rs.evidence.quality-q2-chroma-attribution-2026-08-18/1 : evidence {
@@ -7494,4 +7597,17 @@ record jpegxl-rs.evidence.workspace-gates-2026-08-25/1 : evidence {
     summary """
         Under pipefail in one chained run: cargo test --workspace --release reported 76 test-result groups, all ok with zero failures (including the new jpxl-jpeg suite); cargo clippy --workspace --all-targets -D warnings finished clean; cargo fmt --all --check passed.
         """
+}
+
+record jpegxl-rs.evidence.workspace-gates-2026-09-01/1 : evidence {
+    title "Workspace gates pass with the pre-existing jpxl-perceptual strict-clippy failure isolated"
+    state verified
+    result pass
+    method command
+    observed_at git:45d948630dec1bac11bc98e6a9ea727e33c2e2a8
+    command "cd JPXL && cargo build --workspace && cargo test --workspace --release && cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all --check"
+    summary """
+        On the screened tree (trailing truncation and the ANS lookup retained, the raw-event replay reverted): cargo build --workspace passed; cargo test --workspace --release passed with 76 green suites and zero failures; cargo fmt --all --check passed; cargo clippy --workspace --all-targets -- -D warnings passes for every crate except jpxl-perceptual, whose lib-test code indexes planes[c] directly at ssimulacra2.rs:583 — a pre-existing failure at base commit 45d9486 (the working tree does not touch that crate), isolated as @jpegxl-rs.papercut.strict-clippy-ssimulacra2-test-indexing/1. Strict clippy initially also failed in the retained truncation code (too_many_arguments on the eight-argument truncate_trailing and indexing/casting in its new test); both were fixed with documented #[expect] attributes before this run.
+        """
+    derived_from [ @jpegxl-rs.assessment.exact-base-encoder-frontier-2026-09-01/1 ]
 }

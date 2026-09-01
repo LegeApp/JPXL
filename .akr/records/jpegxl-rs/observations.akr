@@ -1,6 +1,18 @@
 akr 0.1
 project jpegxl-rs
 
+record jpegxl-rs.observation.ans-slot-lookup-2026-09-01/1 : observation {
+    title "Prevalidated inline ANS slot lookup is byte-identical with a small consistent wall gain; retained"
+    state verified
+    statement """
+        On the working tree atop 45d948630dec1bac11bc98e6a9ea727e33c2e2a8 plus the retained trailing-truncation change, replacing the once-per-symbol checked AnsEncodeTable::slot call in the backward rANS pass with an inline slot_prevalidated lookup (safe by construction: new re-checks the C.2.6 bijection and the pass's zero-mass gate plus state%p bound the indices; the public checked slot remains for every other caller) was byte-identical across the full 32-encode matrix (two anchors, quality/rate, t1/t4, default/scalar; canonical large-anchor hashes matched). Two independent 12-repetition pinned ABBA matched-rate screens against the truncation-only binaries never showed a slower cell across 48 paired reps; pooling both runs (24 paired reps per cell, ans-pooled.txt) gives medians 0.9954, 0.9856, 0.9900, 0.9916, with large-12MP t4 excluding 1.0 at CI95 [0.9748,0.9981] and the other three cells' upper bounds at or just above 1.0. Peak RSS was unchanged in both runs. The realizable gain is around 1%, at the harness's ~0.5% resolution floor, consistent with the frontier's prediction that the 3.99% checked-lookup share would only partially convert; both runs again carried large clock drift, so the paired intervals carry the verdict. Retained: byte-identical, no memory cost, no regression signal, and a statistically excluded interval on the anchor hosting the largest ANS share.
+        """
+    observed_at git:45d948630dec1bac11bc98e6a9ea727e33c2e2a8
+    method instrumented
+    watches [ "JPXL/crates/jpxl-entropy/src/encode/ans.rs", "JPXL/tools/quiet_ab.py" ]
+    derived_from [ @jpegxl-rs.assessment.exact-base-encoder-frontier-2026-09-01/1 ]
+}
+
 record jpegxl-rs.observation.aq-field-is-a-net-perceptual-loss-2026-08-10/1 : observation {
     title "At matched bitrate the adaptive-quantization field is a net perceptual loss: AQ off beats every tuning tried, on both metrics"
     state superseded
@@ -134,6 +146,39 @@ record jpegxl-rs.observation.cropped-frames-orientation-kblack/1 : observation {
             Cropped displayed frames, image orientation, and kBlack extra channels
             """
     }
+}
+
+record jpegxl-rs.observation.current-head-quality-rate-profile-2026-09-01/1 : observation {
+    title "Current-HEAD profiles reproduce the perceptual closure and expose an exact base-encoder frontier"
+    state verified
+    scope [
+        path "JPXL/crates/jpxl-core/src/restoration.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/**",
+        path "JPXL/crates/jpxl-encode/src/vardct/**",
+        path "JPXL/crates/jpxl-entropy/src/encode/**",
+        path "JPXL/crates/jpxl-perceptual/src/**",
+        path "JPXL/tools/quiet_ab.py"
+    ]
+    statement """
+        At HEAD 45d948630dec1bac11bc98e6a9ea727e33c2e2a8, fresh `cpu_core/cycles/u` profiles on the locked 12 MP photo, pinned to the six physical P-cores at t6, reproduce the perceptual-kernel closure but expose a separate exact base-encoder frontier. Quality captured 30,212 samples: horizontal_band_avx2 14.29%, epf_step_rows_fma 10.80%, vert_batch_avx2 10.22%, planes_to_positive_xyb_avx2 6.97%, and accumulate_band_avx2 4.63% (46.91% combined), with no new large perceptual instruction defect. The current quality trace is 3 pixel probes / 2 exact prices and 433 ms plan + 1350 ms render/metric + 90 ms entropy + 115 ms emit; each pixel probe is 422-489 ms, so avoiding one remains the only double-digit wall lever and requires the already-identified Contract B policy choice. The matched-rate profile captured 8,861 samples and finds three exact candidates outside that closure: (1) truncate_trailing's two monomorphizations are 2.56%+2.43% inclusive and their per-call Vec collections are 2.26%+2.20%; a reverse nonzero cursor can preserve decisions while removing per-varblock allocation and the post-Y full refresh scan. (2) walk_pass_group<CensusSink> is 7.13% and the later trained-tape record walk is 5.48%; retaining packed raw (pre-context,value) events during census would allow sequential replay after hybrid-uint training, replacing the second coefficient/context traversal for about 24.6 MiB at the final plan's 3,223,433 symbols. (3) AnsEncodeTable::slot is a non-inlined checked Result-returning lookup at 3.99% of rate cycles and 0.99% of quality cycles; the self-built TokenTape path can use a separately validated inline lookup while generic callers retain errors. These shares are ceilings, not measured wins. Raw profiles, exact commands, hashes, trace, diagnostics, caveats and ranking are kept in .agent/scratch/frontier-refresh-20260901/.
+        """
+    observed_at git:45d948630dec1bac11bc98e6a9ea727e33c2e2a8
+    method command
+    watches [
+        "JPXL/crates/jpxl-encode-policy/src/quantize.rs",
+        "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        "JPXL/crates/jpxl-encode/src/vardct/sink.rs",
+        "JPXL/crates/jpxl-encode/src/vardct/walk.rs",
+        "JPXL/crates/jpxl-encode/src/vardct/write.rs",
+        "JPXL/crates/jpxl-entropy/src/encode/ans.rs",
+        "JPXL/crates/jpxl-entropy/src/encode/tape.rs",
+        "JPXL/crates/jpxl-perceptual/src/**",
+        "JPXL/crates/jpxl-core/src/restoration.rs"
+    ]
+    derived_from [
+        @jpegxl-rs.assessment.exact-codegen-frontier-closed-2026-08-31,
+        @jpegxl-rs.policy.performance-baseline-rules
+    ]
 }
 
 record jpegxl-rs.observation.distortion-currency-misprices-frequency-2026-08-12/1 : observation {
@@ -321,6 +366,21 @@ record jpegxl-rs.observation.epf-flip-points/1 : observation {
             J.4 edge-preserving filter: four flip points and the J.3/J.4 OCR reconciliation
             """
     }
+}
+
+record jpegxl-rs.observation.event-replay-negative-2026-09-01/1 : observation {
+    title "Census raw-event replay is byte-identical but wall-slower with a 11-14 MiB memory cost; reverted"
+    state verified
+    statement """
+        On the working tree atop 45d948630dec1bac11bc98e6a9ea727e33c2e2a8 plus the retained trailing-truncation change, retaining compact (pre-context, raw value) census events and replaying them into the token-tape recorder at exact pricing was byte-identical across the full 32-encode matrix (two anchors, quality/rate, t1/t4, default/scalar; large-anchor hashes matched the canonical 2d8e948e and 222358b8). Two independent 12-repetition pinned ABBA matched-rate screens against the truncation-only binaries showed the replay is slower, not faster, on the anchor where its ceiling was largest: 12 MP t4 1.0297 CI [1.0139,1.0454] and 1.0243 CI [1.0038,1.0524]; 12 MP t6 1.0243 CI [1.0131,1.0463] and 1.0164 CI [0.9982,1.0415]; the 4.3 MP cells straddled 1.0 in both runs. Peak RSS rose 11-14 MiB (4.3 MP) and 13-14 MiB (12 MP), confirming the transient raw-event tape cost. The eliminated second coefficient/context walk evidently reads data still cache-warm from the census, while the retained tape adds a multi-MiB cold store that is written during the census and re-read during replay. Both runs carried large clock drift (-68.3% and again), so paired intervals, not absolute walls, carry the verdict. The candidate was reverted per the retain-only-if-beneficial rule; the reverted tree rebuilt to binaries bit-identical (md5) to the retained truncation-only binaries.
+        """
+    observed_at git:45d948630dec1bac11bc98e6a9ea727e33c2e2a8
+    method instrumented
+    watches [
+        "JPXL/crates/jpxl-encode/src/vardct/sink.rs",
+        "JPXL/crates/jpxl-encode/src/vardct/write.rs"
+    ]
+    derived_from [ @jpegxl-rs.assessment.exact-base-encoder-frontier-2026-09-01/1 ]
 }
 
 record jpegxl-rs.observation.exact-sample-specials-honest-negative-2026-08-12/1 : observation {
@@ -2475,6 +2535,26 @@ record jpegxl-rs.observation.q6-zero-run-term-explains-dct8-residual-only-2026-0
     supersedes [
         @jpegxl-rs.observation.q6-zero-run-term-explains-dct8-residual-only-2026-08-18/1
     ]
+}
+
+record jpegxl-rs.observation.qk4-allocation-free-truncation-2026-09-01/1 : observation {
+    title "Allocation-free trailing truncation is byte-identical and faster in all four pinned rate cells"
+    state verified
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/quantize.rs"
+    ]
+    statement """
+        On the working tree atop 45d948630dec1bac11bc98e6a9ea727e33c2e2a8, replacing truncate_trailing's per-varblock nonzero-position Vec with a backwards cursor and updating Y reconstruction on each drop preserved all 32 pre-change stream comparisons (two anchors, quality/rate, t1/t4, default/scalar). A 12-repetition pinned ABBA matched-rate screen was faster in every cell: 4.3 MP t4 0.9697 CI [0.9512,0.9904], t6 0.9795 [0.9557,0.9997]; 12 MP t4 0.9876 [0.9539,0.9955], t6 0.9859 [0.9615,0.9987]. RSS was unchanged. The host was thermally saturated with +23.4% clock drift, so the paired intervals—not absolute walls—support retention.
+        """
+    observed_at git:45d948630dec1bac11bc98e6a9ea727e33c2e2a8
+    method instrumented
+    watches [
+        "JPXL/crates/jpxl-encode-policy/src/quantize.rs",
+        "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        "JPXL/tools/quiet_ab.py"
+    ]
+    derived_from [ @jpegxl-rs.assessment.exact-base-encoder-frontier-2026-09-01/1 ]
 }
 
 record jpegxl-rs.observation.quality-corpus-critical-class-families-2026-08-25/1 : observation {

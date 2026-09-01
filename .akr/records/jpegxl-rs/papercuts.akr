@@ -327,6 +327,18 @@ record jpegxl-rs.papercut.knowledge-propose-exposes-topic-for-every/1 : papercut
     created_at 2026-08-23
 }
 
+record jpegxl-rs.papercut.knowledge-propose-for-an-assessment-rejected/1 : papercut {
+    title "knowledge.propose for an assessment rejected the generic `method` slot;…"
+    state verified
+    statement """
+        knowledge.propose for an assessment rejected the generic `method` slot; the tool schema exposes generic `slots` but not the kind-specific slot set until rejection. The diagnostic did provide the valid assessment slots, so retry is straightforward.
+        """
+    observed_at git:45d948630dec1bac11bc98e6a9ea727e33c2e2a8
+    about "akr"
+    author "codex"
+    created_at 2026-09-01
+}
+
 record jpegxl-rs.papercut.knowledge-propose-rejected-a-work-record/1 : papercut {
     title "knowledge.propose rejected a work record because the schema expects…"
     state verified
@@ -398,6 +410,18 @@ record jpegxl-rs.papercut.orienting-on-this-project-through-the-knowledge/1 : pa
     created_at 2026-08-12
 }
 
+record jpegxl-rs.papercut.strict-clippy-ssimulacra2-test-indexing/1 : papercut {
+    title "Strict workspace clippy fails on pre-existing jpxl-perceptual test indexing"
+    state verified
+    statement """
+        The strict workspace clippy gate (cargo clippy --workspace --all-targets -- -D warnings) has been failing since the 2026-08-31 perceptual round: a jpxl-perceptual unit test indexes planes[c] directly at crates/jpxl-perceptual/src/ssimulacra2.rs:583, which indexing_slicing flags. The failure is pre-existing at 45d9486 and unrelated to the exact base-encoder frontier, so the frontier's workspace-gates evidence records it as isolated rather than fixing it outside the frontier's file ownership. Whoever next owns jpxl-perceptual should bounds-check or document the test indexing so the strict gate passes tree-wide again.
+        """
+    observed_at git:45d948630dec1bac11bc98e6a9ea727e33c2e2a8
+    about "JPXL jpxl-perceptual strict clippy"
+    author "cline"
+    created_at 2026-09-01
+}
+
 record jpegxl-rs.papercut.the-checked-in-quality-track-readme-points/1 : papercut {
     title "The checked-in quality-track README points ladder.ps1 at…"
     state verified
@@ -465,6 +489,17 @@ record jpegxl-rs.papercut.the-installed-akr-0-3-1-rejected-four-existing/1 : pap
     about "akr"
     author "codex"
     created_at 2026-08-15
+}
+
+record jpegxl-rs.papercut.the-mandatory-cargo-clippy-workspace-all/1 : papercut {
+    title "The mandatory `cargo clippy --workspace --all-targets -- -D warnings`…"
+    state verified
+    statement """
+        The mandatory `cargo clippy --workspace --all-targets -- -D warnings` handoff gate fails on pre-existing test indexing at `jpxl-perceptual/src/ssimulacra2.rs:583` (`planes[c]`, introduced by 767f080). This profiling/AKR-only task did not touch codec source; build, release tests, and fmt remain green.
+        """
+    observed_at git:45d948630dec1bac11bc98e6a9ea727e33c2e2a8
+    author "codex"
+    created_at 2026-09-01
 }
 
 record jpegxl-rs.papercut.the-native-windows-workspace-test-gate-treated/1 : papercut {

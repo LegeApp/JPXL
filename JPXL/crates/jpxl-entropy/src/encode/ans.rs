@@ -182,6 +182,33 @@ impl AnsEncodeTable {
             .map(|&s| u32::from(s))
             .ok_or_else(|| encode_error!("C.2.6: alias index for symbol {symbol} out of range"))
     }
+
+    /// The state slot whose alias mapping is `(symbol, offset)`, validated form.
+    ///
+    /// [`new`](Self::new) re-checks the C.2.6 bijection at construction, so
+    /// once the caller has rejected a zero-mass symbol and holds
+    /// `offset < probability(symbol)` — exactly the backward pass's
+    /// `state % p` — both `starts[symbol]` and `slots[starts[symbol] + offset]`
+    /// exist by construction. This removes three checked lookups and the
+    /// `Result` machinery from the once-per-symbol rANS step (the checked
+    /// [`slot`](Self::slot) was 3.99% of matched-rate cycles); every other
+    /// caller keeps the checked form.
+    #[inline]
+    #[expect(
+        clippy::indexing_slicing,
+        clippy::cast_possible_truncation,
+        reason = "unreachable by construction: `new` validated the alias bijection, \
+                  the caller's zero-mass rejection bounds `symbol`, and \
+                  `offset < p <= u32::MAX`"
+    )]
+    fn slot_prevalidated(&self, symbol: u32, offset: u64) -> u32 {
+        debug_assert!(
+            offset < u64::from(self.probabilities[symbol as usize]),
+            "alias offset above the symbol's mass"
+        );
+        let index = self.starts[symbol as usize] + offset as u32;
+        u32::from(self.slots[index as usize])
+    }
 }
 
 /// One entropy-coded symbol: which cluster's distribution codes it, and the
@@ -294,13 +321,9 @@ pub fn encode_symbols_with(
 
         let quotient = state / p;
         let offset = state % p;
-        let slot = u64::from(
-            table.slot(
-                symbol.token,
-                u32::try_from(offset)
-                    .map_err(|_| encode_error!("C.3.2: alias offset {offset} out of range"))?,
-            )?,
-        );
+        // `offset = state % p` is below the mass the `p == 0` gate just
+        // validated, so the prevalidated form is exact here.
+        let slot = u64::from(table.slot_prevalidated(symbol.token, offset));
         state = (quotient << 12) | slot;
         if state >= 1 << 32 {
             return Err(encode_error!(

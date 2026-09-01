@@ -129,6 +129,26 @@ record jpegxl-rs.assessment.encoder-static-optimization/1 : assessment {
     }
 }
 
+record jpegxl-rs.assessment.exact-base-encoder-frontier-2026-09-01/1 : assessment {
+    title "The perceptual closure stands, but three exact base-encoder candidates merit measurement"
+    state verified
+    scope [
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/quantize.rs",
+        path "JPXL/crates/jpxl-encode/src/vardct/**",
+        path "JPXL/crates/jpxl-entropy/src/encode/**"
+    ]
+    statement """
+        The 2026-08-31 exact-codegen closure remains the right conclusion for the perceptual render/metric kernels, and probe policy remains the only double-digit quality-wall lever. A fresh matched-rate profile nevertheless identifies a separate exact base-encoder sequence worth screening. First, replace truncate_trailing's per-varblock Vec of all nonzero positions with a backwards cursor that finds only last/previous positions and reports each dropped cell so Y reconstruction is updated without a whole-lane rescan. This is local, Contract A, and has a 4.99% inclusive rate-cycle / 1.55% quality-cycle ceiling. Second, retain an optional compact raw event tape during the entropy census and replay it after clustering/config training, avoiding the second coefficient-order/context walk; this is cross-crate and has a 5.48% rate ceiling plus about 25 MiB transient raw-event storage on the 12 MP anchor. Third, specialize the TokenTape ANS emission path around a once-validated inline slot lookup; this has a 3.99% rate ceiling and is lower priority because the realizable fraction may be small. Screen in that order, one change at a time, with byte identity across t1/t4 and SIMD on/off, then `quiet_ab.py` on both anchors; profile shares are not wall claims. Do not reopen blur transpose, 128-bit vertical f32, XYB regroup, EPF bounds removal, coarse-scale serial scheduling, or cross-stage colour fusion without a new profile: their expected values remain around the measurement floor or their arithmetic remains mandatory. Do not describe these base-encoder candidates as a substitute for the Contract B probe-count decision: even all three together are unlikely to equal one avoided 422-489 ms canonical probe.
+        """
+    confidence high
+    as_of git:45d948630dec1bac11bc98e6a9ea727e33c2e2a8
+    derived_from [
+        @jpegxl-rs.assessment.exact-codegen-frontier-closed-2026-08-31,
+        @jpegxl-rs.observation.current-head-quality-rate-profile-2026-09-01
+    ]
+}
+
 record jpegxl-rs.assessment.exact-codegen-frontier-closed-2026-08-31/1 : assessment {
     title "Handoff: the exact-codegen frontier on the quality path is closed; the only remaining lever of size is probe count, which needs a Contract B decision"
     state verified
