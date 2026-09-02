@@ -37,21 +37,16 @@ def parse_line(stdout: str) -> dict:
 
 
 def run_cell(binary: str, image_path: str, target: float, threads: int, trace_path: str,
-             keep_trace: str | None = None) -> dict:
+             keep_trace: str | None = None, effort: str | None = None) -> dict:
     env = dict(os.environ, JPXL_QUALITY_TRACE=trace_path)
     out_path = os.path.join(tempfile.gettempdir(), "oneshot-ab.jxl")
     start = time.perf_counter()
+    argv = [binary, "encode", "--quality", f"{target}", "--threads", str(threads)]
+    if effort:
+        argv += ["--effort", effort]
+    argv += [image_path, out_path]
     completed = subprocess.run(
-        [
-            binary,
-            "encode",
-            "--quality",
-            f"{target}",
-            "--threads",
-            str(threads),
-            image_path,
-            out_path,
-        ],
+        argv,
         capture_output=True,
         text=True,
         env=env,
@@ -104,6 +99,9 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--targets", nargs="+", type=float,
                         default=[30.0, 50.0, 70.0, 80.0, 85.0, 90.0, 95.0])
     parser.add_argument("--threads", type=int, default=4)
+    parser.add_argument("--effort", default=None,
+                        help="lossy effort passed to both arms (fast|balanced); the "
+                             "encoder's default when omitted")
     parser.add_argument("--max-pixels", type=int, default=None,
                         help="skip images above this pixel count")
     parser.add_argument("--output", required=True)
@@ -141,9 +139,9 @@ def main(argv: list[str]) -> int:
                     "pixels": width * height, "target": target}
             trace = os.path.join(tempfile.gettempdir(), "oneshot-ab-trace.jsonl")
             cell["default"] = run_cell(args.default_binary, path, target, args.threads, trace,
-                                       keep_default)
+                                       keep_default, args.effort)
             cell["one_shot"] = run_cell(args.one_shot_binary, path, target, args.threads, trace,
-                                        keep_one_shot)
+                                        keep_one_shot, args.effort)
             rows.append(cell)
             d, o = cell["default"], cell["one_shot"]
             print(

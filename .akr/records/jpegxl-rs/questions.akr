@@ -3,7 +3,7 @@ project jpegxl-rs
 
 record jpegxl-rs.question.low-target-one-pass-parameters/1 : question {
     title "Low-target one pass: below which target, and does one pass mean one verified probe or no verification?"
-    state open
+    state superseded
     question """
         The operator's rule that lower targets are one pass by design (@jpegxl-rs.decision.low-targets-are-one-pass-by-design) leaves two parameters open. (1) The threshold: which requested scores count as 'lower'? The production presets are Fast 70 and Balanced 85, and the corrected stop already pays from 70 upward, so the candidates are 'below the Fast preset (< 70)' or a fixed cut such as <= 50. (2) The semantics: does one pass mean one canonical probe at the predicted rung whose stream is emitted whenever it meets the floor, whatever the overshoot (one render, one score, one exact price — the floor contract kept), or a single plan emitted without a score (no floor verification, which changes the public minimum-score contract at those targets)? A third detail follows from the answer: what happens when the single probe misses the floor — the existing bounded expansion, a one-jump rescue, or the under-target fallback semantics of @jpegxl-rs.decision.quality-miss-fallback-semantics.
         """
@@ -11,6 +11,20 @@ record jpegxl-rs.question.low-target-one-pass-parameters/1 : question {
         Open: needs the operator. Once answered, the implementation is a feature-gated low-target route in solve_baseline plus the corpus gate at the low targets (30/50 and the chosen threshold).
         """
     derived_from [ @jpegxl-rs.decision.low-targets-are-one-pass-by-design ]
+    supported_by [ @jpegxl-rs.evidence.contract-b-trial-holdout-seven-target-2026-09-02 ]
+}
+
+record jpegxl-rs.question.low-target-one-pass-parameters/2 : question {
+    title "Low-target one pass: below which target, and does one pass mean one verified probe or no verification?"
+    state resolved
+    question """
+        Low-target one pass: below which target, and does one pass mean one verified probe or no verification?
+        """
+    resolution """
+        Neither parameter was needed. The operator delegated the decision ('do what you think is best for speed vs quality/size efficiency; if dropping probes for low quality encodes is not optimal and overly complex then do something else'). The low targets were slow not for want of a one-pass rule but because the crossing aim (threshold + reserve × loss) lay outside the fixed one-point accept band below Balanced 66.7 / Fast 83.3, so a landing on the aim never stopped the search (@jpegxl-rs.observation.crossing-aim-outside-accept-band-below-67-2026-09-02). The reserve-coupled band fixes that at every target with the floor kept and every probe still verified (@jpegxl-rs.decision.promote-reserve-coupled-band-2026-09-02). A literal unverified or first-probe-only pass was rejected: on photos at target 30 the predictor's first landing is 0.3-0.5 ln effective scale above the crossing, a large byte cost, not a saving (@jpegxl-rs.observation.qpv2-photo-low-target-bias-2026-09-02); the remaining low-target probes are the predictor's.
+        """
+    derived_from [ @jpegxl-rs.decision.low-targets-are-one-pass-by-design ]
+    supersedes [ @jpegxl-rs.question.low-target-one-pass-parameters/1 ]
     supported_by [ @jpegxl-rs.evidence.contract-b-trial-holdout-seven-target-2026-09-02 ]
 }
 

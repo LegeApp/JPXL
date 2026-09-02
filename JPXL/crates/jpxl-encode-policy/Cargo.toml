@@ -27,6 +27,7 @@ default = [
     "one-shot-controller",
     "corrected-stop",
     "flagged-median-start",
+    "reserve-coupled-band",
 ]
 parallel = ["jpxl-encode/parallel"]
 # Leaf SIMD for HF quantize choose (and transitive DCT/Gaborish).
@@ -77,6 +78,17 @@ corrected-stop = ["trusted-first-probe"]
 # being larger than the training domain seeds the navigator with the
 # model's median rung instead of the legacy table start.
 flagged-median-start = []
+# `reserve-coupled-band`: the accept band is MET_BAND_RESERVE_MULTIPLE times
+# the effort's loss-relative reserve margin (never narrower than
+# MET_OVERSHOOT_BAND), so the crossing aim always lies inside the band that
+# stops the search. Identical bytes wherever the reserve margin is under one
+# point (Balanced at 85 and above); changes which rung wins below that. In
+# `default` since the 2026-09-02 delegated decision
+# (@jpegxl-rs.decision.promote-reserve-coupled-band-2026-09-02), measured in
+# docs/experiments/2026-09-02-reserve-coupled-band-trial.md: 0 floor
+# violations on 635 cells, Balanced low-target probes 3.91 -> 3.41 for byte
+# geomean 1.005, Fast 2.65 -> 2.16 for 1.010, 85+ byte-identical.
+reserve-coupled-band = []
 # S8 Phase D (AKR source `outside-advice-2026-08-06` §8;
 # `jpegxl-rs.work.arch-s8-full-redesign-scoped`):
 # the Phase C-validated (zero safety violations, exhaustively checked)

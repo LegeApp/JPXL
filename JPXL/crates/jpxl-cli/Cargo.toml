@@ -36,6 +36,7 @@ surrogate-navigation = ["jpxl-encode-policy/surrogate-navigation"]
 trusted-first-probe = ["jpxl-encode-policy/trusted-first-probe"]
 corrected-stop = ["jpxl-encode-policy/corrected-stop"]
 flagged-median-start = ["jpxl-encode-policy/flagged-median-start"]
+reserve-coupled-band = ["jpxl-encode-policy/reserve-coupled-band"]
 # Exposes the exhaustive-reference `quality` lossy effort on `--effort` /
 # `--lossy-preset`. Forwards to `jpxl/quality-effort`; off by default.
 quality-effort = ["jpxl/quality-effort"]

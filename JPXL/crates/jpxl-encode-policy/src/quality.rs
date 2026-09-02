@@ -189,8 +189,44 @@ pub const STRUCTURE_REBUILD_RATIO: f64 = 1.8;
 pub const LOSS_EPSILON: f64 = 1e-3;
 
 /// Overshoot (achieved − requested) below which the result counts as
-/// [`QualityStatus::Met`] rather than work-capped.
+/// [`QualityStatus::Met`] rather than work-capped: the floor of the accept
+/// band. With feature `reserve-coupled-band` the band widens where the
+/// effort's loss-relative reserve places the crossing aim further above the
+/// target than this (see [`met_band`]); without it the band is this constant
+/// at every target.
 pub const MET_OVERSHOOT_BAND: f64 = 1.0;
+
+/// Reserve-coupled band (Contract B, feature `reserve-coupled-band`): the
+/// accept band is this multiple of the reserve's score margin above the
+/// target, never narrower than [`MET_OVERSHOOT_BAND`]. The aim sits at one
+/// reserve above the target, so a multiple of two centres the band on the
+/// aim: a landing on either side of it by up to one reserve is a hit. Below
+/// the target where one reserve exceeds the constant band (Balanced: 66.7,
+/// Fast: 83.3) the fixed band excluded the aim itself, so a perfect landing
+/// never stopped the search and the 2026-09-02 seven-target holdout spent
+/// 4.4–4.6 probes per encode at targets 30 and 50, almost all work-capped
+/// within two points of the target.
+#[cfg(feature = "reserve-coupled-band")]
+pub const MET_BAND_RESERVE_MULTIPLE: f64 = 2.0;
+
+/// The overshoot a feasible probe may carry and still count as a hit at
+/// `threshold` under an effort with `reserve`. Loss-relative like the aim it
+/// contains, so the band is a constant width in the controller's log-loss
+/// coordinate rather than a constant number of score points; identical to
+/// [`MET_OVERSHOOT_BAND`] wherever the reserve margin is below it (Balanced
+/// at 85 and above).
+#[must_use]
+pub fn met_band(threshold: f64, reserve: f64) -> f64 {
+    #[cfg(feature = "reserve-coupled-band")]
+    {
+        (MET_BAND_RESERVE_MULTIPLE * reserve * loss(threshold)).max(MET_OVERSHOOT_BAND)
+    }
+    #[cfg(not(feature = "reserve-coupled-band"))]
+    {
+        let _ = (threshold, reserve);
+        MET_OVERSHOOT_BAND
+    }
+}
 
 /// Smallest score margin the crossing aims above the target, whatever the
 /// effort's loss-relative reserve works out to.
@@ -392,7 +428,8 @@ impl QualityBudget {
 /// Why a completed score-targeted search stopped where it did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QualityStatus {
-    /// The selected stream meets the target within [`MET_OVERSHOOT_BAND`].
+    /// The selected stream meets the target within the accept band
+    /// ([`met_band`]).
     Met,
     /// The selected stream meets the target and its next coarser rung was
     /// verified not to, so the overshoot is forced by the ladder's step.
@@ -1383,8 +1420,7 @@ impl Navigator<'_, '_, '_, '_, '_> {
     fn crossing_is_tight(&self) -> bool {
         match self.bracket() {
             Some(((lo, _), (hi, hi_score))) => {
-                hi.get() <= lo.get().saturating_add(1)
-                    || hi_score - self.threshold() <= MET_OVERSHOOT_BAND
+                hi.get() <= lo.get().saturating_add(1) || hi_score - self.threshold() <= self.band()
             }
             None => true,
         }
@@ -1479,13 +1515,18 @@ impl Navigator<'_, '_, '_, '_, '_> {
         (guess != last.rung && !self.already_probed(guess)).then_some(guess)
     }
 
+    /// The accept band at this search's threshold under its effort's reserve.
+    fn band(&self) -> f64 {
+        met_band(self.threshold(), self.budget.reserve)
+    }
+
     /// Whether a canonical probe is feasible inside the accept band — the
     /// landing a bracketed search would keep without a coarser check.
     #[cfg(feature = "trusted-first-probe")]
     fn in_band(&self, index: usize) -> bool {
         self.probes
             .get(index)
-            .is_some_and(|p| p.feasible && p.score - self.threshold() <= MET_OVERSHOOT_BAND)
+            .is_some_and(|p| p.feasible && p.score - self.threshold() <= self.band())
     }
 
     /// One direct correction from a measured probe: the rung the loss curve
@@ -1798,7 +1839,7 @@ fn solve_baseline(
         && nav
             .probes
             .first()
-            .is_some_and(|p| p.feasible && p.score - nav.threshold() <= MET_OVERSHOOT_BAND);
+            .is_some_and(|p| p.feasible && p.score - nav.threshold() <= nav.band());
     // Contract B trial (feature `corrected-stop`): one bounded direct
     // correction (and one slope-corrected retry) before the bracket
     // expansion, on cells the surrogate detour does not take.
@@ -1830,9 +1871,9 @@ fn solve_baseline(
                 nav.probe(rung, false)?;
             }
             surrogate_hit = bounded_below
-                && nav.coarsest_feasible().is_some_and(|p| {
-                    p.rung <= rung && p.score - nav.threshold() <= MET_OVERSHOOT_BAND
-                });
+                && nav
+                    .coarsest_feasible()
+                    .is_some_and(|p| p.rung <= rung && p.score - nav.threshold() <= nav.band());
         }
     }
     if !one_shot_hit && !corrected_hit && !surrogate_hit {
@@ -2656,7 +2697,7 @@ pub fn search_frame_perceptual_with_budget(
         QualityStatus::RescuedFreshStructure
     } else if winner.quantizer.rung == Rung::FLOOR {
         QualityStatus::SaturatedFloor
-    } else if winner.score - threshold <= MET_OVERSHOOT_BAND {
+    } else if winner.score - threshold <= met_band(threshold, budget.reserve) {
         QualityStatus::Met
     } else if adjacent_infeasible {
         QualityStatus::MetAdjacentRungs
@@ -3337,5 +3378,53 @@ mod tests {
             st_stats.structural_builds, 1,
             "a structural trial did not build exactly one cover"
         );
+    }
+
+    /// The band is never narrower than the constant floor; with the reserve
+    /// coupling it widens loss-relatively below the point where the reserve
+    /// margin exceeds that floor, so the crossing aim lies inside the accept
+    /// band at every preset and target and a landing on the aim is a hit.
+    /// (Without the coupling the aim sits outside the band below Balanced
+    /// 66.7 and Fast 83.3 — the defect the coupling removes.)
+    #[test]
+    fn the_accept_band_contains_the_crossing_aim_at_every_preset_and_target() {
+        for preset in [
+            RateSearchPreset::Fast,
+            RateSearchPreset::Balanced,
+            RateSearchPreset::Quality,
+        ] {
+            let reserve = QualityBudget::for_preset(preset).reserve;
+            for target in [5.0, 30.0, 50.0, 70.0, 80.0, 85.0, 90.0, 95.0, 99.0] {
+                let band = met_band(target, reserve);
+                assert!(
+                    band >= MET_OVERSHOOT_BAND,
+                    "{preset:?} t{target}: band {band}"
+                );
+                #[cfg(feature = "reserve-coupled-band")]
+                {
+                    let margin = aim_score_for(target, reserve) - target;
+                    assert!(
+                        margin < band,
+                        "{preset:?} t{target}: aim {margin} outside {band}"
+                    );
+                    let expected = (MET_BAND_RESERVE_MULTIPLE * reserve * (100.0 - target))
+                        .max(MET_OVERSHOOT_BAND);
+                    assert!((band - expected).abs() < 1e-12);
+                }
+                #[cfg(not(feature = "reserve-coupled-band"))]
+                assert!((band - MET_OVERSHOOT_BAND).abs() < 1e-12);
+            }
+        }
+        #[cfg(feature = "reserve-coupled-band")]
+        {
+            // Balanced: 2 * 0.03 * loss. Unchanged from 85 up, 4.2 points at 30.
+            assert!((met_band(85.0, 0.03) - 1.0).abs() < 1e-12);
+            assert!((met_band(80.0, 0.03) - 1.2).abs() < 1e-12);
+            assert!((met_band(50.0, 0.03) - 3.0).abs() < 1e-12);
+            assert!((met_band(30.0, 0.03) - 4.2).abs() < 1e-12);
+            // Fast: 2 * 0.06 * loss. Unchanged only from 91.7 up.
+            assert!((met_band(95.0, 0.06) - 1.0).abs() < 1e-12);
+            assert!((met_band(85.0, 0.06) - 1.8).abs() < 1e-12);
+        }
     }
 }

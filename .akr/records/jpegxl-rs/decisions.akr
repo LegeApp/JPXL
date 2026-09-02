@@ -498,6 +498,33 @@ record jpegxl-rs.decision.promote-corrected-stop-and-median-start-2026-09-02/1 :
     ]
 }
 
+record jpegxl-rs.decision.promote-reserve-coupled-band-2026-09-02/1 : decision {
+    title "Promote the reserve-coupled accept band to the default Balanced/Fast controller (delegated decision)"
+    state active
+    scope [ path "JPXL/crates/jpxl-cli/**", path "JPXL/crates/jpxl-encode-policy/**" ]
+    topic quality-accept-band-default-2026-09-02
+    decision """
+        Feature `reserve-coupled-band` joins the jpxl-encode-policy `default` set: the accept band is met_band(threshold, reserve) = max(MET_OVERSHOOT_BAND, 2 × reserve × loss(threshold)) everywhere the band is consulted (first-probe, corrected and surrogate stops, bracket tightness, Met/MetWorkCap status), so the crossing aim (threshold + reserve × loss) always lies inside the band that stops the search. Byte-identical wherever the reserve margin is under a point: Balanced at 85 and above, Fast at 91.7 and above. The literal 'lower targets are one pass' rule is not implemented: emitting the predictor's first landing would cost 0.3-0.5 ln effective scale of bytes on photos at low targets, and the remaining low-target probes belong to the predictor (@jpegxl-rs.observation.qpv2-photo-low-target-bias-2026-09-02).
+        """
+    context """
+        The operator asked that lower targets be one pass by design, then, asked for the rule's parameters, delegated the decision ('do what you think is best for speed vs quality/size efficiency; if dropping probes for low quality encodes is not optimal and overly complex then do something else'), having earlier accepted stream changes. @jpegxl-rs.observation.crossing-aim-outside-accept-band-below-67-2026-09-02 found the cause of the 4.4-4.6 probes per encode at targets 30 and 50. Trial docs/experiments/2026-09-02-reserve-coupled-band-trial.md, scratch .agent/scratch/band-trial-20260902 (kept), preregistered gate in its README: zero floor violations on all 635 cells; Balanced ≥ 85 byte-identical 131/131; Balanced low targets probes 3.91 → 3.41 (30: 4.59 → 3.85, 50: 4.08 → 3.48) at byte geomean 1.005, wall geomean 0.93; Fast probes 2.65 → 2.16 at geomean 1.010, wall 0.88. Strict preregistered verdict Partial: three in-domain wide_interval synthetic cells of 359 exceed the 1.10 byte tail (1.234, 1.194, 1.105 — the worst stopped on the aim itself, so no band multiple fixes it), one 139 → 167-byte OOD cell lifts the holdout target-50 geomean to 1.014 (in-domain 1.005), and the Fast geomean is 1.0103 against 1.01. Promoted anyway under the delegated speed-versus-size criterion with those misses recorded, not re-argued.
+        """
+    consequences """
+        Every pre-promotion byte baseline of the quality path at Balanced targets below 85 and Fast targets below 95 is superseded; the kept trial traces are the new baselines. Reverting is one line (drop the feature from `default`); building without default features restores the pre-trial controller. The operator can reverse this on reading the recap. @jpegxl-rs.decision.low-targets-are-one-pass-by-design is superseded and @jpegxl-rs.question.low-target-one-pass-parameters resolved by this record. Next step towards one pass at low targets is a predictor change: refit the qpv2 low-target knots for the photo classes, under its own gate.
+        """
+    derived_from [ @jpegxl-rs.decision.promote-corrected-stop-and-median-start-2026-09-02 ]
+    resolves [ @jpegxl-rs.question.low-target-one-pass-parameters ]
+    supersedes [ @jpegxl-rs.decision.low-targets-are-one-pass-by-design ]
+    supported_by [
+        @jpegxl-rs.evidence.band-trial-caldev-low-targets-2026-09-02,
+        @jpegxl-rs.evidence.band-trial-fast-holdout-2026-09-02,
+        @jpegxl-rs.evidence.band-trial-holdout-seven-target-2026-09-02,
+        @jpegxl-rs.evidence.band-trial-q85-identity-2026-09-02,
+        @jpegxl-rs.observation.crossing-aim-outside-accept-band-below-67-2026-09-02,
+        @jpegxl-rs.observation.qpv2-photo-low-target-bias-2026-09-02
+    ]
+}
+
 record jpegxl-rs.decision.quality-miss-fallback-semantics/1 : decision {
     title "An under-target perceptual result is refused at the facade by default; lossless and best-effort are explicit opt-in fallbacks"
     state proposed

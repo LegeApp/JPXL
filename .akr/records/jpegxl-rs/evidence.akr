@@ -82,6 +82,58 @@ record jpegxl-rs.evidence.b1g-shadow-identity-2026-08-30/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.band-trial-caldev-low-targets-2026-09-02/1 : evidence {
+    title "Band trial: Balanced calibration+development low-target run holds the floor and removes half a probe, with a three-cell synthetic byte tail"
+    state verified
+    result pass
+    method command
+    observed_at git:d7cc8b0f29446a11289ace1db04e8bbebf72b1b4
+    command "taskset -c 0,2,4,6 python3 JPXL/tools/one_shot_promotion_ab.py --manifest test-set/quality-corpus.json --splits calibration development --default-binary bin/jpxl-ref --one-shot-binary bin/jpxl-band --targets 30 50 70 80 --threads 4 --output ab-caldev-low4.json --keep-traces traces-caldev-low4"
+    artifact "JPXL/docs/experiments/2026-09-02-reserve-coupled-band-trial.md"
+    summary """
+        Balanced calibration+development at 30/50/70/80, 284 cells: 0 floor violations; byte geomean 1.0047 (per target 1.0042/1.0058/1.0075/1.0014, in-domain 1.0048); probes 3.91 -> 3.41 (30: 4.59 -> 3.85, 50: 4.08 -> 3.48, 70: 3.73 -> 3.18, 80: 3.23 -> 3.13), cells at <= 2 probes 54 -> 95; tail: 3 of 268 in-domain (wide_interval) cells above 1.10 (text-screenshot-white2 t30 1.234, gradient-dither-highamp t70 1.194 and t50 1.105) - the preregistered tail criterion is missed; wall geomean 0.93
+        """
+}
+
+record jpegxl-rs.evidence.band-trial-fast-holdout-2026-09-02/1 : evidence {
+    title "Band trial: Fast holdout run holds the floor and ends in one or two probes on 84 of 140 cells at byte geomean 1.010"
+    state verified
+    result pass
+    method command
+    observed_at git:d7cc8b0f29446a11289ace1db04e8bbebf72b1b4
+    command "taskset -c 0,2,4,6 python3 JPXL/tools/one_shot_promotion_ab.py --manifest test-set/quality-corpus.json --splits holdout --default-binary bin/jpxl-ref --one-shot-binary bin/jpxl-band --targets 30 50 70 80 85 90 95 --threads 4 --effort fast --output ab-fast-holdout-7t.json --keep-traces traces-fast-holdout-7t"
+    artifact "JPXL/docs/experiments/2026-09-02-reserve-coupled-band-trial.md"
+    summary """
+        Fast preset, holdout 7 targets, 140 cells: 0 floor violations; byte geomean 1.0103 (30: 1.018, 50: 1.018, 70: 1.010, 80: 1.017, 85: 1.008, 90: 1.002, 95: identical 20/20), no cell above 1.10 (worst 1.100); probes 2.65 -> 2.16, cells at <= 2 probes 33 -> 84 (every cell at 30 and 50 used all three probes before); wall geomean 0.88. The preregistered Fast geomean bound of 1.01 is missed by 0.0003.
+        """
+}
+
+record jpegxl-rs.evidence.band-trial-holdout-seven-target-2026-09-02/1 : evidence {
+    title "Band trial: Balanced holdout seven-target run holds the floor, is identical at 85+, and removes a probe at 30 and 50"
+    state verified
+    result pass
+    method command
+    observed_at git:d7cc8b0f29446a11289ace1db04e8bbebf72b1b4
+    command "taskset -c 0,2,4,6 python3 JPXL/tools/one_shot_promotion_ab.py --manifest test-set/quality-corpus.json --splits holdout --default-binary bin/jpxl-ref --one-shot-binary bin/jpxl-band --targets 30 50 70 80 85 90 95 --threads 4 --output ab-holdout-7t.json --keep-traces traces-holdout-7t"
+    artifact "JPXL/docs/experiments/2026-09-02-reserve-coupled-band-trial.md"
+    summary """
+        Reserve-coupled band vs promoted default, Balanced holdout 7 targets, 140 cells: 0 floor violations both arms; byte geomean 1.0033 (30: 1.003, 50: 1.014 from one 139->167-byte OOD cell, in-domain 1.005; 70: 1.004; 80: 1.002); 85/90/95 byte-identical 60/60; probes 3.48 -> 3.13 (30: 4.60 -> 3.65, 50: 4.45 -> 3.40); wall geomean 0.94 (reported, not claimed)
+        """
+}
+
+record jpegxl-rs.evidence.band-trial-q85-identity-2026-09-02/1 : evidence {
+    title "Band trial: byte-identical at Balanced 85 and above (131/131 cells)"
+    state verified
+    result pass
+    method command
+    observed_at git:d7cc8b0f29446a11289ace1db04e8bbebf72b1b4
+    command "taskset -c 0,2,4,6 python3 JPXL/tools/one_shot_promotion_ab.py --manifest test-set/quality-corpus.json --splits calibration development --default-binary bin/jpxl-ref --one-shot-binary bin/jpxl-band --targets 85 --threads 4 --output ab-caldev-q85.json --keep-traces traces-caldev-q85"
+    artifact "JPXL/docs/experiments/2026-09-02-reserve-coupled-band-trial.md"
+    summary """
+        Balanced calibration+development at 85, 71 cells: 71/71 byte-identical, achieved scores and probe counts identical (2.97 mean); with the holdout run's 60 cells at 85/90/95 the reserve-coupled band is byte-identical on 131/131 Balanced cells at targets >= 85, as max(1.0, 2*0.03*loss) predicts
+        """
+}
+
 record jpegxl-rs.evidence.bench-vs-libjxl-reproducible-2026-08-25/1 : evidence {
     title "One documented command compares JPXL and native cjxl/djxl on the same inputs with recorded provenance"
     state verified
@@ -6383,6 +6435,32 @@ record jpegxl-rs.evidence.probe-next-stage-scoped-2026-09-01/1 : evidence {
         The next probe-simplification investigation is scoped as @jpegxl-rs.work.probe-simplification-next-stage-2026-09-01/1: it names its measurement inputs (the locked 4.3 MP and 12 MP anchors, quiet_ab.py at t4/t6 with 12 ABBA repetitions, the canonical probe trace with per-probe 422-489 ms walls) and sets the Contract B boundary as an explicit acceptance gate — any change that can alter the emitted stream requires a separate Contract B decision record, not implementation under that item.
         """
     derived_from [ @jpegxl-rs.assessment.exact-base-encoder-frontier-2026-09-01/1 ]
+}
+
+record jpegxl-rs.evidence.promoted-band-default-identity-2026-09-02/1 : evidence {
+    title "Promoted band default matches the trial arm and is thread-count identical on 18/18 spot cells"
+    state verified
+    result pass
+    method command
+    observed_at git:d7cc8b0f29446a11289ace1db04e8bbebf72b1b4
+    command ".agent/scratch/band-trial-20260902/promote.sh (cargo build --release -p jpxl-cli with reserve-coupled-band in default; six spot-check images at targets 30/50/85, threads 1 and 4, sha256 against the trial's bin/jpxl-band)"
+    artifact "JPXL/docs/experiments/2026-09-02-reserve-coupled-band-trial.md"
+    summary """
+        The build with reserve-coupled-band in the policy crate's default set (sha256 ec5263e9...) is byte-identical to the trial's candidate binary and across 1 vs 4 threads on all 18 spot-check cells (photo-large 12 MP, photo-mid, text-screenshot, gradient, saturated, noise-lowlight at 30, 50 and 85)
+        """
+}
+
+record jpegxl-rs.evidence.promoted-band-default-workspace-gates-2026-09-02/1 : evidence {
+    title "Workspace gates pass with the reserve-coupled band in the default feature set"
+    state verified
+    result pass
+    method command
+    observed_at git:d7cc8b0f29446a11289ace1db04e8bbebf72b1b4
+    command "cd JPXL && cargo clippy --workspace --all-targets -- -D warnings && cargo clippy -p jpxl-encode-policy --all-targets --no-default-features -- -D warnings && cargo fmt --all --check && cargo test --workspace --release"
+    artifact "JPXL/docs/experiments/2026-09-02-reserve-coupled-band-trial.md"
+    summary """
+        With reserve-coupled-band in default: workspace clippy clean with and without default features, fmt clean, cargo test --workspace --release exit 0 with no failing test-result line (full log band-trial-20260902/test-promoted-full.log); the new unit test the_accept_band_contains_the_crossing_aim_at_every_preset_and_target passes with and without the feature
+        """
 }
 
 record jpegxl-rs.evidence.promoted-default-matches-trial-arm-2026-09-02/1 : evidence {
