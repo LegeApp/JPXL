@@ -978,6 +978,237 @@ def cmd_train(args: argparse.Namespace) -> int:
     return 0
 
 
+# --------------------------------------------------------------------------
+# Case table (nearest-neighbour crossing curves)
+# --------------------------------------------------------------------------
+
+CASES_MODEL_VERSION = "qpv2-cases-1"
+CASES_NEIGHBOURS = 2
+CASES_DISTANCE_EPS = 0.05
+CASES_PRIOR_BETA = 0.9
+
+
+def build_cases(rows: list[dict]) -> dict:
+    """One case per image with every knot crossed: standardized features, the
+    ln crossing scale at each knot, and ln beta at each knot (missing betas
+    take the image's own geometric mean, else the prior)."""
+    by_image: dict[str, dict] = {}
+    for r in rows:
+        by_image.setdefault(r["image_id"], {"rows": {}, "row": r})["rows"][r["target"]] = r
+    images = [
+        v for v in by_image.values()
+        if all(t in v["rows"] and v["rows"][t]["state"] != "censored" for t in TARGET_KNOTS)
+    ]
+    raw = [feature_vector(v["row"]["source_features"], "source+transform", v["row"]["transform_features"]) for v in images]
+    centers, scales = robust_standardizer(raw)
+    cases = []
+    for v, feats in zip(images, raw):
+        betas = [v["rows"][t].get("beta") for t in TARGET_KNOTS]
+        known = [math.log(b) for b in betas if b]
+        fill = sum(known) / len(known) if known else math.log(CASES_PRIOR_BETA)
+        cases.append({
+            "id": v["row"]["image_id"],
+            "family_id": v["row"]["family_id"],
+            "split": v["row"]["split"],
+            "class": v["row"]["class"],
+            "z": standardize(feats, centers, scales),
+            "ln_crossing": [math.log(v["rows"][t]["crossing_scale"]) for t in TARGET_KNOTS],
+            "ln_beta": [math.log(b) if b else fill for b in betas],
+        })
+    z_range = [
+        (min(c["z"][j] for c in cases), max(c["z"][j] for c in cases)) for j in range(len(centers))
+    ]
+    return {"centers": centers, "scales": scales, "z_range": z_range, "cases": cases}
+
+
+def _interp_knots(values: list[float], x: float) -> float:
+    """Linear interpolation of per-knot values against ln loss(target), clamped at the end knots."""
+    xs = [math.log(max(100.0 - t, 1e-3)) for t in TARGET_KNOTS]  # descending
+    if x >= xs[0]:
+        return values[0]
+    if x <= xs[-1]:
+        return values[-1]
+    for (xa, va), (xb, vb) in zip(zip(xs, values), zip(xs[1:], values[1:])):
+        if xb <= x <= xa:
+            span = xa - xb
+            return va if span <= 1e-12 else va + (xa - x) / span * (vb - va)
+    return values[-1]
+
+
+def cases_predict(table: dict, cases: list[dict], z: list[float], target: float,
+                  k: int = CASES_NEIGHBOURS, eps: float = CASES_DISTANCE_EPS) -> dict:
+    """The runtime rule: distance-weighted mean of the k nearest cases' curves at `target`."""
+    x = math.log(max(100.0 - target, 1e-3))
+    scored = sorted(
+        ((math.sqrt(sum((a - b) ** 2 for a, b in zip(c["z"], z))), i) for i, c in enumerate(cases)),
+        key=lambda di: (di[0], di[1]),
+    )[:k]
+    weights = [1.0 / (d + eps) for d, _ in scored]
+    total = sum(weights)
+    crossings = [_interp_knots(cases[i]["ln_crossing"], x) for _, i in scored]
+    betas = [_interp_knots(cases[i]["ln_beta"], x) for _, i in scored]
+    return {
+        "ln_crossing": sum(w * c for w, c in zip(weights, crossings)) / total,
+        "ln_beta": sum(w * b for w, b in zip(weights, betas)) / total,
+        "low": min(crossings),
+        "high": max(crossings),
+        "nearest": scored[0][0],
+        "neighbours": [cases[i]["id"] for _, i in scored],
+    }
+
+
+def cases_metrics(train_cases: list[dict], test_cases: list[dict], k: int, eps: float) -> dict:
+    """Abs ln error of the case rule on every knot of every test case."""
+    errors: list[float] = []
+    by_class: dict[str, list[float]] = {}
+    bias = 0.0
+    for c in test_cases:
+        pool = [t for t in train_cases if t["family_id"] != c["family_id"]]
+        for j, target in enumerate(TARGET_KNOTS):
+            p = cases_predict(None, pool, c["z"], target, k, eps)
+            e = p["ln_crossing"] - c["ln_crossing"][j]
+            errors.append(abs(e)); bias += e
+            by_class.setdefault(c["class"], []).append(abs(e))
+    errors.sort()
+    def q(v: list[float], f: float) -> float:
+        return v[min(len(v) - 1, int(f * len(v)))] if v else float("nan")
+    return {
+        "rows": len(errors),
+        "median_abs_ln_error": q(errors, 0.5),
+        "p90_abs_ln_error": q(errors, 0.9),
+        "p99_abs_ln_error": q(errors, 0.99),
+        "within_0_05": sum(e <= 0.05 for e in errors) / max(len(errors), 1),
+        "within_0_10": sum(e <= 0.10 for e in errors) / max(len(errors), 1),
+        "mean_bias": bias / max(len(errors), 1),
+        "per_class_median": {cls: q(sorted(v), 0.5) for cls, v in sorted(by_class.items())},
+    }
+
+
+def generate_cases_rust(table: dict, provenance: dict, k: int, eps: float, emitted_splits: list[str]) -> str:
+    dim = len(table["centers"])
+    lines = [
+        "//! Generated case table for the one-shot quality program's crossing",
+        "//! predictor (nearest-neighbour crossing curves).",
+        "//!",
+        f"//! GENERATED by `tools/quality_predictor_v2.py {TOOL_VERSION}` (train-cases) — do",
+        "//! not edit by hand; retrain and regenerate. Consumed only with the",
+        "//! `case-predictor` feature; the exact controller stays authoritative.",
+        "//!",
+        f"//! model_version: {CASES_MODEL_VERSION}",
+        "//! feature_schema: qpv2-st/1",
+        f"//! labels: {provenance['labels_sha256']}",
+        f"//! splits: {', '.join(emitted_splits)}",
+        f"//! trained_at: {provenance['generated_at']}",
+        f"//! git: {provenance['git']['commit']} (dirty: {provenance['git']['dirty']})",
+        "",
+        "/// The generated case table's version string.",
+        f'pub const QPV2_CASES_MODEL_VERSION: &str = "{CASES_MODEL_VERSION}";',
+        "/// The feature-vector dimension of every case (the qpv2-st/1 schema).",
+        f"pub const QPV2_CASES_FEATURE_DIM: usize = {dim};",
+        "/// Cases averaged for one prediction, nearest first.",
+        f"pub const QPV2_CASES_NEIGHBOURS: usize = {k};",
+        "/// Added to a case's standardized-feature distance before its inverse",
+        "/// becomes the case's weight, so an exact match does not dominate.",
+        f"pub const QPV2_CASES_DISTANCE_EPS: f64 = {eps!r};",
+        "/// Robust per-feature centers (medians over the case images).",
+        f"pub const QPV2_CASES_FEATURE_CENTERS: [f64; {dim}] = {rust_array(table['centers'])};",
+        "/// Robust per-feature scales (1.4826 x MAD, floored).",
+        f"pub const QPV2_CASES_FEATURE_SCALES: [f64; {dim}] = {rust_array(table['scales'])};",
+        "/// The SSIMULACRA2 targets every case's curve is sampled at, ascending.",
+        f"pub const QPV2_CASES_KNOT_TARGETS: [f64; {len(TARGET_KNOTS)}] = {rust_array(TARGET_KNOTS)};",
+        "/// Per-feature (min, max) of the standardized features over the cases:",
+        "/// the table's domain. A frame outside it (with the runtime's margin)",
+        "/// is out of distribution and keeps the legacy start.",
+        f"pub const QPV2_CASES_FEATURE_Z_RANGE: [(f64, f64); {dim}] = [",
+        *[f"    ({lo!r}, {hi!r})," for lo, hi in table["z_range"]],
+        "];",
+        "",
+        "/// One labelled image: its standardized features and its oracle",
+        "/// crossing curve, sampled at the knot targets.",
+        "#[derive(Debug, Clone, Copy, PartialEq)]",
+        "pub struct Qpv2Case {",
+        "    /// The corpus image id, for traces and audits.",
+        "    pub id: &'static str,",
+        "    /// Standardized qpv2-st/1 feature vector.",
+        f"    pub z: [f64; {dim}],",
+        "    /// ln effective scale at which the image crosses each knot target.",
+        f"    pub ln_crossing: [f64; {len(TARGET_KNOTS)}],",
+        "    /// ln local loss exponent at each knot target.",
+        f"    pub ln_beta: [f64; {len(TARGET_KNOTS)}],",
+        "}",
+        "",
+        "/// The case table, in corpus id order.",
+        "pub const QPV2_CASES: &[Qpv2Case] = &[",
+    ]
+    for c in sorted(table["cases"], key=lambda c: c["id"]):
+        lines += [
+            "    Qpv2Case {",
+            f'        id: "{c["id"]}",',
+            f"        z: {rust_array(c['z'])},",
+            f"        ln_crossing: {rust_array(c['ln_crossing'])},",
+            f"        ln_beta: {rust_array(c['ln_beta'])},",
+            "    },",
+        ]
+    lines += ["];", ""]
+    return "\n".join(lines)
+
+
+def cmd_train_cases(args: argparse.Namespace) -> int:
+    _, rows = load_labels(args.labels)
+    rows = [
+        r for r in rows
+        if min(r["source_features"]["width"], r["source_features"]["height"]) >= MIN_DOMAIN_SIDE
+    ]
+    with open(args.transform_features, encoding="utf-8") as fh:
+        transform_map = json.load(fh)
+    for row in rows:
+        row["transform_features"] = transform_map.get(row["image_id"])
+    rows = [r for r in rows if r.get("transform_features") is not None]
+    provenance = {
+        "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "labels_sha256": sha256_file(args.labels),
+        "git": git_provenance(args.repo_root),
+        "tool_version": TOOL_VERSION,
+    }
+    blind = None if args.blind_split == "none" else args.blind_split
+    train_rows = [r for r in rows if r["split"] != blind]
+    blind_rows = [r for r in rows if blind and r["split"] == blind]
+    table = build_cases(train_rows)
+    lofo = cases_metrics(table["cases"], table["cases"], args.k, args.distance_eps)
+    report = {
+        "schema": REPORT_SCHEMA,
+        "model_version": CASES_MODEL_VERSION,
+        "provenance": provenance,
+        "neighbours": args.k,
+        "distance_eps": args.distance_eps,
+        "emitted_splits": sorted({r["split"] for r in train_rows}),
+        "cases": len(table["cases"]),
+        "lofo": lofo,
+    }
+    print(f"[cases k={args.k}] {len(table['cases'])} cases; LOFO {json.dumps(lofo)}")
+    if blind_rows:
+        blind_table = build_cases(blind_rows)
+        # Standardize the blind images with the training table's standardizer.
+        for c, feats in zip(blind_table["cases"], [
+            feature_vector(v["source_features"], "source+transform", v["transform_features"])
+            for v in [next(r for r in blind_rows if r["image_id"] == c["id"]) for c in blind_table["cases"]]
+        ]):
+            c["z"] = standardize(feats, table["centers"], table["scales"])
+        blind_metrics = cases_metrics(table["cases"], blind_table["cases"], args.k, args.distance_eps)
+        report["blind_split"] = blind
+        report["blind"] = blind_metrics
+        print(f"[cases k={args.k}] blind {blind}: {json.dumps(blind_metrics)}")
+    rust = generate_cases_rust(table, provenance, args.k, args.distance_eps, report["emitted_splits"])
+    with open(args.rust_out, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(rust)
+    report["emitted"] = {"rust": args.rust_out, "rust_sha256": hashlib.sha256(rust.encode()).hexdigest()}
+    with open(args.report_out, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(json.dumps(report, indent=2) + "\n")
+    print(f"wrote {args.rust_out} and {args.report_out}")
+    print("note: run `cargo fmt --all` — the emitted table is not rustfmt-shaped")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1005,6 +1236,17 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--rust-out", required=True)
     train.add_argument("--report-out", required=True)
     train.set_defaults(func=cmd_train)
+    cases = sub.add_parser("train-cases", help="build, cross-validate, and emit the nearest-neighbour case table")
+    cases.add_argument("--labels", required=True)
+    cases.add_argument("--transform-features", required=True)
+    cases.add_argument("--repo-root", default=".")
+    cases.add_argument("--blind-split", default="holdout",
+                       help="split kept out of the emitted table and scored once; 'none' emits every split")
+    cases.add_argument("--k", type=int, default=CASES_NEIGHBOURS)
+    cases.add_argument("--distance-eps", type=float, default=CASES_DISTANCE_EPS)
+    cases.add_argument("--rust-out", required=True)
+    cases.add_argument("--report-out", required=True)
+    cases.set_defaults(func=cmd_train_cases)
     return parser
 
 

@@ -130,6 +130,25 @@ record jpegxl-rs.observation.bpg-rs-aq-precedent-2026-08-10/2 : observation {
     author "GitHub Uploader"
 }
 
+record jpegxl-rs.observation.case-table-first-guess-study-2026-09-02/1 : observation {
+    title "Nearest-neighbour crossing curves cut the first-guess error to a third of the linear knot model's on the current corpus; natural content is data-limited at about 0.11 ln"
+    state verified
+    scope [ path "JPXL/crates/jpxl-encode-policy/**", path "JPXL/tools/**" ]
+    statement """
+        Offline study (.agent/scratch/qpv2-firstguess-20260902, eval.py..eval5.py) on the 623 in-domain rows of the 2026-09-02 all-knot oracle labels, scored in ln effective scale against the oracle crossing. The deployed qpv2-st-1 (a Python port matching the runtime median on 393/393 comparable trace cells) has median abs error 0.32 with bias +0.29 (natural content 0.14 median, +0.31 bias at target 30; synthetic 0.62); its first probe lands in the accept band on 13% of cells. Refitting the pooled linear structure on the current labels under leave-one-family-out (LOFO) gives 0.42-0.52 median at any ridge or interaction set; per-knot affine fits are worse. A case table - every labelled image's standardized 19-feature vector and oracle crossing curve, prediction = distance-weighted (1/(d+0.05)) mean of the 2 nearest cases' curves at the requested score - gives LOFO median 0.104 (natural 0.110, graphic 0.069, synthetic 0.113), 49% of rows within 0.10, bias -0.04 at every target; feature weighting, group routing, natural-only linear models and kNN residual corrections do not improve it. Neighbour beta is closer to the oracle (median |ln ratio| 0.24) than the knot model's (0.36) or the 0.9 prior (0.45). Simulating the corrected-stop sequence on the oracle curves: 3.01 -> 2.41 mean probes over all rows, 2.95 -> 2.09 on the holdout split, first-probe stops 84 -> 187 of 623; routing far cells to the exact controller costs more than trusting the neighbours. The natural class (21 families) sits near 0.11-0.14 median under every method: more labelled natural images are the lever there, not a different model.
+        """
+    observed_at git:fb3662d6fbffa703e63a251f176c1510d05bf17a
+    method instrumented
+    watches [
+        "JPXL/tools/quality_predictor_v2.py",
+        "JPXL/crates/jpxl-encode-policy/src/quality_prediction.rs"
+    ]
+    derived_from [
+        @jpegxl-rs.assessment.two-probe-path-is-predictor-bound-2026-09-02,
+        @jpegxl-rs.observation.qpv2-photo-low-target-bias-2026-09-02
+    ]
+}
+
 record jpegxl-rs.observation.contract-b-corrected-stop-trial-2026-09-02/1 : observation {
     title "Contract B trial: corrected stop plus large-frame median start removes 0.44 probes per encode with zero floor violations and neutral bytes; trusted first probe alone is byte-identical; median start alone is a three-cell 12 MP lever"
     state verified

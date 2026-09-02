@@ -39,7 +39,10 @@ def parse_line(stdout: str) -> dict:
 def run_cell(binary: str, image_path: str, target: float, threads: int, trace_path: str,
              keep_trace: str | None = None, effort: str | None = None) -> dict:
     env = dict(os.environ, JPXL_QUALITY_TRACE=trace_path)
-    out_path = os.path.join(tempfile.gettempdir(), "oneshot-ab.jxl")
+    # Per-process names: two harnesses on one host must never share a
+    # stream or trace file (a shared trace file appends the other run's
+    # records to this run's kept traces).
+    out_path = os.path.join(tempfile.gettempdir(), f"oneshot-ab-{os.getpid()}.jxl")
     start = time.perf_counter()
     argv = [binary, "encode", "--quality", f"{target}", "--threads", str(threads)]
     if effort:
@@ -137,19 +140,23 @@ def main(argv: list[str]) -> int:
         for target in args.targets:
             cell = {"image_id": image["id"], "class": image.get("class"),
                     "pixels": width * height, "target": target}
-            trace = os.path.join(tempfile.gettempdir(), "oneshot-ab-trace.jsonl")
+            trace = os.path.join(tempfile.gettempdir(), f"oneshot-ab-trace-{os.getpid()}.jsonl")
             cell["default"] = run_cell(args.default_binary, path, target, args.threads, trace,
                                        keep_default, args.effort)
             cell["one_shot"] = run_cell(args.one_shot_binary, path, target, args.threads, trace,
                                         keep_one_shot, args.effort)
             rows.append(cell)
             d, o = cell["default"], cell["one_shot"]
+
+            def num(value, digits=2):
+                return "error" if value is None else f"{value:.{digits}f}"
+
             print(
                 f"{image['id']} t={target}: bytes {d.get('bytes')}->{o.get('bytes')} "
-                f"achieved {d.get('achieved'):.2f}->{o.get('achieved'):.2f} "
+                f"achieved {num(d.get('achieved'))}->{num(o.get('achieved'))} "
                 f"recon {d.get('work', {}).get('reconstructions')}->"
                 f"{o.get('work', {}).get('reconstructions')} "
-                f"wall {d.get('wall'):.2f}s->{o.get('wall'):.2f}s",
+                f"wall {num(d.get('wall'))}s->{num(o.get('wall'))}s",
                 flush=True,
             )
 

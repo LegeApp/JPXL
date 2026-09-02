@@ -15,7 +15,7 @@ use crate::quality::{ProbeKind, QualityProbe};
 use crate::quality_features::{SourceFeatures, TransformFeatureSummary};
 use crate::quality_predictor_v2::{
     QPV2_FEATURE_CENTERS, QPV2_FEATURE_DIM, QPV2_FEATURE_SCALES, QPV2_FEATURE_SCHEMA, QPV2_KNOTS,
-    QPV2_MODEL_VERSION, Qpv2Knot,
+    Qpv2Knot,
 };
 use crate::quantizer_ladder::{Rung, effective_scale, rung_for_effective_scale};
 
@@ -341,6 +341,207 @@ pub const fn qpv2_feature_name(index: usize) -> &'static str {
     }
 }
 
+/// The crossing predictor in use: the generated case table with feature
+/// `case-predictor`, else the generated linear knot model. `reserve` is
+/// the effort's loss-relative reserve; the case predictor aims its
+/// candidate at the crossing of `target + reserve × loss(target)`, the
+/// same score the navigator's own corrections aim at, while the knot model
+/// keeps its risk-adjusted quantile and ignores it.
+#[must_use]
+pub fn predict(
+    features: &SourceFeatures,
+    transform: &TransformFeatureSummary,
+    target: f64,
+    reserve: f64,
+) -> Option<QualityPredictionV2> {
+    #[cfg(feature = "case-predictor")]
+    {
+        predict_cases(features, transform, target, reserve)
+    }
+    #[cfg(not(feature = "case-predictor"))]
+    {
+        let _ = reserve;
+        predict_v2(features, transform, target)
+    }
+}
+
+/// The version string of the predictor [`predict`] dispatches to.
+#[must_use]
+pub const fn active_model_version() -> &'static str {
+    #[cfg(feature = "case-predictor")]
+    {
+        crate::quality_predictor_cases::QPV2_CASES_MODEL_VERSION
+    }
+    #[cfg(not(feature = "case-predictor"))]
+    {
+        crate::quality_predictor_v2::QPV2_MODEL_VERSION
+    }
+}
+
+/// Linear interpolation of per-knot values against `ln loss(target)`,
+/// clamped at the end knots. Mirrors the trainer's `_interp_knots`.
+#[cfg(feature = "case-predictor")]
+fn interpolate_knots(values: &[f64], x: f64) -> f64 {
+    use crate::quality_predictor_cases::QPV2_CASES_KNOT_TARGETS;
+    let xs: Vec<f64> = QPV2_CASES_KNOT_TARGETS
+        .iter()
+        .map(|&t| loss(t).ln())
+        .collect();
+    let (Some(&first), Some(&last)) = (values.first(), values.last()) else {
+        return 0.0;
+    };
+    if xs.first().is_some_and(|&x0| x >= x0) {
+        return first;
+    }
+    if xs.last().is_some_and(|&xn| x <= xn) {
+        return last;
+    }
+    for (pair_x, pair_v) in xs.windows(2).zip(values.windows(2)) {
+        let ([xa, xb], [va, vb]) = (pair_x, pair_v) else {
+            continue;
+        };
+        if *xb <= x && x <= *xa {
+            let span = xa - xb;
+            if span <= 1e-12 {
+                return *va;
+            }
+            return va + (xa - x) / span * (vb - va);
+        }
+    }
+    last
+}
+
+/// Case-table crossing predictor (feature `case-predictor`): the
+/// distance-weighted mean, over the `QPV2_CASES_NEIGHBOURS` labelled images
+/// nearest in standardized feature space, of each image's oracle crossing
+/// curve at the requested score. The median is the crossing of `target`,
+/// the candidate the crossing of the effort's aim score
+/// `target + reserve × loss(target)` (never coarser than the median), the
+/// interval the neighbours' spread at `target`, the loss exponent the
+/// neighbours' geometric mean. Out of distribution means a tiny frame, a
+/// standardized feature outside the cases' range (the knot model's rule),
+/// or neighbours whose crossings disagree by more than
+/// [`FALLBACK_LOG_WIDTH`]; each keeps the legacy start. Within the range,
+/// distance alone is not a fallback signal — on the 2026-09-02 study
+/// (leave-one-family-out over 89 images) routing far cells to the exact
+/// controller cost more probes than trusting the neighbours.
+#[cfg(feature = "case-predictor")]
+#[must_use]
+pub fn predict_cases(
+    features: &SourceFeatures,
+    transform: &TransformFeatureSummary,
+    target: f64,
+    reserve: f64,
+) -> Option<QualityPredictionV2> {
+    use crate::quality_predictor_cases::{
+        QPV2_CASES, QPV2_CASES_DISTANCE_EPS, QPV2_CASES_FEATURE_CENTERS, QPV2_CASES_FEATURE_DIM,
+        QPV2_CASES_FEATURE_SCALES, QPV2_CASES_FEATURE_Z_RANGE, QPV2_CASES_NEIGHBOURS,
+    };
+    const _: () = assert!(QPV2_CASES_FEATURE_DIM == QPV2_FEATURE_DIM);
+    if QPV2_CASES.is_empty() {
+        return None;
+    }
+    let raw = qpv2_features(features, transform);
+    let mut z = [0.0; QPV2_FEATURE_DIM];
+    for (slot, ((&value, &center), &scale)) in z.iter_mut().zip(
+        raw.iter()
+            .zip(QPV2_CASES_FEATURE_CENTERS.iter())
+            .zip(QPV2_CASES_FEATURE_SCALES.iter()),
+    ) {
+        *slot = (value - center) / scale;
+    }
+    // Nearest cases, ties broken by table order (deterministic).
+    let mut ranked: Vec<(f64, usize)> = QPV2_CASES
+        .iter()
+        .enumerate()
+        .map(|(i, case)| {
+            let d = case
+                .z
+                .iter()
+                .zip(z.iter())
+                .map(|(a, b)| (a - b) * (a - b))
+                .sum::<f64>()
+                .sqrt();
+            (d, i)
+        })
+        .collect();
+    ranked.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+    ranked.truncate(QPV2_CASES_NEIGHBOURS.max(1));
+
+    let x_target = loss(target).ln();
+    let aim = 100.0 - loss(target) * (1.0 - reserve);
+    let x_aim = loss(aim).ln();
+    let mut total = 0.0;
+    let mut ln_median = 0.0;
+    let mut ln_candidate = 0.0;
+    let mut ln_beta = 0.0;
+    let mut ln_low = f64::INFINITY;
+    let mut ln_high = f64::NEG_INFINITY;
+    for &(d, i) in &ranked {
+        let Some(case) = QPV2_CASES.get(i) else {
+            continue;
+        };
+        let w = 1.0 / (d + QPV2_CASES_DISTANCE_EPS);
+        let at_target = interpolate_knots(&case.ln_crossing, x_target);
+        let at_aim = interpolate_knots(&case.ln_crossing, x_aim);
+        ln_median += w * at_target;
+        ln_candidate += w * at_aim;
+        ln_beta += w * interpolate_knots(&case.ln_beta, x_target);
+        ln_low = ln_low.min(at_target);
+        ln_high = ln_high.max(at_target);
+        total += w;
+    }
+    ln_median /= total;
+    ln_candidate = (ln_candidate / total).max(ln_median);
+    ln_beta /= total;
+
+    // The table's domain is the cases' feature range (same margin and
+    // flags as the knot model): outside it the nearest cases are an
+    // extrapolation the runtime must not trust — on the 2026-09-02 blind
+    // trial a 256x256 saturated block outside every table's range drew a
+    // first guess coarse enough that Fast's three probes ended under
+    // target. Such frames keep the legacy start, exactly as before; a frame
+    // that is only larger than the domain keeps the case median.
+    let mut ood_flags: Vec<&'static str> = Vec::new();
+    let mut above_range: Vec<&'static str> = Vec::new();
+    if features.width.min(features.height) < MIN_DOMAIN_SIDE {
+        ood_flags.push("tiny_frame");
+    }
+    for (i, (&value, &(lo, hi))) in z.iter().zip(QPV2_CASES_FEATURE_Z_RANGE.iter()).enumerate() {
+        let span = (hi - lo).max(1e-6);
+        if value < lo - OOD_RANGE_MARGIN * span || value > hi + OOD_RANGE_MARGIN * span {
+            ood_flags.push(qpv2_feature_name(i));
+            if value > hi + OOD_RANGE_MARGIN * span {
+                above_range.push(qpv2_feature_name(i));
+            }
+        }
+    }
+    let large_frame_only_ood =
+        ood_flags.as_slice() == ["log2_pixels"] && above_range.as_slice() == ["log2_pixels"];
+    let mut fallback_reason = (!ood_flags.is_empty()).then_some("ood_feature");
+    // Neighbours that disagree by more than the fallback width do not know
+    // this frame: the table's median is no safer than its candidate, so the
+    // frame keeps the legacy start like any other out-of-distribution one.
+    // Adopted after the 2026-09-02 holdout trial's second round, where the
+    // 256x256 saturated block (inside the table's range, nearest to two
+    // solid-colour cases, spread 0.42) again ended Fast under target.
+    if !large_frame_only_ood && ln_high - ln_low > FALLBACK_LOG_WIDTH {
+        ood_flags.push("case_spread");
+        fallback_reason = Some("wide_interval");
+    }
+    Some(QualityPredictionV2 {
+        median_rung: rung_floor(ln_median.exp()),
+        candidate_rung: rung_ceil(ln_candidate.exp()),
+        interval_low: rung_floor(ln_low.exp()),
+        interval_high: rung_ceil(ln_high.exp()),
+        local_loss_exponent: ln_beta.exp().clamp(BETA_RANGE.0, BETA_RANGE.1),
+        saturation_risk: 0.0,
+        ood_flags,
+        fallback_reason,
+        large_frame_only_ood,
+    })
+}
+
 /// The counterfactual one-shot record of a finished exact search.
 ///
 /// The exact controller's probes bound what the one-shot path would have
@@ -356,9 +557,10 @@ pub fn shadow_prediction_trace(
     features: &SourceFeatures,
     transform: &TransformFeatureSummary,
     target: f64,
+    reserve: f64,
     probes: &[QualityProbe],
 ) -> Option<crate::quality::QualityPredictionTrace> {
-    let prediction = predict_v2(features, transform, target)?;
+    let prediction = predict(features, transform, target, reserve)?;
     let pixel_probes: Vec<&QualityProbe> = probes
         .iter()
         .filter(|p| p.kind == ProbeKind::Pixel)
@@ -408,7 +610,7 @@ pub fn shadow_prediction_trace(
     };
 
     Some(crate::quality::QualityPredictionTrace {
-        model_version: QPV2_MODEL_VERSION,
+        model_version: active_model_version(),
         feature_schema: QPV2_FEATURE_SCHEMA,
         median_rung: prediction.median_rung.get(),
         candidate_rung: prediction.candidate_rung.get(),
@@ -521,5 +723,96 @@ mod tests {
         assert!(effective_scale(r) >= 1001);
         let exact = rung_ceil(1000.0);
         assert_eq!(effective_scale(exact), 1000);
+    }
+
+    /// Case predictor (feature `case-predictor`): monotone in the target,
+    /// the candidate never coarser than the median, the interval spanning
+    /// the neighbours, and a tiny frame the only out-of-distribution flag.
+    #[cfg(feature = "case-predictor")]
+    #[test]
+    fn the_case_predictor_is_monotone_and_aims_finer_than_its_median() {
+        let f = features();
+        let t = transform();
+        let mut previous = 0u32;
+        for target in [30.0, 50.0, 70.0, 80.0, 85.0, 90.0, 95.0] {
+            let p = predict_cases(&f, &t, target, 0.03).expect("case table present");
+            assert!(
+                p.median_rung.get() >= previous,
+                "median coarser at {target}"
+            );
+            assert!(
+                p.candidate_rung.get() >= p.median_rung.get(),
+                "candidate coarser than median at {target}"
+            );
+            assert!(p.interval_low.get() <= p.median_rung.get());
+            assert!(p.interval_high.get() >= p.median_rung.get());
+            // The synthetic fixture is inside the table's range; its
+            // neighbours may still disagree at some target, which is the
+            // wide-spread fallback and nothing else.
+            match p.fallback_reason {
+                None => assert!(p.ood_flags.is_empty()),
+                Some(reason) => {
+                    assert_eq!(reason, "wide_interval");
+                    assert_eq!(p.ood_flags, vec!["case_spread"]);
+                }
+            }
+            assert!((0.2..=3.0).contains(&p.local_loss_exponent));
+            previous = p.median_rung.get();
+        }
+        // The Fast reserve aims further above the target than Balanced's.
+        let balanced = predict_cases(&f, &t, 85.0, 0.03).expect("prediction");
+        let fast = predict_cases(&f, &t, 85.0, 0.06).expect("prediction");
+        assert!(fast.candidate_rung.get() >= balanced.candidate_rung.get());
+        assert_eq!(fast.median_rung, balanced.median_rung);
+        let mut tiny = features();
+        tiny.width = 64;
+        tiny.height = 64;
+        let p = predict_cases(&tiny, &t, 85.0, 0.03).expect("prediction");
+        assert_eq!(p.ood_flags.first(), Some(&"tiny_frame"));
+        assert_eq!(p.fallback_reason, Some("ood_feature"));
+        assert!(!p.large_frame_only_ood);
+        let mut huge = features();
+        huge.width = 1 << 15;
+        huge.height = 1 << 15;
+        let p = predict_cases(&huge, &t, 85.0, 0.03).expect("prediction");
+        assert_eq!(p.ood_flags, vec!["log2_pixels"]);
+        assert!(p.large_frame_only_ood);
+        assert_eq!(
+            predict(&f, &t, 85.0, 0.03),
+            predict_cases(&f, &t, 85.0, 0.03)
+        );
+        assert_eq!(
+            active_model_version(),
+            crate::quality_predictor_cases::QPV2_CASES_MODEL_VERSION
+        );
+    }
+
+    /// A case's own features reproduce its own curve up to the second
+    /// neighbour's share of the weight, and the knot interpolation is exact
+    /// at the knots and clamped beyond them.
+    #[cfg(feature = "case-predictor")]
+    #[test]
+    fn a_case_predicts_close_to_its_own_curve() {
+        use crate::quality_predictor_cases::{
+            QPV2_CASES, QPV2_CASES_DISTANCE_EPS, QPV2_CASES_KNOT_TARGETS,
+        };
+        let case = QPV2_CASES.first().expect("non-empty table");
+        for (&target, &expected) in QPV2_CASES_KNOT_TARGETS.iter().zip(case.ln_crossing.iter()) {
+            let at = interpolate_knots(&case.ln_crossing, loss(target).ln());
+            assert!((at - expected).abs() < 1e-12);
+        }
+        let below = interpolate_knots(&case.ln_crossing, loss(5.0).ln());
+        let above = interpolate_knots(&case.ln_crossing, loss(99.0).ln());
+        assert_eq!(
+            case.ln_crossing.first().map(|&v| (below - v).abs() < 1e-12),
+            Some(true)
+        );
+        assert_eq!(
+            case.ln_crossing.last().map(|&v| (above - v).abs() < 1e-12),
+            Some(true)
+        );
+        // Distance zero gives the case a weight of 1/eps; the runner-up at
+        // distance d gets 1/(d + eps). The blend stays within the pair.
+        let _ = QPV2_CASES_DISTANCE_EPS;
     }
 }

@@ -2477,48 +2477,48 @@ pub fn search_frame_perceptual_with_budget(
     // prediction reads warmed the cover's own cache, so this costs no
     // duplicated transform work.
     #[cfg(feature = "one-shot-controller")]
-    let (predicted, prior_beta, confident_stop, use_surrogates) = match transform_features
-        .as_ref()
-        .and_then(|tf| crate::quality_prediction::predict_v2(&features, tf, target_score))
-    {
-        // Confident: the risk-adjusted candidate is the first fresh plan,
-        // and (phase N3) a feasible landing inside the accept band ends
-        // navigation there.
-        Some(p) if p.fallback_reason.is_none() => {
-            (p.candidate_rung, Some(p.local_loss_exponent), true, false)
-        }
-        // Uncertain but in distribution (wide interval, saturation risk):
-        // the navigator still runs its full bounded search from the model's
-        // median seed — and (phase S1, feature-gated) its bracket search
-        // runs at half resolution first, with canonical confirmation. Only
-        // a wide interval engages surrogates: below the width gate, 98% of
-        // cells settle in two canonical probes on the shadow corpus
-        // (2026-08-29), which no surrogate detour can beat.
-        Some(p) if p.ood_flags.is_empty() => {
-            let wide = p.interval_low.get() > 0
-                && (f64::from(p.interval_high.get()) / f64::from(p.interval_low.get())).ln()
-                    >= SURROGATE_INTERVAL_WIDTH_GATE;
-            (
-                p.median_rung,
-                Some(p.local_loss_exponent),
-                false,
-                cfg!(feature = "surrogate-navigation")
-                    && wide
-                    && target_score >= SURROGATE_TARGET_FLOOR,
-            )
-        }
-        // Contract B trial (feature `flagged-median-start`): a frame whose
-        // only out-of-distribution signal is being larger than the training
-        // domain seeds the navigator with the model's median rung, all
-        // canonical and without the model's slope. On the 2026-09-01 q85
-        // trace the legacy ladder-ceiling start cost each 12 MP photo two
-        // expansion probes the median would have skipped.
-        #[cfg(feature = "flagged-median-start")]
-        Some(p) if p.large_frame_only_ood => (p.median_rung, None, false, false),
-        // Out of distribution: keep the legacy predictor's start, all
-        // canonical.
-        _ => (predicted, None, false, false),
-    };
+    let (predicted, prior_beta, confident_stop, use_surrogates) =
+        match transform_features.as_ref().and_then(|tf| {
+            crate::quality_prediction::predict(&features, tf, target_score, budget.reserve)
+        }) {
+            // Confident: the risk-adjusted candidate is the first fresh plan,
+            // and (phase N3) a feasible landing inside the accept band ends
+            // navigation there.
+            Some(p) if p.fallback_reason.is_none() => {
+                (p.candidate_rung, Some(p.local_loss_exponent), true, false)
+            }
+            // Uncertain but in distribution (wide interval, saturation risk):
+            // the navigator still runs its full bounded search from the model's
+            // median seed — and (phase S1, feature-gated) its bracket search
+            // runs at half resolution first, with canonical confirmation. Only
+            // a wide interval engages surrogates: below the width gate, 98% of
+            // cells settle in two canonical probes on the shadow corpus
+            // (2026-08-29), which no surrogate detour can beat.
+            Some(p) if p.ood_flags.is_empty() => {
+                let wide = p.interval_low.get() > 0
+                    && (f64::from(p.interval_high.get()) / f64::from(p.interval_low.get())).ln()
+                        >= SURROGATE_INTERVAL_WIDTH_GATE;
+                (
+                    p.median_rung,
+                    Some(p.local_loss_exponent),
+                    false,
+                    cfg!(feature = "surrogate-navigation")
+                        && wide
+                        && target_score >= SURROGATE_TARGET_FLOOR,
+                )
+            }
+            // Contract B trial (feature `flagged-median-start`): a frame whose
+            // only out-of-distribution signal is being larger than the training
+            // domain seeds the navigator with the model's median rung, all
+            // canonical and without the model's slope. On the 2026-09-01 q85
+            // trace the legacy ladder-ceiling start cost each 12 MP photo two
+            // expansion probes the median would have skipped.
+            #[cfg(feature = "flagged-median-start")]
+            Some(p) if p.large_frame_only_ood => (p.median_rung, None, false, false),
+            // Out of distribution: keep the legacy predictor's start, all
+            // canonical.
+            _ => (predicted, None, false, false),
+        };
     #[cfg(not(feature = "one-shot-controller"))]
     let (prior_beta, confident_stop, use_surrogates): (Option<f64>, bool, bool) =
         (None, false, false);
@@ -2709,7 +2709,13 @@ pub fn search_frame_perceptual_with_budget(
     // finished search's own probes. Never touches the emitted bytes; absent
     // when no transform summary was computed.
     let prediction = transform_features.as_ref().and_then(|tf| {
-        crate::quality_prediction::shadow_prediction_trace(&features, tf, target_score, &trace)
+        crate::quality_prediction::shadow_prediction_trace(
+            &features,
+            tf,
+            target_score,
+            budget.reserve,
+            &trace,
+        )
     });
     Ok(QualityOutcome {
         codestream: winner.bytes,
@@ -2880,7 +2886,7 @@ mod tests {
         let summary =
             crate::quality_transform_summary(&frame, &request, &mut check_cache, Some(&executor))
                 .expect("transform summary");
-        match crate::quality_prediction::predict_v2(&features, &summary, 85.0) {
+        match crate::quality_prediction::predict(&features, &summary, 85.0, budget.reserve) {
             Some(p) if p.fallback_reason.is_none() => {
                 assert_eq!(
                     outcome.stats.predicted,

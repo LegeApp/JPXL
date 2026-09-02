@@ -89,6 +89,12 @@ flagged-median-start = []
 # violations on 635 cells, Balanced low-target probes 3.91 -> 3.41 for byte
 # geomean 1.005, Fast 2.65 -> 2.16 for 1.010, 85+ byte-identical.
 reserve-coupled-band = []
+# `case-predictor`: the first-guess crossing comes from the generated case
+# table (src/quality_predictor_cases.rs: the labelled corpus images'
+# standardized features and oracle crossing curves) as the distance-weighted
+# mean of the nearest cases' curves, instead of the linear knot model.
+# Off by default pending the 2026-09-02 blind holdout trial.
+case-predictor = []
 # S8 Phase D (AKR source `outside-advice-2026-08-06` §8;
 # `jpegxl-rs.work.arch-s8-full-redesign-scoped`):
 # the Phase C-validated (zero safety violations, exhaustively checked)

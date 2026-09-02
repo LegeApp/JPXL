@@ -79,6 +79,8 @@ pub mod quality;
 pub mod quality_features;
 pub mod quality_prediction;
 pub mod quality_predictor;
+#[cfg(feature = "case-predictor")]
+pub mod quality_predictor_cases;
 pub mod quality_predictor_v2;
 pub mod quantize;
 pub mod quantizer_ladder;
@@ -137,7 +139,7 @@ pub use quality::{
     sweep_frame_perceptual,
 };
 pub use quality_features::{SourceFeatures, TransformFeatureSummary, source_features};
-pub use quality_prediction::{QualityPredictionV2, predict_v2, shadow_prediction_trace};
+pub use quality_prediction::{QualityPredictionV2, predict, predict_v2, shadow_prediction_trace};
 pub use quantizer_ladder::{
     HF_MUL_RUNGS, LADDER_LEN, QuantizerChoice, Rung, effective_scale, rung_for_effective_scale,
 };

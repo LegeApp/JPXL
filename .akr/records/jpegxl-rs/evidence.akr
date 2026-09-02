@@ -165,6 +165,71 @@ record jpegxl-rs.evidence.blur-row-lanes-register-pressure-2026-08-31/1 : eviden
     ]
 }
 
+record jpegxl-rs.evidence.case-predictor-blind-holdout-balanced-2026-09-02/1 : evidence {
+    title "Case predictor blind Balanced holdout: floor held, bytes -1.4%, probes 3.13 -> 2.66, byte-tail criterion missed on one synthetic image"
+    state verified
+    result pass
+    method command
+    observed_at git:fb3662d6fbffa703e63a251f176c1510d05bf17a
+    command "taskset -c 0,2,4,6 python3 JPXL/tools/one_shot_promotion_ab.py --manifest test-set/quality-corpus.json --splits holdout --default-binary bin/jpxl-ref --one-shot-binary bin/jpxl-cases-blind3 --targets 30 50 70 80 85 90 95 --threads 4 --output ab-cases-holdout-7t.json --keep-traces traces-cases-holdout-7t"
+    artifact "JPXL/docs/experiments/2026-09-02-case-predictor-first-guess.md"
+    summary """
+        Case predictor (70-case calibration+development table, holdout never in it) vs the promoted default, Balanced holdout 7 targets, 140 cells, round 3 and its clean re-run identical: 0 floor violations, 0 errors; byte geomean 0.986 (30: 0.990, 50: 0.972, 70: 0.986, 80: 0.999, 85: 1.002, 90: 0.980, 95: 0.974); probes 3.13 -> 2.66 (30: 3.65 -> 2.15, 50: 3.40 -> 2.60, 70: 3.45 -> 2.75), cells at <= 2 probes 47 -> 77; wall geomean 0.90 (reported, not claimed). Two synthetic cells (saturated-hue-wheel 320x320 at 80 and 85: 1.53, 1.45) exceed the preregistered 1.15 byte tail via the new wide-spread fallback. The holdout was seen twice before the final two fallback rules (feature-range, neighbour spread > FALLBACK_LOG_WIDTH), both the knot model's existing criteria; disclosed in the document.
+        """
+}
+
+record jpegxl-rs.evidence.case-predictor-blind-holdout-fast-2026-09-02/1 : evidence {
+    title "Case predictor blind Fast holdout: floor held with no encode errors after the wide-spread fallback, probes about neutral"
+    state verified
+    result pass
+    method command
+    observed_at git:fb3662d6fbffa703e63a251f176c1510d05bf17a
+    command "taskset -c 0,2,4,6 python3 JPXL/tools/one_shot_promotion_ab.py --manifest test-set/quality-corpus.json --splits holdout --default-binary bin/jpxl-ref --one-shot-binary bin/jpxl-cases-blind3 --targets 30 50 70 80 85 90 95 --threads 4 --effort fast --output ab-cases-fast-holdout-7t.json --keep-traces traces-cases-fast-holdout-7t"
+    artifact "JPXL/docs/experiments/2026-09-02-case-predictor-first-guess.md"
+    summary """
+        Fast preset, holdout 7 targets, 140 cells, round 3: 0 floor violations, 0 errors (rounds 1 and 2 had failed on saturated-block-holdout-256x256 at target 70, where a first guess of rung 63 from two solid-colour neighbours left Fast's three probes plus rescue at 69.86 and the encoder refused to write; the wide-spread fallback removes it); byte geomean 0.988; probes 2.16 -> 2.11, cells at <= 2 probes 84 -> 87; eight synthetic cells above 1.10 (worst gradient-bilinear at 95, 1.907); wall geomean 0.97.
+        """
+}
+
+record jpegxl-rs.evidence.case-predictor-caldev-in-table-2026-09-02/1 : evidence {
+    title "Case predictor on in-table images: floor held, 127 of 213 cells end on the first probe"
+    state verified
+    result pass
+    method command
+    observed_at git:fb3662d6fbffa703e63a251f176c1510d05bf17a
+    command "taskset -c 0,2,4,6 python3 JPXL/tools/one_shot_promotion_ab.py --manifest test-set/quality-corpus.json --splits calibration development --default-binary bin/jpxl-ref --one-shot-binary bin/jpxl-cases-blind3 --targets 30 50 85 --threads 4 --output ab-cases-caldev-3t.json --keep-traces traces-cases-caldev-3t"
+    artifact "JPXL/docs/experiments/2026-09-02-case-predictor-first-guess.md"
+    summary """
+        Not blind (these 71 images are in the table): Balanced at 30/50/85, 213 cells: 0 floor violations, byte geomean 0.962, probes 3.43 -> 2.12, cells at one probe 19 -> 127, wall geomean 0.78. Shows the in-table behaviour and that exact-match first guesses keep the floor; not an accuracy measurement.
+        """
+}
+
+record jpegxl-rs.evidence.case-predictor-thread-identity-2026-09-02/1 : evidence {
+    title "Case predictor build is thread-count identical on 12/12 spot cells"
+    state verified
+    result pass
+    method command
+    observed_at git:fb3662d6fbffa703e63a251f176c1510d05bf17a
+    command "for six spot images (12 MP photo, mid photo, text screenshot, gradient, saturated, noise-lowlight) at targets 30 and 85: bin/jpxl-cases-blind3 encode --threads 4 vs --threads 1, sha256 compared (identity-cases-blind3.txt)"
+    artifact "JPXL/docs/experiments/2026-09-02-case-predictor-first-guess.md"
+    summary """
+        The case-predictor build produces byte-identical streams at 1 and 4 threads on 12 of 12 spot cells.
+        """
+}
+
+record jpegxl-rs.evidence.case-predictor-workspace-gates-2026-09-02/1 : evidence {
+    title "Workspace gates pass with the case predictor landed off by default"
+    state verified
+    result pass
+    method command
+    observed_at git:fb3662d6fbffa703e63a251f176c1510d05bf17a
+    command "cd JPXL && cargo clippy --workspace --all-targets -- -D warnings && cargo clippy --workspace --all-targets --features jpxl-cli/case-predictor -- -D warnings && cargo clippy -p jpxl-encode-policy --all-targets --no-default-features -- -D warnings && cargo fmt --all --check && cargo test --release -p jpxl-encode-policy --features case-predictor && cargo test --workspace --release"
+    artifact "JPXL/docs/experiments/2026-09-02-case-predictor-first-guess.md"
+    summary """
+        With the case predictor landed off by default and the 89-case production table in the tree: clippy clean with default, case-predictor and no-default features; fmt clean; policy crate tests pass with the feature (173 passed, incl. the new case-predictor tests); full workspace release tests pass (logs test-cases-final.log, test-default-final.log in qpv2-firstguess-20260902).
+        """
+}
+
 record jpegxl-rs.evidence.certified-rejection-shadow-bound-2026-09-01/1 : evidence {
     title "The cumulative-error unit test proves every partial is non-decreasing and closes exactly on weighted_error; the weight-table test asserts the non-negative-weight premise."
     state verified

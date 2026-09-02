@@ -94,6 +94,23 @@ record jpegxl-rs.question.one-shot-calibration-contract-b/4 : question {
     ]
 }
 
+record jpegxl-rs.question.promote-case-predictor-2026-09-02/1 : question {
+    title "Promote the case-table crossing predictor (feature case-predictor) to the default controller?"
+    state open
+    scope [ path "JPXL/crates/jpxl-encode-policy/**" ]
+    question """
+        Feature `case-predictor` replaces the qpv2-st-1 linear knot model's first guess with the distance-weighted mean of the two nearest labelled images' oracle crossing curves (generated quality_predictor_cases.rs, tool subcommand train-cases). Offline it has a third of the knot model's error with no target bias (@jpegxl-rs.observation.case-table-first-guess-study-2026-09-02). On the never-seen holdout it holds the floor on all 493 cells, saves 0.47 probes per encode at Balanced for 1.4% fewer bytes and about 10% wall, and is neutral at Fast (@jpegxl-rs.evidence.case-predictor-blind-holdout-balanced-2026-09-02, @jpegxl-rs.evidence.case-predictor-blind-holdout-fast-2026-09-02). Against it: the strict preregistered verdict is Partial (two synthetic hue-wheel cells above the 1.15 byte tail), the holdout was seen twice before the final two fallback rules (the knot model's feature-range and fallback-width criteria applied to the table), the shipped 89-case table would contain the holdout images and so is not the measured model, photos gain little at high targets (the 12-50 MP camera photos have no close case) and lose a probe at 95 on two frames for 3.75% fewer bytes, and it changes 112 of 140 holdout streams. Should it join `default`? If yes, the promotion commit should add the feature to the policy crate's default set and note that pre-promotion byte baselines of the quality path are superseded again.
+        """
+    part_of [ @jpegxl-rs.work.pqc-one-shot-controller ]
+    supported_by [
+        @jpegxl-rs.evidence.case-predictor-blind-holdout-balanced-2026-09-02,
+        @jpegxl-rs.evidence.case-predictor-blind-holdout-fast-2026-09-02,
+        @jpegxl-rs.evidence.case-predictor-caldev-in-table-2026-09-02,
+        @jpegxl-rs.evidence.case-predictor-thread-identity-2026-09-02,
+        @jpegxl-rs.observation.case-table-first-guess-study-2026-09-02
+    ]
+}
+
 record jpegxl-rs.question.route-text-lineart-via-bpg-preanalysis/1 : question {
     title "Route text/line-art content using the bpg-rs still265 preanalysis classifier?"
     state open
