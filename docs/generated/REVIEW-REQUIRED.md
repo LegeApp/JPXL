@@ -7,7 +7,7 @@
 
 What should not be trusted without re-checking: records the build flagged `stale` or `at_risk`. Neither flag means a record is wrong (D-003); both mean look at it. This view is generated on every successful build, including one that exits 0 with a long queue (D-024). An empty file on an active project is more often a sign the `watches` globs are wrong than a sign the knowledge is perfect.
 
-## Stale (64)
+## Stale (66)
 
 ### The cover/CfL objective misprices Y-channel error by 2.65x across DCT8x8 frequency; the mispricing is in the ruler, not the lever
 
@@ -171,11 +171,59 @@ What should not be trusted without re-checking: records the build flagged `stale
 
 **Cause** — `watches "JPXL/crates/jpxl-encode-policy/src/csf.rs"` was matched by `286ad71a`, which touched `JPXL/crates/jpxl-encode-policy/src/csf.rs`.
 
+### Nearest-neighbour crossing curves cut the first-guess error to a third of the linear knot model's on the current corpus; natural content is data-limited at about 0.11 ln
+
+`verified` · `@jpegxl-rs.observation.case-table-first-guess-study-2026-09-02/1` · observation · **stale** · [Nearest-neighbour crossing curves cut the first-guess error to a third of the linear knot model's on the current corpus; natural content is data-limited at about 0.11 ln](CURRENT-STATE.md#nearest-neighbour-crossing-curves-cut-the-first-guess-error-to-a-third-of-the-linear-knot-models-on-the-current-corpus-natural-content-is-data-limited-at-about-011-ln)
+
+**Cause** — `watches "JPXL/tools/quality_predictor_v2.py"` was matched by `2b1a0555`, which touched `JPXL/tools/quality_predictor_v2.py`.
+
+### Contract B trial: corrected stop plus large-frame median start removes 0.44 probes per encode with zero floor violations and neutral bytes; trusted first probe alone is byte-identical; median start alone is a three-cell 12 MP lever
+
+`verified` · `@jpegxl-rs.observation.contract-b-corrected-stop-trial-2026-09-02/1` · observation · **stale** · [Contract B trial: corrected stop plus large-frame median start removes 0.44 probes per encode with zero floor violations and neutral bytes; trusted first probe alone is byte-identical; median start alone is a three-cell 12 MP lever](CURRENT-STATE.md#contract-b-trial-corrected-stop-plus-large-frame-median-start-removes-044-probes-per-encode-with-zero-floor-violations-and-neutral-bytes-trusted-first-probe-alone-is-byte-identical-median-start-alone-is-a-three-cell-12-mp-lever)
+
+**Cause** — `watches "JPXL/crates/jpxl-encode-policy/src/quality.rs"` was matched by `2b1a0555`, which touched `JPXL/crates/jpxl-encode-policy/src/quality.rs`.
+
+### Below target 66.7 (Balanced) the crossing aim lies outside the fixed 1-point accept band, so a landing on the aim never stops the search
+
+`verified` · `@jpegxl-rs.observation.crossing-aim-outside-accept-band-below-67-2026-09-02/1` · observation · **stale** · [Below target 66.7 (Balanced) the crossing aim lies outside the fixed 1-point accept band, so a landing on the aim never stops the search](CURRENT-STATE.md#below-target-667-balanced-the-crossing-aim-lies-outside-the-fixed-1-point-accept-band-so-a-landing-on-the-aim-never-stops-the-search)
+
+**Cause** — `watches "JPXL/crates/jpxl-encode-policy/src/quality.rs"` was matched by `2b1a0555`, which touched `JPXL/crates/jpxl-encode-policy/src/quality.rs`.
+
+### The one-shot falsification screen fails on corpus coverage, not on the design: transform features halve the error, the tail is two under-represented classes
+
+`verified` · `@jpegxl-rs.observation.pqc-one-shot-gate-fails-on-corpus-coverage-2026-08-24/2` · observation · **stale** · [The one-shot falsification screen fails on corpus coverage, not on the design: transform features halve the error, the tail is two under-represented classes](CURRENT-STATE.md#the-one-shot-falsification-screen-fails-on-corpus-coverage-not-on-the-design-transform-features-halve-the-error-the-tail-is-two-under-represented-classes)
+
+**Cause** — `watches "JPXL/crates/jpxl-encode-policy/src/quality_predictor*.rs"` was matched by `2b1a0555`, which touched `JPXL/crates/jpxl-encode-policy/src/quality_predictor_cases.rs`.
+
 ### Full PR7 holdout closes the OOM tail and rejects Quality promotion
 
 `verified` · `@jpegxl-rs.observation.pqc-pr7-full-holdout-quality-rejected-2026-08-24/1` · observation · **stale** · [Full PR7 holdout closes the OOM tail and rejects Quality promotion](CURRENT-STATE.md#full-pr7-holdout-closes-the-oom-tail-and-rejects-quality-promotion)
 
-**Cause** — `watches "JPXL/crates/jpxl-encode-policy/src/quality.rs"` was matched by `2ed12734`, which touched `JPXL/crates/jpxl-encode-policy/src/quality.rs`.
+**Cause** — `watches "JPXL/crates/jpxl-encode-policy/src/quality.rs"` was matched by `2b1a0555`, which touched `JPXL/crates/jpxl-encode-policy/src/quality.rs`.
+
+### Per-probe attribution: reused-probe planning already collapses; metric then render dominate each probe
+
+`verified` · `@jpegxl-rs.observation.probe-attribution-2026-09-01/1` · observation · **stale** · [Per-probe attribution: reused-probe planning already collapses; metric then render dominate each probe](CURRENT-STATE.md#per-probe-attribution-reused-probe-planning-already-collapses-metric-then-render-dominate-each-probe)
+
+**Cause** — `watches "JPXL/crates/jpxl-encode-policy/src/quality.rs"` was matched by `2b1a0555`, which touched `JPXL/crates/jpxl-encode-policy/src/quality.rs`.
+
+### One-shot stop rate is 4.3% and fully attributable to calibration; finalist non-monotonicity is 1/76
+
+`verified` · `@jpegxl-rs.observation.probe-contract-b-shadow-2026-09-01/1` · observation · **stale** · [One-shot stop rate is 4.3% and fully attributable to calibration; finalist non-monotonicity is 1/76](CURRENT-STATE.md#one-shot-stop-rate-is-43-and-fully-attributable-to-calibration-finalist-non-monotonicity-is-176)
+
+**Cause** — `watches "JPXL/crates/jpxl-encode-policy/src/quality_prediction.rs"` was matched by `2b1a0555`, which touched `JPXL/crates/jpxl-encode-policy/src/quality_prediction.rs`.
+
+### qpv2-st-1 predicts photos too fine by about 0.36 ln effective scale at targets 30-80, and its photo loss exponent (0.85) is above the oracle's (0.65)
+
+`verified` · `@jpegxl-rs.observation.qpv2-photo-low-target-bias-2026-09-02/1` · observation · **stale** · [qpv2-st-1 predicts photos too fine by about 0.36 ln effective scale at targets 30-80, and its photo loss exponent (0.85) is above the oracle's (0.65)](CURRENT-STATE.md#qpv2-st-1-predicts-photos-too-fine-by-about-036-ln-effective-scale-at-targets-30-80-and-its-photo-loss-exponent-085-is-above-the-oracles-065)
+
+**Cause** — `watches "JPXL/crates/jpxl-encode-policy/src/quality_prediction.rs"` was matched by `2b1a0555`, which touched `JPXL/crates/jpxl-encode-policy/src/quality_prediction.rs`.
+
+### Two-probe corrected-stop replay: best variant 2.85 mean probes, floor held, bytes neutral in geo-mean; success is set by first-probe distance, not slope
+
+`verified` · `@jpegxl-rs.observation.two-probe-corrected-stop-replay-2026-09-02/2` · observation · **stale** · [Two-probe corrected-stop replay: best variant 2.85 mean probes, floor held, bytes neutral in geo-mean; success is set by first-probe distance, not slope](CURRENT-STATE.md#two-probe-corrected-stop-replay-best-variant-285-mean-probes-floor-held-bytes-neutral-in-geo-mean-success-is-set-by-first-probe-distance-not-slope)
+
+**Cause** — `watches "JPXL/crates/jpxl-encode-policy/src/quality.rs"` was matched by `2b1a0555`, which touched `JPXL/crates/jpxl-encode-policy/src/quality.rs`.
 
 ### Parallelizing the serial varblock render and linearization cut 12 MP quality wall 21%; ratio 3.11x -> 2.46x on the measuring host
 
@@ -188,30 +236,6 @@ What should not be trusted without re-checking: records the build flagged `stale
 `verified` · `@jpegxl-rs.observation.pqc-wall-quiet-host-attribution-2026-08-25/1` · observation · **stale** · [Quiet-host wall anchors: 12 MP 5.42x (4t) / 4.25x (8t); the quality path's fixed costs alone sit near 2x, so the 2.0x target is unreachable by search improvements](CURRENT-STATE.md#quiet-host-wall-anchors-12-mp-542x-4t--425x-8t-the-quality-paths-fixed-costs-alone-sit-near-2x-so-the-20x-target-is-unreachable-by-search-improvements)
 
 **Cause** — `watches "JPXL/crates/jpxl-plan-render/src/lib.rs"` was matched by `2fc041fa`, which touched `JPXL/crates/jpxl-plan-render/src/lib.rs`.
-
-### Contract B trial: corrected stop plus large-frame median start removes 0.44 probes per encode with zero floor violations and neutral bytes; trusted first probe alone is byte-identical; median start alone is a three-cell 12 MP lever
-
-`verified` · `@jpegxl-rs.observation.contract-b-corrected-stop-trial-2026-09-02/1` · observation · **stale** · [Contract B trial: corrected stop plus large-frame median start removes 0.44 probes per encode with zero floor violations and neutral bytes; trusted first probe alone is byte-identical; median start alone is a three-cell 12 MP lever](CURRENT-STATE.md#contract-b-trial-corrected-stop-plus-large-frame-median-start-removes-044-probes-per-encode-with-zero-floor-violations-and-neutral-bytes-trusted-first-probe-alone-is-byte-identical-median-start-alone-is-a-three-cell-12-mp-lever)
-
-**Cause** — `watches "JPXL/crates/jpxl-encode-policy/src/quality.rs"` was matched by `488770b8`, which touched `JPXL/crates/jpxl-encode-policy/src/quality.rs`.
-
-### Per-probe attribution: reused-probe planning already collapses; metric then render dominate each probe
-
-`verified` · `@jpegxl-rs.observation.probe-attribution-2026-09-01/1` · observation · **stale** · [Per-probe attribution: reused-probe planning already collapses; metric then render dominate each probe](CURRENT-STATE.md#per-probe-attribution-reused-probe-planning-already-collapses-metric-then-render-dominate-each-probe)
-
-**Cause** — `watches "JPXL/crates/jpxl-encode-policy/src/quality.rs"` was matched by `488770b8`, which touched `JPXL/crates/jpxl-encode-policy/src/quality.rs`.
-
-### One-shot stop rate is 4.3% and fully attributable to calibration; finalist non-monotonicity is 1/76
-
-`verified` · `@jpegxl-rs.observation.probe-contract-b-shadow-2026-09-01/1` · observation · **stale** · [One-shot stop rate is 4.3% and fully attributable to calibration; finalist non-monotonicity is 1/76](CURRENT-STATE.md#one-shot-stop-rate-is-43-and-fully-attributable-to-calibration-finalist-non-monotonicity-is-176)
-
-**Cause** — `watches "JPXL/crates/jpxl-encode-policy/src/quality_prediction.rs"` was matched by `488770b8`, which touched `JPXL/crates/jpxl-encode-policy/src/quality_prediction.rs`.
-
-### Two-probe corrected-stop replay: best variant 2.85 mean probes, floor held, bytes neutral in geo-mean; success is set by first-probe distance, not slope
-
-`verified` · `@jpegxl-rs.observation.two-probe-corrected-stop-replay-2026-09-02/2` · observation · **stale** · [Two-probe corrected-stop replay: best variant 2.85 mean probes, floor held, bytes neutral in geo-mean; success is set by first-probe distance, not slope](CURRENT-STATE.md#two-probe-corrected-stop-replay-best-variant-285-mean-probes-floor-held-bytes-neutral-in-geo-mean-success-is-set-by-first-probe-distance-not-slope)
-
-**Cause** — `watches "JPXL/crates/jpxl-encode-policy/src/quality.rs"` was matched by `488770b8`, which touched `JPXL/crates/jpxl-encode-policy/src/quality.rs`.
 
 ### Reproducible JPXL versus libjxl VarDCT baseline on 4 MP and 12 MP photographs
 
@@ -230,12 +254,6 @@ What should not be trusted without re-checking: records the build flagged `stale
 `verified` · `@jpegxl-rs.observation.pqc-wall-attribution-post-s2-2026-08-30/2` · observation · **stale** · [Post-E1 quality-wall attribution: quiet-host walls and the first real cycle profile](CURRENT-STATE.md#post-e1-quality-wall-attribution-quiet-host-walls-and-the-first-real-cycle-profile)
 
 **Cause** — `watches "JPXL/crates/jpxl-perceptual/src/**"` was matched by `94e8dc4c`, which touched `JPXL/crates/jpxl-perceptual/src/evaluator.rs`.
-
-### Below target 66.7 (Balanced) the crossing aim lies outside the fixed 1-point accept band, so a landing on the aim never stops the search
-
-`verified` · `@jpegxl-rs.observation.crossing-aim-outside-accept-band-below-67-2026-09-02/1` · observation · **stale** · [Below target 66.7 (Balanced) the crossing aim lies outside the fixed 1-point accept band, so a landing on the aim never stops the search](CURRENT-STATE.md#below-target-667-balanced-the-crossing-aim-lies-outside-the-fixed-1-point-accept-band-so-a-landing-on-the-aim-never-stops-the-search)
-
-**Cause** — `watches "JPXL/crates/jpxl-encode-policy/src/quality.rs"` was matched by `a2b7071c`, which touched `JPXL/crates/jpxl-encode-policy/src/quality.rs`.
 
 ### Quality-vs-rate wall anchors after the 2026-08-31 cuts: 2.27x and 3.17x at 4 threads, against 3.0x and 4.5x ceilings
 
@@ -369,12 +387,6 @@ What should not be trusted without re-checking: records the build flagged `stale
 
 **Cause** — `watches "JPXL/crates/jpxl-encode-policy/src/quantize.rs"` was matched by `b53da037`, which touched `JPXL/crates/jpxl-encode-policy/src/quantize.rs`.
 
-### The one-shot falsification screen fails on corpus coverage, not on the design: transform features halve the error, the tail is two under-represented classes
-
-`verified` · `@jpegxl-rs.observation.pqc-one-shot-gate-fails-on-corpus-coverage-2026-08-24/2` · observation · **stale** · [The one-shot falsification screen fails on corpus coverage, not on the design: transform features halve the error, the tail is two under-represented classes](CURRENT-STATE.md#the-one-shot-falsification-screen-fails-on-corpus-coverage-not-on-the-design-transform-features-halve-the-error-the-tail-is-two-under-represented-classes)
-
-**Cause** — `watches "JPXL/crates/jpxl-encode-policy/src/quality_predictor*.rs"` was matched by `b57c9d40`, which touched `JPXL/crates/jpxl-encode-policy/src/quality_predictor_v2.rs`.
-
 ### Peak-memory convention: JPXL sits between cjxl e7 and cjxl e9, and below e9 at 12 MP
 
 `verified` · `@jpegxl-rs.observation.encoder-memory-convention-2026-08-31/1` · observation · **stale** · [Peak-memory convention: JPXL sits between cjxl e7 and cjxl e9, and below e9 at 12 MP](CURRENT-STATE.md#peak-memory-convention-jpxl-sits-between-cjxl-e7-and-cjxl-e9-and-below-e9-at-12-mp)
@@ -393,7 +405,7 @@ What should not be trusted without re-checking: records the build flagged `stale
 
 **Cause** — `watches "JPXL/crates/jpxl-core/src/color.rs"` was matched by `deed1f65`, which touched `JPXL/crates/jpxl-core/src/color.rs`.
 
-## At risk (38)
+## At risk (36)
 
 ### The perceptual closure stands, but three exact base-encoder candidates merit measurement
 
@@ -417,7 +429,7 @@ What should not be trusted without re-checking: records the build flagged `stale
 
 `verified` · `@jpegxl-rs.assessment.two-probe-path-is-predictor-bound-2026-09-02/1` · assessment · **depth 1** · [The advisor's 1.5-probe target is predictor-bound; the navigator-side ceiling is about -0.45 to -0.6 probes per encode under Contract B](CURRENT-STATE.md#the-advisors-15-probe-target-is-predictor-bound-the-navigator-side-ceiling-is-about--045-to--06-probes-per-encode-under-contract-b)
 
-**Via** `supported_by` → `@jpegxl-rs.observation.probe-contract-b-shadow-2026-09-01/1` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/quality_prediction.rs"` was matched by `488770b8`, which touched `JPXL/crates/jpxl-encode-policy/src/quality_prediction.rs`.)
+**Via** `supported_by` → `@jpegxl-rs.observation.probe-contract-b-shadow-2026-09-01/1` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/quality_prediction.rs"` was matched by `2b1a0555`, which touched `JPXL/crates/jpxl-encode-policy/src/quality_prediction.rs`.)
 
 ### A minimum SSIMULACRA2 score is the public lossy contract; Fast (70) and Balanced (85) are the production efforts; Quality stays feature-gated until it is smaller at matched score
 
@@ -435,13 +447,13 @@ What should not be trusted without re-checking: records the build flagged `stale
 
 `active` · `@jpegxl-rs.decision.promote-corrected-stop-and-median-start-2026-09-02/1` · decision · **depth 1** · [Promote the corrected stop (with the trusted first probe) and the large-frame median start to the default Balanced/Fast controller](DECISION-HISTORY.md#revision-1--promote-the-corrected-stop-with-the-trusted-first-probe-and-the-large-frame-median-start-to-the-default-balancedfast-controller)
 
-**Via** `supported_by` → `@jpegxl-rs.observation.contract-b-corrected-stop-trial-2026-09-02/1` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/quality.rs"` was matched by `488770b8`, which touched `JPXL/crates/jpxl-encode-policy/src/quality.rs`.)
+**Via** `supported_by` → `@jpegxl-rs.observation.contract-b-corrected-stop-trial-2026-09-02/1` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/quality.rs"` was matched by `2b1a0555`, which touched `JPXL/crates/jpxl-encode-policy/src/quality.rs`.)
 
 ### Promote the reserve-coupled accept band to the default Balanced/Fast controller (delegated decision)
 
 `active` · `@jpegxl-rs.decision.promote-reserve-coupled-band-2026-09-02/1` · decision · **depth 1** · [Promote the reserve-coupled accept band to the default Balanced/Fast controller (delegated decision)](DECISION-HISTORY.md#revision-1--promote-the-reserve-coupled-accept-band-to-the-default-balancedfast-controller-delegated-decision)
 
-**Via** `supported_by` → `@jpegxl-rs.observation.crossing-aim-outside-accept-band-below-67-2026-09-02/1` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/quality.rs"` was matched by `a2b7071c`, which touched `JPXL/crates/jpxl-encode-policy/src/quality.rs`.)
+**Via** `supported_by` → `@jpegxl-rs.observation.crossing-aim-outside-accept-band-below-67-2026-09-02/1` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/quality.rs"` was matched by `2b1a0555`, which touched `JPXL/crates/jpxl-encode-policy/src/quality.rs`.)
 
 ### The 12 MP quality-path memory cap rises from 2.0 GB to 2.5 GB; E1-a retention is adopted
 
@@ -477,7 +489,7 @@ What should not be trusted without re-checking: records the build flagged `stale
 
 `verified` · `@jpegxl-rs.evidence.contract-b-boundary-held-2026-09-01/1` · evidence · **depth 1** · [No stream-altering change was implemented; both levers are open Contract B questions with measured inputs](CURRENT-STATE.md#no-stream-altering-change-was-implemented-both-levers-are-open-contract-b-questions-with-measured-inputs)
 
-**Via** `derived_from` → `@jpegxl-rs.observation.probe-contract-b-shadow-2026-09-01/1` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/quality_prediction.rs"` was matched by `488770b8`, which touched `JPXL/crates/jpxl-encode-policy/src/quality_prediction.rs`.)
+**Via** `derived_from` → `@jpegxl-rs.observation.probe-contract-b-shadow-2026-09-01/1` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/quality_prediction.rs"` was matched by `2b1a0555`, which touched `JPXL/crates/jpxl-encode-policy/src/quality_prediction.rs`.)
 
 ### E1-a retested on a quiet pinned host buys 8.9-10.2% at 12 MP for 2.36 GiB, not the ~6% the closure recorded
 
@@ -495,7 +507,7 @@ What should not be trusted without re-checking: records the build flagged `stale
 
 `verified` · `@jpegxl-rs.evidence.exact-simplification-screen-negative-2026-09-01/1` · evidence · **depth 1** · [The exact structural simplification screen found nothing of measurable size; nothing changed](CURRENT-STATE.md#the-exact-structural-simplification-screen-found-nothing-of-measurable-size-nothing-changed)
 
-**Via** `derived_from` → `@jpegxl-rs.observation.probe-attribution-2026-09-01/1` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/quality.rs"` was matched by `488770b8`, which touched `JPXL/crates/jpxl-encode-policy/src/quality.rs`.)
+**Via** `derived_from` → `@jpegxl-rs.observation.probe-attribution-2026-09-01/1` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/quality.rs"` was matched by `2b1a0555`, which touched `JPXL/crates/jpxl-encode-policy/src/quality.rs`.)
 
 ### Hoisting the pooled fourth powers out of the ordered fold removes all scalar FP from accumulate_band and is byte-identical
 
@@ -507,7 +519,7 @@ What should not be trusted without re-checking: records the build flagged `stale
 
 `verified` · `@jpegxl-rs.evidence.probe-attribution-measured-2026-09-01/1` · evidence · **depth 1** · [Per-probe encode/render/metric attribution measured on both locked anchors](CURRENT-STATE.md#per-probe-encoderendermetric-attribution-measured-on-both-locked-anchors)
 
-**Via** `derived_from` → `@jpegxl-rs.observation.probe-attribution-2026-09-01/1` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/quality.rs"` was matched by `488770b8`, which touched `JPXL/crates/jpxl-encode-policy/src/quality.rs`.)
+**Via** `derived_from` → `@jpegxl-rs.observation.probe-attribution-2026-09-01/1` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/quality.rs"` was matched by `2b1a0555`, which touched `JPXL/crates/jpxl-encode-policy/src/quality.rs`.)
 
 ### QK4 trailing truncation preserved all 32 stream comparisons
 
@@ -533,17 +545,17 @@ What should not be trusted without re-checking: records the build flagged `stale
 
 **Via** `derived_from` → `@jpegxl-rs.observation.selectivity-halves-the-damage-but-lambda-is-the-remaining-term-2026-08-12/1` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/quantize.rs"` was matched by `07fe457f`, which touched `JPXL/crates/jpxl-encode-policy/src/quantize.rs`.)
 
-### qpv2-st-1 predicts photos too fine by about 0.36 ln effective scale at targets 30-80, and its photo loss exponent (0.85) is above the oracle's (0.65)
+### Promote the case-table crossing predictor (feature case-predictor) to the default controller?
 
-`verified` · `@jpegxl-rs.observation.qpv2-photo-low-target-bias-2026-09-02/1` · observation · **depth 1** · [qpv2-st-1 predicts photos too fine by about 0.36 ln effective scale at targets 30-80, and its photo loss exponent (0.85) is above the oracle's (0.65)](CURRENT-STATE.md#qpv2-st-1-predicts-photos-too-fine-by-about-036-ln-effective-scale-at-targets-30-80-and-its-photo-loss-exponent-085-is-above-the-oracles-065)
+`open` · `@jpegxl-rs.question.promote-case-predictor-2026-09-02/1` · question · **depth 1** · [Promote the case-table crossing predictor (feature case-predictor) to the default controller?](OPEN-QUESTIONS.md#promote-the-case-table-crossing-predictor-feature-case-predictor-to-the-default-controller)
 
-**Via** `derived_from` → `@jpegxl-rs.observation.contract-b-corrected-stop-trial-2026-09-02/1` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/quality.rs"` was matched by `488770b8`, which touched `JPXL/crates/jpxl-encode-policy/src/quality.rs`.)
+**Via** `supported_by` → `@jpegxl-rs.observation.case-table-first-guess-study-2026-09-02/1` (stale: `watches "JPXL/tools/quality_predictor_v2.py"` was matched by `2b1a0555`, which touched `JPXL/tools/quality_predictor_v2.py`.)
 
 ### Price only the coarsest feasible finalist? (1.3% rare-byte-change tail)
 
 `open` · `@jpegxl-rs.question.single-finalist-pricing-contract-b/1` · question · **depth 1** · [Price only the coarsest feasible finalist? (1.3% rare-byte-change tail)](OPEN-QUESTIONS.md#price-only-the-coarsest-feasible-finalist-13-rare-byte-change-tail)
 
-**Via** `supported_by` → `@jpegxl-rs.observation.probe-contract-b-shadow-2026-09-01/1` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/quality_prediction.rs"` was matched by `488770b8`, which touched `JPXL/crates/jpxl-encode-policy/src/quality_prediction.rs`.)
+**Via** `supported_by` → `@jpegxl-rs.observation.probe-contract-b-shadow-2026-09-01/1` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/quality_prediction.rs"` was matched by `2b1a0555`, which touched `JPXL/crates/jpxl-encode-policy/src/quality_prediction.rs`.)
 
 ### Perceptual quality controller: SSIMULACRA2 score target for Fast and Balanced, gated Quality effort
 
@@ -587,12 +599,6 @@ What should not be trusted without re-checking: records the build flagged `stale
 
 **Via** `derived_from` → `@jpegxl-rs.assessment.exact-base-encoder-frontier-2026-09-01/1` → `@jpegxl-rs.observation.current-head-quality-rate-profile-2026-09-01/1` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/quantize.rs"` was matched by `b53da037`, which touched `JPXL/crates/jpxl-encode-policy/src/quantize.rs`.)
 
-### Nearest-neighbour crossing curves cut the first-guess error to a third of the linear knot model's on the current corpus; natural content is data-limited at about 0.11 ln
-
-`verified` · `@jpegxl-rs.observation.case-table-first-guess-study-2026-09-02/1` · observation · **depth 2** · [Nearest-neighbour crossing curves cut the first-guess error to a third of the linear knot model's on the current corpus; natural content is data-limited at about 0.11 ln](CURRENT-STATE.md#nearest-neighbour-crossing-curves-cut-the-first-guess-error-to-a-third-of-the-linear-knot-models-on-the-current-corpus-natural-content-is-data-limited-at-about-011-ln)
-
-**Via** `derived_from` → `@jpegxl-rs.assessment.two-probe-path-is-predictor-bound-2026-09-02/1` → `@jpegxl-rs.observation.probe-contract-b-shadow-2026-09-01/1` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/quality_prediction.rs"` was matched by `488770b8`, which touched `JPXL/crates/jpxl-encode-policy/src/quality_prediction.rs`.)
-
 ### Census raw-event replay is byte-identical but wall-slower with a 11-14 MiB memory cost; reverted
 
 `verified` · `@jpegxl-rs.observation.event-replay-negative-2026-09-01/1` · observation · **depth 2** · [Census raw-event replay is byte-identical but wall-slower with a 11-14 MiB memory cost; reverted](CURRENT-STATE.md#census-raw-event-replay-is-byte-identical-but-wall-slower-with-a-11-14-mib-memory-cost-reverted)
@@ -616,9 +622,3 @@ What should not be trusted without re-checking: records the build flagged `stale
 `verified` · `@jpegxl-rs.evidence.event-replay-wall-screen-2026-09-01/1` · evidence · **depth 3** · [Census raw-event replay was wall-slower with an 11-14 MiB memory cost and was reverted](CURRENT-STATE.md#census-raw-event-replay-was-wall-slower-with-an-11-14-mib-memory-cost-and-was-reverted)
 
 **Via** `derived_from` → `@jpegxl-rs.observation.event-replay-negative-2026-09-01/1` → `@jpegxl-rs.assessment.exact-base-encoder-frontier-2026-09-01/1` → `@jpegxl-rs.observation.current-head-quality-rate-profile-2026-09-01/1` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/quantize.rs"` was matched by `b53da037`, which touched `JPXL/crates/jpxl-encode-policy/src/quantize.rs`.)
-
-### Promote the case-table crossing predictor (feature case-predictor) to the default controller?
-
-`open` · `@jpegxl-rs.question.promote-case-predictor-2026-09-02/1` · question · **depth 3** · [Promote the case-table crossing predictor (feature case-predictor) to the default controller?](OPEN-QUESTIONS.md#promote-the-case-table-crossing-predictor-feature-case-predictor-to-the-default-controller)
-
-**Via** `supported_by` → `@jpegxl-rs.observation.case-table-first-guess-study-2026-09-02/1` → `@jpegxl-rs.assessment.two-probe-path-is-predictor-bound-2026-09-02/1` → `@jpegxl-rs.observation.probe-contract-b-shadow-2026-09-01/1` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/quality_prediction.rs"` was matched by `488770b8`, which touched `JPXL/crates/jpxl-encode-policy/src/quality_prediction.rs`.)
