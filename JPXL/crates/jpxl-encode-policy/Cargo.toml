@@ -19,7 +19,15 @@ jpxl-entropy.workspace = true
 wide = { workspace = true, optional = true }
 
 [features]
-default = ["parallel", "simd", "anchor-sketch", "g5-bounded-entropy", "one-shot-controller"]
+default = [
+    "parallel",
+    "simd",
+    "anchor-sketch",
+    "g5-bounded-entropy",
+    "one-shot-controller",
+    "corrected-stop",
+    "flagged-median-start",
+]
 parallel = ["jpxl-encode/parallel"]
 # Leaf SIMD for HF quantize choose (and transitive DCT/Gaborish).
 simd = ["dep:wide", "jpxl-encode/simd", "jpxl-core/simd"]
@@ -44,10 +52,15 @@ one-shot-controller = []
 # Phase S1: half-resolution surrogate bracket search with canonical
 # confirmation. Off by default until the promotion A/B gate passes.
 surrogate-navigation = []
-# Contract B trial (2026-09-02, @jpegxl-rs.question.one-shot-calibration-contract-b):
-# three feature-gated quality-policy candidates, each of which can change
-# which rung wins and therefore the emitted bytes. None is in `default`;
-# each is promoted only through the one_shot_promotion_ab.py corpus gate.
+# Contract B navigator levers (2026-09-02, @jpegxl-rs.question.one-shot-calibration-contract-b):
+# three feature-gated quality-policy changes, each of which can change which
+# rung wins and therefore the emitted bytes. `corrected-stop` (which implies
+# `trusted-first-probe`) and `flagged-median-start` are in `default` since the
+# operator's 2026-09-02 promotion decision, on the one_shot_promotion_ab.py
+# corpus gate recorded in docs/experiments/2026-09-02-contract-b-corrected-stop-trial.md
+# (0 floor violations on 91 q85 and 140 seven-target holdout cells, byte
+# geomean 0.995, 3.46 -> 3.02 pixel probes per encode, levers additive).
+# Build without default features for the pre-promotion controller.
 #
 # `trusted-first-probe`: a first canonical probe that lands feasible inside
 # the accept band ends navigation there whatever the crossing model's

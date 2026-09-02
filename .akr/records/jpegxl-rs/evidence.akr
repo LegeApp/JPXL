@@ -6385,6 +6385,30 @@ record jpegxl-rs.evidence.probe-next-stage-scoped-2026-09-01/1 : evidence {
     derived_from [ @jpegxl-rs.assessment.exact-base-encoder-frontier-2026-09-01/1 ]
 }
 
+record jpegxl-rs.evidence.promoted-default-matches-trial-arm-2026-09-02/1 : evidence {
+    title "Promoted default build is byte-identical to the trial's combined arm on all spot-check cells"
+    state verified
+    result pass
+    method command
+    observed_at git:94200fa01d5e7b350ef73143c75c0703cde55354
+    artifact "JPXL/docs/experiments/2026-09-02-contract-b-corrected-stop-trial.md"
+    summary """
+        The release jpxl-cli built from the promoted default feature set (corrected-stop, flagged-median-start in jpxl-encode-policy defaults) produced sha256-identical q85 streams to the trial's `both` arm binary on 8/8 spot-check cells (12 MP photo, mid photo, scene, text-screenshot, gradient, saturated, line-art, noise-lowlight), so the promoted default is the measured arm.
+        """
+}
+
+record jpegxl-rs.evidence.promoted-default-workspace-gates-2026-09-02/1 : evidence {
+    title "Workspace gates pass with the promoted default feature set"
+    state verified
+    result pass
+    method command
+    observed_at git:94200fa01d5e7b350ef73143c75c0703cde55354
+    command "cd JPXL && cargo clippy --workspace --all-targets -- -D warnings && cargo clippy --workspace --all-targets --no-default-features --features jpxl-cli/parallel,jpxl-cli/simd -- -D warnings && cargo test --workspace --release && cargo fmt --all --check"
+    summary """
+        With corrected-stop and flagged-median-start in the policy crate's default features: workspace clippy -D warnings clean with defaults and with no default features; cargo test --workspace --release all green; cargo fmt --all --check clean.
+        """
+}
+
 record jpegxl-rs.evidence.q0-harness-and-sections-2026-08-17/1 : evidence {
     title "CLI research controls --dead-zone-scale (byte-identical at 1.0 on mid/large x fast/balanced/quality), --tolerance and --sections landed; the standing harness (ladder.sh, scenes.sh, cjxl-match.sh, summarise.py under .agent/scratch/quality-track) ran end to end; --sections attributed 38.1% (mid) / 37.9% (large) of a 1 bpp Balanced stream to the LF-group sections and a temporary trace measured the HF-metadata stream at 44.8 KB of flat-code tokens against 6.4 KB order-0 entropy, which opened Phase Q0b."
     state verified

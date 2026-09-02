@@ -227,6 +227,24 @@ record jpegxl-rs.decision.lossy-production-presets/1 : decision {
     ]
 }
 
+record jpegxl-rs.decision.low-targets-are-one-pass-by-design/1 : decision {
+    title "Lower quality targets are one pass by design; additional probes are attempted only at higher qualities"
+    state proposed
+    scope [ path "JPXL/crates/jpxl-encode-policy/**" ]
+    topic quality-low-target-probe-policy
+    decision """
+        Operator design rule, stated 2026-09-02 when promoting the corrected stop: at lower quality targets the perceptual controller should settle in one pass, and the multi-probe navigation (bracket expansion, tightening, finalist pricing of two candidates) is reserved for higher qualities. The rule is recorded here as stated; its two parameters are open in @jpegxl-rs.question.low-target-one-pass-parameters and must be fixed before implementation.
+        """
+    context """
+        The 2026-09-02 seven-target holdout run showed the promoted controller spending 4.35-4.6 pixel probes at target 30 and 4.4-4.45 at target 50, more than at any production quality, with the corrected stop slightly negative there; the operator's reading is that those targets should not be searched at all. The public lossy contract (@jpegxl-rs.decision.perceptual-quality-contract) is a minimum SSIMULACRA2 score, so a one-pass design at low targets still needs one canonical render-and-score to verify the floor unless that contract is relaxed for low targets.
+        """
+    consequences """
+        A Contract B change to the navigator's low-target path, gated like the 2026-09-02 trial on the corpus (floor, byte geomean, per-cell tail, thread identity) once the threshold target and the acceptance semantics are decided.
+        """
+    depends_on [ @jpegxl-rs.decision.perceptual-quality-contract/1 ]
+    derived_from [ @jpegxl-rs.decision.promote-corrected-stop-and-median-start-2026-09-02 ]
+}
+
 record jpegxl-rs.decision.mit-only-licensing/1 : decision {
     title "License JPXL under MIT only"
     state proposed
@@ -454,6 +472,30 @@ record jpegxl-rs.decision.pqc-wall-target-renegotiation-shape/1 : decision {
         @jpegxl-rs.observation.pqc-wall-attribution-post-s2-2026-08-30
     ]
     supported_by [ @jpegxl-rs.evidence.w1b-quiet-host-floors-2026-08-30 ]
+}
+
+record jpegxl-rs.decision.promote-corrected-stop-and-median-start-2026-09-02/1 : decision {
+    title "Promote the corrected stop (with the trusted first probe) and the large-frame median start to the default Balanced/Fast controller"
+    state active
+    scope [ path "JPXL/crates/jpxl-encode-policy/**" ]
+    topic quality-navigator-default-2026-09-02
+    decision """
+        The operator's 2026-09-02 Contract B decision: `corrected-stop` (which implies `trusted-first-probe`) and `flagged-median-start` join the jpxl-encode-policy `default` feature set, so the shipped quality controller ends navigation on an in-band first probe regardless of model confidence, takes one gated direct correction and one slope-corrected retry before the bracket expansion, and seeds large out-of-domain frames with the model median. The two levers are promoted together because the trial showed them independent and additive. Building without default features restores the pre-promotion controller.
+        """
+    context """
+        @jpegxl-rs.observation.contract-b-corrected-stop-trial-2026-09-02: on real encodes the combined arm removed 0.44 pixel probes per encode (3.462 to 3.022) with zero floor violations on 91 q85 cells and 140 seven-target holdout cells, byte geomean 0.9954 / 0.9925, worst in-domain q85 cell 1.060, t1/t4 identity on 8/8 cells, and the three 12 MP out-of-domain photos losing one to two probes and a structure rebuild each. The operator accepted the stream change explicitly (58 of 91 q85 streams differ), does not require the advisor's 1.5-probe target, and stated a further design rule for low targets recorded in @jpegxl-rs.decision.low-targets-are-one-pass-by-design.
+        """
+    consequences """
+        Every byte-identity baseline of the quality path taken before 2026-09-02 (the deployed q85 corpus-shadow trace at 3.51 mean probes, the large-anchor quality hashes cited by the exact base-encoder identity matrices) is superseded; the promoted arm's own traces (.agent/scratch/contract-b-trial-20260902/traces-both/one_shot.jsonl, 91 cells) are the new q85 baseline. Contract A identity checks from here compare against the promoted controller. The slight probe increase at targets 30 and 50 is accepted and is to be removed by the low-target one-pass rule rather than by retuning the corrected stop.
+        """
+    derived_from [ @jpegxl-rs.decision.optimization-determinism-contract/1 ]
+    resolves [ @jpegxl-rs.question.one-shot-calibration-contract-b ]
+    supported_by [
+        @jpegxl-rs.evidence.contract-b-trial-holdout-seven-target-2026-09-02,
+        @jpegxl-rs.evidence.contract-b-trial-q85-gate-2026-09-02,
+        @jpegxl-rs.evidence.contract-b-trial-thread-identity-2026-09-02,
+        @jpegxl-rs.observation.contract-b-corrected-stop-trial-2026-09-02
+    ]
 }
 
 record jpegxl-rs.decision.quality-miss-fallback-semantics/1 : decision {

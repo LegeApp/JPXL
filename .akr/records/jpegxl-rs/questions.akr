@@ -1,6 +1,19 @@
 akr 0.1
 project jpegxl-rs
 
+record jpegxl-rs.question.low-target-one-pass-parameters/1 : question {
+    title "Low-target one pass: below which target, and does one pass mean one verified probe or no verification?"
+    state open
+    question """
+        The operator's rule that lower targets are one pass by design (@jpegxl-rs.decision.low-targets-are-one-pass-by-design) leaves two parameters open. (1) The threshold: which requested scores count as 'lower'? The production presets are Fast 70 and Balanced 85, and the corrected stop already pays from 70 upward, so the candidates are 'below the Fast preset (< 70)' or a fixed cut such as <= 50. (2) The semantics: does one pass mean one canonical probe at the predicted rung whose stream is emitted whenever it meets the floor, whatever the overshoot (one render, one score, one exact price — the floor contract kept), or a single plan emitted without a score (no floor verification, which changes the public minimum-score contract at those targets)? A third detail follows from the answer: what happens when the single probe misses the floor — the existing bounded expansion, a one-jump rescue, or the under-target fallback semantics of @jpegxl-rs.decision.quality-miss-fallback-semantics.
+        """
+    resolution """
+        Open: needs the operator. Once answered, the implementation is a feature-gated low-target route in solve_baseline plus the corpus gate at the low targets (30/50 and the chosen threshold).
+        """
+    derived_from [ @jpegxl-rs.decision.low-targets-are-one-pass-by-design ]
+    supported_by [ @jpegxl-rs.evidence.contract-b-trial-holdout-seven-target-2026-09-02 ]
+}
+
 record jpegxl-rs.question.one-shot-calibration-contract-b/1 : question {
     title "Recalibrate qpv2 to raise the 4.3% one-shot stop rate?"
     state superseded
@@ -33,7 +46,7 @@ record jpegxl-rs.question.one-shot-calibration-contract-b/2 : question {
 
 record jpegxl-rs.question.one-shot-calibration-contract-b/3 : question {
     title "Recalibrate qpv2 to raise the 4.3% one-shot stop rate?"
-    state open
+    state superseded
     question """
         Should the qpv2 prediction be recalibrated to raise the one-shot stop rate (currently 4/94 = 4.3% on the quality corpus at score 85 balanced)? The stop mechanism is already proven safe where it fires (N3, 2026-08-29: every stopped cell chose exactly the rung the full search would), and the shadow corpus attributes every missed stop to calibration: 9 of 13 confident cells overshot by more than the 1.0-point band (the candidate rung is a conservative upper quantile; predicted-rung/winner-rung median 1.34) and 8 of 12 in-band cells were blocked by the confidence gate. Each converted cell saves two of about 3.5 baseline pixel probes - roughly 850-900 ms on the 12 MP anchor. This can alter which rung wins and the emitted bytes, so it is a Contract B decision: promotion gates are a corpus-wide byte-delta and quality A/B screen and the operator's acceptance of the changed rung distribution; a first zero-risk step is retraining the model on the existing corpus traces and shadow-measuring the would-have-stopped rate without touching the encoder.
         """
@@ -42,6 +55,24 @@ record jpegxl-rs.question.one-shot-calibration-contract-b/3 : question {
         """
     derived_from [ @jpegxl-rs.work.probe-simplification-next-stage-2026-09-01/1 ]
     supersedes [ @jpegxl-rs.question.one-shot-calibration-contract-b/2 ]
+    supported_by [
+        @jpegxl-rs.observation.contract-b-corrected-stop-trial-2026-09-02,
+        @jpegxl-rs.observation.probe-contract-b-shadow-2026-09-01,
+        @jpegxl-rs.observation.two-probe-corrected-stop-replay-2026-09-02
+    ]
+}
+
+record jpegxl-rs.question.one-shot-calibration-contract-b/4 : question {
+    title "Recalibrate qpv2 to raise the 4.3% one-shot stop rate?"
+    state resolved
+    question """
+        Should the qpv2 prediction be recalibrated to raise the one-shot stop rate (currently 4/94 = 4.3% on the quality corpus at score 85 balanced)? The stop mechanism is already proven safe where it fires (N3, 2026-08-29: every stopped cell chose exactly the rung the full search would), and the shadow corpus attributes every missed stop to calibration: 9 of 13 confident cells overshot by more than the 1.0-point band (the candidate rung is a conservative upper quantile; predicted-rung/winner-rung median 1.34) and 8 of 12 in-band cells were blocked by the confidence gate. Each converted cell saves two of about 3.5 baseline pixel probes - roughly 850-900 ms on the 12 MP anchor. This can alter which rung wins and the emitted bytes, so it is a Contract B decision: promotion gates are a corpus-wide byte-delta and quality A/B screen and the operator's acceptance of the changed rung distribution; a first zero-risk step is retraining the model on the existing corpus traces and shadow-measuring the would-have-stopped rate without touching the encoder.
+        """
+    resolution """
+        Resolved 2026-09-02 by the operator's promotion decision (@jpegxl-rs.decision.promote-corrected-stop-and-median-start-2026-09-02): not by recalibrating the model, which cannot be promoted (@jpegxl-rs.evidence.qpv2-current-corpus-retrain-2026-09-02), but by dropping the confidence gate on the one-shot stop (`trusted-first-probe`, byte-identical where it fires) and adding the gated corrected stop and the large-frame median start, which together take the corpus from 3.462 to 3.022 pixel probes per encode with zero floor violations and byte geomean 0.995 (@jpegxl-rs.observation.contract-b-corrected-stop-trial-2026-09-02). The one-shot stop rate at q85 is now 12/91; the remaining probes are bound by first-probe predictor accuracy (@jpegxl-rs.assessment.two-probe-path-is-predictor-bound-2026-09-02) and, at low targets, by the open low-target one-pass rule (@jpegxl-rs.question.low-target-one-pass-parameters).
+        """
+    derived_from [ @jpegxl-rs.work.probe-simplification-next-stage-2026-09-01/1 ]
+    supersedes [ @jpegxl-rs.question.one-shot-calibration-contract-b/3 ]
     supported_by [
         @jpegxl-rs.observation.contract-b-corrected-stop-trial-2026-09-02,
         @jpegxl-rs.observation.probe-contract-b-shadow-2026-09-01,
