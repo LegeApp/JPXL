@@ -130,6 +130,50 @@ record jpegxl-rs.observation.bpg-rs-aq-precedent-2026-08-10/2 : observation {
     author "GitHub Uploader"
 }
 
+record jpegxl-rs.observation.case-predictor-v2-paintings-study-2026-09-02/1 : observation {
+    title "A case predictor searched against simulated probes over structure features, on a corpus with 258 paintings, cuts simulated probes on never-seen images; a table without paintings makes paintings worse"
+    state superseded
+    scope [ path "JPXL/crates/jpxl-encode-policy/**", path "JPXL/tools/**" ]
+    statement """
+        258 paintings (test-set/paintings, calibration 120 / development 86 / ext-holdout 52; 90 sources over 13 MP Lanczos-downscaled) were oracle-swept at seven knots (1806 rows, none censored). In weighted standardized feature space a painting's nearest old-corpus image is at median distance 5.6 while its nearest other painting is at 1.6: the paintings fill a region the old corpus did not cover. The still265 32x32-cell structure pass ported to jpxl-encode-policy/src/preanalysis.rs (25-value frame vector, schema qpv2-stp/1 = 19 qpv2-st/1 features + 25) is attached at frame preparation on the quality path. A coordinate-descent search over per-feature distance weights {0,1/2,1,2,4}, k, an adaptive neighbour cut, a spread threshold and a spread offset, minimising the corrected-stop navigator's simulated Balanced + Fast probes on the oracle curves under leave-one-family-out over calibration+development families only (1932 rows), chose: x4 on ln_chroma_q50, log2_pixels, high_low_ratio, near_zero_frac_1e3 and pa_noise_q90, x1/2 directional_asymmetry, ln_aspect and chroma_ac_ratio dropped, k 2 with a 3x nearest-distance cut and a first guess shifted finer by a quarter of the neighbours' spread. Blind (old holdout + paintings ext-holdout, 497 rows): simulated Balanced probes 2.09 (landed v1 table) -> 1.97, paintings 1.93 -> 1.77, first-probe-in-band 0.30 -> 0.34; the search's wider spread threshold (0.6) raised the simulated Fast refusal rate 0.6% -> 3.4%, so the trial table keeps the existing 0.405 threshold (chosen on the search set: -0.05 probes, refusal rate back to 0.9%). Production table: 347 cases, LOFO median ln error 0.073 (p90 0.247, 62% within 0.10), paintings 0.066. On the real controller the landed v1 table (no paintings) makes paintings WORSE than the default: probes 2.21 -> 2.49 at byte geomean 0.999 on 364 blind cells.
+        """
+    observed_at git:1556bfb38552b49df091128f91262f920d2e4c74
+    method command
+    watches [
+        "JPXL/crates/jpxl-encode-policy/src/quality_predictor_cases.rs",
+        "JPXL/crates/jpxl-encode-policy/src/preanalysis.rs",
+        "JPXL/tools/quality_predictor_v2.py"
+    ]
+    derived_from [ @jpegxl-rs.observation.case-table-first-guess-study-2026-09-02 ]
+    source {
+        kind internal
+        role origin
+        path "JPXL/docs/experiments/2026-09-02-case-predictor-v2-paintings.md"
+    }
+}
+
+record jpegxl-rs.observation.case-predictor-v2-paintings-study-2026-09-02/2 : observation {
+    title "A case predictor searched against simulated probes over structure features, on a corpus with 258 paintings, cuts simulated probes on never-seen images; a table without paintings makes paintings worse"
+    state verified
+    scope [ path "JPXL/crates/jpxl-encode-policy/**", path "JPXL/tools/**" ]
+    statement """
+        258 paintings (test-set/paintings, calibration 120 / development 86 / ext-holdout 52; 90 sources over 13 MP Lanczos-downscaled) were oracle-swept at seven knots (1806 rows, none censored). In weighted standardized feature space a painting's nearest old-corpus image is at median distance 5.6 while its nearest other painting is at 1.6: the paintings fill a region the old corpus did not cover. The still265 32x32-cell structure pass ported to jpxl-encode-policy/src/preanalysis.rs (25-value frame vector, schema qpv2-stp/1 = 19 qpv2-st/1 features + 25) is attached at frame preparation on the quality path. A coordinate-descent search over per-feature distance weights {0,1/2,1,2,4}, k, an adaptive neighbour cut, a spread threshold and a spread offset, minimising the corrected-stop navigator's simulated Balanced + Fast probes on the oracle curves under leave-one-family-out over calibration+development families only (1932 rows), chose: x4 on ln_chroma_q50, log2_pixels, high_low_ratio, near_zero_frac_1e3 and pa_noise_q90, x1/2 directional_asymmetry, ln_aspect and chroma_ac_ratio dropped, k 2 with a 3x nearest-distance cut and a first guess shifted finer by a quarter of the neighbours' spread. Blind (old holdout + paintings ext-holdout, 497 rows): simulated Balanced probes 2.09 (landed v1 table) -> 1.97, paintings 1.93 -> 1.77, first-probe-in-band 0.30 -> 0.34; the search's wider spread threshold (0.6) raised the simulated Fast refusal rate 0.6% -> 3.4%, so the trial table keeps the existing 0.405 threshold (chosen on the search set: -0.05 probes, refusal rate back to 0.9%). Production table: 347 cases, LOFO median ln error 0.073 (p90 0.247, 62% within 0.10), paintings 0.066. On the real controller the landed v1 table (no paintings) makes paintings WORSE than the default: probes 2.21 -> 2.49 at byte geomean 0.999 on 364 blind cells.
+        """
+    observed_at git:1556bfb38552b49df091128f91262f920d2e4c74
+    method command
+    watches [
+        "JPXL/crates/jpxl-encode-policy/src/quality_predictor_cases.rs",
+        "JPXL/tools/quality_predictor_v2.py"
+    ]
+    derived_from [ @jpegxl-rs.observation.case-table-first-guess-study-2026-09-02 ]
+    supersedes [ @jpegxl-rs.observation.case-predictor-v2-paintings-study-2026-09-02/1 ]
+    source {
+        kind internal
+        role origin
+        path "JPXL/docs/experiments/2026-09-02-case-predictor-v2-paintings.md"
+    }
+}
+
 record jpegxl-rs.observation.case-table-first-guess-study-2026-09-02/1 : observation {
     title "Nearest-neighbour crossing curves cut the first-guess error to a third of the linear knot model's on the current corpus; natural content is data-limited at about 0.11 ln"
     state verified

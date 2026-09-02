@@ -356,7 +356,18 @@ pub fn predict(
 ) -> Option<QualityPredictionV2> {
     #[cfg(feature = "case-predictor")]
     {
-        predict_cases(features, transform, target, reserve)
+        match predict_cases(features, transform, target, reserve) {
+            Some(p) if p.fallback_reason.is_none() || p.large_frame_only_ood => Some(p),
+            // The table does not know this frame — no structure vector, a
+            // tiny frame, a weighted feature outside the cases' range, or
+            // neighbours that disagree — so the knot model decides exactly
+            // as the controller without this feature would; the legacy
+            // start is not a better fallback than the model it replaced.
+            // On the 2026-09-02 paintings trial the seven wide-spread cells
+            // that took the legacy start cost 1.7 probes each and produced
+            // the run's only byte-tail cell (1.41x at target 95).
+            _ => predict_v2(features, transform, target),
+        }
     }
     #[cfg(not(feature = "case-predictor"))]
     {
@@ -411,22 +422,69 @@ fn interpolate_knots(values: &[f64], x: f64) -> f64 {
     last
 }
 
+/// The case table's feature dimension: the knot model's `qpv2-st/1` vector
+/// followed by the frame's [`crate::preanalysis`] vector (`qpv2-stp/1`).
+pub const QPV2_STP_FEATURE_DIM: usize = QPV2_FEATURE_DIM + crate::preanalysis::PREANALYSIS_DIM;
+
+/// The `qpv2-stp/1` raw feature vector, or `None` when the frame carried no
+/// preanalysis (a frame prepared from linear or XYB planes, or one without
+/// a whole 32x32 cell) — such frames keep the legacy start.
+#[must_use]
+pub fn qpv2_stp_features(
+    features: &SourceFeatures,
+    transform: &TransformFeatureSummary,
+) -> Option<[f64; QPV2_STP_FEATURE_DIM]> {
+    let preanalysis = features.preanalysis?;
+    let base = qpv2_features(features, transform);
+    let extra = preanalysis.vector();
+    let mut out = [0.0; QPV2_STP_FEATURE_DIM];
+    for (slot, value) in out.iter_mut().zip(base.iter().chain(extra.iter())) {
+        *slot = *value;
+    }
+    Some(out)
+}
+
+/// The name of the `qpv2-stp/1` feature at `index`, for OOD flags.
+#[must_use]
+pub fn qpv2_stp_feature_name(index: usize) -> &'static str {
+    if index < QPV2_FEATURE_DIM {
+        qpv2_feature_name(index)
+    } else {
+        crate::preanalysis::PREANALYSIS_NAMES
+            .get(index - QPV2_FEATURE_DIM)
+            .copied()
+            .unwrap_or("unknown")
+    }
+}
+
 /// Case-table crossing predictor (feature `case-predictor`): the
-/// distance-weighted mean, over the `QPV2_CASES_NEIGHBOURS` labelled images
-/// nearest in standardized feature space, of each image's oracle crossing
-/// curve at the requested score. The median is the crossing of `target`,
-/// the candidate the crossing of the effort's aim score
+/// distance-weighted mean, over the labelled images nearest in weighted
+/// standardized feature space, of each image's oracle crossing curve at
+/// the requested score. The median is the crossing of `target`, the
+/// candidate the crossing of the effort's aim score
 /// `target + reserve × loss(target)` (never coarser than the median), the
 /// interval the neighbours' spread at `target`, the loss exponent the
-/// neighbours' geometric mean. Out of distribution means a tiny frame, a
-/// standardized feature outside the cases' range (the knot model's rule),
-/// or neighbours whose crossings disagree by more than
-/// [`FALLBACK_LOG_WIDTH`]; each keeps the legacy start. Within the range,
-/// distance alone is not a fallback signal — on the 2026-09-02 study
-/// (leave-one-family-out over 89 images) routing far cells to the exact
-/// controller cost more probes than trusting the neighbours.
+/// neighbours' geometric mean.
+///
+/// The table fixes the geometry: per-feature distance weights
+/// (`QPV2_CASES_FEATURE_WEIGHTS`, searched offline against the simulated
+/// probe count rather than the ln error), the neighbour count
+/// (`QPV2_CASES_NEIGHBOURS`) and, when `QPV2_CASES_NEIGHBOUR_RATIO` is
+/// positive, an adaptive cut — a further neighbour is averaged in only while
+/// it is within that ratio of the nearest distance, so unrelated cases are
+/// never blended with a close match. Out of distribution means a tiny
+/// frame, a weighted feature outside the cases' range (the knot model's
+/// rule), or neighbours whose crossings disagree by more than
+/// `QPV2_CASES_SPREAD_FALLBACK`; each keeps the legacy start. Within the
+/// range, distance alone is not a fallback signal — on the 2026-09-02 study
+/// routing far cells to the exact controller cost more probes than trusting
+/// the neighbours.
 #[cfg(feature = "case-predictor")]
 #[must_use]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one straight pass: standardize, rank, blend, flag"
+)]
 pub fn predict_cases(
     features: &SourceFeatures,
     transform: &TransformFeatureSummary,
@@ -435,14 +493,15 @@ pub fn predict_cases(
 ) -> Option<QualityPredictionV2> {
     use crate::quality_predictor_cases::{
         QPV2_CASES, QPV2_CASES_DISTANCE_EPS, QPV2_CASES_FEATURE_CENTERS, QPV2_CASES_FEATURE_DIM,
-        QPV2_CASES_FEATURE_SCALES, QPV2_CASES_FEATURE_Z_RANGE, QPV2_CASES_NEIGHBOURS,
+        QPV2_CASES_FEATURE_SCALES, QPV2_CASES_FEATURE_WEIGHTS, QPV2_CASES_FEATURE_Z_RANGE,
+        QPV2_CASES_NEIGHBOUR_RATIO, QPV2_CASES_NEIGHBOURS, QPV2_CASES_SPREAD_FALLBACK,
     };
-    const _: () = assert!(QPV2_CASES_FEATURE_DIM == QPV2_FEATURE_DIM);
+    const _: () = assert!(QPV2_CASES_FEATURE_DIM == QPV2_STP_FEATURE_DIM);
     if QPV2_CASES.is_empty() {
         return None;
     }
-    let raw = qpv2_features(features, transform);
-    let mut z = [0.0; QPV2_FEATURE_DIM];
+    let raw = qpv2_stp_features(features, transform)?;
+    let mut z = [0.0; QPV2_STP_FEATURE_DIM];
     for (slot, ((&value, &center), &scale)) in z.iter_mut().zip(
         raw.iter()
             .zip(QPV2_CASES_FEATURE_CENTERS.iter())
@@ -450,7 +509,8 @@ pub fn predict_cases(
     ) {
         *slot = (value - center) / scale;
     }
-    // Nearest cases, ties broken by table order (deterministic).
+    // Nearest cases in weighted standardized space, ties broken by table
+    // order (deterministic).
     let mut ranked: Vec<(f64, usize)> = QPV2_CASES
         .iter()
         .enumerate()
@@ -459,7 +519,11 @@ pub fn predict_cases(
                 .z
                 .iter()
                 .zip(z.iter())
-                .map(|(a, b)| (a - b) * (a - b))
+                .zip(QPV2_CASES_FEATURE_WEIGHTS.iter())
+                .map(|((a, b), w)| {
+                    let delta = w * (a - b);
+                    delta * delta
+                })
                 .sum::<f64>()
                 .sqrt();
             (d, i)
@@ -467,6 +531,10 @@ pub fn predict_cases(
         .collect();
     ranked.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
     ranked.truncate(QPV2_CASES_NEIGHBOURS.max(1));
+    if QPV2_CASES_NEIGHBOUR_RATIO > 0.0 {
+        let nearest = ranked.first().map_or(0.0, |r| r.0);
+        ranked.retain(|&(d, _)| d <= nearest * QPV2_CASES_NEIGHBOUR_RATIO + 1e-9);
+    }
 
     let x_target = loss(target).ln();
     let aim = 100.0 - loss(target) * (1.0 - reserve);
@@ -491,41 +559,52 @@ pub fn predict_cases(
         ln_high = ln_high.max(at_target);
         total += w;
     }
+    if total <= 0.0 {
+        return None;
+    }
     ln_median /= total;
     ln_candidate = (ln_candidate / total).max(ln_median);
     ln_beta /= total;
 
-    // The table's domain is the cases' feature range (same margin and
-    // flags as the knot model): outside it the nearest cases are an
-    // extrapolation the runtime must not trust — on the 2026-09-02 blind
-    // trial a 256x256 saturated block outside every table's range drew a
-    // first guess coarse enough that Fast's three probes ended under
-    // target. Such frames keep the legacy start, exactly as before; a frame
-    // that is only larger than the domain keeps the case median.
+    // The table's domain is the cases' range over the features the distance
+    // reads (same margin and flags as the knot model): outside it the nearest
+    // cases are an extrapolation the runtime must not trust — on the
+    // 2026-09-02 blind trial a 256x256 saturated block outside every table's
+    // range drew a first guess coarse enough that Fast's three probes ended
+    // under target. Such frames keep the legacy start, exactly as before; a
+    // frame that is only larger than the domain keeps the case median.
     let mut ood_flags: Vec<&'static str> = Vec::new();
     let mut above_range: Vec<&'static str> = Vec::new();
     if features.width.min(features.height) < MIN_DOMAIN_SIDE {
         ood_flags.push("tiny_frame");
     }
-    for (i, (&value, &(lo, hi))) in z.iter().zip(QPV2_CASES_FEATURE_Z_RANGE.iter()).enumerate() {
+    for (i, ((&value, &(lo, hi)), &weight)) in z
+        .iter()
+        .zip(QPV2_CASES_FEATURE_Z_RANGE.iter())
+        .zip(QPV2_CASES_FEATURE_WEIGHTS.iter())
+        .enumerate()
+    {
+        if weight <= 0.0 {
+            continue;
+        }
         let span = (hi - lo).max(1e-6);
         if value < lo - OOD_RANGE_MARGIN * span || value > hi + OOD_RANGE_MARGIN * span {
-            ood_flags.push(qpv2_feature_name(i));
+            ood_flags.push(qpv2_stp_feature_name(i));
             if value > hi + OOD_RANGE_MARGIN * span {
-                above_range.push(qpv2_feature_name(i));
+                above_range.push(qpv2_stp_feature_name(i));
             }
         }
     }
     let large_frame_only_ood =
         ood_flags.as_slice() == ["log2_pixels"] && above_range.as_slice() == ["log2_pixels"];
     let mut fallback_reason = (!ood_flags.is_empty()).then_some("ood_feature");
-    // Neighbours that disagree by more than the fallback width do not know
-    // this frame: the table's median is no safer than its candidate, so the
-    // frame keeps the legacy start like any other out-of-distribution one.
-    // Adopted after the 2026-09-02 holdout trial's second round, where the
-    // 256x256 saturated block (inside the table's range, nearest to two
+    // Neighbours that disagree by more than the table's spread bound do not
+    // know this frame: the table's median is no safer than its candidate, so
+    // the frame keeps the legacy start like any other out-of-distribution
+    // one. Adopted after the 2026-09-02 holdout trial's second round, where
+    // the 256x256 saturated block (inside the table's range, nearest to two
     // solid-colour cases, spread 0.42) again ended Fast under target.
-    if !large_frame_only_ood && ln_high - ln_low > FALLBACK_LOG_WIDTH {
+    if !large_frame_only_ood && ln_high - ln_low > QPV2_CASES_SPREAD_FALLBACK {
         ood_flags.push("case_spread");
         fallback_reason = Some("wide_interval");
     }
@@ -641,6 +720,34 @@ mod tests {
             chroma_variance_q50: 1e-5,
             flat_fraction: 0.1,
             edge_proxy: 1e-2,
+            preanalysis: Some(preanalysis()),
+        }
+    }
+
+    /// A photograph's structure vector (the corpus image
+    /// `photo-large-20260607_155124`, so the fixture sits inside any table
+    /// trained on the corpus).
+    fn preanalysis() -> crate::preanalysis::PreanalysisFeatures {
+        crate::preanalysis::PreanalysisFeatures {
+            cells: 48705,
+            share: [
+                0.0451904, 0.724505, 0.0380659, 0.0, 0.108305, 0.0675085, 0.0164254,
+            ],
+            log2var_mean: 7.07718,
+            log2var_std: 1.73362,
+            log2var_q10: 5.12928,
+            log2var_q90: 8.98868,
+            edge_mean: 0.0716309,
+            edge_q90: 0.230469,
+            flat_mean: 0.722714,
+            noise_mean: 0.0984498,
+            noise_q90: 0.0,
+            chroma_log2_mean: 5.71906,
+            chroma_log2_q90: 8.65464,
+            orient_entropy_mean: 0.428383,
+            dir_dominance_mean: 0.739334,
+            axis_aligned_mean: 0.759818,
+            hetero_frac: 0.186819,
         }
     }
 
@@ -777,14 +884,27 @@ mod tests {
         let p = predict_cases(&huge, &t, 85.0, 0.03).expect("prediction");
         assert_eq!(p.ood_flags, vec!["log2_pixels"]);
         assert!(p.large_frame_only_ood);
-        assert_eq!(
-            predict(&f, &t, 85.0, 0.03),
-            predict_cases(&f, &t, 85.0, 0.03)
-        );
+        // A confident case prediction is the prediction; an uncertain one
+        // hands the frame to the knot model, as without the feature.
+        let cases = predict_cases(&f, &t, 85.0, 0.03).expect("prediction");
+        if cases.fallback_reason.is_none() {
+            assert_eq!(predict(&f, &t, 85.0, 0.03), Some(cases));
+        } else {
+            assert_eq!(predict(&f, &t, 85.0, 0.03), predict_v2(&f, &t, 85.0));
+        }
+        let mut bare = features();
+        bare.preanalysis = None;
+        assert_eq!(predict(&bare, &t, 85.0, 0.03), predict_v2(&bare, &t, 85.0));
         assert_eq!(
             active_model_version(),
             crate::quality_predictor_cases::QPV2_CASES_MODEL_VERSION
         );
+        // A frame without structure statistics has no `qpv2-stp/1` vector.
+        assert!(predict_cases(&bare, &t, 85.0, 0.03).is_none());
+        assert!(qpv2_stp_features(&bare, &t).is_none());
+        assert_eq!(qpv2_stp_feature_name(0), "ln_luma_q10");
+        assert_eq!(qpv2_stp_feature_name(QPV2_FEATURE_DIM), "pa_share_flat");
+        assert_eq!(qpv2_stp_feature_name(QPV2_STP_FEATURE_DIM), "unknown");
     }
 
     /// A case's own features reproduce its own curve up to the second

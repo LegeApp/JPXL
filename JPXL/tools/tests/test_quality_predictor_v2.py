@@ -196,5 +196,64 @@ class EndToEndTest(unittest.TestCase):
             )
 
 
+class CaseTableTest(unittest.TestCase):
+    """The qpv2-stp/1 case table: structure vector, weighted distance, adaptive k."""
+
+    PA = {k: 0.0 for k in qpv2.PREANALYSIS_KEYS}
+
+    def test_preanalysis_vector_is_25_wide_with_the_derived_logs_last(self):
+        pa = dict(self.PA, pa_share_flat=0.25, pa_edge_mean=0.5, pa_noise_mean=1.9)
+        v = qpv2.preanalysis_vector(pa)
+        self.assertEqual(len(v), 25)
+        self.assertAlmostEqual(v[22], math.log(0.5 + 1e-4))
+        self.assertAlmostEqual(v[23], math.log(0.75 + 1e-3))
+        self.assertAlmostEqual(v[24], math.log(2.0))
+        self.assertEqual(len(qpv2.feature_names("source+transform")), 19)
+        self.assertEqual(len(qpv2.feature_names("source+transform+preanalysis")), 44)
+        self.assertEqual(qpv2.feature_names("source+transform+preanalysis")[19], "pa_share_flat")
+
+    def test_feature_vector_appends_the_structure_vector(self):
+        sf = {"width": 640, "height": 480, "grayscale": False, "luma_variance_q10": 1e-6,
+              "luma_variance_q50": 1e-4, "luma_variance_q90": 1e-2, "chroma_variance_q50": 1e-5,
+              "flat_fraction": 0.1, "edge_proxy": 1e-2, "preanalysis": self.PA}
+        tf = {"blocks": 4800, "chroma_ac_ratio": 0.15, "dc_variance_y": 0.01, "directional_asymmetry": 0.2,
+              "high_low_ratio": 0.3, "ln_ac_y_mean": -5.0, "ln_ac_y_q50": -6.0, "ln_ac_y_q90": -4.0,
+              "ln_ac_y_q99": -3.0, "near_zero_frac_1e2": 0.8, "near_zero_frac_1e3": 0.6}
+        base = qpv2.feature_vector(sf, "source+transform", tf)
+        full = qpv2.feature_vector(sf, "source+transform+preanalysis", tf)
+        self.assertEqual(full[:19], base)
+        self.assertEqual(len(full), 44)
+        with self.assertRaises(ValueError):
+            qpv2.feature_vector(dict(sf, preanalysis=None), "source+transform+preanalysis", tf)
+
+    def test_weighted_distance_and_adaptive_cut(self):
+        cases = [
+            {"id": "near-in-x", "z": [0.1, 5.0], "ln_crossing": [1.0] * 7, "ln_beta": [0.0] * 7},
+            {"id": "near-in-y", "z": [5.0, 0.1], "ln_crossing": [3.0] * 7, "ln_beta": [0.0] * 7},
+        ]
+        z = [0.0, 0.0]
+        # Unweighted: both at the same distance; the tie goes to table order and k=2 blends.
+        both = qpv2.cases_predict(None, cases, z, 85.0, k=2, eps=0.05)
+        self.assertAlmostEqual(both["ln_crossing"], 2.0)
+        # Weight 0 on the second feature makes the first case the only near one.
+        wx = qpv2.cases_predict(None, cases, z, 85.0, k=2, eps=0.05, weights=[1.0, 0.0])
+        self.assertLess(abs(wx["ln_crossing"] - 1.0), 0.15)
+        # The adaptive cut drops a neighbour further than ratio x the nearest.
+        cut = qpv2.cases_predict(None, cases, z, 85.0, k=2, eps=0.05, weights=[1.0, 0.0], ratio=1.5)
+        self.assertEqual(cut["neighbours"], ["near-in-x"])
+        self.assertEqual(cut["ln_crossing"], 1.0)
+
+    def test_generated_table_declares_its_geometry(self):
+        table = {"centers": [0.0, 0.0], "scales": [1.0, 1.0], "z_range": [(-1.0, 1.0), (-1.0, 1.0)],
+                 "cases": [{"id": "a", "z": [0.0, 0.0], "ln_crossing": [1.0] * 7, "ln_beta": [0.0] * 7}],
+                 "feature_set": "source+transform+preanalysis"}
+        prov = {"labels_sha256": "x", "generated_at": "now", "git": {"commit": "c", "dirty": False}}
+        rust = qpv2.generate_cases_rust(table, prov, 2, 0.05, ["calibration"], [1.0, 0.5], 1.5, 0.6)
+        self.assertIn("pub const QPV2_CASES_FEATURE_WEIGHTS: [f64; 2] = [1.0, 0.5];", rust)
+        self.assertIn("pub const QPV2_CASES_NEIGHBOUR_RATIO: f64 = 1.5;", rust)
+        self.assertIn("pub const QPV2_CASES_SPREAD_FALLBACK: f64 = 0.6;", rust)
+        self.assertIn("feature_schema: qpv2-stp/1", rust)
+
+
 if __name__ == "__main__":
     unittest.main()

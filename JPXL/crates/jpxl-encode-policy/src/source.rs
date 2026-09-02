@@ -93,6 +93,9 @@ pub struct PreparedFrame {
     xyb: XybPlanes,
     intensity_target: f32,
     grayscale: bool,
+    /// Structure statistics attached at preparation by callers that read
+    /// the 8-bit samples (see [`crate::preanalysis`]); `None` otherwise.
+    preanalysis: Option<crate::preanalysis::PreanalysisFeatures>,
 }
 
 impl PreparedFrame {
@@ -142,6 +145,7 @@ impl PreparedFrame {
             },
             intensity_target: jpxl_core::color::NOMINAL_INTENSITY_TARGET,
             grayscale,
+            preanalysis: None,
         })
     }
 
@@ -186,6 +190,7 @@ impl PreparedFrame {
             },
             intensity_target: jpxl_core::color::NOMINAL_INTENSITY_TARGET,
             grayscale,
+            preanalysis: None,
         })
     }
 
@@ -477,6 +482,7 @@ impl PreparedFrame {
             },
             intensity_target: jpxl_core::color::NOMINAL_INTENSITY_TARGET,
             grayscale,
+            preanalysis: None,
         })
     }
 
@@ -514,6 +520,24 @@ impl PreparedFrame {
     #[must_use]
     pub const fn is_grayscale(&self) -> bool {
         self.grayscale
+    }
+
+    /// The structure statistics attached at preparation, if any.
+    #[must_use]
+    pub const fn preanalysis(&self) -> Option<crate::preanalysis::PreanalysisFeatures> {
+        self.preanalysis
+    }
+
+    /// Attaches the source-domain structure statistics (computed by the
+    /// caller from the samples the frame was prepared from). They inform
+    /// the quality controller's first guess only; no plan reads them.
+    #[must_use]
+    pub const fn with_preanalysis(
+        mut self,
+        features: Option<crate::preanalysis::PreanalysisFeatures>,
+    ) -> Self {
+        self.preanalysis = features;
+        self
     }
 }
 

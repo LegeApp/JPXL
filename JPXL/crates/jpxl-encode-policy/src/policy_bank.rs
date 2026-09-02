@@ -289,6 +289,7 @@ mod tests {
             chroma_variance_q50: 1e-4,
             flat_fraction: flat,
             edge_proxy: edge,
+            preanalysis: None,
         }
     }
 

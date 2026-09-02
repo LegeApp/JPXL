@@ -75,6 +75,7 @@ pub mod error;
 pub mod field;
 pub mod navigation;
 pub mod policy_bank;
+pub mod preanalysis;
 pub mod quality;
 pub mod quality_features;
 pub mod quality_prediction;
@@ -132,6 +133,7 @@ pub use field::{AqMode, AqTuning};
 
 use field::{DesiredQuantField, mul_lattice_for};
 pub use policy_bank::{PerceptualPolicy, rank_alternatives};
+pub use preanalysis::{PreanalysisFeatures, preanalysis_srgb8, preanalysis_srgb16};
 pub use quality::{
     LadderPoint, PerceptualEvaluator, PerceptualObservation, PolicyTrial, ProbeKind, QualityBudget,
     QualityOutcome, QualityPredictionTrace, QualityProbe, QualityStats, QualityStatus, QualityWork,

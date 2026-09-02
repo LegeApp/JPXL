@@ -96,7 +96,7 @@ record jpegxl-rs.question.one-shot-calibration-contract-b/4 : question {
 
 record jpegxl-rs.question.promote-case-predictor-2026-09-02/1 : question {
     title "Promote the case-table crossing predictor (feature case-predictor) to the default controller?"
-    state open
+    state superseded
     scope [ path "JPXL/crates/jpxl-encode-policy/**" ]
     question """
         Feature `case-predictor` replaces the qpv2-st-1 linear knot model's first guess with the distance-weighted mean of the two nearest labelled images' oracle crossing curves (generated quality_predictor_cases.rs, tool subcommand train-cases). Offline it has a third of the knot model's error with no target bias (@jpegxl-rs.observation.case-table-first-guess-study-2026-09-02). On the never-seen holdout it holds the floor on all 493 cells, saves 0.47 probes per encode at Balanced for 1.4% fewer bytes and about 10% wall, and is neutral at Fast (@jpegxl-rs.evidence.case-predictor-blind-holdout-balanced-2026-09-02, @jpegxl-rs.evidence.case-predictor-blind-holdout-fast-2026-09-02). Against it: the strict preregistered verdict is Partial (two synthetic hue-wheel cells above the 1.15 byte tail), the holdout was seen twice before the final two fallback rules (the knot model's feature-range and fallback-width criteria applied to the table), the shipped 89-case table would contain the holdout images and so is not the measured model, photos gain little at high targets (the 12-50 MP camera photos have no close case) and lose a probe at 95 on two frames for 3.75% fewer bytes, and it changes 112 of 140 holdout streams. Should it join `default`? If yes, the promotion commit should add the feature to the policy crate's default set and note that pre-promotion byte baselines of the quality path are superseded again.
@@ -107,6 +107,29 @@ record jpegxl-rs.question.promote-case-predictor-2026-09-02/1 : question {
         @jpegxl-rs.evidence.case-predictor-blind-holdout-fast-2026-09-02,
         @jpegxl-rs.evidence.case-predictor-caldev-in-table-2026-09-02,
         @jpegxl-rs.evidence.case-predictor-thread-identity-2026-09-02,
+        @jpegxl-rs.observation.case-table-first-guess-study-2026-09-02
+    ]
+}
+
+record jpegxl-rs.question.promote-case-predictor-2026-09-02/2 : question {
+    title "Promote the case-table crossing predictor (feature case-predictor, now v2 with structure features and 347 cases) to the default controller?"
+    state open
+    scope [ path "JPXL/crates/jpxl-encode-policy/**" ]
+    question """
+        Feature `case-predictor` replaces the qpv2-st-1 linear knot model's first guess with the distance-weighted mean of the nearest labelled images' oracle crossing curves. Version 2 (2026-09-02 evening, @jpegxl-rs.observation.case-predictor-v2-paintings-study-2026-09-02): the still265 structure pass is ported (preanalysis.rs) and attached at frame preparation, the table is 347 cases over the old corpus plus 258 paintings, the neighbour geometry (per-feature weights, k 2 with a 3x adaptive cut, a quarter-spread offset, spread threshold 0.405) was searched against the simulated Balanced + Fast probe count under leave-one-family-out on calibration+development families only, and any table fallback now hands the frame to the knot model, i.e. behaves exactly as the default controller. Preregistered blind trial on 52 never-seen paintings: Balanced 0 floor violations on 364 cells, byte geomean 0.990, worst cell 1.092, probes 2.21 -> 1.77, cells at <= 2 probes 242 -> 322 (@jpegxl-rs.evidence.case-predictor-v2-blind-paintings-balanced-2026-09-02); Fast 0 floor / 0 errors on 208 cells, 0.977, 1.84 -> 1.73 (@jpegxl-rs.evidence.case-predictor-v2-blind-paintings-fast-2026-09-02); old-corpus holdout (in the table) 0 floor, 0.981, 3.13 -> 1.64 (@jpegxl-rs.evidence.case-predictor-v2-corpus-holdout-in-table-2026-09-02); thread identity 9/9; gates green. Verdict: Pass on every preregistered criterion in round 2; round 1 (legacy-start fallback) was Partial on one 1.41x fallback cell, and the fallback change was made after seeing it (disclosed). Against promotion: the landed v1 table without paintings made paintings WORSE (2.21 -> 2.49 probes, @jpegxl-rs.evidence.case-predictor-v1-table-on-paintings-2026-09-02), so the predictor is only as good as the table's coverage of the content a user encodes — camera photographs (12-50 MP) still have no close case; sub-kilobyte synthetic gradients keep a tail (one 416 -> 1074 byte cell); it changes every quality stream. Should v2 join `default`? If yes, the promotion commit adds the feature to the policy crate's default set and notes that pre-promotion byte baselines are superseded; the next accuracy lever is labelled camera photographs and screenshots (coverage), not model structure.
+        """
+    part_of [ @jpegxl-rs.work.pqc-one-shot-controller ]
+    supersedes [ @jpegxl-rs.question.promote-case-predictor-2026-09-02/1 ]
+    supported_by [
+        @jpegxl-rs.evidence.case-predictor-blind-holdout-balanced-2026-09-02,
+        @jpegxl-rs.evidence.case-predictor-blind-holdout-fast-2026-09-02,
+        @jpegxl-rs.evidence.case-predictor-v1-table-on-paintings-2026-09-02,
+        @jpegxl-rs.evidence.case-predictor-v2-blind-paintings-balanced-2026-09-02,
+        @jpegxl-rs.evidence.case-predictor-v2-blind-paintings-fast-2026-09-02,
+        @jpegxl-rs.evidence.case-predictor-v2-corpus-holdout-in-table-2026-09-02,
+        @jpegxl-rs.evidence.case-predictor-v2-thread-identity-2026-09-02,
+        @jpegxl-rs.evidence.case-predictor-v2-workspace-gates-2026-09-02,
+        @jpegxl-rs.observation.case-predictor-v2-paintings-study-2026-09-02,
         @jpegxl-rs.observation.case-table-first-guess-study-2026-09-02
     ]
 }

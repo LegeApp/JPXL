@@ -97,6 +97,41 @@ FEATURE_NAMES = [
 ]
 
 
+# The frame structure vector (crate `jpxl-encode-policy`, module
+# `preanalysis`): 22 measured keys as emitted in `source_features.preanalysis`,
+# then three derived logarithms every reader recomputes.
+PREANALYSIS_KEYS = [
+    "pa_share_flat", "pa_share_gradient", "pa_share_chroma_critical", "pa_share_noisy",
+    "pa_share_texture", "pa_share_directional_edge", "pa_share_text_like", "pa_log2var_mean",
+    "pa_log2var_std", "pa_log2var_q10", "pa_log2var_q90", "pa_edge_mean", "pa_edge_q90",
+    "pa_flat_mean", "pa_noise_mean", "pa_noise_q90", "pa_chroma_log2_mean", "pa_chroma_log2_q90",
+    "pa_orient_entropy_mean", "pa_dir_dominance_mean", "pa_axis_aligned_mean", "pa_hetero_frac",
+]
+PREANALYSIS_NAMES = PREANALYSIS_KEYS + ["pa_ln_edge_mean", "pa_ln_nonflat", "pa_ln_noise"]
+
+
+def preanalysis_vector(pa: dict) -> list[float]:
+    """The 25-value preanalysis vector, exactly as `PreanalysisFeatures::vector`."""
+    v = [float(pa[k]) for k in PREANALYSIS_KEYS]
+    v.append(math.log(float(pa["pa_edge_mean"]) + 1e-4))
+    v.append(math.log(1.0 - float(pa["pa_share_flat"]) + 1e-3))
+    v.append(math.log(float(pa["pa_noise_mean"]) + 0.1))
+    return v
+
+
+def feature_names(feature_set: str) -> list[str]:
+    """Feature names of `feature_set`, in vector order."""
+    if feature_set == "source":
+        return list(FEATURE_NAMES)
+    tf = ["chroma_ac_ratio", "dc_variance_y", "directional_asymmetry", "high_low_ratio", "ln_ac_y_mean",
+          "ln_ac_y_q50", "ln_ac_y_q90", "ln_ac_y_q99", "near_zero_frac_1e2", "near_zero_frac_1e3"]
+    if feature_set == "source+transform":
+        return FEATURE_NAMES + tf
+    if feature_set == "source+transform+preanalysis":
+        return FEATURE_NAMES + tf + PREANALYSIS_NAMES
+    raise ValueError(f"unknown feature set {feature_set}")
+
+
 def feature_vector(sf: dict, feature_set: str, extra: dict | None = None) -> list[float]:
     """The raw (unstandardized) feature vector of one image."""
     width = float(sf["width"])
@@ -116,12 +151,17 @@ def feature_vector(sf: dict, feature_set: str, extra: dict | None = None) -> lis
         return [ln(sf["luma_variance_q50"]), float(sf["flat_fraction"])]
     if feature_set == "source":
         return base
-    if feature_set == "source+transform":
+    if feature_set in ("source+transform", "source+transform+preanalysis"):
         if extra is None:
             raise ValueError("source+transform needs the per-image transform summary")
         # `blocks` duplicates log2_pixels; every other summary field enters raw
         # (they are already log/ratio/fraction shaped), in sorted key order.
-        return base + [float(extra[k]) for k in sorted(extra) if k != "blocks"]
+        out = base + [float(extra[k]) for k in sorted(extra) if k != "blocks"]
+        if feature_set == "source+transform+preanalysis":
+            if sf.get("preanalysis") is None:
+                raise ValueError("source+transform+preanalysis needs source_features.preanalysis")
+            out += preanalysis_vector(sf["preanalysis"])
+        return out
     raise ValueError(f"unknown feature set {feature_set}")
 
 
@@ -982,13 +1022,17 @@ def cmd_train(args: argparse.Namespace) -> int:
 # Case table (nearest-neighbour crossing curves)
 # --------------------------------------------------------------------------
 
-CASES_MODEL_VERSION = "qpv2-cases-1"
+CASES_MODEL_VERSION = "qpv2-cases-2"
+CASES_FEATURE_SET = "source+transform+preanalysis"
+CASES_FEATURE_SCHEMA = "qpv2-stp/1"
 CASES_NEIGHBOURS = 2
+CASES_NEIGHBOUR_RATIO = 0.0  # 0 = every neighbour up to k; > 0 keeps only those within ratio x nearest
+CASES_SPREAD_FALLBACK = 0.405465  # neighbour crossings further apart than this (ln scale) -> legacy start
 CASES_DISTANCE_EPS = 0.05
 CASES_PRIOR_BETA = 0.9
 
 
-def build_cases(rows: list[dict]) -> dict:
+def build_cases(rows: list[dict], feature_set: str = CASES_FEATURE_SET) -> dict:
     """One case per image with every knot crossed: standardized features, the
     ln crossing scale at each knot, and ln beta at each knot (missing betas
     take the image's own geometric mean, else the prior)."""
@@ -999,7 +1043,7 @@ def build_cases(rows: list[dict]) -> dict:
         v for v in by_image.values()
         if all(t in v["rows"] and v["rows"][t]["state"] != "censored" for t in TARGET_KNOTS)
     ]
-    raw = [feature_vector(v["row"]["source_features"], "source+transform", v["row"]["transform_features"]) for v in images]
+    raw = [feature_vector(v["row"]["source_features"], feature_set, v["row"]["transform_features"]) for v in images]
     centers, scales = robust_standardizer(raw)
     cases = []
     for v, feats in zip(images, raw):
@@ -1018,7 +1062,7 @@ def build_cases(rows: list[dict]) -> dict:
     z_range = [
         (min(c["z"][j] for c in cases), max(c["z"][j] for c in cases)) for j in range(len(centers))
     ]
-    return {"centers": centers, "scales": scales, "z_range": z_range, "cases": cases}
+    return {"centers": centers, "scales": scales, "z_range": z_range, "cases": cases, "feature_set": feature_set}
 
 
 def _interp_knots(values: list[float], x: float) -> float:
@@ -1036,13 +1080,20 @@ def _interp_knots(values: list[float], x: float) -> float:
 
 
 def cases_predict(table: dict, cases: list[dict], z: list[float], target: float,
-                  k: int = CASES_NEIGHBOURS, eps: float = CASES_DISTANCE_EPS) -> dict:
-    """The runtime rule: distance-weighted mean of the k nearest cases' curves at `target`."""
+                  k: int = CASES_NEIGHBOURS, eps: float = CASES_DISTANCE_EPS,
+                  weights: list[float] | None = None, ratio: float = CASES_NEIGHBOUR_RATIO) -> dict:
+    """The runtime rule: distance-weighted mean of the nearest cases' curves at
+    `target`, distances in weighted standardized space, at most k neighbours
+    and (ratio > 0) only those within ratio x the nearest distance."""
     x = math.log(max(100.0 - target, 1e-3))
+    w = weights if weights is not None else [1.0] * len(z)
     scored = sorted(
-        ((math.sqrt(sum((a - b) ** 2 for a, b in zip(c["z"], z))), i) for i, c in enumerate(cases)),
+        ((math.sqrt(sum((wj * (a - b)) ** 2 for a, b, wj in zip(c["z"], z, w))), i) for i, c in enumerate(cases)),
         key=lambda di: (di[0], di[1]),
     )[:k]
+    if ratio > 0.0 and scored:
+        nearest = scored[0][0]
+        scored = [di for di in scored if di[0] <= nearest * ratio + 1e-9]
     weights = [1.0 / (d + eps) for d, _ in scored]
     total = sum(weights)
     crossings = [_interp_knots(cases[i]["ln_crossing"], x) for _, i in scored]
@@ -1057,7 +1108,8 @@ def cases_predict(table: dict, cases: list[dict], z: list[float], target: float,
     }
 
 
-def cases_metrics(train_cases: list[dict], test_cases: list[dict], k: int, eps: float) -> dict:
+def cases_metrics(train_cases: list[dict], test_cases: list[dict], k: int, eps: float,
+                  weights: list[float] | None = None, ratio: float = CASES_NEIGHBOUR_RATIO) -> dict:
     """Abs ln error of the case rule on every knot of every test case."""
     errors: list[float] = []
     by_class: dict[str, list[float]] = {}
@@ -1065,7 +1117,7 @@ def cases_metrics(train_cases: list[dict], test_cases: list[dict], k: int, eps: 
     for c in test_cases:
         pool = [t for t in train_cases if t["family_id"] != c["family_id"]]
         for j, target in enumerate(TARGET_KNOTS):
-            p = cases_predict(None, pool, c["z"], target, k, eps)
+            p = cases_predict(None, pool, c["z"], target, k, eps, weights, ratio)
             e = p["ln_crossing"] - c["ln_crossing"][j]
             errors.append(abs(e)); bias += e
             by_class.setdefault(c["class"], []).append(abs(e))
@@ -1084,8 +1136,10 @@ def cases_metrics(train_cases: list[dict], test_cases: list[dict], k: int, eps: 
     }
 
 
-def generate_cases_rust(table: dict, provenance: dict, k: int, eps: float, emitted_splits: list[str]) -> str:
+def generate_cases_rust(table: dict, provenance: dict, k: int, eps: float, emitted_splits: list[str],
+                        weights: list[float], ratio: float, spread_fallback: float) -> str:
     dim = len(table["centers"])
+    assert len(weights) == dim
     lines = [
         "//! Generated case table for the one-shot quality program's crossing",
         "//! predictor (nearest-neighbour crossing curves).",
@@ -1095,7 +1149,7 @@ def generate_cases_rust(table: dict, provenance: dict, k: int, eps: float, emitt
         "//! `case-predictor` feature; the exact controller stays authoritative.",
         "//!",
         f"//! model_version: {CASES_MODEL_VERSION}",
-        "//! feature_schema: qpv2-st/1",
+        f"//! feature_schema: {CASES_FEATURE_SCHEMA}",
         f"//! labels: {provenance['labels_sha256']}",
         f"//! splits: {', '.join(emitted_splits)}",
         f"//! trained_at: {provenance['generated_at']}",
@@ -1103,10 +1157,19 @@ def generate_cases_rust(table: dict, provenance: dict, k: int, eps: float, emitt
         "",
         "/// The generated case table's version string.",
         f'pub const QPV2_CASES_MODEL_VERSION: &str = "{CASES_MODEL_VERSION}";',
-        "/// The feature-vector dimension of every case (the qpv2-st/1 schema).",
+        f"/// The feature-vector dimension of every case (the {CASES_FEATURE_SCHEMA} schema).",
         f"pub const QPV2_CASES_FEATURE_DIM: usize = {dim};",
         "/// Cases averaged for one prediction, nearest first.",
         f"pub const QPV2_CASES_NEIGHBOURS: usize = {k};",
+        "/// A further neighbour is averaged in only while its distance is within",
+        "/// this multiple of the nearest one (0 disables the cut).",
+        f"pub const QPV2_CASES_NEIGHBOUR_RATIO: f64 = {ratio!r};",
+        "/// Neighbour crossings (ln scale) further apart than this at the target",
+        "/// are a wide interval: the frame keeps the legacy start.",
+        f"pub const QPV2_CASES_SPREAD_FALLBACK: f64 = {spread_fallback!r};",
+        "/// Per-feature distance weights over the standardized features (searched",
+        "/// offline against the simulated probe count; 0 drops a feature).",
+        f"pub const QPV2_CASES_FEATURE_WEIGHTS: [f64; {dim}] = {rust_array(weights)};",
         "/// Added to a case's standardized-feature distance before its inverse",
         "/// becomes the case's weight, so an exact match does not dominate.",
         f"pub const QPV2_CASES_DISTANCE_EPS: f64 = {eps!r};",
@@ -1129,7 +1192,7 @@ def generate_cases_rust(table: dict, provenance: dict, k: int, eps: float, emitt
         "pub struct Qpv2Case {",
         "    /// The corpus image id, for traces and audits.",
         "    pub id: &'static str,",
-        "    /// Standardized qpv2-st/1 feature vector.",
+        f"    /// Standardized {CASES_FEATURE_SCHEMA} feature vector.",
         f"    pub z: [f64; {dim}],",
         "    /// ln effective scale at which the image crosses each knot target.",
         f"    pub ln_crossing: [f64; {len(TARGET_KNOTS)}],",
@@ -1154,51 +1217,77 @@ def generate_cases_rust(table: dict, provenance: dict, k: int, eps: float, emitt
 
 
 def cmd_train_cases(args: argparse.Namespace) -> int:
-    _, rows = load_labels(args.labels)
+    rows: list[dict] = []
+    for path in args.labels:
+        rows.extend(load_labels(path)[1])
     rows = [
         r for r in rows
         if min(r["source_features"]["width"], r["source_features"]["height"]) >= MIN_DOMAIN_SIDE
     ]
-    with open(args.transform_features, encoding="utf-8") as fh:
-        transform_map = json.load(fh)
+    transform_map: dict = {}
+    for path in args.transform_features:
+        with open(path, encoding="utf-8") as fh:
+            transform_map.update(json.load(fh))
+    preanalysis_map: dict = {}
+    for path in args.preanalysis_features or []:
+        with open(path, encoding="utf-8") as fh:
+            preanalysis_map.update(json.load(fh))
     for row in rows:
         row["transform_features"] = transform_map.get(row["image_id"])
+        if row["source_features"].get("preanalysis") is None and row["image_id"] in preanalysis_map:
+            row["source_features"]["preanalysis"] = preanalysis_map[row["image_id"]]
     rows = [r for r in rows if r.get("transform_features") is not None]
+    if args.feature_set == "source+transform+preanalysis":
+        rows = [r for r in rows if r["source_features"].get("preanalysis") is not None]
+    names = feature_names(args.feature_set)
+    weights = [1.0] * len(names)
+    if args.weights:
+        with open(args.weights, encoding="utf-8") as fh:
+            table_w = json.load(fh)
+        unknown = sorted(set(table_w) - set(names))
+        if unknown:
+            raise SystemExit(f"--weights names not in {args.feature_set}: {unknown}")
+        weights = [float(table_w.get(n, 0.0)) for n in names]
     provenance = {
         "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-        "labels_sha256": sha256_file(args.labels),
+        "labels_sha256": hashlib.sha256("".join(sha256_file(p) for p in args.labels).encode()).hexdigest(),
         "git": git_provenance(args.repo_root),
         "tool_version": TOOL_VERSION,
     }
     blind = None if args.blind_split == "none" else args.blind_split
     train_rows = [r for r in rows if r["split"] != blind]
     blind_rows = [r for r in rows if blind and r["split"] == blind]
-    table = build_cases(train_rows)
-    lofo = cases_metrics(table["cases"], table["cases"], args.k, args.distance_eps)
+    table = build_cases(train_rows, args.feature_set)
+    lofo = cases_metrics(table["cases"], table["cases"], args.k, args.distance_eps, weights, args.neighbour_ratio)
     report = {
         "schema": REPORT_SCHEMA,
         "model_version": CASES_MODEL_VERSION,
+        "feature_schema": CASES_FEATURE_SCHEMA if args.feature_set == CASES_FEATURE_SET else args.feature_set,
         "provenance": provenance,
         "neighbours": args.k,
+        "neighbour_ratio": args.neighbour_ratio,
+        "spread_fallback": args.spread_fallback,
         "distance_eps": args.distance_eps,
+        "weights": dict(zip(names, weights)),
         "emitted_splits": sorted({r["split"] for r in train_rows}),
         "cases": len(table["cases"]),
         "lofo": lofo,
     }
-    print(f"[cases k={args.k}] {len(table['cases'])} cases; LOFO {json.dumps(lofo)}")
+    print(f"[cases k={args.k} ratio={args.neighbour_ratio}] {len(table['cases'])} cases; LOFO {json.dumps(lofo)}")
     if blind_rows:
-        blind_table = build_cases(blind_rows)
+        blind_table = build_cases(blind_rows, args.feature_set)
         # Standardize the blind images with the training table's standardizer.
-        for c, feats in zip(blind_table["cases"], [
-            feature_vector(v["source_features"], "source+transform", v["transform_features"])
-            for v in [next(r for r in blind_rows if r["image_id"] == c["id"]) for c in blind_table["cases"]]
-        ]):
+        for c in blind_table["cases"]:
+            v = next(r for r in blind_rows if r["image_id"] == c["id"])
+            feats = feature_vector(v["source_features"], args.feature_set, v["transform_features"])
             c["z"] = standardize(feats, table["centers"], table["scales"])
-        blind_metrics = cases_metrics(table["cases"], blind_table["cases"], args.k, args.distance_eps)
+        blind_metrics = cases_metrics(table["cases"], blind_table["cases"], args.k, args.distance_eps,
+                                      weights, args.neighbour_ratio)
         report["blind_split"] = blind
         report["blind"] = blind_metrics
         print(f"[cases k={args.k}] blind {blind}: {json.dumps(blind_metrics)}")
-    rust = generate_cases_rust(table, provenance, args.k, args.distance_eps, report["emitted_splits"])
+    rust = generate_cases_rust(table, provenance, args.k, args.distance_eps, report["emitted_splits"],
+                               weights, args.neighbour_ratio, args.spread_fallback)
     with open(args.rust_out, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(rust)
     report["emitted"] = {"rust": args.rust_out, "rust_sha256": hashlib.sha256(rust.encode()).hexdigest()}
@@ -1237,8 +1326,17 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--report-out", required=True)
     train.set_defaults(func=cmd_train)
     cases = sub.add_parser("train-cases", help="build, cross-validate, and emit the nearest-neighbour case table")
-    cases.add_argument("--labels", required=True)
-    cases.add_argument("--transform-features", required=True)
+    cases.add_argument("--labels", required=True, nargs="+", help="labels JSONL file(s)")
+    cases.add_argument("--transform-features", required=True, nargs="+",
+                       help="per-image transform-summary JSON map(s)")
+    cases.add_argument("--preanalysis-features", nargs="+", default=None,
+                       help="per-image preanalysis JSON map(s), for labels swept before the frame carried them")
+    cases.add_argument("--feature-set", default=CASES_FEATURE_SET,
+                       choices=["source+transform", "source+transform+preanalysis"])
+    cases.add_argument("--weights", default=None,
+                       help="JSON {feature name: distance weight}; unnamed features get 0")
+    cases.add_argument("--neighbour-ratio", type=float, default=CASES_NEIGHBOUR_RATIO)
+    cases.add_argument("--spread-fallback", type=float, default=CASES_SPREAD_FALLBACK)
     cases.add_argument("--repo-root", default=".")
     cases.add_argument("--blind-split", default="holdout",
                        help="split kept out of the emitted table and scored once; 'none' emits every split")

@@ -119,6 +119,14 @@ def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def sha256_file(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def to_ppm(image: Image.Image) -> bytes:
     rgb = image.convert("RGB")
     header = f"P6\n{rgb.width} {rgb.height}\n255\n".encode()
@@ -152,9 +160,19 @@ def cmd_build(args: argparse.Namespace) -> int:
                 if min(im.width, im.height) < args.min_side:
                     dropped += 1
                     continue
+                downscale = None
                 if im.width * im.height > args.max_pixels:
-                    dropped += 1
-                    continue
+                    if not args.downscale_large:
+                        dropped += 1
+                        continue
+                    # Fit the frame inside the pixel cap, keeping the aspect
+                    # ratio; a resampled painting is still a painting, and the
+                    # factor is recorded so the family can be told apart from
+                    # camera-resolution frames.
+                    factor = (args.max_pixels / (im.width * im.height)) ** 0.5
+                    size = (max(1, int(im.width * factor)), max(1, int(im.height * factor)))
+                    im = im.convert("RGB").resize(size, Image.Resampling.LANCZOS)
+                    downscale = f"{im.width}x{im.height} (Lanczos, factor {factor:.4f})"
                 ppm = to_ppm(im)
         except Exception as error:  # noqa: BLE001 - a bad file is data, not a bug
             print(f"skip (unreadable): {name} ({type(error).__name__})", file=sys.stderr)
@@ -162,19 +180,26 @@ def cmd_build(args: argparse.Namespace) -> int:
         family = family_key(rel, name)
         image_id = f"{args.name}-{index:04d}-{sha256_bytes(family.encode())[:8]}"
         ppm_name = f"{image_id}.ppm"
-        with open(os.path.join(out_dir, ppm_name), "wb") as fh:
-            fh.write(ppm)
+        ppm_path = os.path.join(out_dir, ppm_name)
+        ppm_sha = sha256_bytes(ppm)
+        # Idempotent: an unchanged frame already on disk is left alone, so a
+        # rerun that only adds images never rewrites files a sweep may be
+        # reading.
+        if not (os.path.exists(ppm_path) and sha256_file(ppm_path) == ppm_sha):
+            with open(ppm_path, "wb") as fh:
+                fh.write(ppm)
         entries.append(
             {
                 "id": image_id,
                 "path": f"{args.name}/{ppm_name}",
-                "sha256": sha256_bytes(ppm),
+                "sha256": ppm_sha,
                 "split": split_for_family(family, args.holdout_fraction, args.dev_fraction),
                 "class": args.image_class,
                 "kind": "external",
                 "bit_depth": 8,
                 "license": "private source collection; corpus use only, not redistributed",
-                "provenance": f"decoded from {source} (sha256 {source_sha})",
+                "provenance": f"decoded from {source} (sha256 {source_sha})"
+                + (f"; downscaled to {downscale}" if downscale else ""),
                 "family_id": family,
                 "variant_id": image_id,
                 "generator_family": None,
@@ -214,6 +239,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--holdout-fraction", type=float, default=0.2)
     parser.add_argument("--dev-fraction", type=float, default=0.3)
     parser.add_argument("--image-class", default="painting")
+    parser.add_argument(
+        "--downscale-large",
+        action="store_true",
+        help="resample frames over --max-pixels to fit the cap instead of dropping them",
+    )
     parser.set_defaults(func=cmd_build)
     return parser
 

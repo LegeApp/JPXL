@@ -2241,6 +2241,7 @@ fn cmd_features(args: &[String]) -> u8 {
         image.width(),
         image.height(),
         frame.is_grayscale(),
+        frame.preanalysis(),
     );
     if transform_summary {
         let mut request = jpxl_encode_policy::EncodeRequest::for_quality(
@@ -2393,7 +2394,12 @@ fn cmd_quality_ladder(args: &[String]) -> u8 {
         bits_per_sample,
         Some(&executor),
     ) {
-        Ok(frame) => frame,
+        Ok(frame) => frame.with_preanalysis(jpxl_encode_policy::preanalysis_srgb16(
+            width,
+            height,
+            &rgb,
+            bits_per_sample,
+        )),
         Err(error) => {
             fail(&format!("{input}: {error}"));
             return EXIT_ERROR;
@@ -2415,7 +2421,13 @@ fn cmd_quality_ladder(args: &[String]) -> u8 {
         }
     };
     let atlas = jpxl_encode_policy::AnalysisAtlas::analyze(&frame);
-    let features = jpxl_encode_policy::source_features(&atlas, width, height, frame.is_grayscale());
+    let features = jpxl_encode_policy::source_features(
+        &atlas,
+        width,
+        height,
+        frame.is_grayscale(),
+        frame.preanalysis(),
+    );
     use jpxl_encode_policy::PerceptualEvaluator as _;
     println!(
         "{{\"schema\":\"jpxl.quality-ladder/1\",\"input\":\"{}\",\"width\":{width},\
@@ -2594,7 +2606,13 @@ fn cmd_rate_ladder(args: &[String]) -> u8 {
         }
     };
     let atlas = jpxl_encode_policy::AnalysisAtlas::analyze(&frame);
-    let features = jpxl_encode_policy::source_features(&atlas, width, height, frame.is_grayscale());
+    let features = jpxl_encode_policy::source_features(
+        &atlas,
+        width,
+        height,
+        frame.is_grayscale(),
+        frame.preanalysis(),
+    );
     println!(
         "{{\"schema\":\"jpxl.rate-ladder/1\",\"input\":\"{}\",\"width\":{width},\
          \"height\":{height},\"bit_depth\":{bits_per_sample},\"preset\":\"{}\",\
@@ -2663,6 +2681,14 @@ fn analysis_frame(image: &jpxl_encode::Image) -> Result<jpxl_encode_policy::Prep
         &rgb,
         image.bits_per_sample(),
     )
+    .map(|frame| {
+        frame.with_preanalysis(jpxl_encode_policy::preanalysis_srgb16(
+            image.width(),
+            image.height(),
+            &rgb,
+            image.bits_per_sample(),
+        ))
+    })
     .map_err(|error| error.to_string())
 }
 

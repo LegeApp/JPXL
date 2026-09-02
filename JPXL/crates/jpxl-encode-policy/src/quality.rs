@@ -2447,7 +2447,13 @@ pub fn search_frame_perceptual_with_budget(
         None
     };
     let transform_frame = transform_owned.as_ref().unwrap_or(frame);
-    let features = source_features(atlas, frame.width(), frame.height(), frame.is_grayscale());
+    let features = source_features(
+        atlas,
+        frame.width(),
+        frame.height(),
+        frame.is_grayscale(),
+        frame.preanalysis(),
+    );
     let predicted = rung_for_scale(predicted_effective_scale(&features, target_score));
 
     let mut trace: Vec<QualityProbe> = Vec::new();
@@ -2803,7 +2809,11 @@ mod tests {
                 ]
             })
             .collect();
-        PreparedFrame::from_srgb8(w, h, &rgb).expect("frame")
+        // The production quality path attaches the structure statistics the
+        // case predictor reads; a frame without them keeps the legacy start.
+        PreparedFrame::from_srgb8(w, h, &rgb)
+            .expect("frame")
+            .with_preanalysis(crate::preanalysis::preanalysis_srgb8(w, h, &rgb))
     }
 
     fn frame() -> PreparedFrame {
@@ -2881,7 +2891,7 @@ mod tests {
         )
         .expect("search");
 
-        let features = source_features(&atlas, w, h, frame.is_grayscale());
+        let features = source_features(&atlas, w, h, frame.is_grayscale(), frame.preanalysis());
         let mut check_cache = crate::CandidateForwardCache::new();
         let summary =
             crate::quality_transform_summary(&frame, &request, &mut check_cache, Some(&executor))
@@ -3064,6 +3074,7 @@ mod tests {
             chroma_variance_q50: 1e-4,
             flat_fraction: 0.1,
             edge_proxy: 9e-4,
+            preanalysis: None,
         };
         let a = predicted_effective_scale(&f, 50.0);
         let b = predicted_effective_scale(&f, 85.0);
@@ -3290,7 +3301,13 @@ mod tests {
         let executor = request.resources.executor();
         let (enable_cfl, structure_tier, finalist_entropy) = planning_tiers(preset);
         let target = 70.0;
-        let features = source_features(&atlas, frame.width(), frame.height(), frame.is_grayscale());
+        let features = source_features(
+            &atlas,
+            frame.width(),
+            frame.height(),
+            frame.is_grayscale(),
+            frame.preanalysis(),
+        );
         let predicted = rung_for_scale(predicted_effective_scale(&features, target));
 
         let baseline_policy = PerceptualPolicy::baseline(preset);

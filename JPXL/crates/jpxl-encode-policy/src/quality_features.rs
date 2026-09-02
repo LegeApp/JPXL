@@ -40,6 +40,8 @@ pub struct SourceFeatures {
     /// `luma_variance_q90 - luma_variance_q50`: how much busier the busiest
     /// tenth of the frame is than its typical atom (an edge/texture proxy).
     pub edge_proxy: f32,
+    /// Source-domain structure statistics, when the frame carried them.
+    pub preanalysis: Option<crate::preanalysis::PreanalysisFeatures>,
 }
 
 impl SourceFeatures {
@@ -62,10 +64,13 @@ impl SourceFeatures {
     /// A one-line JSON object, for the CLI and the calibration tooling.
     #[must_use]
     pub fn to_json(&self) -> String {
+        let preanalysis = self
+            .preanalysis
+            .map_or_else(String::new, |p| format!(",\"preanalysis\":{}", p.to_json()));
         format!(
             "{{\"width\":{},\"height\":{},\"grayscale\":{},\"luma_variance_q10\":{:e},\
              \"luma_variance_q50\":{:e},\"luma_variance_q90\":{:e},\"chroma_variance_q50\":{:e},\
-             \"flat_fraction\":{},\"edge_proxy\":{:e}}}",
+             \"flat_fraction\":{},\"edge_proxy\":{:e}{}}}",
             self.width,
             self.height,
             self.grayscale,
@@ -75,6 +80,7 @@ impl SourceFeatures {
             self.chroma_variance_q50,
             self.flat_fraction,
             self.edge_proxy,
+            preanalysis,
         )
     }
 }
@@ -169,6 +175,7 @@ pub fn source_features(
     width: u32,
     height: u32,
     grayscale: bool,
+    preanalysis: Option<crate::preanalysis::PreanalysisFeatures>,
 ) -> SourceFeatures {
     let atoms = atlas.atoms();
     let mut luma: Vec<f32> = atoms.iter().map(|a| a.variance_xyb[1]).collect();
@@ -196,6 +203,7 @@ pub fn source_features(
         chroma_variance_q50,
         flat_fraction,
         edge_proxy: luma_variance_q90 - luma_variance_q50,
+        preanalysis,
     }
 }
 
@@ -218,7 +226,7 @@ mod tests {
         let flat =
             crate::PreparedFrame::from_srgb8(64, 48, &vec![100u8; 64 * 48 * 3]).expect("frame");
         let atlas = AnalysisAtlas::analyze(&flat);
-        let f = source_features(&atlas, 64, 48, true);
+        let f = source_features(&atlas, 64, 48, true, None);
         assert_eq!(f.flat_fraction, 1.0);
         assert_eq!(f.luma_variance_q90, 0.0);
         assert!(f.grayscale);
@@ -229,7 +237,7 @@ mod tests {
             .collect();
         let frame = crate::PreparedFrame::from_srgb8(64, 48, &noisy).expect("frame");
         let atlas = AnalysisAtlas::analyze(&frame);
-        let f = source_features(&atlas, 64, 48, false);
+        let f = source_features(&atlas, 64, 48, false, None);
         assert_eq!(f.flat_fraction, 0.0);
         assert!(f.luma_variance_q10 > FLAT_VARIANCE);
         assert!(f.edge_proxy >= 0.0);

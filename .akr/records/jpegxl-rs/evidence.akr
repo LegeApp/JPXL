@@ -217,6 +217,83 @@ record jpegxl-rs.evidence.case-predictor-thread-identity-2026-09-02/1 : evidence
         """
 }
 
+record jpegxl-rs.evidence.case-predictor-v1-table-on-paintings-2026-09-02/1 : evidence {
+    title "The landed v1 case table (no paintings) on 364 blind paintings cells: floor held but probes 2.21 -> 2.49 at byte geomean 0.999"
+    state verified
+    result fail
+    method command
+    observed_at git:1556bfb38552b49df091128f91262f920d2e4c74
+    command ".agent/scratch/firstguess2-20260902/run_trial.sh (run c1-paint-balanced-7t)"
+    artifact "JPXL/docs/experiments/2026-09-02-case-predictor-v2-paintings.md"
+    summary """
+        Binary built from HEAD 1556bfb with case-predictor (19-feature, 89-case table) vs the default build on the paintings ext-holdout x 7 targets, Balanced: 0 floor violations, byte geomean 0.999, worst 1.164, mean pixel probes 2.21 -> 2.49, cells at <= 2 probes 242 -> 195. A case table is only as good as its coverage of the content class.
+        """
+}
+
+record jpegxl-rs.evidence.case-predictor-v2-blind-paintings-balanced-2026-09-02/1 : evidence {
+    title "Case predictor v2 blind Balanced paintings (round 2): floor held on 364 cells, bytes -1.0%, probes 2.21 -> 1.77, no cell over 1.10"
+    state verified
+    result pass
+    method command
+    observed_at git:1556bfb38552b49df091128f91262f920d2e4c74
+    command ".agent/scratch/firstguess2-20260902/run_trial2.sh (tools/one_shot_promotion_ab.py, 4 threads, P-cores 0,2,4,6)"
+    artifact "JPXL/docs/experiments/2026-09-02-case-predictor-v2-paintings.md"
+    summary """
+        Paintings ext-holdout (52 images, not in the table) x 7 targets, Balanced, C3 (searched geometry, spread 0.405, knot-model fallback) vs the default build: 0 floor violations, 0 errors, byte geomean 0.9897, worst 1.092, mean pixel probes 2.21 -> 1.77, cells at <= 2 probes 242 -> 322, 7 fallback cells byte-identical to the reference, wall geomean 0.89 (reported, not claimed). Round 1 (legacy-start fallback) was identical on the 357 confident cells and had one 1.414x fallback cell.
+        """
+}
+
+record jpegxl-rs.evidence.case-predictor-v2-blind-paintings-fast-2026-09-02/1 : evidence {
+    title "Case predictor v2 blind Fast paintings (round 2): floor held on 208 cells, no errors, bytes -2.3%, probes 1.84 -> 1.73"
+    state verified
+    result pass
+    method command
+    observed_at git:1556bfb38552b49df091128f91262f920d2e4c74
+    command ".agent/scratch/firstguess2-20260902/run_trial2.sh (run c3-paint-fast-4t)"
+    artifact "JPXL/docs/experiments/2026-09-02-case-predictor-v2-paintings.md"
+    summary """
+        Paintings ext-holdout x targets 30/50/70/85, Fast, C3 vs the default build: 0 floor violations, 0 encode errors, byte geomean 0.9772, worst 1.075, mean pixel probes 1.84 -> 1.73, cells at <= 2 probes 185 -> 197, overshoot +2.56 -> +1.73, wall geomean 0.96 (reported, not claimed).
+        """
+}
+
+record jpegxl-rs.evidence.case-predictor-v2-corpus-holdout-in-table-2026-09-02/1 : evidence {
+    title "Case predictor v2 on the old-corpus holdout (in the table): floor held on 140 cells, bytes -1.9%, probes 3.13 -> 1.64, one 2.6x sub-kilobyte gradient cell"
+    state verified
+    result pass
+    method command
+    observed_at git:1556bfb38552b49df091128f91262f920d2e4c74
+    command ".agent/scratch/firstguess2-20260902/run_trial2.sh (run c3-corpus-holdout-7t)"
+    artifact "JPXL/docs/experiments/2026-09-02-case-predictor-v2-paintings.md"
+    summary """
+        Old-corpus holdout x 7 targets, Balanced, C3 vs the default build; the split is in the 347-case table so this is an in-table regression check, not a blind one: 0 floor violations, 0 errors, byte geomean 0.9814 (<= 1.01), mean pixel probes 3.13 -> 1.64, cells at <= 2 probes 47 -> 119, 7 out-of-range tiny/256-pixel cells byte-identical to the reference. Tail: gradient-chroma-shallow-green-holdout-640x640 at 70 (416 -> 1074 bytes, a confident case prediction on a non-monotone sub-kilobyte curve) and three cells at 1.14-1.23.
+        """
+}
+
+record jpegxl-rs.evidence.case-predictor-v2-thread-identity-2026-09-02/1 : evidence {
+    title "Case predictor v2 build is thread-count identical on 9/9 spot cells"
+    state verified
+    result pass
+    method command
+    observed_at git:1556bfb38552b49df091128f91262f920d2e4c74
+    artifact "JPXL/docs/experiments/2026-09-02-case-predictor-v2-paintings.md"
+    summary """
+        jpxl-cases-v2-blind encode at 1 and 4 threads on two paintings and a holdout screenshot at targets 50/85/95: identical sha256 on all nine cells (.agent/scratch/firstguess2-20260902/identity-c2.txt).
+        """
+}
+
+record jpegxl-rs.evidence.case-predictor-v2-workspace-gates-2026-09-02/1 : evidence {
+    title "Preanalysis port and case predictor v2: clippy -D warnings (default, case-predictor, no-default), fmt, release tests (default workspace and policy crate with the feature) all pass"
+    state verified
+    result pass
+    method command
+    observed_at git:1556bfb38552b49df091128f91262f920d2e4c74
+    command ".agent/scratch/firstguess2-20260902/gates2.sh"
+    artifact "JPXL/docs/experiments/2026-09-02-case-predictor-v2-paintings.md"
+    summary """
+        gates2.sh on the final tree with the 347-case production table: cargo clippy --workspace --all-targets -D warnings for default / --features jpxl-cli/case-predictor / policy --no-default-features, cargo fmt --all --check, cargo test --release -p jpxl-encode-policy --features case-predictor (rc 0), cargo test --workspace --release (rc 0); tools/tests unittest 17 + 28 pass.
+        """
+}
+
 record jpegxl-rs.evidence.case-predictor-workspace-gates-2026-09-02/1 : evidence {
     title "Workspace gates pass with the case predictor landed off by default"
     state verified
