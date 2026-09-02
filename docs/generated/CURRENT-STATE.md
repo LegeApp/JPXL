@@ -329,7 +329,7 @@ Feature-gated production encodes (jpxl-cli built from the same tree with `truste
 
 **resolves** `@jpegxl-rs.question.one-shot-calibration-contract-b/3` · **derived_from** `@jpegxl-rs.assessment.two-probe-path-is-predictor-bound-2026-09-02/1`, `@jpegxl-rs.observation.two-probe-corrected-stop-replay-2026-09-02/2`
 
-> **At risk** at depth 2 via `derived_from` → `@jpegxl-rs.assessment.two-probe-path-is-predictor-bound-2026-09-02/1` → `@jpegxl-rs.observation.probe-contract-b-shadow-2026-09-01/1` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/quality.rs"` was matched by `a8e51043`, which touched `JPXL/crates/jpxl-encode-policy/src/quality.rs`.). See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#contract-b-trial-corrected-stop-plus-large-frame-median-start-removes-044-probes-per-encode-with-zero-floor-violations-and-neutral-bytes-trusted-first-probe-alone-is-byte-identical-median-start-alone-is-a-three-cell-12-mp-lever).
+> **Stale** — `watches "JPXL/crates/jpxl-encode-policy/src/quality.rs"` was matched by `488770b8`, which touched `JPXL/crates/jpxl-encode-policy/src/quality.rs`. See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#contract-b-trial-corrected-stop-plus-large-frame-median-start-removes-044-probes-per-encode-with-zero-floor-violations-and-neutral-bytes-trusted-first-probe-alone-is-byte-identical-median-start-alone-is-a-three-cell-12-mp-lever).
 
 ### Cropped frames, orientation, kBlack channels
 
@@ -967,7 +967,7 @@ Advisory per-probe plan/render/metric fields added to PerceptualObservation and 
 
 **derived_from** `@jpegxl-rs.work.probe-simplification-next-stage-2026-09-01/1`
 
-> **Stale** — `watches "JPXL/crates/jpxl-encode-policy/src/quality.rs"` was matched by `a8e51043`, which touched `JPXL/crates/jpxl-encode-policy/src/quality.rs`. See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#per-probe-attribution-reused-probe-planning-already-collapses-metric-then-render-dominate-each-probe).
+> **Stale** — `watches "JPXL/crates/jpxl-encode-policy/src/quality.rs"` was matched by `488770b8`, which touched `JPXL/crates/jpxl-encode-policy/src/quality.rs`. See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#per-probe-attribution-reused-probe-planning-already-collapses-metric-then-render-dominate-each-probe).
 
 ### One-shot stop rate is 4.3% and fully attributable to calibration; finalist non-monotonicity is 1/76
 
@@ -977,7 +977,7 @@ A zero-stream-change shadow corpus run (95 quality-guard fixtures, 94 scored - t
 
 **derived_from** `@jpegxl-rs.work.probe-simplification-next-stage-2026-09-01/1`
 
-> **Stale** — `watches "JPXL/crates/jpxl-encode-policy/src/quality.rs"` was matched by `a8e51043`, which touched `JPXL/crates/jpxl-encode-policy/src/quality.rs`. See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#one-shot-stop-rate-is-43-and-fully-attributable-to-calibration-finalist-non-monotonicity-is-176).
+> **Stale** — `watches "JPXL/crates/jpxl-encode-policy/src/quality_prediction.rs"` was matched by `488770b8`, which touched `JPXL/crates/jpxl-encode-policy/src/quality_prediction.rs`. See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#one-shot-stop-rate-is-43-and-fully-attributable-to-calibration-finalist-non-monotonicity-is-176).
 
 ### Q3: the two-anchor controller's second anchor extrapolates with exponent 2 and overshoots on smooth photos, so Balanced falls back to the exhaustive controller above the ceiling (mid2 2 bpp 5.9 s vs 0.42 s at 1 bpp)
 
@@ -1226,7 +1226,7 @@ An offline replay (JPXL/docs/experiments/2026-09-02-two-probe-corrected-stop-rep
 
 **supersedes** `@jpegxl-rs.observation.two-probe-corrected-stop-replay-2026-09-02/1` · **derived_from** `@jpegxl-rs.evidence.qpv2-current-corpus-retrain-2026-09-02/1`, `@jpegxl-rs.observation.probe-contract-b-shadow-2026-09-01/1`
 
-> **At risk** at depth 1 via `derived_from` → `@jpegxl-rs.observation.probe-contract-b-shadow-2026-09-01/1` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/quality.rs"` was matched by `a8e51043`, which touched `JPXL/crates/jpxl-encode-policy/src/quality.rs`.). See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#two-probe-corrected-stop-replay-best-variant-285-mean-probes-floor-held-bytes-neutral-in-geo-mean-success-is-set-by-first-probe-distance-not-slope).
+> **Stale** — `watches "JPXL/crates/jpxl-encode-policy/src/quality.rs"` was matched by `488770b8`, which touched `JPXL/crates/jpxl-encode-policy/src/quality.rs`. See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#two-probe-corrected-stop-replay-best-variant-285-mean-probes-floor-held-bytes-neutral-in-geo-mean-success-is-set-by-first-probe-distance-not-slope).
 
 ### Extra channels in VarDCT frames and F.8 blending
 
@@ -1467,7 +1467,7 @@ The deterministic two-probe common case the 2026-09-01 advisor pack ranks second
 
 **supported_by** `@jpegxl-rs.evidence.qpv2-current-corpus-retrain-2026-09-02/1`, `@jpegxl-rs.observation.probe-contract-b-shadow-2026-09-01/1`, `@jpegxl-rs.observation.two-probe-corrected-stop-replay-2026-09-02/2` · **derived_from** `@jpegxl-rs.assessment.exact-base-encoder-frontier-2026-09-01/1`
 
-> **At risk** at depth 1 via `supported_by` → `@jpegxl-rs.observation.probe-contract-b-shadow-2026-09-01/1` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/quality.rs"` was matched by `a8e51043`, which touched `JPXL/crates/jpxl-encode-policy/src/quality.rs`.). See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#the-advisors-15-probe-target-is-predictor-bound-the-navigator-side-ceiling-is-about--045-to--06-probes-per-encode-under-contract-b).
+> **At risk** at depth 1 via `supported_by` → `@jpegxl-rs.observation.probe-contract-b-shadow-2026-09-01/1` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/quality_prediction.rs"` was matched by `488770b8`, which touched `JPXL/crates/jpxl-encode-policy/src/quality_prediction.rs`.). See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#the-advisors-15-probe-target-is-predictor-bound-the-navigator-side-ceiling-is-about--045-to--06-probes-per-encode-under-contract-b).
 
 ## Evidence
 
@@ -1622,7 +1622,7 @@ No probe-count or search-policy change that can alter the emitted stream was imp
 
 - `completed` `@jpegxl-rs.work.probe-simplification-next-stage-2026-09-01/1` — check `contract-b-boundary`
 
-> **At risk** at depth 1 via `derived_from` → `@jpegxl-rs.observation.probe-contract-b-shadow-2026-09-01/1` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/quality.rs"` was matched by `a8e51043`, which touched `JPXL/crates/jpxl-encode-policy/src/quality.rs`.). See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#no-stream-altering-change-was-implemented-both-levers-are-open-contract-b-questions-with-measured-inputs).
+> **At risk** at depth 1 via `derived_from` → `@jpegxl-rs.observation.probe-contract-b-shadow-2026-09-01/1` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/quality_prediction.rs"` was matched by `488770b8`, which touched `JPXL/crates/jpxl-encode-policy/src/quality_prediction.rs`.). See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#no-stream-altering-change-was-implemented-both-levers-are-open-contract-b-questions-with-measured-inputs).
 
 ### Contract B off-target holdout gate: zero floor violations and byte geomean 0.9925 across seven targets
 
@@ -1775,7 +1775,7 @@ The exact-structural-simplification screen ran to a negative outcome: the attrib
 
 - `completed` `@jpegxl-rs.work.probe-simplification-next-stage-2026-09-01/1` — check `exact-simplification-screen`
 
-> **At risk** at depth 1 via `derived_from` → `@jpegxl-rs.observation.probe-attribution-2026-09-01/1` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/quality.rs"` was matched by `a8e51043`, which touched `JPXL/crates/jpxl-encode-policy/src/quality.rs`.). See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#the-exact-structural-simplification-screen-found-nothing-of-measurable-size-nothing-changed).
+> **At risk** at depth 1 via `derived_from` → `@jpegxl-rs.observation.probe-attribution-2026-09-01/1` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/quality.rs"` was matched by `488770b8`, which touched `JPXL/crates/jpxl-encode-policy/src/quality.rs`.). See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#the-exact-structural-simplification-screen-found-nothing-of-measurable-size-nothing-changed).
 
 ### The dated docs/experiments notes are captured as 18 observations that watch the relevant crates; akr review-queue reflects the resulting stale/at-risk set
 
@@ -6044,7 +6044,7 @@ Per-probe wall attribution (encode, render, metric) was measured on both locked 
 
 - `completed` `@jpegxl-rs.work.probe-simplification-next-stage-2026-09-01/1` — check `probe-attribution`
 
-> **At risk** at depth 1 via `derived_from` → `@jpegxl-rs.observation.probe-attribution-2026-09-01/1` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/quality.rs"` was matched by `a8e51043`, which touched `JPXL/crates/jpxl-encode-policy/src/quality.rs`.). See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#per-probe-encoderendermetric-attribution-measured-on-both-locked-anchors).
+> **At risk** at depth 1 via `derived_from` → `@jpegxl-rs.observation.probe-attribution-2026-09-01/1` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/quality.rs"` was matched by `488770b8`, which touched `JPXL/crates/jpxl-encode-policy/src/quality.rs`.). See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#per-probe-encoderendermetric-attribution-measured-on-both-locked-anchors).
 
 ### The next probe-simplification investigation is scoped with named inputs and Contract B gates
 
