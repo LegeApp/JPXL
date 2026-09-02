@@ -7,7 +7,7 @@
 
 What should not be trusted without re-checking: records the build flagged `stale` or `at_risk`. Neither flag means a record is wrong (D-003); both mean look at it. This view is generated on every successful build, including one that exits 0 with a long queue (D-024). An empty file on an active project is more often a sign the `watches` globs are wrong than a sign the knowledge is perfect.
 
-## Stale (66)
+## Stale (67)
 
 ### The cover/CfL objective misprices Y-channel error by 2.65x across DCT8x8 frequency; the mispricing is in the ruler, not the lever
 
@@ -405,7 +405,13 @@ What should not be trusted without re-checking: records the build flagged `stale
 
 **Cause** — `watches "JPXL/crates/jpxl-core/src/color.rs"` was matched by `deed1f65`, which touched `JPXL/crates/jpxl-core/src/color.rs`.
 
-## At risk (37)
+### A case predictor searched against simulated probes over structure features, on a corpus with 258 paintings, cuts simulated probes on never-seen images; a table without paintings makes paintings worse
+
+`verified` · `@jpegxl-rs.observation.case-predictor-v2-paintings-study-2026-09-02/2` · observation · **stale** · [A case predictor searched against simulated probes over structure features, on a corpus with 258 paintings, cuts simulated probes on never-seen images; a table without paintings makes paintings worse](CURRENT-STATE.md#a-case-predictor-searched-against-simulated-probes-over-structure-features-on-a-corpus-with-258-paintings-cuts-simulated-probes-on-never-seen-images-a-table-without-paintings-makes-paintings-worse)
+
+**Cause** — `watches "JPXL/crates/jpxl-encode-policy/src/quality_predictor_cases.rs"` was matched by `f141360a`, which touched `JPXL/crates/jpxl-encode-policy/src/quality_predictor_cases.rs`.
+
+## At risk (36)
 
 ### The perceptual closure stands, but three exact base-encoder candidates merit measurement
 
@@ -533,12 +539,6 @@ What should not be trusted without re-checking: records the build flagged `stale
 
 **Via** `derived_from` → `@jpegxl-rs.observation.qk4-allocation-free-truncation-2026-09-01/1` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/quantize.rs"` was matched by `b53da037`, which touched `JPXL/crates/jpxl-encode-policy/src/quantize.rs`.)
 
-### A case predictor searched against simulated probes over structure features, on a corpus with 258 paintings, cuts simulated probes on never-seen images; a table without paintings makes paintings worse
-
-`verified` · `@jpegxl-rs.observation.case-predictor-v2-paintings-study-2026-09-02/2` · observation · **depth 1** · [A case predictor searched against simulated probes over structure features, on a corpus with 258 paintings, cuts simulated probes on never-seen images; a table without paintings makes paintings worse](CURRENT-STATE.md#a-case-predictor-searched-against-simulated-probes-over-structure-features-on-a-corpus-with-258-paintings-cuts-simulated-probes-on-never-seen-images-a-table-without-paintings-makes-paintings-worse)
-
-**Via** `derived_from` → `@jpegxl-rs.observation.case-table-first-guess-study-2026-09-02/1` (stale: `watches "JPXL/tools/quality_predictor_v2.py"` was matched by `2b1a0555`, which touched `JPXL/tools/quality_predictor_v2.py`.)
-
 ### Exact sample-domain special transforms regress quality: honest negative, research mode removed
 
 `verified` · `@jpegxl-rs.observation.exact-sample-specials-honest-negative-2026-08-12/2` · observation · **depth 1** · [Exact sample-domain special transforms regress quality: honest negative, research mode removed](CURRENT-STATE.md#exact-sample-domain-special-transforms-regress-quality-honest-negative-research-mode-removed)
@@ -555,7 +555,7 @@ What should not be trusted without re-checking: records the build flagged `stale
 
 `open` · `@jpegxl-rs.question.promote-case-predictor-2026-09-02/2` · question · **depth 1** · [Promote the case-table crossing predictor (feature case-predictor, now v2 with structure features and 347 cases) to the default controller?](OPEN-QUESTIONS.md#promote-the-case-table-crossing-predictor-feature-case-predictor-now-v2-with-structure-features-and-347-cases-to-the-default-controller)
 
-**Via** `supported_by` → `@jpegxl-rs.observation.case-table-first-guess-study-2026-09-02/1` (stale: `watches "JPXL/tools/quality_predictor_v2.py"` was matched by `2b1a0555`, which touched `JPXL/tools/quality_predictor_v2.py`.)
+**Via** `supported_by` → `@jpegxl-rs.observation.case-predictor-v2-paintings-study-2026-09-02/2` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/quality_predictor_cases.rs"` was matched by `f141360a`, which touched `JPXL/crates/jpxl-encode-policy/src/quality_predictor_cases.rs`.)
 
 ### Price only the coarsest feasible finalist? (1.3% rare-byte-change tail)
 

@@ -329,7 +329,7 @@ Scope limit: evidence about one other implementation's experience, and one of th
 
 **supersedes** `@jpegxl-rs.observation.case-predictor-v2-paintings-study-2026-09-02/1` · **derived_from** `@jpegxl-rs.observation.case-table-first-guess-study-2026-09-02/1`
 
-> **At risk** at depth 1 via `derived_from` → `@jpegxl-rs.observation.case-table-first-guess-study-2026-09-02/1` (stale: `watches "JPXL/tools/quality_predictor_v2.py"` was matched by `2b1a0555`, which touched `JPXL/tools/quality_predictor_v2.py`.). See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#a-case-predictor-searched-against-simulated-probes-over-structure-features-on-a-corpus-with-258-paintings-cuts-simulated-probes-on-never-seen-images-a-table-without-paintings-makes-paintings-worse).
+> **Stale** — `watches "JPXL/crates/jpxl-encode-policy/src/quality_predictor_cases.rs"` was matched by `f141360a`, which touched `JPXL/crates/jpxl-encode-policy/src/quality_predictor_cases.rs`. See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#a-case-predictor-searched-against-simulated-probes-over-structure-features-on-a-corpus-with-258-paintings-cuts-simulated-probes-on-never-seen-images-a-table-without-paintings-makes-paintings-worse).
 
 ### Nearest-neighbour crossing curves cut the first-guess error to a third of the linear knot model's on the current corpus; natural content is data-limited at about 0.11 ln
 
