@@ -46,6 +46,7 @@ One file per experiment: `YYYY-MM-DD-short-slug.md`. Sections:
 
 | Date | Report | Question | Outcome |
 | --- | --- | --- | --- |
+| 2026-09-02 | [qpv2-current-corpus-retrain](2026-09-02-qpv2-current-corpus-retrain.md) | Does a fresh seven-knot current-corpus QPv2 fit justify a Contract-B production trial? | No. Transform features help, but blind p90 log-scale error is 1.854 (gate 0.45) and 85.0% of requests still preflight-fallback; production code is unchanged. |
 | 2026-08-18 | [speed-parity-reconciliation](2026-08-18-speed-parity-reconciliation.md) | Why did the public Quality-preset comparison contradict the optimized matched-quality speed result? | They measured distinct presets, quality points, and thread allocations. Balanced/Fast retain the parity window; the old report is superseded. |
 | 2026-08-03 | [h52-clamp-xor-scan-resolution](2026-08-03-h52-clamp-xor-scan-resolution.md) | What does H.5.2's clamp guard actually say? | **XOR, not multiplication** — every text transcription misread `^` as `*`. One symmetric clamp; the standard is correct. Resolves the sawtooth, 61/62 and VarDCT 54/57. |
 | 2026-08-03 | [h52-subpredictor-localisation](2026-08-03-h52-subpredictor-localisation.md) | Which layer of the H.5 weighted predictor is actually wrong? | The sub-predictors. An impossibility proof at fixture 62 (11,5) eliminates max_error, clamp gating, clamp bounds, err_sum/weights, the NE substitution and the transcription. |

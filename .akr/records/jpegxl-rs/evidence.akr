@@ -6445,6 +6445,19 @@ record jpegxl-rs.evidence.qk4-wall-screen-2026-09-01/1 : evidence {
     derived_from [ @jpegxl-rs.observation.qk4-allocation-free-truncation-2026-09-01/1 ]
 }
 
+record jpegxl-rs.evidence.qpv2-current-corpus-retrain-2026-09-02/1 : evidence {
+    title "Current-corpus all-knot QPv2 source+transform blind holdout fails quick-screen and production gates; no runtime model was promoted."
+    state verified
+    result fail
+    method command
+    observed_at git:d85bad6d5d66c7587593fd3ace910d312aee09fe
+    command "python3 JPXL/tools/quality_predictor_v2.py train --labels .agent/scratch/qpv2-retrain-20260902/all-knot-labels.jsonl --feature-sets source source+transform --blind-split holdout"
+    artifact "JPXL/docs/experiments/2026-09-02-qpv2-current-corpus-retrain.md"
+    summary """
+        Current-corpus all-knot QPv2 source+transform blind holdout fails quick-screen and production gates; no runtime model was promoted.
+        """
+}
+
 record jpegxl-rs.evidence.quality-q2-chroma-attribution-2026-08-18/1 : evidence {
     title "Q2 chroma-HF attribution sweep"
     state superseded

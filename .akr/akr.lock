@@ -5,7 +5,7 @@ build {
     tool "akr 0.4.0"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:a4446cf3247d98a2632c391f1b4793d5169fff691a368b7688c5970ce4392555"
+    source_graph "sha256:682c33094c4fff04a167b6b4613fded78162447832ac273aa9934a92b14231a3"
 }
 
 source ".akr/project.akr" {
@@ -29,8 +29,8 @@ source ".akr/records/jpegxl-rs/decisions.akr" {
 }
 
 source ".akr/records/jpegxl-rs/evidence.akr" {
-    hash "sha256:b6fa87e48ef6fd1b0de112e79e2e960e0b026f58227e39ebd128ac5d44b321a7"
-    records 628
+    hash "sha256:1754a97f2ea537431cf6488c1ad4d8ade40b58e56d85973c55662fb213d1d9a5"
+    records 629
 }
 
 source ".akr/records/jpegxl-rs/milestones.akr" {
@@ -7396,6 +7396,11 @@ seal @jpegxl-rs.evidence.qk4-identity-matrix-2026-09-01/1 {
 seal @jpegxl-rs.evidence.qk4-wall-screen-2026-09-01/1 {
     state verified
     hash "sha256:689f46363bbe7036e41b80bf54d6123f34757ec09fdef7c4a9f7e66d15324890"
+}
+
+seal @jpegxl-rs.evidence.qpv2-current-corpus-retrain-2026-09-02/1 {
+    state verified
+    hash "sha256:4beb563dd56f481750438a290cc0765cb397e726a25ae6663a16c6dd2e477d71"
 }
 
 seal @jpegxl-rs.evidence.quality-q2-chroma-attribution-2026-08-18/1 {
