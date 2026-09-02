@@ -1,5 +1,16 @@
 [
   {
+    "added_at": "2026-09-01",
+    "availability": "full",
+    "byte_len": 4388,
+    "content_hash": "sha256:a53fa9eb038c3e84fbe5994142e6a14ee4fa16b0fda7cdc55b09beb01d4bf9b4",
+    "id": "advisor-probe-campaign-2026-09-01-a53fa9eb",
+    "media_type": "text/markdown",
+    "origin": "external",
+    "path": "sources/external/advisor-probe-campaign-2026-09-01-a53fa9eb--a53fa9eb.md",
+    "title": "Advisor pack: post-frontier probe campaign priorities (2026-09-01)"
+  },
+  {
     "added_at": "2026-08-21",
     "availability": "full",
     "byte_len": 57302,

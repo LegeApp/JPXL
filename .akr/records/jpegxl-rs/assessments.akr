@@ -462,3 +462,27 @@ record jpegxl-rs.assessment.surrogate-navigation-does-not-pay-for-wall/1 : asses
         @jpegxl-rs.evidence.s2-decimated-surrogate-sizing-corpus
     ]
 }
+
+record jpegxl-rs.assessment.two-probe-path-is-predictor-bound-2026-09-02/1 : assessment {
+    title "The advisor's 1.5-probe target is predictor-bound; the navigator-side ceiling is about -0.45 to -0.6 probes per encode under Contract B"
+    state verified
+    statement """
+        The deterministic two-probe common case the 2026-09-01 advisor pack ranks second (predicted crossing, one direct correction, certified stop, old navigator on exceptions) cannot reach the advisor's target of <= 1.5 mean canonical pixel probes and <= 2 probes for 90% of in-domain requests on the current 95-fixture corpus, whatever slope it corrects with: the replay of 2026-09-02 shows a corrected stop lands inside the existing one-point band 79% of the time only when the first probe is already within 0.25 ln scale of the crossing and never beyond 1.0, and only 37% of the corpus's non-in-band first probes are that close (median 0.32, p90 1.38). The binding quantity is therefore the first-probe predictor's log-scale error, which would need a p90 near 0.25 on this corpus; the 2026-09-02 all-knot retrain measured a blind p90 of 1.854. Until a predictor of that accuracy exists (or the corpus stops being dominated by the 28 saturated and tiny synthetic cells that are both worst-predicted and least simulable), the 1.5-probe target should not be pursued through navigator changes, and 'class-aware routing' on this corpus routes text-screenshot, grayscale, noise and photo-scene cells (already 1.7-2.0 probes with the corrected stop) while leaving saturated and gradient cells, which carry most of the probes, on the exact path. What the navigator side can still buy under Contract B is bounded and now quantified: (1) the corrected stop with a 0.5 ln-scale move gate, trusted in-band first probes and one second correction, worth about -0.45 probes per encode on the corpus (-0.55 in-domain), byte-neutral in geometric mean (0.998-1.001) with a fair overshoot no worse than the deployed path, tail +9% in-domain, about 5-6% of probe wall on the >= 4 MP cells; the ungated form reaches -0.6 probes and about 10% of probe wall but carries a +30% fallback-budget tail and a worse overshoot, so a move gate is part of any promotable form; (2) replacing the legacy ladder-ceiling start (rung 73727) for log2_pixels-flagged large photos with the flagged model median, which by the trace would remove two expansion probes on each 12 MP photo cell. Both alter which rung wins and need the operator's Contract B decision, a feature-gated implementation, and the standing one_shot_promotion_ab.py corpus gate (floor, byte geo-mean, per-cell tail, byte identity across threads) before promotion; neither is a 2x lever. This assessment rests on an offline replay with interpolated counterfactual scores and unpinned per-probe millis, so the probe counts are the claim, not the wall figures.
+        """
+    confidence medium
+    as_of git:2b87b7bd07aca849a489a6bf0707362a9971532f
+    derived_from [ @jpegxl-rs.assessment.exact-base-encoder-frontier-2026-09-01 ]
+    supported_by [
+        @jpegxl-rs.evidence.qpv2-current-corpus-retrain-2026-09-02,
+        @jpegxl-rs.observation.probe-contract-b-shadow-2026-09-01,
+        @jpegxl-rs.observation.two-probe-corrected-stop-replay-2026-09-02
+    ]
+    source {
+        kind external
+        role origin
+        document "advisor-probe-campaign-2026-09-01-a53fa9eb"
+        use """
+            Dispositions the advisor's items 1-2 and its probe target: the target is recorded as predictor-bound; the corrected stop survives only in a gated, bounded form as a Contract B candidate.
+            """
+    }
+}

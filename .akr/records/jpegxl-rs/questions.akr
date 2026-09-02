@@ -3,7 +3,7 @@ project jpegxl-rs
 
 record jpegxl-rs.question.one-shot-calibration-contract-b/1 : question {
     title "Recalibrate qpv2 to raise the 4.3% one-shot stop rate?"
-    state open
+    state superseded
     question """
         Should the qpv2 prediction be recalibrated to raise the one-shot stop rate (currently 4/94 = 4.3% on the quality corpus at score 85 balanced)? The stop mechanism is already proven safe where it fires (N3, 2026-08-29: every stopped cell chose exactly the rung the full search would), and the shadow corpus attributes every missed stop to calibration: 9 of 13 confident cells overshot by more than the 1.0-point band (the candidate rung is a conservative upper quantile; predicted-rung/winner-rung median 1.34) and 8 of 12 in-band cells were blocked by the confidence gate. Each converted cell saves two of about 3.5 baseline pixel probes - roughly 850-900 ms on the 12 MP anchor. This can alter which rung wins and the emitted bytes, so it is a Contract B decision: promotion gates are a corpus-wide byte-delta and quality A/B screen and the operator's acceptance of the changed rung distribution; a first zero-risk step is retraining the model on the existing corpus traces and shadow-measuring the would-have-stopped rate without touching the encoder.
         """
@@ -12,6 +12,23 @@ record jpegxl-rs.question.one-shot-calibration-contract-b/1 : question {
         """
     derived_from [ @jpegxl-rs.work.probe-simplification-next-stage-2026-09-01/1 ]
     supported_by [ @jpegxl-rs.observation.probe-contract-b-shadow-2026-09-01/1 ]
+}
+
+record jpegxl-rs.question.one-shot-calibration-contract-b/2 : question {
+    title "Recalibrate qpv2 to raise the 4.3% one-shot stop rate?"
+    state open
+    question """
+        Should the qpv2 prediction be recalibrated to raise the one-shot stop rate (currently 4/94 = 4.3% on the quality corpus at score 85 balanced)? The stop mechanism is already proven safe where it fires (N3, 2026-08-29: every stopped cell chose exactly the rung the full search would), and the shadow corpus attributes every missed stop to calibration: 9 of 13 confident cells overshot by more than the 1.0-point band (the candidate rung is a conservative upper quantile; predicted-rung/winner-rung median 1.34) and 8 of 12 in-band cells were blocked by the confidence gate. Each converted cell saves two of about 3.5 baseline pixel probes - roughly 850-900 ms on the 12 MP anchor. This can alter which rung wins and the emitted bytes, so it is a Contract B decision: promotion gates are a corpus-wide byte-delta and quality A/B screen and the operator's acceptance of the changed rung distribution; a first zero-risk step is retraining the model on the existing corpus traces and shadow-measuring the would-have-stopped rate without touching the encoder.
+        """
+    resolution """
+        Open: decided by the operator. The zero-risk steps are done and narrow the question. The 2026-09-02 all-knot retrain (@jpegxl-rs.evidence.qpv2-current-corpus-retrain-2026-09-02) shows recalibrating the upper quantile alone cannot be promoted (blind p90 log-scale error 1.854, 85% fallback). The 2026-09-02 replay (@jpegxl-rs.observation.two-probe-corrected-stop-replay-2026-09-02) shows that trusting in-band first probes without the confidence gate converts 12/91 cells to one probe with no floor loss, and that a gated corrected stop adds a bounded second lever; the concrete Contract B candidates and their expected sizes are stated in @jpegxl-rs.assessment.two-probe-path-is-predictor-bound-2026-09-02. What remains for the operator is whether to authorise a feature-gated trial of (a) trusted in-band first probes plus a 0.5 ln-scale-gated corrected stop with one second correction, and (b) the flagged model median as the start for log2_pixels-flagged large photos, each gated by one_shot_promotion_ab.py on the corpus.
+        """
+    derived_from [ @jpegxl-rs.work.probe-simplification-next-stage-2026-09-01/1 ]
+    supersedes [ @jpegxl-rs.question.one-shot-calibration-contract-b/1 ]
+    supported_by [
+        @jpegxl-rs.observation.probe-contract-b-shadow-2026-09-01,
+        @jpegxl-rs.observation.two-probe-corrected-stop-replay-2026-09-02
+    ]
 }
 
 record jpegxl-rs.question.route-text-lineart-via-bpg-preanalysis/1 : question {
