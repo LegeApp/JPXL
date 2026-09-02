@@ -32,6 +32,10 @@ anchor-sketch = ["jpxl-encode-policy/anchor-sketch"]
 # common-case one-shot start to the binary, for promotion A/B runs.
 one-shot-controller = ["jpxl-encode-policy/one-shot-controller"]
 surrogate-navigation = ["jpxl-encode-policy/surrogate-navigation"]
+# Contract B trial candidates (2026-09-02), forwarded for promotion A/B runs.
+trusted-first-probe = ["jpxl-encode-policy/trusted-first-probe"]
+corrected-stop = ["jpxl-encode-policy/corrected-stop"]
+flagged-median-start = ["jpxl-encode-policy/flagged-median-start"]
 # Exposes the exhaustive-reference `quality` lossy effort on `--effort` /
 # `--lossy-preset`. Forwards to `jpxl/quality-effort`; off by default.
 quality-effort = ["jpxl/quality-effort"]

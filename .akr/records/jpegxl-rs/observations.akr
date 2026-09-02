@@ -130,6 +130,27 @@ record jpegxl-rs.observation.bpg-rs-aq-precedent-2026-08-10/2 : observation {
     author "GitHub Uploader"
 }
 
+record jpegxl-rs.observation.contract-b-corrected-stop-trial-2026-09-02/1 : observation {
+    title "Contract B trial: corrected stop plus large-frame median start removes 0.44 probes per encode with zero floor violations and neutral bytes; trusted first probe alone is byte-identical; median start alone is a three-cell 12 MP lever"
+    state verified
+    statement """
+        Feature-gated production encodes (jpxl-cli built from the same tree with `trusted-first-probe`, `corrected-stop`, `flagged-median-start`, and both) against the deployed default, through one_shot_promotion_ab.py on test-set/quality-corpus.json at score 85 Balanced, 4 threads, all splits (91 scorable cells): trusted-first-probe alone converts 8 two-probe cells to one probe (3.462 to 3.374 mean pixel probes) with every stream byte-identical to the default; corrected-stop (prior exponent 0.9, 0.5 ln-scale move gate, one slope-corrected second try, trusted in-band first probe) reaches 3.066 mean probes (42.9% of cells within two, 48.8% in-domain), zero floor violations, byte geomean 0.9950 (in-domain 0.9998), worst cell 1.060, 55 of 91 streams changed, reconstructions 315 to 279; flagged-median-start alone changes only the three log2_pixels-flagged 12 MP photos (five probes and a fresh-structure rescue each to three or four probes, wall 17.3/19.5/18.1 s to 15.1/12.6/12.0 s, bytes +1.7/+3.4/+4.0%); the combined arm reaches 3.022 mean probes (saving 0.440 against 0.396 + 0.055 for the parts, so the levers are additive), byte geomean 0.9954, worst 1.060, zero floor violations, minimum margin above target 0.041 (default 0.044), wall geomean 0.907 (0.832 on the >= 4 MP cells, not a claim: unquiet host), and t1/t4 byte identity on 8/8 spot-check cells including a 12 MP photo. On the 20 holdout images at targets 30/50/70/80/85/90/95 (140 cells) the combined arm has zero floor violations, byte geomean 0.9925 (in-domain 1.0005), probes 3.77 to 3.48, with two cells above 1.10 (the non-monotone out-of-domain gradient-chroma-shallow-green at 80, 1.293, which is a coin toss in both arms, and saturated-holdout-640x480 at 30, 1.111), a slight probe increase at targets 30 and 50 (+0.25, +0.05) and the saving concentrated at 70 and above; at 95 the three large photos go from four probes to one at 0.81-0.85 of the bytes. Routes in the combined arm: 12 cells stop on the first probe, 27 on the first correction, 23 on the second, 20 are gated straight to expansion (4.8 probes) and 9 miss both corrections (4.7 probes). Full tables, hashes and per-cell changes in JPXL/docs/experiments/2026-09-02-contract-b-corrected-stop-trial.md; artefacts kept in .agent/scratch/contract-b-trial-20260902.
+        """
+    observed_at git:22be3b90079c64187855afd66465ffb5a777bd27
+    method command
+    watches [
+        "JPXL/crates/jpxl-encode-policy/src/quality.rs",
+        "JPXL/crates/jpxl-encode-policy/src/quality_prediction.rs",
+        "JPXL/crates/jpxl-encode-policy/Cargo.toml",
+        "JPXL/tools/one_shot_promotion_ab.py"
+    ]
+    derived_from [
+        @jpegxl-rs.assessment.two-probe-path-is-predictor-bound-2026-09-02,
+        @jpegxl-rs.observation.two-probe-corrected-stop-replay-2026-09-02
+    ]
+    resolves [ @jpegxl-rs.question.one-shot-calibration-contract-b ]
+}
+
 record jpegxl-rs.observation.cropped-frames-orientation-kblack/1 : observation {
     title "Cropped frames, orientation, kBlack channels"
     state verified

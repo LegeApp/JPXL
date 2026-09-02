@@ -200,6 +200,57 @@ record jpegxl-rs.evidence.contract-b-boundary-held-2026-09-01/1 : evidence {
     derived_from [ @jpegxl-rs.observation.probe-contract-b-shadow-2026-09-01/1 ]
 }
 
+record jpegxl-rs.evidence.contract-b-trial-holdout-seven-target-2026-09-02/1 : evidence {
+    title "Contract B off-target holdout gate: zero floor violations and byte geomean 0.9925 across seven targets"
+    state verified
+    result pass
+    method command
+    observed_at git:22be3b90079c64187855afd66465ffb5a777bd27
+    command "taskset -c 0,2,4,6 python3 JPXL/tools/one_shot_promotion_ab.py --manifest test-set/quality-corpus.json --splits holdout --targets 30 50 70 80 85 90 95 --threads 4 --default-binary .agent/scratch/contract-b-trial-20260902/bin/jpxl-default --one-shot-binary .agent/scratch/contract-b-trial-20260902/bin/jpxl-both --output .agent/scratch/contract-b-trial-20260902/ab-holdout-7t-both.json --keep-traces .agent/scratch/contract-b-trial-20260902/traces-holdout-7t-both"
+    artifact "JPXL/docs/experiments/2026-09-02-contract-b-corrected-stop-trial.md"
+    summary """
+        Holdout split, seven targets, 140 cells, combined arm: 0 floor violations, byte geomean 0.9925 (in-domain 1.0005), probes 3.77 to 3.48; two cells above 1.10 (an out-of-domain non-monotone gradient at 80 and a saturated cell at 30); slight probe increase at targets 30 and 50, saving from 70 upward. Corrected-only arm: 0 floor, 0.9931, 3.77 to 3.64.
+        """
+}
+
+record jpegxl-rs.evidence.contract-b-trial-q85-gate-2026-09-02/1 : evidence {
+    title "Contract B q85 corpus gate: combined and corrected-only arms pass every preregistered criterion"
+    state verified
+    result pass
+    method command
+    observed_at git:22be3b90079c64187855afd66465ffb5a777bd27
+    command "taskset -c 0,2,4,6 python3 JPXL/tools/one_shot_promotion_ab.py --manifest test-set/quality-corpus.json --splits calibration development holdout --targets 85 --threads 4 --default-binary .agent/scratch/contract-b-trial-20260902/bin/jpxl-default --one-shot-binary .agent/scratch/contract-b-trial-20260902/bin/jpxl-both --output .agent/scratch/contract-b-trial-20260902/ab-q85-both.json --keep-traces .agent/scratch/contract-b-trial-20260902/traces-both"
+    artifact "JPXL/docs/experiments/2026-09-02-contract-b-corrected-stop-trial.md"
+    summary """
+        Combined corrected-stop + flagged-median-start arm at q85 on 91 cells: 0 floor violations, byte geomean 0.9954 (in-domain 0.9998), worst in-domain cell 1.060, mean pixel probes 3.462 to 3.022 (-0.44, bar 0.3), additive with the single arms (0.396 + 0.055); corrected-stop alone 3.066 / 0.9950; every preregistered q85 criterion met.
+        """
+}
+
+record jpegxl-rs.evidence.contract-b-trial-thread-identity-2026-09-02/1 : evidence {
+    title "Contract B trial: t1/t4 byte identity held on all eight spot-check cells"
+    state verified
+    result pass
+    method command
+    observed_at git:22be3b90079c64187855afd66465ffb5a777bd27
+    command "bash .agent/scratch/contract-b-trial-20260902/identity_check.sh both <eight spot-check fixtures spanning the classes and the 12 MP anchor>"
+    artifact "JPXL/docs/experiments/2026-09-02-contract-b-corrected-stop-trial.md"
+    summary """
+        The combined-arm binary produced sha256-identical streams at --threads 1 and --threads 4 on 8/8 spot-check cells (photo-large 12 MP, photo mid, scene, text-screenshot, gradient, saturated, line-art, noise-lowlight) at quality 85.
+        """
+}
+
+record jpegxl-rs.evidence.contract-b-trial-workspace-gates-2026-09-02/1 : evidence {
+    title "Contract B trial: all workspace gates pass with the trial features present and off by default"
+    state verified
+    result pass
+    method command
+    observed_at git:22be3b90079c64187855afd66465ffb5a777bd27
+    command "cd JPXL && cargo clippy --workspace --all-targets -- -D warnings && cargo clippy --workspace --all-targets --features jpxl-cli/corrected-stop,jpxl-cli/flagged-median-start -- -D warnings && cargo test --workspace --release && cargo fmt --all --check; plus cargo clippy/test of jpxl-encode-policy under each trial feature alone"
+    summary """
+        With the three off-by-default trial features in the tree: workspace clippy -D warnings clean under default features and with both trial features enabled; per-feature clippy clean for trusted-first-probe, corrected-stop, flagged-median-start alone; cargo test --workspace --release all green; policy crate tests green under both trial features (including the new large-frame OOD flag test); cargo fmt --all --check clean.
+        """
+}
+
 record jpegxl-rs.evidence.e1a-relaxed-cap-below-10pct-2026-08-30/1 : evidence {
     title "E1-a under a relaxed cap: ~6% wall for +0.42 GiB — below the operator's 10% bar"
     state verified

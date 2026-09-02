@@ -36,7 +36,8 @@ def parse_line(stdout: str) -> dict:
     return out
 
 
-def run_cell(binary: str, image_path: str, target: float, threads: int, trace_path: str) -> dict:
+def run_cell(binary: str, image_path: str, target: float, threads: int, trace_path: str,
+             keep_trace: str | None = None) -> dict:
     env = dict(os.environ, JPXL_QUALITY_TRACE=trace_path)
     out_path = os.path.join(tempfile.gettempdir(), "oneshot-ab.jxl")
     start = time.perf_counter()
@@ -66,6 +67,9 @@ def run_cell(binary: str, image_path: str, target: float, threads: int, trace_pa
                 record = json.loads(raw)
                 if record.get("schema", "").startswith("jpxl.quality-trace/"):
                     trace = record
+                    if keep_trace:
+                        with open(keep_trace, "a", encoding="utf-8") as out:
+                            out.write(raw if raw.endswith("\n") else raw + "\n")
     except OSError:
         pass
     finally:
@@ -73,6 +77,10 @@ def run_cell(binary: str, image_path: str, target: float, threads: int, trace_pa
             os.remove(trace_path)
         except OSError:
             pass
+    pixel_rungs = [
+        p.get("rung") for p in trace.get("probes", [])
+        if p.get("kind") == "pixel" and p.get("policy_id", 0) == 0
+    ]
     return {
         "achieved": float(line.get("achieved", "nan")),
         "bytes": int(line.get("bytes", "0")),
@@ -81,6 +89,8 @@ def run_cell(binary: str, image_path: str, target: float, threads: int, trace_pa
         "prices": int(line.get("prices", "0")),
         "work": trace.get("work"),
         "predicted_rung": trace.get("predicted_rung"),
+        "pixel_rungs": pixel_rungs,
+        "trace_status": trace.get("status"),
         "wall": wall,
     }
 
@@ -97,7 +107,15 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--max-pixels", type=int, default=None,
                         help="skip images above this pixel count")
     parser.add_argument("--output", required=True)
+    parser.add_argument("--keep-traces", default=None,
+                        help="directory to append each arm's jpxl.quality-trace records "
+                             "to (default.jsonl / one_shot.jsonl), for offline analysis")
     args = parser.parse_args(argv)
+    keep_default = keep_one_shot = None
+    if args.keep_traces:
+        os.makedirs(args.keep_traces, exist_ok=True)
+        keep_default = os.path.join(args.keep_traces, "default.jsonl")
+        keep_one_shot = os.path.join(args.keep_traces, "one_shot.jsonl")
 
     with open(args.manifest, encoding="utf-8") as fh:
         manifest = json.load(fh)
@@ -122,8 +140,10 @@ def main(argv: list[str]) -> int:
             cell = {"image_id": image["id"], "class": image.get("class"),
                     "pixels": width * height, "target": target}
             trace = os.path.join(tempfile.gettempdir(), "oneshot-ab-trace.jsonl")
-            cell["default"] = run_cell(args.default_binary, path, target, args.threads, trace)
-            cell["one_shot"] = run_cell(args.one_shot_binary, path, target, args.threads, trace)
+            cell["default"] = run_cell(args.default_binary, path, target, args.threads, trace,
+                                       keep_default)
+            cell["one_shot"] = run_cell(args.one_shot_binary, path, target, args.threads, trace,
+                                        keep_one_shot)
             rows.append(cell)
             d, o = cell["default"], cell["one_shot"]
             print(
@@ -141,6 +161,7 @@ def main(argv: list[str]) -> int:
     ratios = [r["one_shot"]["bytes"] / r["default"]["bytes"] for r in ok if r["default"]["bytes"]]
     geomean = math.exp(sum(math.log(x) for x in ratios) / len(ratios)) if ratios else None
     recon = lambda arm: sum(r[arm]["work"]["reconstructions"] for r in ok if r[arm].get("work"))
+    probes = lambda arm: sum(len(r[arm]["pixel_rungs"]) for r in ok)
     wall_ratio = [r["one_shot"]["wall"] / r["default"]["wall"] for r in ok]
     summary = {
         "cells": len(rows),
@@ -151,6 +172,8 @@ def main(argv: list[str]) -> int:
         "worst_cell_byte_ratio": max(ratios) if ratios else None,
         "total_reconstructions_default": recon("default"),
         "total_reconstructions_one_shot": recon("one_shot"),
+        "mean_baseline_pixel_probes_default": probes("default") / len(ok) if ok else None,
+        "mean_baseline_pixel_probes_one_shot": probes("one_shot") / len(ok) if ok else None,
         "wall_geomean_ratio": (
             math.exp(sum(math.log(x) for x in wall_ratio) / len(wall_ratio))
             if wall_ratio

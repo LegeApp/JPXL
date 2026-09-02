@@ -64,6 +64,13 @@ pub struct QualityPredictionV2 {
     pub ood_flags: Vec<&'static str>,
     /// Why the shadow would route to the exact controller, if it would.
     pub fallback_reason: Option<&'static str>,
+    /// `true` when the only out-of-distribution signal is a frame larger
+    /// than the training domain (`log2_pixels` above its range, no other
+    /// flag): the model is extrapolating in size alone. Read by the
+    /// feature-gated `flagged-median-start` routing (Contract B trial,
+    /// 2026-09-02), which seeds the navigator with the median instead of
+    /// the legacy table start on such frames.
+    pub large_frame_only_ood: bool,
 }
 
 fn loss(score: f64) -> f64 {
@@ -234,6 +241,7 @@ pub fn predict_v2(
     let z = standardized(features, transform);
 
     let mut ood_flags: Vec<&'static str> = Vec::new();
+    let mut above_range: Vec<&'static str> = Vec::new();
     if features.width.min(features.height) < MIN_DOMAIN_SIDE {
         ood_flags.push("tiny_frame");
     }
@@ -245,8 +253,13 @@ pub fn predict_v2(
         let span = (hi - lo).max(1e-6);
         if value < lo - OOD_RANGE_MARGIN * span || value > hi + OOD_RANGE_MARGIN * span {
             ood_flags.push(qpv2_feature_name(i));
+            if value > hi + OOD_RANGE_MARGIN * span {
+                above_range.push(qpv2_feature_name(i));
+            }
         }
     }
+    let large_frame_only_ood =
+        ood_flags.as_slice() == ["log2_pixels"] && above_range.as_slice() == ["log2_pixels"];
 
     // Monotone projection: a higher target must never predict a coarser
     // scale, per output. Knots ascend in target, so run a max-accumulate.
@@ -297,6 +310,7 @@ pub fn predict_v2(
         saturation_risk,
         ood_flags,
         fallback_reason,
+        large_frame_only_ood,
     })
 }
 
@@ -475,6 +489,30 @@ mod tests {
             );
             previous = scale;
         }
+    }
+
+    /// The large-frame-only flag is exactly "the single OOD signal is a
+    /// frame above the training domain": never set on an in-domain frame,
+    /// and whenever set, `log2_pixels` is the only flag that fired.
+    #[test]
+    fn the_large_frame_flag_names_size_as_the_only_ood_signal() {
+        let t = transform();
+        let small = features();
+        let Some(p) = predict_v2(&small, &t, 85.0) else {
+            return; // no generated model in this build
+        };
+        assert!(!p.large_frame_only_ood || p.ood_flags == ["log2_pixels"]);
+        let mut huge = features();
+        huge.width = 1 << 15;
+        huge.height = 1 << 15;
+        let p = predict_v2(&huge, &t, 85.0).expect("model");
+        assert!(p.ood_flags.contains(&"log2_pixels"), "{:?}", p.ood_flags);
+        assert_eq!(p.large_frame_only_ood, p.ood_flags == ["log2_pixels"]);
+        let mut tiny = features();
+        tiny.width = 16;
+        tiny.height = 16;
+        let p = predict_v2(&tiny, &t, 85.0).expect("model");
+        assert!(!p.large_frame_only_ood, "a below-domain frame is not large");
     }
 
     #[test]

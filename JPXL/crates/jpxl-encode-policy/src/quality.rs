@@ -196,6 +196,15 @@ pub const MET_OVERSHOOT_BAND: f64 = 1.0;
 /// effort's loss-relative reserve works out to.
 pub const MIN_AIM_MARGIN: f64 = 0.25;
 
+/// Corrected stop (Contract B trial, feature `corrected-stop`): the largest
+/// move in ln effective scale, from the first probe to the aimed crossing
+/// under the prior exponent, that the direct correction is trusted with. A
+/// larger implied move means the first probe was far from the crossing,
+/// where the 2026-09-02 replay found the correction never lands in band;
+/// such cells go straight to the unchanged bracket expansion.
+#[cfg(feature = "corrected-stop")]
+pub const CORRECTED_STOP_MOVE_GATE: f64 = 0.5;
+
 /// Smallest predictor interval width (`ln(interval_high / interval_low)`)
 /// that routes an uncertain in-distribution cell to the surrogate bracket
 /// search. Below it, the shadow corpus shows the canonical search already
@@ -940,6 +949,13 @@ fn extrapolated_step_from(
     })
 }
 
+/// The score every crossing aim points at: the threshold plus the effort's
+/// loss-relative reserve, never less than [`MIN_AIM_MARGIN`] above it.
+fn aim_score_for(threshold: f64, reserve: f64) -> f64 {
+    let relative = 100.0 - loss(threshold) * (1.0 - reserve);
+    relative.max(threshold + MIN_AIM_MARGIN)
+}
+
 /// The rung the crossing aim (with the effort's reserve) points at from a
 /// bracket. The pure core of [`Navigator::tighten_aim`], shared with the
 /// B1-G speculation shadow.
@@ -949,8 +965,7 @@ fn crossing_aim_from(
     threshold: f64,
     reserve: f64,
 ) -> Option<Rung> {
-    let relative = 100.0 - loss(threshold) * (1.0 - reserve);
-    let aim_score = relative.max(threshold + MIN_AIM_MARGIN);
+    let aim_score = aim_score_for(threshold, reserve);
     // Aiming at (or past) the feasible end of the bracket would only
     // re-probe its neighbour: the bracket is as tight as the aim.
     if aim_score >= hi.1 {
@@ -1464,6 +1479,84 @@ impl Navigator<'_, '_, '_, '_, '_> {
         (guess != last.rung && !self.already_probed(guess)).then_some(guess)
     }
 
+    /// Whether a canonical probe is feasible inside the accept band — the
+    /// landing a bracketed search would keep without a coarser check.
+    #[cfg(feature = "trusted-first-probe")]
+    fn in_band(&self, index: usize) -> bool {
+        self.probes
+            .get(index)
+            .is_some_and(|p| p.feasible && p.score - self.threshold() <= MET_OVERSHOOT_BAND)
+    }
+
+    /// One direct correction from a measured probe: the rung the loss curve
+    /// through `from` with exponent `beta` reaches the crossing aim at (the
+    /// same aim as tightening), clamped to one bounded jump and nudged one
+    /// rung when it lands back where it started.
+    #[cfg(feature = "corrected-stop")]
+    fn corrected_aim(&self, from: (Rung, f64), beta: f64) -> Rung {
+        let aim = aim_score_for(self.threshold(), self.budget.reserve);
+        let ratio = (loss(from.1) / loss(aim))
+            .powf(1.0 / beta)
+            .clamp(1.0 / MAX_EXPANSION_JUMP, MAX_EXPANSION_JUMP);
+        let rung = rung_for_scale(ln_scale(from.0).exp() * ratio);
+        force_progress(rung, from.0, from.1 < aim, Progress::NudgeWhenStuck)
+    }
+
+    /// Contract B trial (feature `corrected-stop`): after a first probe
+    /// outside the band, aim one direct correction at the crossing under the
+    /// prior exponent — only when the implied move is within
+    /// [`CORRECTED_STOP_MOVE_GATE`] — and, if that misses, one more through
+    /// the slope the two probes measured, anchored at whichever lies nearer
+    /// the aim. Returns `true` when a correction landed in band, which ends
+    /// navigation exactly as the N3 stop does; otherwise every probe made
+    /// here stays on the record and the unchanged expansion continues from
+    /// it. Sized on the 2026-09-02 offline replay (`prior|g0.5|trust=1|c2=1`).
+    #[cfg(feature = "corrected-stop")]
+    fn corrected_stop(&mut self) -> Result<bool> {
+        let Some(first) = self.probes.first().map(|p| (p.rung, p.score)) else {
+            return Ok(false);
+        };
+        let aim = aim_score_for(self.threshold(), self.budget.reserve);
+        let implied_move = (loss(first.1) / loss(aim)).ln().abs() / PRIOR_LOSS_EXPONENT;
+        if implied_move > CORRECTED_STOP_MOVE_GATE || !self.pixel_budget_left() {
+            return Ok(false);
+        }
+        let second_rung = self.corrected_aim(first, PRIOR_LOSS_EXPONENT);
+        if self.already_probed(second_rung) {
+            return Ok(false);
+        }
+        let second_index = self.probe(second_rung, false)?;
+        if self.in_band(second_index) {
+            return Ok(true);
+        }
+        if !self.pixel_budget_left() {
+            return Ok(false);
+        }
+        let Some(second) = self.probes.get(second_index).map(|p| (p.rung, p.score)) else {
+            return Ok(false);
+        };
+        let (x1, x2) = (ln_scale(first.0), ln_scale(second.0));
+        if (x2 - x1).abs() <= f64::EPSILON {
+            return Ok(false);
+        }
+        let slope =
+            LocalModel::through((x1, neg_ln_loss(first.1)), (x2, neg_ln_loss(second.1))).slope;
+        if slope.is_nan() || slope <= 0.0 {
+            return Ok(false);
+        }
+        let near = if (second.1 - aim).abs() < (first.1 - aim).abs() {
+            second
+        } else {
+            first
+        };
+        let third_rung = self.corrected_aim(near, slope.clamp(0.2, 3.0));
+        if self.already_probed(third_rung) {
+            return Ok(false);
+        }
+        let third_index = self.probe(third_rung, false)?;
+        Ok(self.in_band(third_index))
+    }
+
     /// Aims at the log-loss crossing (with the effort's reserve) and probes
     /// it, then once more from the refined bracket, while budget remains.
     fn tighten(&mut self) -> Result<()> {
@@ -1690,11 +1783,29 @@ fn solve_baseline(
     // canonical render-and-score, and its finalist is still exactly priced:
     // nothing about what constitutes a valid answer changes.
     nav.probe(predicted, true)?;
+    // Contract B trial (feature `trusted-first-probe`): the same landing
+    // ends navigation whatever the crossing model's confidence said. The
+    // 2026-09-01 shadow corpus found 8 of 12 in-band first probes blocked
+    // by the confidence gate alone, and the 2026-09-02 replay converted
+    // them with no floor loss.
+    #[cfg(feature = "trusted-first-probe")]
+    let one_shot_hit = {
+        let _ = confident_stop;
+        nav.in_band(0)
+    };
+    #[cfg(not(feature = "trusted-first-probe"))]
     let one_shot_hit = confident_stop
         && nav
             .probes
             .first()
             .is_some_and(|p| p.feasible && p.score - nav.threshold() <= MET_OVERSHOOT_BAND);
+    // Contract B trial (feature `corrected-stop`): one bounded direct
+    // correction (and one slope-corrected retry) before the bracket
+    // expansion, on cells the surrogate detour does not take.
+    #[cfg(feature = "corrected-stop")]
+    let corrected_hit = !one_shot_hit && !use_surrogates && nav.corrected_stop()?;
+    #[cfg(not(feature = "corrected-stop"))]
+    let corrected_hit = false;
     // Phase S1: on an uncertain in-distribution cell, the bracket search is
     // run at half resolution first. Surrogate probes locate the estimated
     // crossing; the proposal is then confirmed canonically, and the
@@ -1707,7 +1818,7 @@ fn solve_baseline(
     // correction through the unchanged expansion/tightening machinery —
     // the budgets and the rescue semantics are untouched.
     let mut surrogate_hit = false;
-    if !one_shot_hit && use_surrogates {
+    if !one_shot_hit && !corrected_hit && use_surrogates {
         nav.surrogate_explore()?;
         let proposal = nav.surrogate_proposal();
         nav.retire_surrogates();
@@ -1724,7 +1835,7 @@ fn solve_baseline(
                 });
         }
     }
-    if !one_shot_hit && !surrogate_hit {
+    if !one_shot_hit && !corrected_hit && !surrogate_hit {
         nav.expand_until_bracketed()?;
     }
     nav.tighten()?;
@@ -2355,6 +2466,14 @@ pub fn search_frame_perceptual_with_budget(
                     && target_score >= SURROGATE_TARGET_FLOOR,
             )
         }
+        // Contract B trial (feature `flagged-median-start`): a frame whose
+        // only out-of-distribution signal is being larger than the training
+        // domain seeds the navigator with the model's median rung, all
+        // canonical and without the model's slope. On the 2026-09-01 q85
+        // trace the legacy ladder-ceiling start cost each 12 MP photo two
+        // expansion probes the median would have skipped.
+        #[cfg(feature = "flagged-median-start")]
+        Some(p) if p.large_frame_only_ood => (p.median_rung, None, false, false),
         // Out of distribution: keep the legacy predictor's start, all
         // canonical.
         _ => (predicted, None, false, false),
