@@ -347,7 +347,7 @@ The quality navigator aims every crossing at threshold + reserve * loss(threshol
 
 **derived_from** `@jpegxl-rs.observation.contract-b-corrected-stop-trial-2026-09-02/1`
 
-> **At risk** at depth 1 via `derived_from` → `@jpegxl-rs.observation.contract-b-corrected-stop-trial-2026-09-02/1` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/quality.rs"` was matched by `488770b8`, which touched `JPXL/crates/jpxl-encode-policy/src/quality.rs`.). See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#below-target-667-balanced-the-crossing-aim-lies-outside-the-fixed-1-point-accept-band-so-a-landing-on-the-aim-never-stops-the-search).
+> **Stale** — `watches "JPXL/crates/jpxl-encode-policy/src/quality.rs"` was matched by `a2b7071c`, which touched `JPXL/crates/jpxl-encode-policy/src/quality.rs`. See [REVIEW-REQUIRED.md](REVIEW-REQUIRED.md#below-target-667-balanced-the-crossing-aim-lies-outside-the-fixed-1-point-accept-band-so-a-landing-on-the-aim-never-stops-the-search).
 
 ### Current-HEAD profiles reproduce the perceptual closure and expose an exact base-encoder frontier
 

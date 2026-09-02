@@ -7,7 +7,7 @@
 
 What should not be trusted without re-checking: records the build flagged `stale` or `at_risk`. Neither flag means a record is wrong (D-003); both mean look at it. This view is generated on every successful build, including one that exits 0 with a long queue (D-024). An empty file on an active project is more often a sign the `watches` globs are wrong than a sign the knowledge is perfect.
 
-## Stale (63)
+## Stale (64)
 
 ### The cover/CfL objective misprices Y-channel error by 2.65x across DCT8x8 frequency; the mispricing is in the ruler, not the lever
 
@@ -231,6 +231,12 @@ What should not be trusted without re-checking: records the build flagged `stale
 
 **Cause** — `watches "JPXL/crates/jpxl-perceptual/src/**"` was matched by `94e8dc4c`, which touched `JPXL/crates/jpxl-perceptual/src/evaluator.rs`.
 
+### Below target 66.7 (Balanced) the crossing aim lies outside the fixed 1-point accept band, so a landing on the aim never stops the search
+
+`verified` · `@jpegxl-rs.observation.crossing-aim-outside-accept-band-below-67-2026-09-02/1` · observation · **stale** · [Below target 66.7 (Balanced) the crossing aim lies outside the fixed 1-point accept band, so a landing on the aim never stops the search](CURRENT-STATE.md#below-target-667-balanced-the-crossing-aim-lies-outside-the-fixed-1-point-accept-band-so-a-landing-on-the-aim-never-stops-the-search)
+
+**Cause** — `watches "JPXL/crates/jpxl-encode-policy/src/quality.rs"` was matched by `a2b7071c`, which touched `JPXL/crates/jpxl-encode-policy/src/quality.rs`.
+
 ### Quality-vs-rate wall anchors after the 2026-08-31 cuts: 2.27x and 3.17x at 4 threads, against 3.0x and 4.5x ceilings
 
 `verified` · `@jpegxl-rs.observation.wall-anchors-after-2026-08-31-cuts/1` · observation · **stale** · [Quality-vs-rate wall anchors after the 2026-08-31 cuts: 2.27x and 3.17x at 4 threads, against 3.0x and 4.5x ceilings](CURRENT-STATE.md#quality-vs-rate-wall-anchors-after-the-2026-08-31-cuts-227x-and-317x-at-4-threads-against-30x-and-45x-ceilings)
@@ -387,7 +393,7 @@ What should not be trusted without re-checking: records the build flagged `stale
 
 **Cause** — `watches "JPXL/crates/jpxl-core/src/color.rs"` was matched by `deed1f65`, which touched `JPXL/crates/jpxl-core/src/color.rs`.
 
-## At risk (37)
+## At risk (36)
 
 ### The perceptual closure stands, but three exact base-encoder candidates merit measurement
 
@@ -430,6 +436,12 @@ What should not be trusted without re-checking: records the build flagged `stale
 `active` · `@jpegxl-rs.decision.promote-corrected-stop-and-median-start-2026-09-02/1` · decision · **depth 1** · [Promote the corrected stop (with the trusted first probe) and the large-frame median start to the default Balanced/Fast controller](DECISION-HISTORY.md#revision-1--promote-the-corrected-stop-with-the-trusted-first-probe-and-the-large-frame-median-start-to-the-default-balancedfast-controller)
 
 **Via** `supported_by` → `@jpegxl-rs.observation.contract-b-corrected-stop-trial-2026-09-02/1` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/quality.rs"` was matched by `488770b8`, which touched `JPXL/crates/jpxl-encode-policy/src/quality.rs`.)
+
+### Promote the reserve-coupled accept band to the default Balanced/Fast controller (delegated decision)
+
+`active` · `@jpegxl-rs.decision.promote-reserve-coupled-band-2026-09-02/1` · decision · **depth 1** · [Promote the reserve-coupled accept band to the default Balanced/Fast controller (delegated decision)](DECISION-HISTORY.md#revision-1--promote-the-reserve-coupled-accept-band-to-the-default-balancedfast-controller-delegated-decision)
+
+**Via** `supported_by` → `@jpegxl-rs.observation.crossing-aim-outside-accept-band-below-67-2026-09-02/1` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/quality.rs"` was matched by `a2b7071c`, which touched `JPXL/crates/jpxl-encode-policy/src/quality.rs`.)
 
 ### The 12 MP quality-path memory cap rises from 2.0 GB to 2.5 GB; E1-a retention is adopted
 
@@ -509,12 +521,6 @@ What should not be trusted without re-checking: records the build flagged `stale
 
 **Via** `derived_from` → `@jpegxl-rs.observation.qk4-allocation-free-truncation-2026-09-01/1` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/quantize.rs"` was matched by `b53da037`, which touched `JPXL/crates/jpxl-encode-policy/src/quantize.rs`.)
 
-### Below target 66.7 (Balanced) the crossing aim lies outside the fixed 1-point accept band, so a landing on the aim never stops the search
-
-`verified` · `@jpegxl-rs.observation.crossing-aim-outside-accept-band-below-67-2026-09-02/1` · observation · **depth 1** · [Below target 66.7 (Balanced) the crossing aim lies outside the fixed 1-point accept band, so a landing on the aim never stops the search](CURRENT-STATE.md#below-target-667-balanced-the-crossing-aim-lies-outside-the-fixed-1-point-accept-band-so-a-landing-on-the-aim-never-stops-the-search)
-
-**Via** `derived_from` → `@jpegxl-rs.observation.contract-b-corrected-stop-trial-2026-09-02/1` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/quality.rs"` was matched by `488770b8`, which touched `JPXL/crates/jpxl-encode-policy/src/quality.rs`.)
-
 ### Exact sample-domain special transforms regress quality: honest negative, research mode removed
 
 `verified` · `@jpegxl-rs.observation.exact-sample-specials-honest-negative-2026-08-12/2` · observation · **depth 1** · [Exact sample-domain special transforms regress quality: honest negative, research mode removed](CURRENT-STATE.md#exact-sample-domain-special-transforms-regress-quality-honest-negative-research-mode-removed)
@@ -562,12 +568,6 @@ What should not be trusted without re-checking: records the build flagged `stale
 `proposed` · `@jpegxl-rs.decision.low-targets-are-one-pass-by-design/1` · decision · **depth 2** · [Lower quality targets are one pass by design; additional probes are attempted only at higher qualities](DECISION-HISTORY.md#revision-1--lower-quality-targets-are-one-pass-by-design-additional-probes-are-attempted-only-at-higher-qualities)
 
 **Via** `depends_on` → `@jpegxl-rs.decision.perceptual-quality-contract/1` → `@jpegxl-rs.observation.libjxl-comparison-2026-08-18/2` (stale: `watches "JPXL/tools/compare-libjxl.ps1"` was matched by `4f528696`, which touched `JPXL/tools/compare-libjxl.ps1`.)
-
-### Promote the reserve-coupled accept band to the default Balanced/Fast controller (delegated decision)
-
-`active` · `@jpegxl-rs.decision.promote-reserve-coupled-band-2026-09-02/1` · decision · **depth 2** · [Promote the reserve-coupled accept band to the default Balanced/Fast controller (delegated decision)](DECISION-HISTORY.md#revision-1--promote-the-reserve-coupled-accept-band-to-the-default-balancedfast-controller-delegated-decision)
-
-**Via** `derived_from` → `@jpegxl-rs.decision.promote-corrected-stop-and-median-start-2026-09-02/1` → `@jpegxl-rs.observation.contract-b-corrected-stop-trial-2026-09-02/1` (stale: `watches "JPXL/crates/jpxl-encode-policy/src/quality.rs"` was matched by `488770b8`, which touched `JPXL/crates/jpxl-encode-policy/src/quality.rs`.)
 
 ### Removing EPF's per-access bounds checks does not pay — the 35% scalar int/control share is not bounds checking
 
