@@ -28,6 +28,7 @@ default = [
     "corrected-stop",
     "flagged-median-start",
     "reserve-coupled-band",
+    "case-predictor",
 ]
 parallel = ["jpxl-encode/parallel"]
 # Leaf SIMD for HF quantize choose (and transitive DCT/Gaborish).
@@ -92,8 +93,11 @@ reserve-coupled-band = []
 # `case-predictor`: the first-guess crossing comes from the generated case
 # table (src/quality_predictor_cases.rs: the labelled corpus images'
 # standardized features and oracle crossing curves) as the distance-weighted
-# mean of the nearest cases' curves, instead of the linear knot model.
-# Off by default pending the 2026-09-02 blind holdout trial.
+# mean of the nearest cases' curves, instead of the linear knot model; any
+# table fallback hands the frame to the knot model.  Promoted to default on
+# 2026-09-03 (docs/experiments/2026-09-03-case-predictor-promotion-trial.md):
+# on 1729 blind cells over five corpora, including a camera the table had
+# never seen, 0 floor misses, byte geomean 0.993 and probes 2.30 -> 1.8-1.9.
 case-predictor = []
 # S8 Phase D (AKR source `outside-advice-2026-08-06` §8;
 # `jpegxl-rs.work.arch-s8-full-redesign-scoped`):

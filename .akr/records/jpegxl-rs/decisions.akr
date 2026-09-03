@@ -474,6 +474,35 @@ record jpegxl-rs.decision.pqc-wall-target-renegotiation-shape/1 : decision {
     supported_by [ @jpegxl-rs.evidence.w1b-quiet-host-floors-2026-08-30 ]
 }
 
+record jpegxl-rs.decision.promote-case-predictor-2026-09-03/1 : decision {
+    title "Promote the case-table crossing predictor (re-searched configuration, 1203-case table) to the default Balanced/Fast controller (delegated decision)"
+    state active
+    scope [ path "JPXL/crates/jpxl-cli/**", path "JPXL/crates/jpxl-encode-policy/**" ]
+    topic case-predictor-default
+    decision """
+        Feature `case-predictor` joins the default features of jpxl-encode-policy (the CLI inherits it): the first-guess crossing is the distance-weighted mean of the nearest labelled cases' oracle curves over the 1203-case table (old corpus, paintings, camera, CamSDD, rawcam calibration+development; frozen standardizer), with the re-searched geometry k = 3, neighbour ratio 3.0, spread fallback 0.9 and the 20-weight searched vector; any table fallback hands the frame to the linear knot model, which remains the non-default build's predictor.
+        """
+    context """
+        The operator delegated the promotion with the rule 'promote if it is unequivocally better in quality, speed and size'. The preregistered rule of docs/experiments/2026-09-03-case-predictor-promotion-trial.md (written before any result was read) required, on every blind set, no floor miss, byte geomean <= 1.005 (Fast <= 1.015) with bounded tails, and at least 0.10 fewer probes (Fast not more than 0.10 more); both the landed and the re-searched configuration met it on all six sets, including 336 cells from a camera the table had never seen (Sony ILCE-7C); the tie-break on pooled probes chose the re-searched configuration (1.860 vs 1.936 at pooled bytes within 0.03 %). The final table with the rawcam calibration/development cases passed its blind ext-holdout check and thread identity. Preanalysis is computed by every build, so the default already paid for it; the speed difference is the probe count, and the harness wall ratios on the loaded host (0.79-0.97) agree with it without being a claim.
+        """
+    consequences """
+        Contract B: every pre-promotion byte baseline of the Balanced/Fast quality path moves; the kept trial traces under .agent/scratch/firstguess4-20260903 are the new baselines. The quality floor is unchanged (0 misses on 1729 blind cells). The table embeds statistics derived from the CamSDD test split (CC BY-NC-SA 4.0). Reverting is one line (drop the feature from the policy crate's default list). Remaining coverage gap: large frames from cameras other than one phone and one Sony body; a further corpus is coverage-only work (train-cases with the frozen standardizer), not re-tuning.
+        """
+    derived_from [
+        @jpegxl-rs.decision.promote-corrected-stop-and-median-start-2026-09-02,
+        @jpegxl-rs.decision.promote-reserve-coupled-band-2026-09-02
+    ]
+    resolves [ @jpegxl-rs.question.promote-case-predictor-2026-09-02 ]
+    supported_by [
+        @jpegxl-rs.evidence.case-predictor-cov-camera-balanced-2026-09-03,
+        @jpegxl-rs.evidence.case-predictor-cov-camsdd-balanced-2026-09-03,
+        @jpegxl-rs.evidence.case-predictor-cov-secondary-runs-2026-09-03,
+        @jpegxl-rs.evidence.case-predictor-final-table-rawcam-ext-holdout-2026-09-03,
+        @jpegxl-rs.evidence.case-predictor-searched-cfg-existing-blind-sets-2026-09-03,
+        @jpegxl-rs.evidence.case-predictor-unseen-camera-rawcam-2026-09-03
+    ]
+}
+
 record jpegxl-rs.decision.promote-corrected-stop-and-median-start-2026-09-02/1 : decision {
     title "Promote the corrected stop (with the trusted first probe) and the large-frame median start to the default Balanced/Fast controller"
     state active

@@ -60,3 +60,29 @@ class SampleTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SimilarFoldTest(unittest.TestCase):
+    def test_near_identical_consecutive_frames_fold_and_distinct_ones_do_not(self) -> None:
+        import random
+        import tempfile
+
+        from PIL import Image
+
+        rng = random.Random(7)
+        with tempfile.TemporaryDirectory() as root:
+            base = Image.new("L", (64, 64))
+            base.putdata([rng.randrange(256) for _ in range(64 * 64)])
+            base.save(f"{root}/_DSC0001.png")
+            shifted = base.point(lambda v: min(255, v + 3))
+            shifted.save(f"{root}/_DSC0002.png")
+            other = Image.new("L", (64, 64))
+            other.putdata([rng.randrange(256) for _ in range(64 * 64)])
+            other.save(f"{root}/_DSC0003.png")
+            images = qce.scan(root)
+            stems = qce.fold_bursts(images, 0)
+            self.assertEqual(len(set(stems.values())), 3)
+            folded = qce.fold_similar(root, images, stems, 0.9)
+            self.assertEqual(folded[(".", "_DSC0002.png")], folded[(".", "_DSC0001.png")])
+            self.assertNotEqual(folded[(".", "_DSC0003.png")], folded[(".", "_DSC0001.png")])
+            self.assertEqual(qce.fold_similar(root, images, stems, 0.0), stems)

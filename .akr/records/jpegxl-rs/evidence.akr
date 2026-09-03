@@ -243,6 +243,19 @@ record jpegxl-rs.evidence.case-predictor-cov-secondary-runs-2026-09-03/1 : evide
         """
 }
 
+record jpegxl-rs.evidence.case-predictor-final-table-rawcam-ext-holdout-2026-09-03/1 : evidence {
+    title "Final 1203-case table (searched cfg, rawcam cal+dev added) on the blind rawcam ext-holdout: 0 floor, bytes 0.990, probes 2.38 -> 2.11, thread identity 8/8"
+    state verified
+    result pass
+    method command
+    observed_at git:a3e55c6b429fed361ddfee3f6722f6952668b880
+    command "CORES=0,2,4,6 .agent/scratch/firstguess4-20260903/build_final4.sh .agent/scratch/firstguess4-20260903/weights-searched.json 3 0.9 final-rs"
+    artifact "JPXL/docs/experiments/2026-09-03-case-predictor-promotion-trial.md"
+    summary """
+        train-cases over all splits of the old corpus, paintings, camera and CamSDD plus rawcam calibration+development (1203 cases; LOFO median |ln error| 0.071, p90 0.209), searched weights, k = 3, ratio 3.0, spread fallback 0.9, standardizer frozen at the f141360 values. Blind check on the 12 rawcam ext-holdout images, 7 targets, 84 cells vs the knot model: 0 floor, bytes 0.9905, worst 1.073, no cell over 1.10, probes 2.38 -> 2.11; 8/8 spot cells byte-identical at 1 and 8 threads. The landed configuration's equivalent table was checked the same way (0 floor, 0.9868, worst 1.075, 2.38 -> 2.13) and set aside.
+        """
+}
+
 record jpegxl-rs.evidence.case-predictor-landed-table-on-camsdd-2026-09-03/1 : evidence {
     title "Landed case table without CamSDD is worse than the knot model on CamSDD"
     state verified
@@ -256,6 +269,32 @@ record jpegxl-rs.evidence.case-predictor-landed-table-on-camsdd-2026-09-03/1 : e
         """
 }
 
+record jpegxl-rs.evidence.case-predictor-promotion-gates-2026-09-03/1 : evidence {
+    title "Case predictor promotion gates: default build byte-identical to the trial binary, clippy, fmt, workspace tests and tool tests pass"
+    state verified
+    result pass
+    method command
+    observed_at git:a3e55c6b429fed361ddfee3f6722f6952668b880
+    command ".agent/scratch/firstguess4-20260903/gates4.sh"
+    artifact "JPXL/docs/experiments/2026-09-03-case-predictor-promotion-trial.md"
+    summary """
+        With case-predictor in the policy crate's default features and the 1203-case table in the tree: the default-feature jpxl build is byte-identical to the trial binary jpxl-final-rs on 6/6 spot cells; cargo clippy --workspace --all-targets -D warnings (default) and -p jpxl-encode-policy --no-default-features pass; cargo fmt --check passes; cargo test --workspace --release: 76 result lines, 1638 passed, 0 failed; 88 Python tool tests pass. The policy crate's --no-default-features test run has three failures (winner_stability_over_a_real_rate_search, a_16_bit_source_round_trips_at_16_bit_precision, the_wide_entry_point_agrees_with_the_8_bit_one_on_8_bit_input) that fail identically at 6e06b05 with this round's changes stashed: pre-existing, not part of this round.
+        """
+}
+
+record jpegxl-rs.evidence.case-predictor-searched-cfg-existing-blind-sets-2026-09-03/1 : evidence {
+    title "Case predictor, re-searched configuration (k = 3, spread 0.9), on the existing blind sets: every preregistered criterion met"
+    state verified
+    result pass
+    method command
+    observed_at git:a3e55c6b429fed361ddfee3f6722f6952668b880
+    command ".agent/scratch/firstguess4-20260903/lane_p.sh; python3 .agent/scratch/firstguess4-20260903/analyze4.py -v"
+    artifact "JPXL/docs/experiments/2026-09-03-case-predictor-promotion-trial.md"
+    summary """
+        Arm C (cal+dev table of the four corpora, 968 cases, searched weights, k = 3, ratio 3.0, spread fallback 0.9, frozen standardizer) vs the default knot model, harness one_shot_promotion_ab.py, threads 4: camera ext-holdout Balanced 273 cells 0 floor, bytes 0.9881, worst 1.063, probes 2.65 -> 1.74; camera Fast 156 cells 0 floor, 0.9513, 1.73 -> 1.74; paintings ext-holdout 364 cells 0 floor, 0.9875, 2.21 -> 1.80; CamSDD ext-holdout 756 cells 0 floor, 0.9959, worst 1.203, 2.15 -> 1.80; old-corpus holdout (in table) 140 cells identical to the landed arm (0 floor, 0.9814, 3.13 -> 1.64). Reference binaries ref3 and ref4 byte-identical on 1689 shared cells.
+        """
+}
+
 record jpegxl-rs.evidence.case-predictor-thread-identity-2026-09-02/1 : evidence {
     title "Case predictor build is thread-count identical on 12/12 spot cells"
     state verified
@@ -266,6 +305,19 @@ record jpegxl-rs.evidence.case-predictor-thread-identity-2026-09-02/1 : evidence
     artifact "JPXL/docs/experiments/2026-09-02-case-predictor-first-guess.md"
     summary """
         The case-predictor build produces byte-identical streams at 1 and 4 threads on 12 of 12 spot cells.
+        """
+}
+
+record jpegxl-rs.evidence.case-predictor-unseen-camera-rawcam-2026-09-03/1 : evidence {
+    title "Case predictor on a camera the table had never seen (48 Sony ILCE-7C / raw-autotune frames, 336 cells): both configurations pass"
+    state verified
+    result pass
+    method command
+    observed_at git:a3e55c6b429fed361ddfee3f6722f6952668b880
+    command ".agent/scratch/firstguess4-20260903/lane_p.sh; .agent/scratch/firstguess4-20260903/lane_e.sh; python3 .agent/scratch/firstguess4-20260903/analyze4.py -v; python3 .agent/scratch/firstguess4-20260903/rawcam_study.py"
+    artifact "JPXL/docs/experiments/2026-09-03-case-predictor-promotion-trial.md"
+    summary """
+        test-set/rawcam (46 Sony ILCE-7C 6000x4000 frames, 2 raw-autotune Samsung DNG renders, all native resolution), no rawcam case in either table. Landed cfg (HEAD 1167-case table): 336 cells 0 floor, bytes 0.9961, worst 1.172, 2 cells over 1.10, probes 2.46 -> 2.11. Searched cfg (same 1167 cases, k = 3, spread 0.9): 0 floor, 0.9971, worst 1.172, 3 cells over 1.10, 2.46 -> 2.15. Offline on the rawcam labels: knot model 2.34 simulated probes, both table configurations 1.88; nearest-case distance median 6.0 (farther than the phone frames were). Pooled over the 1729 blind Balanced cells of five corpora: landed 0.9928 / 2.302 -> 1.936, searched 0.9931 / 2.302 -> 1.860.
         """
 }
 

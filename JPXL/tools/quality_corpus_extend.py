@@ -41,7 +41,7 @@ import sys
 
 from PIL import Image
 
-TOOL_VERSION = "1.1.0"
+TOOL_VERSION = "1.2.0"
 MANIFEST_SCHEMA = "jpxl.codec-corpus-ext/1"
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".heic", ".heif")
 MAGICK_EXTS = (".heic", ".heif")
@@ -97,6 +97,57 @@ def fold_bursts(
             last[rel] = (stamp, family)
         families[(rel, name)] = family
     return families
+
+
+THUMB_SIDE = 32
+
+
+def thumbnail_vector(path: str) -> list[float] | None:
+    """A zero-mean, unit-norm luma thumbnail (THUMB_SIDE square) for
+    near-duplicate detection; None when the file cannot be decoded cheaply."""
+    try:
+        with Image.open(path) as im:
+            im.draft("L", (THUMB_SIDE * 2, THUMB_SIDE * 2))
+            small = im.convert("L").resize((THUMB_SIDE, THUMB_SIDE), Image.BOX)
+            values = [float(v) for v in small.getdata()]
+    except Exception:  # noqa: BLE001 - undecodable files simply do not fold
+        return None
+    mean = sum(values) / len(values)
+    centred = [v - mean for v in values]
+    norm = sum(v * v for v in centred) ** 0.5
+    if norm == 0.0:
+        return None
+    return [v / norm for v in centred]
+
+
+def fold_similar(
+    root: str,
+    images: list[tuple[str, str, int]],
+    families: dict[tuple[str, str], str],
+    threshold: float,
+) -> dict[tuple[str, str], str]:
+    """Chain a file into the previous file's family (name order, per
+    directory) when their luma thumbnails correlate at or above
+    ``threshold``: sequence-numbered camera frames carry no time stamp, so
+    near-identical consecutive frames are recognised by content instead."""
+    if threshold <= 0.0:
+        return families
+    out = dict(families)
+    last: dict[str, tuple[list[float] | None, str]] = {}
+    for rel, name, _ in sorted(images):
+        vector = thumbnail_vector(os.path.join(root, rel, name))
+        family = out[(rel, name)]
+        previous = last.get(rel)
+        if (
+            previous is not None
+            and vector is not None
+            and previous[0] is not None
+            and sum(a * b for a, b in zip(vector, previous[0])) >= threshold
+        ):
+            family = previous[1]
+            out[(rel, name)] = family
+        last[rel] = (vector, family)
+    return out
 
 
 def split_for_family(family: str, holdout_fraction: float, dev_fraction: float) -> str:
@@ -236,6 +287,7 @@ def cmd_build(args: argparse.Namespace) -> int:
         print(f"no images under {args.source_dir}", file=sys.stderr)
         return 1
     families = fold_bursts(images, args.burst_window_seconds)
+    families = fold_similar(args.source_dir, images, families, args.fold_similar)
     picked = sample(
         images,
         args.max_images,
@@ -380,6 +432,13 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=0.0,
         help="fold camera-stamped files this close in time into one family (0 = off)",
+    )
+    parser.add_argument(
+        "--fold-similar",
+        type=float,
+        default=0.0,
+        help="fold a file into the previous file's family (name order, per directory) "
+        "when their luma thumbnails correlate at or above this value (0 = off)",
     )
     parser.add_argument(
         "--group-by-stamp-date",
