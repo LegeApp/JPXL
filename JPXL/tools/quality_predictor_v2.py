@@ -1032,10 +1032,17 @@ CASES_DISTANCE_EPS = 0.05
 CASES_PRIOR_BETA = 0.9
 
 
-def build_cases(rows: list[dict], feature_set: str = CASES_FEATURE_SET) -> dict:
+def build_cases(
+    rows: list[dict],
+    feature_set: str = CASES_FEATURE_SET,
+    standardizer: tuple[list[float], list[float]] | None = None,
+) -> dict:
     """One case per image with every knot crossed: standardized features, the
     ln crossing scale at each knot, and ln beta at each knot (missing betas
-    take the image's own geometric mean, else the prior)."""
+    take the image's own geometric mean, else the prior). ``standardizer``
+    freezes the per-feature centers and scales (e.g. those of a landed table)
+    so that adding cases leaves the distance metric untouched; the z-range is
+    always that of the cases in the table."""
     by_image: dict[str, dict] = {}
     for r in rows:
         by_image.setdefault(r["image_id"], {"rows": {}, "row": r})["rows"][r["target"]] = r
@@ -1044,7 +1051,12 @@ def build_cases(rows: list[dict], feature_set: str = CASES_FEATURE_SET) -> dict:
         if all(t in v["rows"] and v["rows"][t]["state"] != "censored" for t in TARGET_KNOTS)
     ]
     raw = [feature_vector(v["row"]["source_features"], feature_set, v["row"]["transform_features"]) for v in images]
-    centers, scales = robust_standardizer(raw)
+    if standardizer is None:
+        centers, scales = robust_standardizer(raw)
+    else:
+        centers, scales = list(standardizer[0]), list(standardizer[1])
+        if len(centers) != len(feature_names(feature_set)) or len(scales) != len(centers):
+            raise SystemExit("--standardizer-from: dimension does not match the feature set")
     cases = []
     for v, feats in zip(images, raw):
         betas = [v["rows"][t].get("beta") for t in TARGET_KNOTS]
@@ -1257,7 +1269,12 @@ def cmd_train_cases(args: argparse.Namespace) -> int:
     blind = None if args.blind_split == "none" else args.blind_split
     train_rows = [r for r in rows if r["split"] != blind]
     blind_rows = [r for r in rows if blind and r["split"] == blind]
-    table = build_cases(train_rows, args.feature_set)
+    frozen = None
+    if args.standardizer_from:
+        with open(args.standardizer_from, encoding="utf-8") as fh:
+            src = json.load(fh)
+        frozen = (src["centers"], src["scales"])
+    table = build_cases(train_rows, args.feature_set, frozen)
     lofo = cases_metrics(table["cases"], table["cases"], args.k, args.distance_eps, weights, args.neighbour_ratio)
     report = {
         "schema": REPORT_SCHEMA,
@@ -1271,6 +1288,10 @@ def cmd_train_cases(args: argparse.Namespace) -> int:
         "weights": dict(zip(names, weights)),
         "emitted_splits": sorted({r["split"] for r in train_rows}),
         "cases": len(table["cases"]),
+        "standardizer": f"frozen from {args.standardizer_from}" if frozen else "refit on the emitted cases",
+        "centers": table["centers"],
+        "scales": table["scales"],
+        "z_range": table["z_range"],
         "lofo": lofo,
     }
     print(f"[cases k={args.k} ratio={args.neighbour_ratio}] {len(table['cases'])} cases; LOFO {json.dumps(lofo)}")
@@ -1341,6 +1362,9 @@ def build_parser() -> argparse.ArgumentParser:
     cases.add_argument("--blind-split", default="holdout",
                        help="split kept out of the emitted table and scored once; 'none' emits every split")
     cases.add_argument("--k", type=int, default=CASES_NEIGHBOURS)
+    cases.add_argument("--standardizer-from", default=None,
+                       help="JSON with 'centers' and 'scales' (a previous train-cases report) to freeze the "
+                            "feature standardizer instead of refitting it on the emitted cases")
     cases.add_argument("--distance-eps", type=float, default=CASES_DISTANCE_EPS)
     cases.add_argument("--rust-out", required=True)
     cases.add_argument("--report-out", required=True)

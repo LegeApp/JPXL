@@ -130,6 +130,82 @@ record jpegxl-rs.observation.bpg-rs-aq-precedent-2026-08-10/2 : observation {
     author "GitHub Uploader"
 }
 
+record jpegxl-rs.observation.case-predictor-camera-coverage-study-2026-09-03/1 : observation {
+    title "Case predictor: coverage from a camera roll and CamSDD, metric frozen (2026-09-03)"
+    state superseded
+    scope [ path "JPXL/crates/jpxl-encode-policy/**", path "JPXL/tools/**" ]
+    statement """
+        Adding 220 phone-camera frames (test-set/camera, 6 native 50 MP) and the 600-image CamSDD test split (test-set/camsdd, 576x384, 30 scenes, CC BY-NC-SA) to the case table with the standardizer, weights and configuration frozen at the f141360 values (train-cases --standardizer-from) gives, in the preregistered blind trial: camera Balanced 273 cells 0 floor, bytes 0.985, probes 2.65 -> 1.85 (pass); camera Fast 0.955, overshoot halved; paintings 2.21 -> 1.83 unchanged from v2; old holdout as v2; CamSDD 756 cells 0 floor, 0.996, 2.15 -> 1.94 but the 0.3 probe margin is missed and one t95 cell is 1.21x (partial). The landed table without CamSDD is worse than the knot model on CamSDD (2.66 probes); on the camera roll it was already better than the default (1.99) and coverage adds 0.14. A re-search of weights/config from the landed start gained 0.04 (camera) to 0.21 (CamSDD) simulated probes but changed k and the spread threshold and was disqualified by the preregistered parsimony rule. Refitting the standardizer on the enlarged table collapses the log2_pixels MAD 0.75 -> 0.17 and moves 35/89 old-corpus nearest neighbours without any label change, so the standardizer is frozen from now on. Landed: 1167-case frozen-standardizer table (all splits), feature still off by default; corpus tool gained HEIC decode, burst folding, day grouping, stem exclusion, native-large and licence options.
+        """
+    observed_at git:e160dc0000000000000000000000000000000000
+    method command
+    watches [
+        "JPXL/crates/jpxl-encode-policy/src/quality_predictor_cases.rs",
+        "JPXL/crates/jpxl-encode-policy/src/quality_prediction.rs",
+        "JPXL/tools/quality_predictor_v2.py",
+        "JPXL/tools/quality_corpus_extend.py",
+        "JPXL/docs/experiments/2026-09-03-case-predictor-camera-coverage.md"
+    ]
+    derived_from [ @jpegxl-rs.observation.case-predictor-v2-paintings-study-2026-09-02 ]
+    verified_by [
+        @jpegxl-rs.evidence.case-predictor-cov-camera-balanced-2026-09-03,
+        @jpegxl-rs.evidence.case-predictor-cov-camsdd-balanced-2026-09-03,
+        @jpegxl-rs.evidence.case-predictor-cov-secondary-runs-2026-09-03,
+        @jpegxl-rs.evidence.case-predictor-landed-table-on-camsdd-2026-09-03
+    ]
+}
+
+record jpegxl-rs.observation.case-predictor-camera-coverage-study-2026-09-03/2 : observation {
+    title "Case predictor: coverage from a camera roll and CamSDD, metric frozen (2026-09-03)"
+    state superseded
+    scope [ path "JPXL/crates/jpxl-encode-policy/**", path "JPXL/tools/**" ]
+    statement """
+        Adding 220 phone-camera frames (test-set/camera, 6 native 50 MP) and the 600-image CamSDD test split (test-set/camsdd, 576x384, 30 scenes, CC BY-NC-SA) to the case table with the standardizer, weights and configuration frozen at the f141360 values (train-cases --standardizer-from) gives, in the preregistered blind trial: camera Balanced 273 cells 0 floor, bytes 0.985, probes 2.65 -> 1.85 (pass); camera Fast 0.955, overshoot halved; paintings 2.21 -> 1.83 unchanged from v2; old holdout as v2; CamSDD 756 cells 0 floor, 0.996, 2.15 -> 1.94 but the 0.3 probe margin is missed and one t95 cell is 1.21x (partial). The landed table without CamSDD is worse than the knot model on CamSDD (2.66 probes); on the camera roll it was already better than the default (1.99) and coverage adds 0.14. A re-search of weights/config from the landed start gained 0.04 (camera) to 0.21 (CamSDD) simulated probes but changed k and the spread threshold and was disqualified by the preregistered parsimony rule. Refitting the standardizer on the enlarged table collapses the log2_pixels MAD 0.75 -> 0.17 and moves 35/89 old-corpus nearest neighbours without any label change, so the standardizer is frozen from now on. Landed: 1167-case frozen-standardizer table (all splits), feature still off by default; corpus tool gained HEIC decode, burst folding, day grouping, stem exclusion, native-large and licence options.
+        """
+    observed_at git:e160dc0e4976ab2c0bdcdeab4787f50884ed10c0
+    method command
+    watches [
+        "JPXL/crates/jpxl-encode-policy/src/quality_predictor_cases.rs",
+        "JPXL/crates/jpxl-encode-policy/src/quality_prediction.rs",
+        "JPXL/tools/quality_predictor_v2.py",
+        "JPXL/tools/quality_corpus_extend.py",
+        "JPXL/docs/experiments/2026-09-03-case-predictor-camera-coverage.md"
+    ]
+    derived_from [ @jpegxl-rs.observation.case-predictor-v2-paintings-study-2026-09-02 ]
+    supersedes [ @jpegxl-rs.observation.case-predictor-camera-coverage-study-2026-09-03/1 ]
+    verified_by [
+        @jpegxl-rs.evidence.case-predictor-cov-camera-balanced-2026-09-03,
+        @jpegxl-rs.evidence.case-predictor-cov-camsdd-balanced-2026-09-03,
+        @jpegxl-rs.evidence.case-predictor-cov-secondary-runs-2026-09-03,
+        @jpegxl-rs.evidence.case-predictor-landed-table-on-camsdd-2026-09-03
+    ]
+}
+
+record jpegxl-rs.observation.case-predictor-camera-coverage-study-2026-09-03/3 : observation {
+    title "Case predictor: coverage from a camera roll and CamSDD, metric frozen (2026-09-03)"
+    state verified
+    scope [ path "JPXL/crates/jpxl-encode-policy/**", path "JPXL/tools/**" ]
+    statement """
+        Adding 220 phone-camera frames (test-set/camera, 6 native 50 MP) and the 600-image CamSDD test split (test-set/camsdd, 576x384, 30 scenes, CC BY-NC-SA) to the case table with the standardizer, weights and configuration frozen at the f141360 values (train-cases --standardizer-from) gives, in the preregistered blind trial: camera Balanced 273 cells 0 floor, bytes 0.985, probes 2.65 -> 1.85 (pass); camera Fast 0.955, overshoot halved; paintings 2.21 -> 1.83 unchanged from v2; old holdout as v2; CamSDD 756 cells 0 floor, 0.996, 2.15 -> 1.94 but the 0.3 probe margin is missed and one t95 cell is 1.21x (partial). The landed table without CamSDD is worse than the knot model on CamSDD (2.66 probes); on the camera roll it was already better than the default (1.99) and coverage adds 0.14. A re-search of weights/config from the landed start gained 0.04 (camera) to 0.21 (CamSDD) simulated probes but changed k and the spread threshold and was disqualified by the preregistered parsimony rule. Refitting the standardizer on the enlarged table collapses the log2_pixels MAD 0.75 -> 0.17 and moves 35/89 old-corpus nearest neighbours without any label change, so the standardizer is frozen from now on. Landed: 1167-case frozen-standardizer table (all splits), feature still off by default; corpus tool gained HEIC decode, burst folding, day grouping, stem exclusion, native-large and licence options.
+        """
+    observed_at git:e160dc0e4976ab2c0bdcdeab4787f50884ed10c0
+    method command
+    watches [
+        "JPXL/crates/jpxl-encode-policy/src/quality_predictor_cases.rs",
+        "JPXL/crates/jpxl-encode-policy/src/quality_prediction.rs",
+        "JPXL/tools/quality_predictor_v2.py",
+        "JPXL/tools/quality_corpus_extend.py"
+    ]
+    derived_from [ @jpegxl-rs.observation.case-predictor-v2-paintings-study-2026-09-02 ]
+    supersedes [ @jpegxl-rs.observation.case-predictor-camera-coverage-study-2026-09-03/2 ]
+    verified_by [
+        @jpegxl-rs.evidence.case-predictor-cov-camera-balanced-2026-09-03,
+        @jpegxl-rs.evidence.case-predictor-cov-camsdd-balanced-2026-09-03,
+        @jpegxl-rs.evidence.case-predictor-cov-secondary-runs-2026-09-03,
+        @jpegxl-rs.evidence.case-predictor-landed-table-on-camsdd-2026-09-03
+    ]
+}
+
 record jpegxl-rs.observation.case-predictor-v2-paintings-study-2026-09-02/1 : observation {
     title "A case predictor searched against simulated probes over structure features, on a corpus with 258 paintings, cuts simulated probes on never-seen images; a table without paintings makes paintings worse"
     state superseded

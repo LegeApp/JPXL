@@ -204,6 +204,58 @@ record jpegxl-rs.evidence.case-predictor-caldev-in-table-2026-09-02/1 : evidence
         """
 }
 
+record jpegxl-rs.evidence.case-predictor-cov-camera-balanced-2026-09-03/1 : evidence {
+    title "Case predictor coverage table: camera blind gate pass"
+    state verified
+    result pass
+    method command
+    observed_at git:e160dc0e4976ab2c0bdcdeab4787f50884ed10c0
+    command "python3 JPXL/tools/one_shot_promotion_ab.py --manifest test-set/camera-manifest.json --splits ext-holdout --default-binary jpxl-ref3 --one-shot-binary jpxl-cases-cov --targets 30 50 70 80 85 90 95 --threads 4"
+    artifact "JPXL/docs/experiments/2026-09-03-case-predictor-camera-coverage.md"
+    summary """
+        Camera ext-holdout gate, Balanced, 273 cells: 0 floor violations, byte geomean 0.985, probes 2.65 -> 1.85, two-probe encodes 91 -> 220, worst cell 1.138; all preregistered run-1 criteria met. Frozen-standardizer 968-case table, weights/config unchanged from f141360.
+        """
+}
+
+record jpegxl-rs.evidence.case-predictor-cov-camsdd-balanced-2026-09-03/1 : evidence {
+    title "Case predictor coverage table: CamSDD blind gate partial"
+    state verified
+    result fail
+    method command
+    observed_at git:e160dc0e4976ab2c0bdcdeab4787f50884ed10c0
+    command "python3 JPXL/tools/one_shot_promotion_ab.py --manifest test-set/camsdd-manifest.json --splits ext-holdout --default-binary jpxl-ref3 --one-shot-binary jpxl-cases-cov --targets 30 50 70 80 85 90 95 --threads 4"
+    artifact "JPXL/docs/experiments/2026-09-03-case-predictor-camera-coverage.md"
+    summary """
+        CamSDD ext-holdout gate, Balanced, 756 cells: 0 floor violations, byte geomean 0.996, probes 2.15 -> 1.94, but the preregistered probe margin (>= 0.3) is missed at 0.21 and one t95 cell is 1.208x (shallow neighbour slope -> short corrected step -> bracket overshoot). Preregistered outcome: Partial.
+        """
+}
+
+record jpegxl-rs.evidence.case-predictor-cov-secondary-runs-2026-09-03/1 : evidence {
+    title "Case predictor coverage table: Fast, paintings, old-holdout, identity and gates pass"
+    state verified
+    result pass
+    method command
+    observed_at git:e160dc0e4976ab2c0bdcdeab4787f50884ed10c0
+    command ".agent/scratch/firstguess3-20260903/run_trial_lanes.sh (runs c3-cam-fast-4t, c3-paint-balanced-7t, c3-corpus-holdout-7t) and thread-identity spot check"
+    artifact "JPXL/docs/experiments/2026-09-03-case-predictor-camera-coverage.md"
+    summary """
+        Camera Fast 156 cells: 0 floor, bytes 0.955, probes 1.73 -> 1.79, overshoot +3.19 -> +1.61. Paintings ext-holdout 364 cells: 0 floor, 0.989, 2.21 -> 1.83 (v2: 1.77). Old holdout 140 cells: 0 floor, 0.981, 3.13 -> 1.64, the known sub-kB gradient tail cell 2.58x unchanged. Thread identity 1 vs 4: 8/8 byte-identical. Workspace clippy (3 configs), fmt and tests pass with the 1167-case table.
+        """
+}
+
+record jpegxl-rs.evidence.case-predictor-landed-table-on-camsdd-2026-09-03/1 : evidence {
+    title "Landed case table without CamSDD is worse than the knot model on CamSDD"
+    state verified
+    result fail
+    method command
+    observed_at git:e160dc0e4976ab2c0bdcdeab4787f50884ed10c0
+    command "python3 JPXL/tools/one_shot_promotion_ab.py --manifest test-set/camsdd-manifest.json --splits ext-holdout --default-binary jpxl-ref3 --one-shot-binary jpxl-cases-v2-landed --targets 30 50 70 80 85 90 95 --threads 4"
+    artifact "JPXL/docs/experiments/2026-09-03-case-predictor-camera-coverage.md"
+    summary """
+        The landed f141360 table (no CamSDD or camera cases) on the CamSDD ext-holdout, 756 cells: 0 floor, byte geomean 1.005, probes 2.15 -> 2.66 (worse than the knot model at every target from 50 up). On the camera ext-holdout the same table was better than the default (2.65 -> 1.99) and the added cases took it to 1.85. Coverage, not geometry, is the lever.
+        """
+}
+
 record jpegxl-rs.evidence.case-predictor-thread-identity-2026-09-02/1 : evidence {
     title "Case predictor build is thread-count identical on 12/12 spot cells"
     state verified

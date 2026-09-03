@@ -226,6 +226,31 @@ class CaseTableTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             qpv2.feature_vector(dict(sf, preanalysis=None), "source+transform+preanalysis", tf)
 
+    def test_frozen_standardizer_is_used_verbatim_and_range_follows_cases(self):
+        rows = []
+        for i, image in enumerate(("a", "b", "c")):
+            sf = {"width": 1024 + 512 * i, "height": 512, "grayscale": False, "luma_variance_q10": 1e-6,
+                  "luma_variance_q50": 1e-4 * (i + 1), "luma_variance_q90": 1e-2, "chroma_variance_q50": 1e-5,
+                  "flat_fraction": 0.1 * i, "edge_proxy": 1e-2}
+            tf = {"blocks": 4800, "chroma_ac_ratio": 0.15, "dc_variance_y": 0.01, "directional_asymmetry": 0.2,
+                  "high_low_ratio": 0.3, "ln_ac_y_mean": -5.0, "ln_ac_y_q50": -6.0, "ln_ac_y_q90": -4.0,
+                  "ln_ac_y_q99": -3.0, "near_zero_frac_1e2": 0.8, "near_zero_frac_1e3": 0.6}
+            for t in qpv2.TARGET_KNOTS:
+                rows.append({"image_id": image, "family_id": image, "split": "calibration", "class": "photo",
+                             "target": t, "state": "crossed", "crossing_scale": 1.0 + 0.1 * i, "beta": 0.9,
+                             "source_features": sf, "transform_features": tf})
+        refit = qpv2.build_cases(rows, "source+transform")
+        dim = len(refit["centers"])
+        frozen = qpv2.build_cases(rows, "source+transform", ([0.0] * dim, [2.0] * dim))
+        self.assertEqual(frozen["centers"], [0.0] * dim)
+        self.assertEqual(frozen["scales"], [2.0] * dim)
+        raw = qpv2.feature_vector(rows[0]["source_features"], "source+transform", rows[0]["transform_features"])
+        self.assertAlmostEqual(frozen["cases"][0]["z"][0], raw[0] / 2.0)
+        lo, hi = frozen["z_range"][0]
+        self.assertLessEqual(lo, frozen["cases"][0]["z"][0])
+        self.assertGreaterEqual(hi, frozen["cases"][-1]["z"][0])
+        self.assertNotEqual(refit["scales"], frozen["scales"])
+
     def test_weighted_distance_and_adaptive_cut(self):
         cases = [
             {"id": "near-in-x", "z": [0.1, 5.0], "ln_crossing": [1.0] * 7, "ln_beta": [0.0] * 7},
