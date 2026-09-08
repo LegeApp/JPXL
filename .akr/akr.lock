@@ -5,8 +5,7 @@ build {
     tool "akr 0.5.0"
     grammar "0.1"
     vocabulary "0.2"
-    commit git:08859157148189f6e55144183222297dff3d76ca
-    source_graph "sha256:f9945052eb4d2c2a51901a6d667968fa9991377708577e21c03e238c3f6dcd65"
+    source_graph "sha256:63bbce3fec2590923c3d328b413fac68582e22b5d18a2318035a6626ec7466a0"
 }
 
 source ".akr/project.akr" {
@@ -25,8 +24,8 @@ source ".akr/records/jpegxl-rs/constraints.akr" {
 }
 
 source ".akr/records/jpegxl-rs/decisions.akr" {
-    hash "sha256:b526cf49a3eb0410cf8eb4de920e8e2c62b57bc29b2c54e8702f8aa03872b635"
-    records 30
+    hash "sha256:1e54065365694ff0827d9aedf9e37feb58f1de4c00e715f44661bbd662d8d770"
+    records 31
 }
 
 source ".akr/records/jpegxl-rs/evidence.akr" {
@@ -480,6 +479,12 @@ resolution @jpegxl-rs.decision.promote-reserve-coupled-band-2026-09-02/1 {
     slot supported_by
     to @jpegxl-rs.observation.qpv2-photo-low-target-bias-2026-09-02/1
     hash "sha256:6a582286f424589a98f69d881673db90843b0bf52726b0c241495893fd133e4c"
+}
+
+resolution @jpegxl-rs.decision.publish-twelve-crates-2026-09-08/1 {
+    slot derived_from
+    to @jpegxl-rs.track.perceptual-quality-controller/1
+    hash "sha256:ee46ea6ea41bbe6b52ee4962868f2ed858f276a6e2455fd361c4086cc0aee1c0"
 }
 
 resolution @jpegxl-rs.decision.quality-path-memory-budget-2026-08-31/1 {
