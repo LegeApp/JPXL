@@ -36,6 +36,7 @@
 pub mod bands;
 pub mod blur;
 pub mod color;
+mod cpu;
 #[cfg(feature = "evaluator")]
 pub mod evaluator;
 pub mod executor;

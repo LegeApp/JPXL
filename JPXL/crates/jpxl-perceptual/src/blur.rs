@@ -213,7 +213,7 @@ const ROW_LANES: usize = 6;
 /// the host supports it.
 pub(crate) fn horizontal_band(input: BlurInput<'_>, out_band: &mut [f32], width: usize) {
     #[cfg(target_arch = "x86_64")]
-    if jpxl_core::cpu::has_avx2() {
+    if crate::cpu::has_avx2() {
         // SAFETY: `horizontal_band_avx2` only requires that the host support
         // AVX2, which `has_avx2` has just confirmed.
         #[allow(unsafe_code)]
@@ -228,7 +228,7 @@ pub(crate) fn horizontal_band(input: BlurInput<'_>, out_band: &mut [f32], width:
 /// [`horizontal_band`] compiled for AVX2.
 ///
 /// Calling it is `unsafe` unless the host supports AVX2 (see
-/// [`jpxl_core::cpu::has_avx2`]); that is the whole contract.
+/// [`crate::cpu::has_avx2`]); that is the whole contract.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2,fma")]
 fn horizontal_band_avx2(input: BlurInput<'_>, out_band: &mut [f32], width: usize) {
@@ -610,7 +610,7 @@ fn vertical_strip(
     cols: usize,
 ) {
     #[cfg(target_arch = "x86_64")]
-    if jpxl_core::cpu::has_avx2() {
+    if crate::cpu::has_avx2() {
         // SAFETY: `vertical_strip_avx2` only requires that the host support
         // AVX2, which `has_avx2` has just confirmed.
         #[allow(unsafe_code)]
@@ -625,7 +625,7 @@ fn vertical_strip(
 /// [`vertical_strip`] compiled for AVX2.
 ///
 /// Calling it is `unsafe` unless the host supports AVX2 (see
-/// [`jpxl_core::cpu::has_avx2`]); that is the whole contract.
+/// [`crate::cpu::has_avx2`]); that is the whole contract.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2,fma")]
 fn vertical_strip_avx2(

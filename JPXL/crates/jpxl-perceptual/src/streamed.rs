@@ -354,7 +354,7 @@ pub(crate) fn channel_terms(
 /// build where the host supports it.
 fn vert_batch(job: VertJob<'_>) {
     #[cfg(target_arch = "x86_64")]
-    if jpxl_core::cpu::has_avx2() {
+    if crate::cpu::has_avx2() {
         // SAFETY: `vert_batch_avx2` only requires that the host support AVX2,
         // which `has_avx2` has just confirmed.
         #[allow(unsafe_code)]
@@ -369,7 +369,7 @@ fn vert_batch(job: VertJob<'_>) {
 /// [`vert_batch`] compiled for AVX2.
 ///
 /// Calling it is `unsafe` unless the host supports AVX2 (see
-/// [`jpxl_core::cpu::has_avx2`]); that is the whole contract.
+/// [`crate::cpu::has_avx2`]); that is the whole contract.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2,fma")]
 fn vert_batch_avx2(job: VertJob<'_>) {

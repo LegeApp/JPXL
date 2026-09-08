@@ -96,7 +96,7 @@ pub struct MomentBands<'a> {
 /// one (Rust performs no floating-point contraction).
 pub fn accumulate_band(bands: &MomentBands<'_>, sums: &mut MapSums) {
     #[cfg(target_arch = "x86_64")]
-    if jpxl_core::cpu::has_avx2() {
+    if crate::cpu::has_avx2() {
         // SAFETY: `accumulate_band_avx2` only requires that the host support
         // AVX2, which `has_avx2` has just confirmed.
         #[allow(unsafe_code)]
@@ -111,7 +111,7 @@ pub fn accumulate_band(bands: &MomentBands<'_>, sums: &mut MapSums) {
 /// [`accumulate_band`] compiled for AVX2.
 ///
 /// Calling it is `unsafe` unless the host supports AVX2 (see
-/// [`jpxl_core::cpu::has_avx2`]); that is the whole contract.
+/// [`crate::cpu::has_avx2`]); that is the whole contract.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2,fma")]
 fn accumulate_band_avx2(bands: &MomentBands<'_>, sums: &mut MapSums) {
