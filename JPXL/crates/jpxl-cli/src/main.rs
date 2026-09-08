@@ -31,14 +31,92 @@ const USAGE: &str = "\
 jpxl — JPEG XL codec (JPXL)
 
 Usage:
-    jpxl info <file>              Identify a file and print its stream kind
-    jpxl boxes <file.jxl>         List the Part 2 box structure of a container
-    jpxl decode [opts] <in.jxl> <out>
-                                  Decode to PNG, JPEG, WebP, TIFF, BMP, GIF,
-                                  ICO, TGA, QOI, PGM, or PPM
-    jpxl encode [opts] <in> <out> Encode PNG, JPEG, WebP, TIFF, BMP, GIF, ICO,
-                                  TGA, QOI, PGM, or PPM; lossless modular by
-                                  default, lossy VarDCT with --bpp
+    jpxl encode [opts] <in> [out.jxl]   Encode a raster image to JPEG XL
+    jpxl decode [opts] <in.jxl> [out]   Decode JPEG XL to a raster image
+    jpxl info <file>                    Identify a file and print its kind
+    jpxl boxes <file.jxl>               List a container's Part 2 box structure
+    jpxl bench <mode> [opts]            Time one encode path (`jpxl bench --help`)
+    jpxl --help-advanced                Research, calibration and tuning options
+    jpxl --help                         Show this message
+    jpxl --version                      Show the version
+
+The output path is optional: omitted, `encode` writes <in>.jxl and `decode`
+writes <in>.png beside the input, and refuses rather than overwrite a file you
+did not name.
+
+Common encodes:
+    jpxl encode photo.png                    Lossless, to photo.jxl
+    jpxl encode --quality photo.jpg          Lossy at the effort's default score
+    jpxl encode --quality 90 photo.jpg out.jxl
+    jpxl encode --quality --effort fast photo.jpg
+    jpxl decode photo.jxl                    Back to photo.png
+
+Raster formats in and out: PNG, JPEG, WebP, TIFF, BMP, GIF, ICO, TGA, QOI,
+PGM, PPM. Input format is sniffed from the bytes; output format comes from the
+extension or `--format`. PNG, TIFF and PNM keep 16-bit samples.
+
+Encode options:
+    --quality [N]                 Lossy: the minimum SSIMULACRA2 score to hold
+                                  (0..100, 100 = lossless). The number is
+                                  optional; omitted, it is the effort's default
+                                  (fast 70, balanced 85). Alias: --ssimulacra2.
+                                  This is the normal way to ask for lossy
+                                  output.
+    --lossy                       --quality with the effort's default score.
+    --effort <mode|1..9>          Lossy effort fast|balanced (the search-latency
+                                  budget, and the --quality default). A digit
+                                  1..9 is the lossless Modular search effort
+                                  instead (default 1 = fastest); every level is
+                                  exact-lossless. Alias: --lossy-preset.
+    --quality-fallback <mode>     What to emit when the bounded search cannot
+                                  verify the requested score: lossless (a
+                                  mathematically lossless stream) or
+                                  best-effort (the finest verified under-target
+                                  stream, reported by its true score). Without
+                                  this flag such an encode fails, exits 1, and
+                                  writes nothing.
+    --bpp <f>                     Expert mode: target bits per pixel
+    --target-bytes <n>            Expert mode: target output size in bytes
+    --global-scale <n>            Expert mode: pinned VarDCT global_scale;
+                                  emits an exact quantizer
+    --background <#RRGGBB>        Explicitly flatten a transparent input;
+                                  transparent JPEG XL output is not yet encoded
+    --container                   Wrap the codestream in a Part 2 container
+    --threads <n>                 Section-parallel workers (default: host
+                                  available_parallelism; 1 = serial)
+    --sections                    After a lossy encode, print where the bytes
+                                  went by section kind
+
+Decode options:
+    -f, --format <name>           Output format; required for stdout (`-`),
+                                  otherwise inferred from the output extension
+    --background <#RRGGBB>        Flatten alpha when writing JPEG or PNM
+
+    --quality is a minimum SSIMULACRA2 score (0..100, 100 = lossless), not a
+    distance: cjxl's -d targets butteraugli, a different (and inverted) scale.
+
+Exit codes:
+    0  success (info: recognised as JPEG XL)
+    1  I/O, usage, or codec error
+    2  info: not a JPEG XL stream
+
+Use `-` as an input or output path for pipelines. Binary output goes to stdout
+and the human-readable summary moves to stderr.
+
+`encode` preserves 8- or 16-bit greyscale/RGB precision where the input format
+provides it. Opaque alpha is discarded; non-opaque alpha must be flattened
+explicitly with `--background` so transparency is never lost silently.
+";
+
+const ADVANCED_USAGE: &str = "\
+jpxl — research, calibration and tuning surface
+
+These commands and options exist so encoder decisions can be made from
+evidence. They are not needed for ordinary encoding; `jpxl --help` covers
+that. Anything marked `research control` is a lever whose default was chosen
+by measurement — moving it is an experiment, not a recommendation.
+
+Commands:
     jpxl compare <ref.ppm> <b.ppm>
                                   Print RMSE, PSNR, and the in-tree production
                                   SSIMULACRA2 between two decoded PPMs (plus
@@ -65,88 +143,37 @@ Usage:
                                   controller's first anchor, and print JSONL
                                   (rate-prior calibration tool; no output
                                   file, no Store)
-    jpxl bench <mode> [opts]      Time one encode path (see `jpxl bench --help`)
-    jpxl --help                   Show this message
-    jpxl --version                Show the version
 
-Encode options:
-    --background <#RRGGBB>       Explicitly flatten a transparent input;
-                                  transparent JPEG XL output is not yet encoded
-    --container                   Wrap the codestream in a Part 2 container
-    --effort <1..9|mode>          A digit 1..9 is the lossless Modular search
-                                  effort (default 1 = fastest); every level is
-                                  exact-lossless (pixels identical). A name
-                                  (fast|balanced) sets the lossy effort instead
-                                  — see the lossy options below.
+Container and layout options:
     --group-size-shift <0..3>     Force group_dim = 128 << shift (default 2)
     --jxlp <bytes>                Split the codestream across jxlp boxes
                                   (18181-2 9.10); implies --container
-    --threads <n>                 Section-parallel workers (default: host
-                                  available_parallelism; 1 = serial)
 
-Decode options:
-    -f, --format <name>           Output format; required for stdout (`-`),
-                                  otherwise inferred from the output extension
-    --background <#RRGGBB>       Flatten alpha when writing JPEG or PNM
-
-Lossy options (8- or 16-bit RGB; any one selects the VarDCT path):
-    --quality [N]                 Minimum SSIMULACRA2 score to hold (0..100,
-                                  100 = lossless). Alias: --ssimulacra2. The
-                                  number is optional; omitted, it is the
-                                  effort's default (fast 70, balanced 85). This
-                                  is the normal way to ask for lossy output.
-    --lossy                       --quality with the effort's default score.
-    --quality-fallback <mode>     What to emit when the bounded search cannot
-                                  verify the requested score: lossless (a
-                                  mathematically lossless stream) or
-                                  best-effort (the finest verified under-target
-                                  stream, reported by its true score). Without
-                                  this flag such an encode fails, exits 1, and
-                                  writes nothing.
+Routing:
     --text-routing                Experimental: on census-sparse text/UI/line-
                                   art sources, also price colour-reduced
                                   lossless Modular candidates and emit the
                                   smallest stream holding the requested score.
-    --effort <mode>               Lossy effort fast|balanced (search-latency
-                                  budget, also picks the --quality default), or
-                                  a digit 1..9 for lossless Modular effort.
-    --bpp <f>                     Expert mode: target bits per pixel
-    --target-bytes <n>            Expert mode: target output size in bytes
-    --global-scale <n>            Expert mode: pinned VarDCT global_scale (works
-                                  with --quant-lf); emits an exact quantizer
-    --lossy-preset <mode>         Alias for --effort: balanced (default) or fast
+
+Quantization and allocation research controls:
     --aq-mode <mode>              Per-block HF allocation: off (target-rate
                                   default), masking, uniform, fine-masking,
                                   fine-uniform, or edge-refine (Phase Q3 fields
                                   on a 1/16-octave HfMul lattice; all screened
-                                  negative); research control
-    --aq-strength <f>             Activity-field strength; research control
-    --aq-clamp <f>                Activity-field clamp; research control
-    --aq-chroma <f>               Activity-field chroma weight; research control
+                                  negative)
+    --aq-strength <f>             Activity-field strength
+    --aq-clamp <f>                Activity-field clamp
+    --aq-chroma <f>               Activity-field chroma weight
     --aq-edge-contrast <f>        edge-refine dead zone in activity octaves
-                                  (default 6); research control
+                                  (default 6)
     --quant-lf <n>                Hold the LF quantizer at n and disable the
                                   secondary LF fill (target-rate default 4
-                                  after Phase Q1; 8 was Phase 5G's); research
-                                  control
+                                  after Phase Q1; 8 was Phase 5G's)
     --x-qm-scale <0..7>           X-channel QM exponent (Fast neutral 2, Balanced
                                   3, Quality 3; per preset, never per bitrate);
                                   setting it pins the manual chroma policy
     --b-qm-scale <0..7>           B-channel QM exponent (Fast neutral 2, Balanced
-                                  3, Quality 5; per preset, never per bitrate);
-                                  research chroma-allocation control
-    --epf-iters <0..3>            Decoder EPF iteration count (target-rate
-                                  default 1); research control
-    --epf-sharpness <mode>        EPF sharpness plane: zero (fixed default),
-                                  uniform7 (target-rate default), or adaptive
-                                  (Phase Q3 activity ramp); research control
-    --epf-adaptive <f,k,s>        Adaptive sharpness constants floor,knee,span
-                                  (implies --epf-sharpness adaptive); research
-                                  control
-    --cover-size-penalty <mode>   Cover objective's per-transform distortion
-                                  scale: neutral (default) or measured (Phase
-                                  6.2's large-transform correction); research
-                                  control
+                                  3, Quality 5; per preset, never per bitrate)
     --quantizer-choice <mode>     HF quantizer rule: nearest (fixed-quantizer
                                   default), rate-distortion (Phase 7.0,
                                   rejected), or trailing-truncation (Phase
@@ -156,44 +183,37 @@ Lossy options (8- or 16-bit RGB; any one selects the VarDCT path):
                                   target-rate default 4.0 after Phase 7.2.
     --dead-zone-scale <f>         Multiplier on every HF cell's zero threshold
                                   (1.0 = the exact nearest rule; >1 widens the
-                                  dead zone); quality-track research control
+                                  dead zone)
     --zero-token-bits <f>         Bits the trailing-truncation pass charges per
-                                  interior zero token it frees (default 1.0);
-                                  quality-track research control
+                                  interior zero token it frees (default 1.0)
     --tolerance <f>               Undershoot the rate loop may leave, as a
                                   fraction of the target (presets keep their
                                   own floor: Balanced 0.02, Fast 0.03)
-    --sections                    After a lossy encode, print where the bytes
-                                  went by section kind (headers/TOC, LfGlobal,
-                                  LF groups, HfGlobal, pass groups)
+
+Filter and cover research controls:
+    --epf-iters <0..3>            Decoder EPF iteration count (target-rate
+                                  default 1)
+    --epf-sharpness <mode>        EPF sharpness plane: zero (fixed default),
+                                  uniform7 (target-rate default), or adaptive
+                                  (Phase Q3 activity ramp)
+    --epf-adaptive <f,k,s>        Adaptive sharpness constants floor,knee,span
+                                  (implies --epf-sharpness adaptive)
+    --cover-size-penalty <mode>   Cover objective's per-transform distortion
+                                  scale: neutral (default) or measured (Phase
+                                  6.2's large-transform correction)
     --cover-rate-model <mode>     Cover objective's rate proxy: calibrated
                                   (target-rate default after Phase Q4: measured
                                   per-size scales and fixed bits), legacy (the
                                   Phase Q3 proxy; fixed-quantizer default), or
-                                  custom:s8,s16,s32,f8,f16,f32; research control
+                                  custom:s8,s16,s32,f8,f16,f32
     --cover-freq-weight <mode>    Cover objective's per-cell frequency weight:
                                   flat (default), csf (Mannos-Sakrison at 60
                                   ppd, rejected by Phase 6.3), or quant-donor
-                                  (the standard's own DCT8x8 matrix as a curve);
-                                  research control
-
-    --quality is a minimum SSIMULACRA2 score (0..100, 100 = lossless), not a
-    distance: cjxl's -d targets butteraugli, a different (and inverted) scale.
-
-Exit codes:
-    0  success (info: recognised as JPEG XL)
-    1  I/O, usage, or codec error
-    2  info: not a JPEG XL stream
-
-Use `-` as an input or output path for pipelines. Binary output goes to stdout
-and the human-readable summary moves to stderr.
-
-`encode` preserves 8- or 16-bit greyscale/RGB precision where the input format
-provides it. Opaque alpha is discarded; non-opaque alpha must be flattened
-explicitly with `--background` so transparency is never lost silently.
+                                  (the standard's own DCT8x8 matrix as a curve)
 
 `bench` isolates Modular lossless, VarDCT fixed-quantizer, VarDCT target-rate,
-and a single VarDCT probe so flamegraphs are not mixed across paths.
+and a single VarDCT probe so flamegraphs are not mixed across paths; see
+`jpxl bench --help`.
 ";
 
 const BENCH_USAGE: &str = "\
@@ -264,10 +284,18 @@ fn run(args: &[String]) -> u8 {
         print!("{USAGE}");
         return EXIT_OK;
     }
+    if command != "bench" && matches!(rest, [flag] if flag == "--help-advanced") {
+        print!("{ADVANCED_USAGE}");
+        return EXIT_OK;
+    }
 
     match command.as_str() {
         "-h" | "--help" | "help" => {
             print!("{USAGE}");
+            EXIT_OK
+        }
+        "--help-advanced" | "help-advanced" => {
+            print!("{ADVANCED_USAGE}");
             EXIT_OK
         }
         "-V" | "--version" | "version" => {
@@ -364,10 +392,21 @@ fn cmd_decode(args: &[String]) -> u8 {
             _ => positional.push(arg),
         }
     }
-    let [input, output] = positional.as_slice() else {
-        fail("`decode` takes an input and an output path");
-        return EXIT_ERROR;
+    let (input, output) = match positional.as_slice() {
+        [input, output] => ((*input).clone(), (*output).clone()),
+        [input] => match default_output(input, "png") {
+            Ok(output) => ((*input).clone(), output),
+            Err(error) => {
+                fail(&error);
+                return EXIT_ERROR;
+            }
+        },
+        _ => {
+            fail("`decode` takes an input and an optional output path");
+            return EXIT_ERROR;
+        }
     };
+    let (input, output) = (input.as_str(), output.as_str());
 
     let bytes = match read_path(input) {
         Ok(bytes) => bytes,
@@ -935,10 +974,21 @@ fn cmd_encode(args: &[String]) -> u8 {
             _ => positional.push(arg),
         }
     }
-    let [input, output] = positional.as_slice() else {
-        fail("`encode` takes an input and an output path");
-        return EXIT_ERROR;
+    let (input, output) = match positional.as_slice() {
+        [input, output] => ((*input).clone(), (*output).clone()),
+        [input] => match default_output(input, "jxl") {
+            Ok(output) => ((*input).clone(), output),
+            Err(error) => {
+                fail(&error);
+                return EXIT_ERROR;
+            }
+        },
+        _ => {
+            fail("`encode` takes an input and an optional output path");
+            return EXIT_ERROR;
+        }
     };
+    let (input, output) = (input.as_str(), output.as_str());
 
     let bytes = match read_path(input) {
         Ok(bytes) => bytes,
@@ -3273,6 +3323,28 @@ pub fn encode_netpbm(image: &jpxl_decode::DecodedImage) -> Vec<u8> {
 }
 
 /// Read a file, or stdin when `path` is `-`.
+/// The output path to use when the user named only an input.
+///
+/// `in.png` -> `in.jxl` for `encode`, `in.jxl` -> `in.png` for `decode`. A
+/// stdin input has no name to derive from, and an existing file is never
+/// overwritten by a path the user did not type.
+fn default_output(input: &str, extension: &str) -> Result<String, String> {
+    if input == "-" {
+        let _ = extension;
+        return Err(
+            "reading from stdin has no filename to derive an output path from; name the output explicitly (`-` writes to stdout)".to_owned(),
+        );
+    }
+    let derived = Path::new(input).with_extension(extension);
+    let derived = derived.to_string_lossy().into_owned();
+    if Path::new(&derived).exists() {
+        return Err(format!(
+            "{derived} already exists; name the output path explicitly to overwrite it"
+        ));
+    }
+    Ok(derived)
+}
+
 fn read_path(path: &str) -> std::io::Result<Vec<u8>> {
     if path == "-" {
         let mut bytes = Vec::new();

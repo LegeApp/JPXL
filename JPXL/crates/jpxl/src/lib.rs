@@ -510,6 +510,26 @@ impl Encoder {
         self.set_lossy(LossyTarget::Perceptual(target))
     }
 
+    /// Select lossy VarDCT to a minimum quality score, the same number the
+    /// CLI's `--quality` takes.
+    ///
+    /// This is an alias for
+    /// [`with_ssimulacra2_score`](Self::with_ssimulacra2_score); the metric is
+    /// named there because the score is SSIMULACRA2, not a distance.
+    pub fn with_quality(self, score: f64) -> Result<Self> {
+        self.with_ssimulacra2_score(score)
+    }
+
+    /// Select lossy VarDCT at the effort's default quality score (Fast 70,
+    /// Balanced 85), the CLI's bare `--lossy`.
+    ///
+    /// Set the effort *before* calling this: it reads the effort currently on
+    /// the builder.
+    pub fn lossy(self) -> Result<Self> {
+        let score = self.effort.default_score();
+        self.with_ssimulacra2_score(score)
+    }
+
     /// Select lossy VarDCT to a bits-per-pixel ceiling (expert mode).
     pub fn with_target_bpp(self, bits_per_pixel: f64) -> Result<Self> {
         if !bits_per_pixel.is_finite() || bits_per_pixel <= 0.0 {

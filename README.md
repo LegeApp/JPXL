@@ -14,6 +14,21 @@ paths have reached a matched-SSIMULACRA2 speed-parity window against the pinned
 libjxl build on the project’s two photo anchors; quality and density still
 trail libjxl on important perceptual axes.
 
+## Install
+
+```sh
+cargo add jpxl          # the library
+cargo install jpxl-cli  # the `jpxl` command
+```
+
+Pure Rust, no C dependencies and no build script. The workspace publishes as
+[`jpxl`](https://crates.io/crates/jpxl) (the facade you should depend on),
+[`jpxl-cli`](https://crates.io/crates/jpxl-cli), and the lower-level
+`jpxl-decode`, `jpxl-encode`, `jpxl-encode-policy`, `jpxl-core`,
+`jpxl-bitstream`, `jpxl-entropy`, `jpxl-perceptual`, `jpxl-plan-render`,
+`jpxl-conformance` and `jpxl-jpeg` crates for callers that need syntax-level
+or research controls. Every crate is MIT.
+
 ## What works today
 
 - Decoding: entropy coding, Modular, VarDCT, ICC, containers (`jxlc`/`jxlp`),
@@ -69,12 +84,16 @@ black-box validation tools.
 ## CLI
 
 ```sh
-# Lossless Modular encode (default)
+# Lossless Modular encode (default). The output path is optional: omitted,
+# `encode` writes <in>.jxl and `decode` writes <in>.png beside the input, and
+# refuses rather than overwrite a file you did not name.
+jpxl encode input.png
 jpxl encode input.png output.jxl
 
 # Lossy VarDCT to a minimum SSIMULACRA2 quality (the normal contract):
 # the smallest stream that scores at least N. Balanced (archival) defaults
 # to 85, `--effort fast` (web) to 70; 100 is exact-lossless.
+jpxl encode --quality input.jpg
 jpxl encode --quality 85 input.jpg output.jxl
 jpxl encode --quality --effort fast input.jpg output.jxl
 
@@ -83,6 +102,7 @@ jpxl encode --bpp 1.0 input.jpg output.jxl
 jpxl encode --global-scale 40000 input.jpg output.jxl
 
 # Decode and inspect
+jpxl decode output.jxl
 jpxl decode output.jxl decoded.png
 jpxl info output.jxl
 
@@ -96,8 +116,13 @@ cat output.jxl | jpxl decode --format png - - > decoded.png
 Raster input and output support PNG, JPEG, WebP, TIFF, BMP, GIF, ICO, TGA,
 QOI, PGM, and PPM. Input format is detected from its contents. Output format
 is inferred from the filename or selected with `--format`; `-` means stdin or
-stdout. PNG, TIFF, and PNM retain 16-bit samples. Run `jpxl --help` and
-`jpxl bench --help` for the full option set and isolated encoder timing modes.
+stdout. PNG, TIFF, and PNM retain 16-bit samples.
+
+`jpxl --help` covers ordinary encoding and decoding. The research, calibration
+and tuning surface — the `compare`, `features`, `quality-ladder` and
+`rate-ladder` commands and the per-block allocation, EPF, cover-objective and
+quantizer-rule controls — is on `jpxl --help-advanced`, and the isolated
+encoder timing modes are on `jpxl bench --help`.
 
 `--quality` is a minimum SSIMULACRA2 score (0..100, 100 = lossless), not a
 distance: cjxl's `-d` targets Butteraugli, a different and inverted scale. The
@@ -179,10 +204,12 @@ fn encode_generated(width: u32, height: u32, rgb: &[u8]) -> jpxl::Result<Vec<u8>
     assert_eq!((decoded.width, decoded.height), (width, height));
 
     // The normal lossy contract: a minimum SSIMULACRA2 quality, verified on
-    // the reconstructed pixels; 100 routes to the lossless path. Expert
-    // modes `with_target_bpp` / `with_global_scale` pin a size or quantizer.
+    // the reconstructed pixels; 100 routes to the lossless path. `with_quality`
+    // is the short spelling of `with_ssimulacra2_score`, and bare `.lossy()`
+    // takes the effort's default score. Expert modes `with_target_bpp` /
+    // `with_global_scale` pin a size or quantizer.
     Encoder::new()
-        .with_ssimulacra2_score(85.0)?
+        .with_quality(85.0)?
         .with_effort(Effort::Balanced)
         .encode_rgb8(width, height, rgb)
 }
@@ -268,13 +295,23 @@ committing test images or generated streams.
   implementation guidance.
 - Decoder first: every encoder layer is validated against independent decoding.
 - Safe parser boundaries: checked arithmetic, allocation limits, typed errors,
-  and no `unsafe` code beyond the documented runtime CPU-feature dispatch
-  call sites in `jpxl-core`.
+  and `unsafe_code = "deny"` workspace-wide, lifted only at the documented
+  runtime CPU-feature dispatch call sites in `jpxl-core`, `jpxl-perceptual`
+  and `jpxl-encode-policy`. Every decoder and container path is safe Rust.
 - Traceable bitstreams: bit-position tracing exists before field parsing and is
   feature-gated away when disabled.
 - Honest coverage: unsupported features are named and rejected, and benchmark
   claims retain the commands, inputs, hashes, and host context that produced
   them.
+
+## Releasing
+
+`JPXL/tools/publish.sh` is the whole release: it refuses a dirty tree, runs
+`cargo fmt --check`, `cargo clippy -D warnings` and the release test suite,
+packages every crate, then `cargo publish --workspace` (which resolves the
+inter-crate order and waits on the index itself) and tags the version. Run
+`JPXL/tools/publish.sh --dry-run` first for a full rehearsal that uploads
+nothing.
 
 ## License
 

@@ -20,6 +20,10 @@ version = "0.3.0"
 edition = "2024"
 rust-version = "1.97"
 license = "MIT"
+repository = "https://github.com/LegeApp/JPXL"
+homepage = "https://github.com/LegeApp/JPXL"
+keywords = ["jpeg-xl", "jxl", "image", "codec", "compression"]
+categories = ["multimedia::images", "encoding", "compression"]
 
 # In-workspace crates plus Opt-P leaf deps (feature-gated; default-on).
 [workspace.dependencies]

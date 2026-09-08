@@ -5,6 +5,10 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 # Clean-room boundary (AKR `jpegxl-rs.policy.perceptual-metric-clean-room`):
 # the metric is derived from the public SSIMULACRA2 specification and

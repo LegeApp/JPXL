@@ -5,6 +5,10 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 # Peer-tree rule (AGENTS.md section 6): this crate never depends on
 # `jpxl-decode`. It orchestrates the shared neutral kernels of `jpxl-core`
@@ -23,7 +27,10 @@ jpxl-encode = { path = "../jpxl-encode", version = "0.3.0", default-features = f
 [dev-dependencies]
 jpxl-decode.workspace = true
 jpxl-encode-policy.workspace = true
-jpxl-perceptual.workspace = true
+# Path-only, deliberately: `jpxl-perceptual` optionally depends on this crate,
+# so a versioned dev-dependency here would be a publish cycle crates.io cannot
+# order. Cargo strips path-only dev-dependencies from the published manifest.
+jpxl-perceptual = { path = "../jpxl-perceptual" }
 
 [lints]
 workspace = true

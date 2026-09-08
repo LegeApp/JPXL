@@ -5,6 +5,10 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 # Phase A is a self-contained 10918-1 codec: it deliberately depends on
 # nothing in the workspace so all JPEG-1 subtleties are isolated before any
