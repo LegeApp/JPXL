@@ -5,7 +5,7 @@ build {
     tool "akr 0.5.1"
     grammar "0.1"
     vocabulary "0.2"
-    source_graph "sha256:74b15e0a1fde37ad2a3d4962cfd567b9a5ba23d33e1604fa4a5a56311c76b080"
+    source_graph "sha256:5e98d608c248db36b8ebe603755685c23864a33ea79b57a5484f06875a8a3c2d"
 }
 
 source ".akr/project.akr" {
@@ -69,8 +69,8 @@ source ".akr/records/jpegxl-rs/tracks.akr" {
 }
 
 source ".akr/records/jpegxl-rs/work.akr" {
-    hash "sha256:7fdcff7bba8491af96cb0dc3da8b2e534214c7fa555fa39ca406de1a39fca217"
-    records 224
+    hash "sha256:e47357199f0b7c7ea79ed65629786bd7df9e6474a12ac1fc035d764e8ec18d1f"
+    records 225
 }
 
 resolution @jpegxl-rs.assessment.exact-base-encoder-frontier-2026-09-01/1 {
@@ -10384,8 +10384,13 @@ seal @jpegxl-rs.work.arch-phase4e-modular-effort-ramp/1 {
 }
 
 seal @jpegxl-rs.work.arch-phase4e-modular-effort-ramp/2 {
+    state superseded
+    hash "sha256:7cc32eb26fb100d58c9cd6b0ebfeda712bade5371a49242a6ffc5902a211f639"
+}
+
+seal @jpegxl-rs.work.arch-phase4e-modular-effort-ramp/3 {
     state completed
-    hash "sha256:5b496f5bc12c4639eed251b4ab69c0b6ff6df92a2ffdbc6918b858d151e27368"
+    hash "sha256:7895c162aaa94909442300c6f540405a00e1425057ef3b03417ccfc0f86efca2"
 }
 
 seal @jpegxl-rs.work.arch-phase4f-elide-foregone-search/1 {
