@@ -107,8 +107,6 @@ rounding. Two hosts must produce identical output for identical input.
 
 Do not add these without a decision recorded here first:
 
-- SIMD of any kind (scalar reference paths must be locked first)
-- rayon / threading
 - JPEG recompression and reconstruction (`jbrd` beyond passthrough)
 - Animation playback semantics
 - Progressive / partial decoding as a feature (the syntax must parse; the
@@ -116,6 +114,18 @@ Do not add these without a decision recorded here first:
 - GPU anything
 - Perceptual metrics, encoder rate/distortion search, effort levels
 - Splines and noise synthesis (patches likewise, until slice 8 is stable)
+
+## Admitted formerly-out-of-scope items
+
+- **Threading and SIMD in the decoder (admitted 2026-10-06).** The VarDCT
+  decode path is conformant with its scalar reference paths locked, so its
+  hotspots may parallelize (`std::thread::scope` by default; rayon where
+  work-sharing earns it, subject to the §6 dependency decision) and vectorize
+  in-crate behind the scalar path as lock-step oracle (bit-identical; no
+  reordered reductions, no fast-math). Rules: `AGENTS.md` §1 phase two, float
+  policy above. Scalar-first still governs new code, and item 4's
+  encoder-side gate stands: the encoder track admits SIMD/threading only past
+  a trusted R-D baseline.
 
 ## Deferred crate splits
 

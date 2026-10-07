@@ -229,7 +229,7 @@ record jpegxl-rs.decision.lossy-production-presets/1 : decision {
 
 record jpegxl-rs.decision.low-targets-are-one-pass-by-design/1 : decision {
     title "Lower quality targets are one pass by design; additional probes are attempted only at higher qualities"
-    state proposed
+    state superseded
     scope [ path "JPXL/crates/jpxl-encode-policy/**" ]
     topic quality-low-target-probe-policy
     decision """
@@ -247,7 +247,7 @@ record jpegxl-rs.decision.low-targets-are-one-pass-by-design/1 : decision {
 
 record jpegxl-rs.decision.mit-only-licensing/1 : decision {
     title "License JPXL under MIT only"
-    state proposed
+    state active
     scope [ all ]
     decision """
         JPXL is licensed under MIT only. Repository license notices, workspace package metadata, SPDX headers, and public documentation must consistently use MIT; the former Apache-2.0 alternative is removed from the project distribution.
@@ -258,6 +258,7 @@ record jpegxl-rs.decision.mit-only-licensing/1 : decision {
     consequences """
         Use LICENSE as the canonical root license and JPXL/LICENSE-MIT as the workspace mirror; do not retain or advertise an Apache-2.0 option.
         """
+    supported_by [ @jpegxl-rs.evidence.mit-only-licensing-audit-2026-08-25/1 ]
     source {
         kind internal
         role origin
@@ -529,7 +530,7 @@ record jpegxl-rs.decision.promote-corrected-stop-and-median-start-2026-09-02/1 :
 
 record jpegxl-rs.decision.promote-reserve-coupled-band-2026-09-02/1 : decision {
     title "Promote the reserve-coupled accept band to the default Balanced/Fast controller (delegated decision)"
-    state active
+    state superseded
     scope [ path "JPXL/crates/jpxl-cli/**", path "JPXL/crates/jpxl-encode-policy/**" ]
     topic quality-accept-band-default-2026-09-02
     decision """
@@ -554,6 +555,33 @@ record jpegxl-rs.decision.promote-reserve-coupled-band-2026-09-02/1 : decision {
     ]
 }
 
+record jpegxl-rs.decision.promote-reserve-coupled-band-2026-09-02/2 : decision {
+    title "Promote the reserve-coupled accept band to the default Balanced/Fast controller (delegated decision)"
+    state active
+    scope [ path "JPXL/crates/jpxl-cli/**", path "JPXL/crates/jpxl-encode-policy/**" ]
+    topic quality-accept-band-default-2026-09-02
+    decision """
+        Feature `reserve-coupled-band` joins the jpxl-encode-policy `default` set: the accept band is met_band(threshold, reserve) = max(MET_OVERSHOOT_BAND, 2 × reserve × loss(threshold)) everywhere the band is consulted (first-probe, corrected and surrogate stops, bracket tightness, Met/MetWorkCap status), so the crossing aim (threshold + reserve × loss) always lies inside the band that stops the search. Byte-identical wherever the reserve margin is under a point: Balanced at 85 and above, Fast at 91.7 and above. The literal 'lower targets are one pass' rule is not implemented: emitting the predictor's first landing would cost 0.3-0.5 ln effective scale of bytes on photos at low targets, and the remaining low-target probes belong to the predictor (@jpegxl-rs.observation.qpv2-photo-low-target-bias-2026-09-02).
+        """
+    context """
+        The operator asked that lower targets be one pass by design, then, asked for the rule's parameters, delegated the decision ('do what you think is best for speed vs quality/size efficiency; if dropping probes for low quality encodes is not optimal and overly complex then do something else'), having earlier accepted stream changes. @jpegxl-rs.observation.crossing-aim-outside-accept-band-below-67-2026-09-02 found the cause of the 4.4-4.6 probes per encode at targets 30 and 50. Trial docs/experiments/2026-09-02-reserve-coupled-band-trial.md, scratch .agent/scratch/band-trial-20260902 (kept), preregistered gate in its README: zero floor violations on all 635 cells; Balanced ≥ 85 byte-identical 131/131; Balanced low targets probes 3.91 → 3.41 (30: 4.59 → 3.85, 50: 4.08 → 3.48) at byte geomean 1.005, wall geomean 0.93; Fast probes 2.65 → 2.16 at geomean 1.010, wall 0.88. Strict preregistered verdict Partial: three in-domain wide_interval synthetic cells of 359 exceed the 1.10 byte tail (1.234, 1.194, 1.105 — the worst stopped on the aim itself, so no band multiple fixes it), one 139 → 167-byte OOD cell lifts the holdout target-50 geomean to 1.014 (in-domain 1.005), and the Fast geomean is 1.0103 against 1.01. Promoted anyway under the delegated speed-versus-size criterion with those misses recorded, not re-argued.
+        """
+    consequences """
+        Every pre-promotion byte baseline of the quality path at Balanced targets below 85 and Fast targets below 95 is superseded; the kept trial traces are the new baselines. Reverting is one line (drop the feature from `default`); building without default features restores the pre-trial controller. The operator can reverse this on reading the recap. @jpegxl-rs.decision.low-targets-are-one-pass-by-design is superseded and @jpegxl-rs.question.low-target-one-pass-parameters resolved by this record. Next step towards one pass at low targets is a predictor change: refit the qpv2 low-target knots for the photo classes, under its own gate.
+        """
+    derived_from [ @jpegxl-rs.decision.promote-corrected-stop-and-median-start-2026-09-02 ]
+    resolves [ @jpegxl-rs.question.low-target-one-pass-parameters ]
+    supersedes [ @jpegxl-rs.decision.promote-reserve-coupled-band-2026-09-02/1 ]
+    supported_by [
+        @jpegxl-rs.evidence.band-trial-caldev-low-targets-2026-09-02,
+        @jpegxl-rs.evidence.band-trial-fast-holdout-2026-09-02,
+        @jpegxl-rs.evidence.band-trial-holdout-seven-target-2026-09-02,
+        @jpegxl-rs.evidence.band-trial-q85-identity-2026-09-02,
+        @jpegxl-rs.observation.crossing-aim-outside-accept-band-below-67-2026-09-02,
+        @jpegxl-rs.observation.qpv2-photo-low-target-bias-2026-09-02
+    ]
+}
+
 record jpegxl-rs.decision.publish-twelve-crates-2026-09-08/1 : decision {
     title "Publish JPXL as twelve separate crates rather than consolidating into a single vendored crate"
     state proposed
@@ -567,7 +595,7 @@ record jpegxl-rs.decision.publish-twelve-crates-2026-09-08/1 : decision {
         JPXL publishes all twelve workspace crates to crates.io under their own names (jpxl, jpxl-cli, jpxl-core, jpxl-bitstream, jpxl-entropy, jpxl-decode, jpxl-encode, jpxl-encode-policy, jpxl-perceptual, jpxl-plan-render, jpxl-conformance, jpxl-jpeg). The workspace is NOT consolidated into a single crate with the implementation crates vendored under src/internal/.
         """
     context """
-        The operator asked whether taking twelve crates.io names is acceptable practice, and named the bpg-rs consolidation (commit 6a96059 in /mnt/Samsung980_1TB/Rust-projects/bpg-rs) as the alternative: that project moved its bpg-* crates into still265/src/internal/ as #[doc(hidden)] modules with include = ["/src/**", ...] and published still265 alone. Evidence gathered 2026-09-08: (1) jxl-oxide, the closest comparable project (pure-Rust JPEG XL), publishes exactly twelve crates, verified against the crates.io API; wgpu publishes five, tokio four or more. Multi-crate publication under a shared name prefix is ordinary Rust practice, not name squatting. (2) The bpg-rs pattern left the code duplicated: crates/bpg-image/src/lib.rs and still265/src/internal/bpg_image/mod.rs are byte-identical today and will drift; none of the standalone bpg-* crates were ever published despite the commit message stating they would be. (3) Consolidating JPXL would mean rewriting roughly 880 cross-crate path references across 188 files and about 198k lines, and merging every crate's feature namespace. (4) Consolidation would dissolve the one-way policy/encoder boundary that AGENTS.md section 6 and jpxl-encode-policy/Cargo.toml both declare — today the crate graph makes a jpxl-encode -> jpxl-encode-policy dependency a compile error; inside one crate nothing but discipline would prevent heuristics leaking into the writer. (5) jp2lam, in Lege-ecosystem/lege-codecs/, path-depends on jpxl-perceptual with version = "0.3.0" and default-features = false, so the metric needs its own crates.io name if jp2lam is ever published.
+        The operator asked whether taking twelve crates.io names is acceptable practice, and named the bpg-rs consolidation (commit 6a96059 in /mnt/Samsung980_1TB/Rust-projects/bpg-rs) as the alternative: that project moved its bpg-* crates into still265/src/internal/ as #[doc(hidden)] modules with include = ["/src/**", ...] and published still265 alone. Evidence gathered 2026-09-08: (1) jxl-oxide, the closest comparable project (pure-Rust JPEG XL), publishes exactly twelve crates, verified against the crates.io API; wgpu publishes five, tokio four or more. Multi-crate publication under a shared name prefix is ordinary Rust practice, not name squatting. (2) As gathered, the bpg-rs pattern had left the code duplicated — crates/bpg-image/src/lib.rs and still265/src/internal/bpg_image/mod.rs were byte-identical and would drift — and none of the standalone bpg-* crates were ever published despite the commit message stating they would be. That duplication no longer exists: bpg-rs deleted the standalone support crates later the same day (commit c8ebe3f, 2026-09-08), leaving still265 as the only copy, which is the "move the sources rather than duplicate them" shape this record's own consequences prescribe. The point stands only as the reason the pattern was not adopted at the time it was evaluated, not as a live criticism of bpg-rs. It also has a cost this decision did not foresee: deleting published-path crates broke every cross-repo path dependency on them (openarc/crates/codecs and image-viewer both pointed at crates/bpg-decode), which is a further argument for JPXL's separate-crate shape. (3) Consolidating JPXL would mean rewriting roughly 880 cross-crate path references across 188 files and about 198k lines, and merging every crate's feature namespace. (4) Consolidation would dissolve the one-way policy/encoder boundary that AGENTS.md section 6 and jpxl-encode-policy/Cargo.toml both declare — today the crate graph makes a jpxl-encode -> jpxl-encode-policy dependency a compile error; inside one crate nothing but discipline would prevent heuristics leaking into the writer. (5) jp2lam, in Lege-ecosystem/lege-codecs/, path-depends on jpxl-perceptual with version = "0.3.0" and default-features = false, so the metric needs its own crates.io name if jp2lam is ever published.
         """
     consequences """
         All twelve names are claimed and permanent, and every release bumps twelve crates — mitigated by `cargo publish --workspace`, which resolves the inter-crate order and index waits itself, wrapped by JPXL/tools/publish.sh as a single command. Twelve public API surfaces now carry semver obligations, not one; the lower-level crates are documented as syntax-level and research surfaces rather than stable integration points, and `jpxl` remains the facade applications should depend on. The compile-enforced architectural boundaries survive, and jp2lam's dependency on jpxl-perceptual alone keeps working. Revisit only if the maintenance cost of twelve versioned surfaces is actually felt; the bpg-rs vendoring pattern remains available, and should then be done by moving the sources rather than duplicating them.

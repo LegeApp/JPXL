@@ -1734,6 +1734,18 @@ record jpegxl-rs.evidence.opt-p-thread-byte-identity-at-head/1 : evidence {
         """
 }
 
+record jpegxl-rs.evidence.opt-plan-dispositioned-2026-09-08/1 : evidence {
+    title "The advisor draft JPXL/optimization-plan.akr is fully dispositioned into the ledger and survives only as a legacy source citation. It is cited by 16 records across seven files: seven milestones (m-opt-foundation Opt-F, m-opt-bitwriter Opt-B, m-opt-dct32-scalar Opt-D, m-opt-modular-planner Opt-M, m-opt-parallel-simd Opt-P, m-opt-vardct-structure Opt-V1, m-opt-vardct-rate Opt-V2, all state completed), four work records, two decisions, one policy, one assessment and the encoder-optimization track. akr check at 1e2004a reports 'no diagnostics'; ROADMAP.md:340 renders the Encoder optimization pass track. No durable claim remains undispositioned."
+    state verified
+    result pass
+    method command
+    observed_at git:1e2004aa0672259279cc24a52d4b8e264f675b77
+    command "akr check; grep -c optimization-plan.akr .akr/records/jpegxl-rs/*.akr"
+    summary """
+        The advisor draft JPXL/optimization-plan.akr is fully dispositioned into the ledger and survives only as a legacy source citation. It is cited by 16 records across seven files: seven milestones (m-opt-foundation Opt-F, m-opt-bitwriter Opt-B, m-opt-dct32-scalar Opt-D, m-opt-modular-planner Opt-M, m-opt-parallel-simd Opt-P, m-opt-vardct-structure Opt-V1, m-opt-vardct-rate Opt-V2, all state completed), four work records, two decisions, one policy, one assessment and the encoder-optimization track. akr check at 1e2004a reports 'no diagnostics'; ROADMAP.md:340 renders the Encoder optimization pass track. No durable claim remains undispositioned.
+        """
+}
+
 record jpegxl-rs.evidence.opt-v1-count-only-arenas/1 : evidence {
     title "Count-only BitWriter price_codestream matches emit sizing; group HF coeff arenas; rate_loop 11/11; vardct-fixed 256 fingerprint 37145644e7e1857f (Contract A). Scratch: .agent/scratch/preopt-baseline-2026-08-06.md"
     state superseded
@@ -5853,6 +5865,18 @@ record jpegxl-rs.evidence.pipeline-metadata-seam-2026-08-26/1 : evidence {
         real 25 MB Samsung DNG's 574-byte TIFF blob survived
         raw-autotune develop, JPXL encode, openarc archive and extract
         byte-identically (recorded on the openarc ledger).
+        """
+}
+
+record jpegxl-rs.evidence.pipeline-metadata-seam-recheck-2026-09-08/1 : evidence {
+    title "Re-verified at HEAD 1e2004a, after the crates.io packaging and perceptual-standalone refactors, that both metadata seams the archive pipeline depends on are live and tested. jpxl::Encoder::with_exif (crates/jpxl/src/lib.rs:670) validates a bare TIFF byte-order header (II*\\0 / MM\\0*) and rejects anything else with Error::InvalidOption, and finish() appends the Part 2 Exif box via jpxl_encode::container::append_exif (lib.rs:1273); the round-trip test an_exif_payload_survives_encode_to_the_decoders_box_walk and the rejection test both pass. Encoder::with_colour_space (lib.rs:654) takes ColourSpace::{Srgb, LinearSrgb, DisplayP3, Rec2020} (crates/jpxl-encode/src/headers.rs:174) mapped onto the Annex E Table E.5/E.6 primaries and transfer-function rows by rgb_rows(); require_srgb_for_lossy() (lib.rs:1291) returns a typed Error::Unsupported for lossy VarDCT on non-sRGB input, and the test colour_space_signalling_and_the_lossy_guard covers both the lossless-Rec2020-succeeds and lossy-Rec2020-fails arms. jpxl lib suite 8 passed 0 failed; integration suites and 2 doctests pass."
+    state verified
+    result pass
+    method command
+    observed_at git:1e2004aa0672259279cc24a52d4b8e264f675b77
+    command "cargo test -p jpxl --profile fast-debug (lib + integration + doctests)"
+    summary """
+        Re-verified at HEAD 1e2004a, after the crates.io packaging and perceptual-standalone refactors, that both metadata seams the archive pipeline depends on are live and tested. jpxl::Encoder::with_exif (crates/jpxl/src/lib.rs:670) validates a bare TIFF byte-order header (II*\0 / MM\0*) and rejects anything else with Error::InvalidOption, and finish() appends the Part 2 Exif box via jpxl_encode::container::append_exif (lib.rs:1273); the round-trip test an_exif_payload_survives_encode_to_the_decoders_box_walk and the rejection test both pass. Encoder::with_colour_space (lib.rs:654) takes ColourSpace::{Srgb, LinearSrgb, DisplayP3, Rec2020} (crates/jpxl-encode/src/headers.rs:174) mapped onto the Annex E Table E.5/E.6 primaries and transfer-function rows by rgb_rows(); require_srgb_for_lossy() (lib.rs:1291) returns a typed Error::Unsupported for lossy VarDCT on non-sRGB input, and the test colour_space_signalling_and_the_lossy_guard covers both the lossless-Rec2020-succeeds and lossy-Rec2020-fails arms. jpxl lib suite 8 passed 0 failed; integration suites and 2 doctests pass.
         """
 }
 

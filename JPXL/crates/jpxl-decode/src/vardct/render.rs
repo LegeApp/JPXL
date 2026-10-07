@@ -804,10 +804,126 @@ pub fn apply_noise(
 /// §4.
 pub const PATCH_ALPHA_IS_THE_PATCHS_OWN: bool = true;
 
+/// Applies `f` to every sample of the three planes, in place.
+///
+/// Elementwise maps commute with banding: each band is an independent slice
+/// range, so the threaded run is bit-identical to the serial one. Ragged
+/// planes (lengths disagreeing) take the serial path — [`OpsinInverse`]'s
+/// converter tolerates them, `chunks_mut` alignment does not assume them.
+pub(crate) fn map_planes<F>(planes: &mut ColourPlanes, f: F)
+where
+    F: Fn(f32) -> f32 + Send + Sync + Copy,
+{
+    map_planes_with_workers(
+        planes,
+        f,
+        crate::parallel::worker_count(
+            planes.planes.iter().map(Vec::len).sum(),
+            crate::parallel::MIN_MAP_SAMPLES_PER_WORKER,
+        ),
+    );
+}
+
+/// [`map_planes`] with an explicit worker count.
+///
+/// `1` runs the serial loop inline; anything larger bands the samples. The
+/// parameter exists so tests can prove worker-count independence; callers
+/// want [`map_planes`].
+pub(crate) fn map_planes_with_workers<F>(planes: &mut ColourPlanes, f: F, workers: usize)
+where
+    F: Fn(f32) -> f32 + Send + Sync + Copy,
+{
+    let serial = |planes: &mut ColourPlanes| {
+        for plane in &mut planes.planes {
+            for v in plane.iter_mut() {
+                *v = f(*v);
+            }
+        }
+    };
+    let first_len = planes.planes.first().map_or(0, Vec::len);
+    if !planes.planes.iter().all(|p| p.len() == first_len) {
+        serial(planes);
+        return;
+    }
+    let sample_bands = crate::parallel::bands(first_len, workers);
+    let band_len = sample_bands.first().map_or(0, |band| band.len());
+    if sample_bands.len() <= 1 || band_len == 0 {
+        serial(planes);
+        return;
+    }
+    std::thread::scope(|scope| {
+        let [chunks0, chunks1, chunks2] = planes.planes.each_mut().map(|p| p.chunks_mut(band_len));
+        debug_assert_eq!(
+            chunks0.len(),
+            sample_bands.len(),
+            "bands tile the planes exactly (see parallel::bands_match_chunks_mut)"
+        );
+        for ((band0, band1), band2) in chunks0.zip(chunks1).zip(chunks2) {
+            scope.spawn(move || {
+                for v in band0
+                    .iter_mut()
+                    .chain(band1.iter_mut())
+                    .chain(band2.iter_mut())
+                {
+                    *v = f(*v);
+                }
+            });
+        }
+    });
+}
+
 /// L.2.2: converts the frame's XYB planes to linear sRGB in place.
+///
+/// Banded over worker threads like [`map_planes`]: the conversion is strictly
+/// per-sample, so bands are independent and the threaded run is bit-identical
+/// to the serial one.
 pub fn to_linear_srgb(planes: &mut ColourPlanes, opsin: &OpsinInverse) {
-    let [x, y, b] = &mut planes.planes;
-    opsin.convert_planes(x, y, b);
+    to_linear_srgb_with_workers(
+        planes,
+        opsin,
+        crate::parallel::worker_count(
+            planes.planes.iter().map(Vec::len).sum(),
+            crate::parallel::MIN_MAP_SAMPLES_PER_WORKER,
+        ),
+    );
+}
+
+/// [`to_linear_srgb`] with an explicit worker count.
+///
+/// `1` runs the serial conversion inline; anything larger bands the samples.
+/// The parameter exists so tests can prove worker-count independence; callers
+/// want [`to_linear_srgb`].
+pub(crate) fn to_linear_srgb_with_workers(
+    planes: &mut ColourPlanes,
+    opsin: &OpsinInverse,
+    workers: usize,
+) {
+    let first_len = planes.planes.first().map_or(0, Vec::len);
+    if !planes.planes.iter().all(|p| p.len() == first_len) {
+        let [x, y, b] = &mut planes.planes;
+        opsin.convert_planes(x, y, b);
+        return;
+    }
+    let sample_bands = crate::parallel::bands(first_len, workers);
+    let band_len = sample_bands.first().map_or(0, |band| band.len());
+    if sample_bands.len() <= 1 || band_len == 0 {
+        let [x, y, b] = &mut planes.planes;
+        opsin.convert_planes(x, y, b);
+        return;
+    }
+    std::thread::scope(|scope| {
+        let [chunks0, chunks1, chunks2] = planes.planes.each_mut().map(|p| p.chunks_mut(band_len));
+        debug_assert_eq!(
+            chunks0.len(),
+            sample_bands.len(),
+            "bands tile the planes exactly (see parallel::bands_match_chunks_mut)"
+        );
+        for ((band0, band1), band2) in chunks0.zip(chunks1).zip(chunks2) {
+            scope.spawn(move || {
+                opsin.convert_planes(band0, band1, band2);
+            });
+        }
+    });
 }
 
 /// L.3: converts the frame's Y'CbCr planes to R'G'B' in place.
@@ -1066,6 +1182,66 @@ mod tests {
                     }],
                 }],
             }],
+        }
+    }
+
+    #[test]
+    fn map_planes_worker_count_never_changes_a_sample() {
+        // Threading partitions samples; it must not move a single bit. A
+        // ragged 130x70 fill exercises band edges against the serial run.
+        let limits = Limits::default();
+        let mut guard = AllocGuard::new(&limits);
+        let mut input = ColourPlanes::zeros(130, 70, &mut guard).unwrap();
+        for (c, plane) in input.planes.iter_mut().enumerate() {
+            let channel = f32::from(u16::try_from(c).unwrap_or(0));
+            for (i, v) in plane.iter_mut().enumerate() {
+                let sample = f32::from(u16::try_from(i % 1000).unwrap_or(0));
+                *v = sample / 1000.0 - 0.25 + channel * 0.1;
+            }
+        }
+        let mut serial = input.clone();
+        map_planes_with_workers(&mut serial, |v| v * 1.5 + 0.25, 1);
+        for workers in [2, 3, 8, 64] {
+            let mut threaded = input.clone();
+            map_planes_with_workers(&mut threaded, |v| v * 1.5 + 0.25, workers);
+            assert_eq!(threaded.planes, serial.planes, "workers {workers}");
+        }
+    }
+
+    #[test]
+    fn srgb_worker_count_never_changes_a_sample() {
+        // Same proof for the L.2.2 conversion, through the real opsin path
+        // (identity matrix, zero bias) with negative and out-of-range
+        // inputs mixed in.
+        let limits = Limits::default();
+        let mut guard = AllocGuard::new(&limits);
+        let opsin = OpsinInverse::new(
+            [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+            [0.0, 0.0, 0.0],
+            255.0,
+        );
+        let mut input = ColourPlanes::zeros(130, 70, &mut guard).unwrap();
+        for plane in input.planes.iter_mut() {
+            for (i, v) in plane.iter_mut().enumerate() {
+                let sample = f32::from(u16::try_from(i % 1000).unwrap_or(0));
+                *v = sample / 1000.0 * 1.4 - 0.2;
+            }
+        }
+        let mut serial = input.clone();
+        to_linear_srgb_with_workers(&mut serial, &opsin, 1);
+        for workers in [2, 3, 8, 64] {
+            let mut threaded = input.clone();
+            to_linear_srgb_with_workers(&mut threaded, &opsin, workers);
+            for (c, (a, b)) in serial.planes.iter().zip(threaded.planes.iter()).enumerate() {
+                assert_eq!(a.len(), b.len(), "workers {workers} channel {c}");
+                for (i, (x, y)) in a.iter().zip(b.iter()).enumerate() {
+                    assert_eq!(
+                        x.to_bits(),
+                        y.to_bits(),
+                        "workers {workers} channel {c} sample {i}"
+                    );
+                }
+            }
         }
     }
 

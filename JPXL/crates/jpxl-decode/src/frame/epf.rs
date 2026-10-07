@@ -46,7 +46,7 @@
 //! and [`SigmaField`] is the shape it should deliver.
 
 use crate::frame::error::{FrameError, Result};
-use crate::frame::gaborish::{PlaneDims, sample_mirrored};
+use crate::frame::gaborish::{PlaneDims, interior_pixel, sample_direct, sample_mirrored};
 use crate::frame::restoration::EpfParams;
 
 /// Side of the block grid that `sigma`, `Sharpness` and the J.4.3 border
@@ -213,6 +213,25 @@ impl EpfStep {
         match self {
             Self::Step0 => &STEP0_KERNEL_COORDS,
             Self::Step1 | Self::Step2 => &CROSS_KERNEL_COORDS,
+        }
+    }
+
+    /// How far any read of this step reaches from the reference pixel.
+    ///
+    /// The distance reads the five-pixel cross around the reference pixel
+    /// and around each tap, so the reach is the kernel's reach plus one —
+    /// except step 2, whose distance compares the two pixels alone. A pixel
+    /// at least this far inside the frame never mirrors a read; see
+    /// [`interior_pixel`], and `margins_cover_every_read_of_every_step`
+    /// for the proof against the read pattern.
+    fn read_margin(self) -> usize {
+        match self {
+            // ±2 taps, ±1 cross around each tap.
+            Self::Step0 => 3,
+            // ±1 taps, ±1 cross around each tap.
+            Self::Step1 => 2,
+            // ±1 taps, no cross.
+            Self::Step2 => 1,
         }
     }
 
@@ -436,14 +455,22 @@ struct StepCtx<'a> {
 }
 
 impl StepCtx<'_> {
-    fn guide_at(&self, c: usize, x: i64, y: i64) -> f32 {
+    fn guide_at(&self, c: usize, x: i64, y: i64, interior: bool) -> f32 {
         let plane: &[f32] = self.guide.get(c).copied().unwrap_or_default();
-        sample_mirrored(plane, self.dims, x, y)
+        if interior {
+            sample_direct(plane, self.dims, x, y)
+        } else {
+            sample_mirrored(plane, self.dims, x, y)
+        }
     }
 
-    fn input_at(&self, c: usize, x: i64, y: i64) -> f32 {
+    fn input_at(&self, c: usize, x: i64, y: i64, interior: bool) -> f32 {
         let plane: &[f32] = self.input.get(c).copied().unwrap_or_default();
-        sample_mirrored(plane, self.dims, x, y)
+        if interior {
+            sample_direct(plane, self.dims, x, y)
+        } else {
+            sample_mirrored(plane, self.dims, x, y)
+        }
     }
 
     fn channel_scale(&self, c: usize) -> f32 {
@@ -451,17 +478,23 @@ impl StepCtx<'_> {
     }
 
     /// J.4.2 `DistanceStep0and1` / `DistanceStep2`, selected by the step.
-    fn distance(&self, x: i64, y: i64, cx: i64, cy: i64) -> f32 {
+    ///
+    /// `inline(always)`: the single call site is the tap loop, and the
+    /// AVX2+FMA build must fuse through this body — an out-of-line call
+    /// would keep the baseline's `fmaf` libcalls inside it.
+    #[inline(always)]
+    fn distance(&self, x: i64, y: i64, cx: i64, cy: i64, interior: bool) -> f32 {
         let mut dist = 0.0f32;
         for c in 0..3 {
             let scale = self.channel_scale(c);
             if self.step == EpfStep::Step2 {
-                let d = self.guide_at(c, x, y) - self.guide_at(c, x + cx, y + cy);
+                let d =
+                    self.guide_at(c, x, y, interior) - self.guide_at(c, x + cx, y + cy, interior);
                 dist = d.abs().mul_add(scale, dist);
             } else {
                 for (ix, iy) in CROSS_COORDS {
-                    let d = self.guide_at(c, x + ix, y + iy)
-                        - self.guide_at(c, x + cx + ix, y + cy + iy);
+                    let d = self.guide_at(c, x + ix, y + iy, interior)
+                        - self.guide_at(c, x + cx + ix, y + cy + iy, interior);
                     dist = d.abs().mul_add(scale, dist);
                 }
             }
@@ -476,6 +509,11 @@ impl StepCtx<'_> {
 /// are measured on (J.4.2 `sample()`). [`epf`] passes the same planes for both
 /// unless [`EPF_DISTANCE_USES_STEP_INPUT`] is flipped.
 ///
+/// The rows are filtered in bands on a `std::thread::scope` pool. Each output
+/// sample is written exactly once from read-only inputs, so the threaded run
+/// is bit-identical to the serial one — [`epf_step_with_workers`] with 1 and
+/// with N workers return the same bytes.
+///
 /// # Errors
 ///
 /// [`FrameError::FieldOutOfRange`] if any plane's length disagrees with
@@ -487,6 +525,35 @@ pub fn epf_step(
     dims: PlaneDims,
     params: &EpfParams,
     sigma: &SigmaField<'_>,
+) -> Result<[Vec<f32>; 3]> {
+    epf_step_with_workers(
+        step,
+        input,
+        guide,
+        dims,
+        params,
+        sigma,
+        crate::parallel::worker_count(dims.height, crate::parallel::MIN_ROWS_PER_WORKER),
+    )
+}
+
+/// [`epf_step`] with an explicit worker count.
+///
+/// `1` runs the serial loop inline; anything larger bands the rows. The
+/// parameter exists so tests can prove worker-count independence; callers
+/// want [`epf_step`].
+///
+/// # Errors
+///
+/// As [`epf_step`].
+pub(crate) fn epf_step_with_workers(
+    step: EpfStep,
+    input: [&[f32]; 3],
+    guide: [&[f32]; 3],
+    dims: PlaneDims,
+    params: &EpfParams,
+    sigma: &SigmaField<'_>,
+    workers: usize,
 ) -> Result<[Vec<f32>; 3]> {
     for plane in input.iter().chain(guide.iter()).copied() {
         dims.check(plane, "epf plane length", "J.4")?;
@@ -514,15 +581,115 @@ pub fn epf_step(
         vec![0.0f32; dims.len()],
     ];
 
-    for y in 0..dims.height {
+    let row_bands = crate::parallel::bands(dims.height, workers);
+    // Every band but the last holds exactly `band_len` rows, so `chunks_mut`
+    // tiles the planes into these same bands in order. A zero-width plane
+    // takes the serial path: its bands hold zero cells and `chunks_mut(0)`
+    // would panic.
+    let band_len = row_bands.first().map_or(0, |band| band.len());
+    let band_cells = band_len.saturating_mul(dims.width);
+    if row_bands.len() <= 1 || band_cells == 0 {
+        let planes = out.each_mut().map(Vec::as_mut_slice);
+        epf_step_rows(&ctx, sigma, kernel, 0..dims.height, planes);
+        return Ok(out);
+    }
+    std::thread::scope(|scope| {
+        let [chunks0, chunks1, chunks2] = out.each_mut().map(|plane| plane.chunks_mut(band_cells));
+        debug_assert_eq!(
+            chunks0.len(),
+            row_bands.len(),
+            "bands tile the planes exactly (see parallel::bands_match_chunks_mut)"
+        );
+        let mut_jobs = chunks0.zip(chunks1).zip(chunks2).zip(row_bands);
+        for (((band0, band1), band2), rows) in mut_jobs {
+            let (ctx_ref, sigma_ref) = (&ctx, sigma);
+            scope.spawn(move || {
+                epf_step_rows(ctx_ref, sigma_ref, kernel, rows, [band0, band1, band2]);
+            });
+        }
+    });
+
+    Ok(out)
+}
+
+/// Filters one band of rows, writing into the band's slices.
+///
+/// Reads use absolute frame coordinates; `out` holds exactly this band's
+/// rows, so writes index relative to the band start (`rel_y`). Everything
+/// else is the J.4.1–J.4.4 loop unchanged.
+///
+/// Dispatched to an AVX2+FMA build where the host supports it; the builds
+/// are bit-identical — same IEEE operations in the same order, and
+/// `mul_add` is a single rounding whether the hardware fuses it or the
+/// baseline's `fmaf` libcall emulates it — and
+/// `fma_build_matches_scalar_bitwise` pins that.
+fn epf_step_rows(
+    ctx: &StepCtx,
+    sigma: &SigmaField,
+    kernel: &[(i64, i64)],
+    band: std::ops::Range<usize>,
+    out: [&mut [f32]; 3],
+) {
+    #[cfg(target_arch = "x86_64")]
+    if jpxl_core::cpu::has_fma() {
+        // SAFETY: `epf_step_rows_fma` only requires AVX2+FMA, which
+        // `has_fma` has just confirmed.
+        #[allow(unsafe_code)]
+        unsafe {
+            epf_step_rows_fma(ctx, sigma, kernel, band, out);
+        }
+        return;
+    }
+    epf_step_rows_impl(ctx, sigma, kernel, band, out);
+}
+
+/// [`epf_step_rows`] compiled for AVX2+FMA.
+///
+/// Scalar fused instructions, not packed lanes: the win is fusing the
+/// loop's dozens of `mul_add`s per pixel into hardware (the baseline build
+/// calls the `fmaf` libcall per tap). Calling it is `unsafe` unless the
+/// host supports AVX2+FMA (see [`jpxl_core::cpu::has_fma`]); that is the
+/// whole contract.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2,fma")]
+fn epf_step_rows_fma(
+    ctx: &StepCtx,
+    sigma: &SigmaField,
+    kernel: &[(i64, i64)],
+    band: std::ops::Range<usize>,
+    out: [&mut [f32]; 3],
+) {
+    epf_step_rows_impl(ctx, sigma, kernel, band, out);
+}
+
+/// The band loop itself: the readable scalar reference and the lock-step
+/// oracle for `epf_step_rows_fma` (see
+/// `fma_build_matches_scalar_bitwise`). Runs wherever the dispatch falls
+/// back: non-x86_64 hosts and hosts without AVX2+FMA.
+///
+/// `inline(always)` is the dispatch mechanism — it inlines this body into
+/// the `target_feature` caller, whose AVX2+FMA codegen then fuses it.
+#[inline(always)]
+fn epf_step_rows_impl(
+    ctx: &StepCtx,
+    sigma: &SigmaField,
+    kernel: &[(i64, i64)],
+    band: std::ops::Range<usize>,
+    mut out: [&mut [f32]; 3],
+) {
+    let dims = ctx.dims;
+    let margin = ctx.step.read_margin();
+    for (rel_y, y) in band.enumerate() {
         for x in 0..dims.width {
-            let idx = y.saturating_mul(dims.width).saturating_add(x);
+            let idx = rel_y.saturating_mul(dims.width).saturating_add(x);
             let (bx, by) = (x / BLOCK_DIM, y / BLOCK_DIM);
+            let interior = interior_pixel(x, y, dims, margin);
 
             if sigma.skip_sigma_at(bx, by) < EPF_SIGMA_SKIP_THRESHOLD {
                 // J.4.3: the step's output is its input on this block.
                 for c in 0..3 {
-                    let v = ctx.input.get(c).and_then(|p| p.get(idx)).copied();
+                    let input_idx = y.saturating_mul(dims.width).saturating_add(x);
+                    let v = ctx.input.get(c).and_then(|p| p.get(input_idx)).copied();
                     if let (Some(v), Some(slot)) = (v, out.get_mut(c).and_then(|p| p.get_mut(idx)))
                     {
                         *slot = v;
@@ -538,16 +705,18 @@ pub fn epf_step(
             let mut sum_weights = 0.0f32;
             let mut sum_channels = [0.0f32; 3];
             for (ix, iy) in kernel.iter().copied() {
-                let distance = ctx.distance(xi, yi, ix, iy);
+                let distance = ctx.distance(xi, yi, ix, iy, interior);
                 let at_border = if EPF_BORDER_SAD_AT_REFERENCE_PIXEL {
                     reference_at_border
                 } else {
                     at_block_border(xi + ix, yi + iy)
                 };
-                let weight = epf_weight(distance, block_sigma, step, at_border, params);
+                let weight = epf_weight(distance, block_sigma, ctx.step, at_border, ctx.params);
                 sum_weights += weight;
                 for (c, acc) in sum_channels.iter_mut().enumerate() {
-                    *acc = ctx.input_at(c, xi + ix, yi + iy).mul_add(weight, *acc);
+                    *acc = ctx
+                        .input_at(c, xi + ix, yi + iy, interior)
+                        .mul_add(weight, *acc);
                 }
             }
 
@@ -560,8 +729,6 @@ pub fn epf_step(
             }
         }
     }
-
-    Ok(out)
 }
 
 /// Applies the whole edge-preserving filter (J.4) to the three colour planes
@@ -810,6 +977,165 @@ mod tests {
             for v in out.get(c).map(Vec::as_slice).unwrap_or(&[]) {
                 assert!(v.is_finite(), "channel {c}: {v}");
                 assert!((-0.001..=1.001).contains(v), "channel {c}: {v}");
+            }
+        }
+    }
+
+    #[test]
+    fn worker_count_never_changes_a_sample() {
+        // Threading partitions rows; it must not move a single bit. A
+        // ragged 130x70 ramp exercises band edges (70 rows over 8 workers
+        // is 9+9+9+9+9+9+9+7) on every step, against the serial run.
+        let dims = PlaneDims::new(130, 70);
+        let planes = [ramp(dims, 11), low_contrast(dims, 22), ramp(dims, 33)];
+        let s = uniform_field(dims, 5.0);
+        let (bx, by) = block_grid(dims);
+        let field = SigmaField::new(&s, bx, by).expect("valid");
+        for step in [EpfStep::Step0, EpfStep::Step1, EpfStep::Step2] {
+            let refs = planes.each_ref().map(Vec::as_slice);
+            let serial =
+                epf_step_with_workers(step, refs, refs, dims, &params(), &field, 1).expect("valid");
+            for workers in [2, 3, 8, 64] {
+                let refs = planes.each_ref().map(Vec::as_slice);
+                let threaded =
+                    epf_step_with_workers(step, refs, refs, dims, &params(), &field, workers)
+                        .expect("valid");
+                for c in 0..3 {
+                    let (a, b) = (
+                        serial.get(c).map(Vec::as_slice).unwrap_or(&[]),
+                        threaded.get(c).map(Vec::as_slice).unwrap_or(&[]),
+                    );
+                    assert_eq!(a.len(), b.len(), "step {step:?} workers {workers}");
+                    for (i, (x, y)) in a.iter().zip(b.iter()).enumerate() {
+                        assert_eq!(
+                            x.to_bits(),
+                            y.to_bits(),
+                            "step {step:?} workers {workers} channel {c} sample {i}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn margins_cover_every_read_of_every_step() {
+        // Each step's `read_margin` must cover every sample its loop reads:
+        // the J.4.4 input tap plus, per tap, the J.4.2 distance's cross
+        // around the reference pixel and around the tap (steps 0–1) or the
+        // two pixels alone (step 2). The kernels and the cross come from
+        // the same constants the filter reads, so this proves the margins,
+        // not the constants. The `checked` count proves the larger planes
+        // actually exercise the interior (on degenerate planes it is empty
+        // and the loop checks nothing).
+        for step in [EpfStep::Step0, EpfStep::Step1, EpfStep::Step2] {
+            let margin = step.read_margin();
+            let kernel = step.kernel();
+            let mut checked = 0;
+            for width in 1..12usize {
+                for height in 1..12usize {
+                    let dims = PlaneDims::new(width, height);
+                    for y in 0..height {
+                        for x in 0..width {
+                            if !interior_pixel(x, y, dims, margin) {
+                                continue;
+                            }
+                            checked += 1;
+                            let (xi, yi) = (as_i64(x), as_i64(y));
+                            let in_bounds = |rx: i64, ry: i64, what: &str| {
+                                assert!(
+                                    rx >= 0 && ry >= 0,
+                                    "step {step:?}: {what} of ({x},{y}) escapes {width}x{height}"
+                                );
+                                assert!(
+                                    rx < as_i64(width) && ry < as_i64(height),
+                                    "step {step:?}: {what} of ({x},{y}) escapes {width}x{height}"
+                                );
+                            };
+                            for (kx, ky) in kernel.iter().copied() {
+                                in_bounds(xi + kx, yi + ky, "input tap");
+                                if step == EpfStep::Step2 {
+                                    in_bounds(xi, yi, "step-2 reference");
+                                    in_bounds(xi + kx, yi + ky, "step-2 tap");
+                                } else {
+                                    for (ix, iy) in CROSS_COORDS {
+                                        in_bounds(xi + ix, yi + iy, "cross at reference");
+                                        in_bounds(xi + kx + ix, yi + ky + iy, "cross at tap");
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            assert!(
+                checked > 0,
+                "step {step:?}: no interior pixel was ever checked"
+            );
+        }
+    }
+
+    #[test]
+    fn fma_build_matches_scalar_bitwise() {
+        // The dispatched band build returns the scalar impl's bytes exactly,
+        // on every step over a ragged ramp (interior, border and skip-path
+        // pixels all covered). `mul_add` is a single rounding whether the
+        // hardware fuses it or the baseline's `fmaf` libcall emulates it.
+        // (On a host without AVX2+FMA both sides run the scalar impl and
+        // the test is vacuous — it proves the dispatch, which only an
+        // AVX2+FMA host exercises.)
+        let dims = PlaneDims::new(130, 70);
+        let planes = [ramp(dims, 11), low_contrast(dims, 22), ramp(dims, 33)];
+        let s = uniform_field(dims, 5.0);
+        let (bx, by) = block_grid(dims);
+        let field = SigmaField::new(&s, bx, by).expect("valid");
+        let params = params();
+        for step in [EpfStep::Step0, EpfStep::Step1, EpfStep::Step2] {
+            let refs = planes.each_ref().map(Vec::as_slice);
+            let ctx = StepCtx {
+                input: refs,
+                guide: refs,
+                dims,
+                params: &params,
+                step,
+            };
+            let mut dispatched = [
+                vec![0.0f32; dims.len()],
+                vec![0.0f32; dims.len()],
+                vec![0.0f32; dims.len()],
+            ];
+            let mut scalar = [
+                vec![0.0f32; dims.len()],
+                vec![0.0f32; dims.len()],
+                vec![0.0f32; dims.len()],
+            ];
+            epf_step_rows(
+                &ctx,
+                &field,
+                step.kernel(),
+                0..dims.height,
+                dispatched.each_mut().map(Vec::as_mut_slice),
+            );
+            epf_step_rows_impl(
+                &ctx,
+                &field,
+                step.kernel(),
+                0..dims.height,
+                scalar.each_mut().map(Vec::as_mut_slice),
+            );
+            for c in 0..3 {
+                let (a, b) = (
+                    dispatched.get(c).map(Vec::as_slice).unwrap_or(&[]),
+                    scalar.get(c).map(Vec::as_slice).unwrap_or(&[]),
+                );
+                assert_eq!(a.len(), b.len(), "step {step:?}");
+                for (i, (x, y)) in a.iter().zip(b.iter()).enumerate() {
+                    assert_eq!(
+                        x.to_bits(),
+                        y.to_bits(),
+                        "step {step:?} channel {c} sample {i}"
+                    );
+                }
             }
         }
     }

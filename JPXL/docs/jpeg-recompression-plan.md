@@ -1,6 +1,10 @@
 # JPEG bitstream recompression — implementation plan
 
-Status: **plan** (no code yet). AKR work record:
+Status: **phase A landed, phases B-E not started**. Phase A is the
+`jpxl-jpeg` crate (a workspace member; clean-room JPEG-1 parse/serialize
+round-trip with typed refusal of unsupported modes). Phase B has not begun:
+no crate depends on `jpxl-jpeg` yet, and there is no coefficient-carriage
+surface on the encoder or the decoder. AKR work record:
 `jpegxl-rs.work.jpeg-bitstream-recompression`. Written 2026-08-25, from
 ISO/IEC 18181-2:2024 §9.11 + Annex A (`sources/markdowns/standard-markdowns/part2.md`)
 and ISO/IEC 18181-1:2024 (`sources/latex/part1.tex`). Clean-room: everything

@@ -195,12 +195,26 @@ record jpegxl-rs.question.promote-case-predictor-2026-09-02/4 : question {
 
 record jpegxl-rs.question.route-text-lineart-via-bpg-preanalysis/1 : question {
     title "Route text/line-art content using the bpg-rs still265 preanalysis classifier?"
-    state open
+    state superseded
     scope [ path "JPXL/crates/**" ]
     question """
         JPXL's weakest content class against cjxl is synthetic text/line-art (up to +135% bytes at matched score, @jpegxl-rs.evidence.pqc-pr4-byte-neutral-2026-08-22). The operator points at existing first-party detection code: bpg-rs crates/still265/src/preanalysis.rs classifies 32x32 cells into 7 RegionClass values including TextLike (dense axis-aligned low-entropy edges, a text/line-art proxy) from cheap per-cell features (edge density, orientation entropy, direction dominance, flat ratio, chroma activity) plus a contextual saliency pass, with frame-level class_counts(). Should JPXL port or consume this preanalysis to detect screenshot/line-art frames and route them differently (modular/palette path, different effort or quantization policy)? Same-author code, so no licensing question; the open questions are the porting seam (jpxl-analysis vs a shared crate) and what the router changes (mode choice is a policy change under Contract B).
         """
     derived_from [ @jpegxl-rs.evidence.pqc-pr4-byte-neutral-2026-08-22 ]
+}
+
+record jpegxl-rs.question.route-text-lineart-via-bpg-preanalysis/2 : question {
+    title "Route text/line-art content using the bpg-rs still265 preanalysis classifier?"
+    state resolved
+    scope [ path "JPXL/crates/**" ]
+    question """
+        JPXL's weakest content class against cjxl is synthetic text/line-art (up to +135% bytes at matched score, @jpegxl-rs.evidence.pqc-pr4-byte-neutral-2026-08-22). The operator points at existing first-party detection code: bpg-rs crates/still265/src/preanalysis.rs classifies 32x32 cells into 7 RegionClass values including TextLike (dense axis-aligned low-entropy edges, a text/line-art proxy) from cheap per-cell features (edge density, orientation entropy, direction dominance, flat ratio, chroma activity) plus a contextual saliency pass, with frame-level class_counts(). Should JPXL port or consume this preanalysis to detect screenshot/line-art frames and route them differently (modular/palette path, different effort or quantization policy)? Same-author code, so no licensing question; the open questions are the porting seam (jpxl-analysis vs a shared crate) and what the router changes (mode choice is a policy change under Contract B).
+        """
+    resolution """
+        Yes, and it is done. jpxl-encode-policy/src/content_class.rs ports the bpg-rs still265::preanalysis Sobel cell statistics with the same thresholds (content_class.rs:16), behind a cheap unique-colour census gate so the Sobel pass runs only on census-sparse frames. The porting seam question is answered: the classifier lives in jpxl-encode-policy, not in a shared crate and not as a dependency on bpg-rs, so no still265 -> JPXL edge exists and the MIT clean-room boundary is untouched (grep of JPXL/Cargo.toml, every crates/*/Cargo.toml and Cargo.lock at 1e2004a finds no still265 and no x265; bpg-rs is GPL-2.0-or-later via its vendored x265_4.1 headers, so a real dependency would have been a licence problem, same-author or not). What the router changes is also answered and shipped: jpegxl-rs.work.text-aware-routing stages 1-4 route a detected text/line-art frame to a lossless Modular palette candidate scored against the retained reference, replacing VarDCT only when smaller (-21% corpus bytes, 69/121 smaller, 0 grew, 0 floor violations). As a Contract B mode change it shipped opt-in (--text-routing / Encoder::with_text_routing; jpxl/src/lib.rs:428 defaults text_routing to false). The one thing this question raised that is still open is not the port but the promotion: turning routing on by default is the operator's decision and needs the standing Contract-B A/B screen. That lives on work.text-aware-routing, not here.
+        """
+    derived_from [ @jpegxl-rs.evidence.pqc-pr4-byte-neutral-2026-08-22 ]
+    supersedes [ @jpegxl-rs.question.route-text-lineart-via-bpg-preanalysis/1 ]
 }
 
 record jpegxl-rs.question.single-finalist-pricing-contract-b/1 : question {

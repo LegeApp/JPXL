@@ -203,7 +203,7 @@ record jpegxl-rs.policy.oracle-output-format/1 : policy {
 
 record jpegxl-rs.policy.perceptual-metric-clean-room/1 : policy {
     title "Clean-room boundary and version pinning for the in-tree perceptual metric"
-    state proposed
+    state active
     scope [
         path "JPXL/crates/jpxl-encode-policy/**",
         path "JPXL/crates/jpxl-perceptual/**",

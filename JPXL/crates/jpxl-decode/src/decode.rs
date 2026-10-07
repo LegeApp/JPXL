@@ -45,6 +45,7 @@
 use jpxl_bitstream::BitReader;
 use jpxl_core::color::OpsinInverse;
 use jpxl_core::limits::{AllocGuard, Limits};
+use jpxl_core::varblock::SampleBlock;
 
 use crate::container;
 use crate::error::{DecodeError, Result};
@@ -2380,6 +2381,117 @@ struct GroupState {
     coefficients: crate::vardct::hf_coeff::HfCoefficients,
 }
 
+/// One varblock rendered and ready to scatter into the frame planes.
+///
+/// [`render_group_varblocks`] produces these without touching the shared
+/// planes, so groups render on worker threads; the caller scatters them
+/// serially, in group order. The scatter is what keeps threading sound here:
+/// a varblock is assigned to its group by top-left but its footprint can
+/// straddle group rows, so groups cannot own disjoint output bands.
+struct RenderedVarblock {
+    /// Top-left sample of the varblock in frame coordinates.
+    x0: u32,
+    /// Top edge, in samples from the frame origin.
+    y0: u32,
+    /// Dequantized, IDCT'd samples per channel.
+    blocks: [SampleBlock; crate::vardct::render::NUM_CHANNELS],
+    /// `(block_x, block_y, sigma, varblock_sigma)` per covered 8x8 block, in
+    /// frame block coordinates.
+    sigma_cells: Vec<(usize, usize, f32, f32)>,
+}
+
+/// Renders every varblock of one group (I.5.3, I.6, I.8, I.9).
+///
+/// Pure: reads only shared state, returns owned samples. This is the body of
+/// the old serial varblock loop with the `planes.set`/`sigma.set` writes
+/// replaced by buffered cells the caller scatters.
+fn render_group_varblocks(
+    state: &GroupState,
+    geometry: &FrameGeometry,
+    lf_groups: &[LfGroupState],
+    dequant: &crate::vardct::render::HfDequantParams<'_>,
+    filter: &crate::frame::restoration::RestorationFilter,
+) -> Result<Vec<RenderedVarblock>> {
+    use crate::vardct::render;
+
+    let rect = geometry
+        .group_rect(state.group)
+        .ok_or_else(|| unsupported("a group index past the grid", "18181-1 G.4"))?;
+    let lf_rect = geometry
+        .lf_group_rect(state.lf_index)
+        .ok_or_else(|| unsupported("an LF group index past the grid", "18181-1 G.2"))?;
+    let lf_state = lf_groups
+        .get(usize::try_from(state.lf_index).unwrap_or(usize::MAX))
+        .ok_or_else(|| unsupported("an LF group index past the grid", "18181-1 G.2"))?;
+    let origin_bx = (rect.x0 - lf_rect.x0) / 8;
+    let origin_by = (rect.y0 - lf_rect.y0) / 8;
+
+    let mut rendered = Vec::with_capacity(state.varblocks.len());
+    for (index, vb) in state.varblocks.iter().enumerate() {
+        // Back to LF-group-relative coordinates: LfQuant, Sharpness and
+        // the CfL tiles are all indexed that way.
+        let (bx, by) = (vb.bx + origin_bx, vb.by + origin_by);
+        let blocks = render::render_varblock(
+            vb.transform,
+            [
+                state.coefficients.block(index, 0)?,
+                state.coefficients.block(index, 1)?,
+                state.coefficients.block(index, 2)?,
+            ],
+            vb.hf_mul,
+            dequant,
+            // I.6: the 64x64 rectangle containing the sample; a varblock
+            // never spans two tiles, because every varblock is at most
+            // 32x32 samples and is aligned to its own size.
+            lf_state.cfl.at_pixel(bx * 8, by * 8),
+            [&lf_state.lf.x, &lf_state.lf.y, &lf_state.lf.b],
+            bx,
+            by,
+        )?;
+
+        let x0 = lf_rect.x0 + bx * 8;
+        let y0 = lf_rect.y0 + by * 8;
+
+        // J.4.3's sigma field, over the frame's 8x8-block grid. `mul` is
+        // per varblock; `Sharpness` is per 8x8 block. The skip test reads
+        // the varblock's own sigma, taken at its top-left block.
+        let (rows, cols) = vb.transform.block_dims();
+        let (block_rows, block_cols) = (small(rows), small(cols));
+        let vb_sigma = render::varblock_epf_sigma(
+            dequant,
+            vb.hf_mul,
+            sharpness_at(&lf_state.sharpness, bx, by),
+            filter,
+        )?;
+        let rows_hint = usize::try_from(block_rows).unwrap_or(0);
+        let cols_hint = usize::try_from(block_cols).unwrap_or(0);
+        let mut sigma_cells = Vec::with_capacity(rows_hint.saturating_mul(cols_hint));
+        for dy in 0..block_rows {
+            for dx in 0..block_cols {
+                let s = render::varblock_epf_sigma(
+                    dequant,
+                    vb.hf_mul,
+                    sharpness_at(&lf_state.sharpness, bx + dx, by + dy),
+                    filter,
+                )?;
+                sigma_cells.push((
+                    wide((lf_rect.x0 / 8) + bx + dx),
+                    wide((lf_rect.y0 / 8) + by + dy),
+                    s,
+                    vb_sigma,
+                ));
+            }
+        }
+        rendered.push(RenderedVarblock {
+            x0,
+            y0,
+            blocks,
+            sigma_cells,
+        });
+    }
+    Ok(rendered)
+}
+
 /// Decodes one `kVarDCT` frame (Table F.1's four section kinds) into planes.
 ///
 /// The section walk mirrors [`decode_modular_frame`]'s, with the two
@@ -2855,78 +2967,52 @@ fn decode_vardct_frame(
     let mut sigma = render::SigmaPlanes::zeros(width, height, guard)?;
     let filter = &header.restoration_filter;
 
-    for state in &groups {
-        let rect = geometry
-            .group_rect(state.group)
-            .ok_or_else(|| unsupported("a group index past the grid", "18181-1 G.4"))?;
-        let lf_rect = geometry
-            .lf_group_rect(state.lf_index)
-            .ok_or_else(|| unsupported("an LF group index past the grid", "18181-1 G.2"))?;
-        let lf_state = lf_groups
-            .get(usize::try_from(state.lf_index).unwrap_or(usize::MAX))
-            .ok_or_else(|| unsupported("an LF group index past the grid", "18181-1 G.2"))?;
-        let origin_bx = (rect.x0 - lf_rect.x0) / 8;
-        let origin_by = (rect.y0 - lf_rect.y0) / 8;
-
-        for (index, vb) in state.varblocks.iter().enumerate() {
-            // Back to LF-group-relative coordinates: LfQuant, Sharpness and
-            // the CfL tiles are all indexed that way.
-            let (bx, by) = (vb.bx + origin_bx, vb.by + origin_by);
-            let blocks = render::render_varblock(
-                vb.transform,
-                [
-                    state.coefficients.block(index, 0)?,
-                    state.coefficients.block(index, 1)?,
-                    state.coefficients.block(index, 2)?,
-                ],
-                vb.hf_mul,
-                &dequant,
-                // I.6: the 64x64 rectangle containing the sample; a varblock
-                // never spans two tiles, because every varblock is at most
-                // 32x32 samples and is aligned to its own size.
-                lf_state.cfl.at_pixel(bx * 8, by * 8),
-                [&lf_state.lf.x, &lf_state.lf.y, &lf_state.lf.b],
-                bx,
-                by,
-            )?;
-
-            let x0 = lf_rect.x0 + bx * 8;
-            let y0 = lf_rect.y0 + by * 8;
-            for (c, block) in blocks.iter().enumerate() {
-                for row in 0..block.rows() {
-                    for col in 0..block.cols() {
-                        // Sample extents come from Table I.1 (at most 256), so
-                        // `small` never saturates here.
-                        planes.set(c, x0 + small(col), y0 + small(row), block.at(col, row));
+    // I.8–I.9 in waves: each wave renders up to one group per worker on a
+    // `std::thread::scope` pool, then scatters the wave into `planes`/`sigma`
+    // serially, in group order. Waves bound the buffered samples to about one
+    // group per worker no matter how large the frame is; the serial scatter
+    // is what keeps threading sound, because a varblock's footprint can
+    // straddle group rows. First error in group order still wins, as before.
+    let wave = crate::parallel::worker_count(groups.len(), 1).max(1);
+    // Hoisted so the `move` closures below capture a `Copy` shared slice
+    // rather than the `mut` vector.
+    let lf_states: &[LfGroupState] = &lf_groups;
+    for wave_groups in groups.chunks(wave) {
+        let mut slots: Vec<Option<Result<Vec<RenderedVarblock>>>> =
+            (0..wave_groups.len()).map(|_| None).collect();
+        std::thread::scope(|scope| {
+            for (slot, state) in slots.iter_mut().zip(wave_groups) {
+                scope.spawn(move || {
+                    *slot = Some(render_group_varblocks(
+                        state, geometry, lf_states, &dequant, filter,
+                    ));
+                });
+            }
+        });
+        for (slot, state) in slots.iter_mut().zip(wave_groups) {
+            let rendered = match slot.take() {
+                Some(result) => result?,
+                // A joined worker always fills its slot; recompute rather
+                // than panic on the impossible.
+                None => render_group_varblocks(state, geometry, &lf_groups, &dequant, filter)?,
+            };
+            for varblock in rendered {
+                for (c, block) in varblock.blocks.iter().enumerate() {
+                    for row in 0..block.rows() {
+                        for col in 0..block.cols() {
+                            // Sample extents come from Table I.1 (at most 256), so
+                            // `small` never saturates here.
+                            planes.set(
+                                c,
+                                varblock.x0 + small(col),
+                                varblock.y0 + small(row),
+                                block.at(col, row),
+                            );
+                        }
                     }
                 }
-            }
-
-            // J.4.3's sigma field, over the frame's 8x8-block grid. `mul` is
-            // per varblock; `Sharpness` is per 8x8 block. The skip test reads
-            // the varblock's own sigma, taken at its top-left block.
-            let (rows, cols) = vb.transform.block_dims();
-            let (block_rows, block_cols) = (small(rows), small(cols));
-            let vb_sigma = render::varblock_epf_sigma(
-                &dequant,
-                vb.hf_mul,
-                sharpness_at(&lf_state.sharpness, bx, by),
-                filter,
-            )?;
-            for dy in 0..block_rows {
-                for dx in 0..block_cols {
-                    let s = render::varblock_epf_sigma(
-                        &dequant,
-                        vb.hf_mul,
-                        sharpness_at(&lf_state.sharpness, bx + dx, by + dy),
-                        filter,
-                    )?;
-                    sigma.set(
-                        wide((lf_rect.x0 / 8) + bx + dx),
-                        wide((lf_rect.y0 / 8) + by + dy),
-                        s,
-                        vb_sigma,
-                    );
+                for (bx, by, s, vb_sigma) in varblock.sigma_cells {
+                    sigma.set(bx, by, s, vb_sigma);
                 }
             }
         }
@@ -3388,11 +3474,9 @@ fn apply_transfer_function(
                 reason = "a deliberate one-time narrowing of a bounded exponent"
             )]
             let exponent = exponent as f32;
-            for plane in &mut planes.planes {
-                for v in plane.iter_mut() {
-                    *v = jpxl_core::color::linear_to_gamma(*v, exponent);
-                }
-            }
+            crate::vardct::render::map_planes(planes, |v| {
+                jpxl_core::color::linear_to_gamma(v, exponent)
+            });
             return Ok(());
         }
         _ => {
@@ -3403,12 +3487,79 @@ fn apply_transfer_function(
         }
     };
 
-    for plane in &mut planes.planes {
-        for v in plane.iter_mut() {
-            *v = map(*v);
-        }
-    }
+    crate::vardct::render::map_planes(planes, map);
     Ok(())
+}
+
+/// Quantizes one sample to an integer on the `[0, max]` scale.
+///
+/// Scale, round, clamp, cast; non-finite samples become 0 rather than
+/// trapping the cast.
+fn quantize_sample(v: f32, max: f32) -> i32 {
+    let scaled = (v * max).round();
+    if scaled.is_finite() {
+        // Clamped into [0, max] with max < 2^32 before the cast,
+        // so the narrowing is exact for every reachable value.
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "the value is clamped to [0, max] first"
+        )]
+        let quantized = scaled.clamp(0.0, max) as i32;
+        quantized
+    } else {
+        0
+    }
+}
+
+/// Quantizes one plane's samples to integers on the `[0, max]` scale.
+///
+/// Serial core of [`quantize_plane_banded`].
+fn quantize_samples(samples: &[f32], max: f32) -> Vec<i32> {
+    samples.iter().map(|v| quantize_sample(*v, max)).collect()
+}
+
+/// [`quantize_samples`] banded over worker threads, written in place.
+///
+/// Each sample quantizes independently, so the banded run matches the
+/// serial result bit for bit.
+fn quantize_plane_banded(samples: &[f32], max: f32) -> Vec<i32> {
+    quantize_plane_with_workers(
+        samples,
+        max,
+        crate::parallel::worker_count(samples.len(), crate::parallel::MIN_MAP_SAMPLES_PER_WORKER),
+    )
+}
+
+/// [`quantize_plane_banded`] with an explicit worker count.
+///
+/// `1` runs the serial loop inline; anything larger bands the samples. The
+/// parameter exists so tests can prove worker-count independence; callers
+/// want [`quantize_plane_banded`].
+fn quantize_plane_with_workers(samples: &[f32], max: f32, workers: usize) -> Vec<i32> {
+    let sample_bands = crate::parallel::bands(samples.len(), workers);
+    let band_len = sample_bands.first().map_or(0, |band| band.len());
+    if sample_bands.len() <= 1 || band_len == 0 {
+        return quantize_samples(samples, max);
+    }
+    // One output allocation, banded like the input: workers write their
+    // bands in place, so there is no per-band allocation and no concat copy.
+    let mut out = vec![0; samples.len()];
+    std::thread::scope(|scope| {
+        let mut out_bands = out.chunks_mut(band_len);
+        debug_assert_eq!(
+            out_bands.len(),
+            sample_bands.len(),
+            "bands tile the samples exactly (see parallel::bands_match_chunks_mut)"
+        );
+        for (input, output) in samples.chunks(band_len).zip(&mut out_bands) {
+            scope.spawn(move || {
+                for (v, slot) in input.iter().zip(output.iter_mut()) {
+                    *slot = quantize_sample(*v, max);
+                }
+            });
+        }
+    });
+    out
 }
 
 /// Turns the frame's float colour planes into a [`DecodedImage`].
@@ -3457,32 +3608,12 @@ fn assemble_float(
     let total = num_colour + extra.len();
     let mut float_planes = Vec::with_capacity(total);
     let mut integer_planes = Vec::with_capacity(total);
-    let quantize = |samples: &[f32], max: f32| -> Vec<i32> {
-        samples
-            .iter()
-            .map(|v| {
-                let scaled = (v * max).round();
-                if scaled.is_finite() {
-                    // Clamped into [0, max] with max < 2^32 before the cast,
-                    // so the narrowing is exact for every reachable value.
-                    #[allow(
-                        clippy::cast_possible_truncation,
-                        reason = "the value is clamped to [0, max] first"
-                    )]
-                    let quantized = scaled.clamp(0.0, max) as i32;
-                    quantized
-                } else {
-                    0
-                }
-            })
-            .collect()
-    };
     for samples in planes.planes.into_iter().take(num_colour) {
         integer_planes.push(Plane {
             width,
             height,
             bits_per_sample: bits,
-            samples: quantize(&samples, max),
+            samples: quantize_plane_banded(&samples, max),
         });
         float_planes.push(FloatPlane {
             width,
@@ -3501,7 +3632,7 @@ fn assemble_float(
             width,
             height,
             bits_per_sample: ec_bits,
-            samples: quantize(&samples, full_scale(ec_bits)),
+            samples: quantize_plane_banded(&samples, full_scale(ec_bits)),
         });
         float_planes.push(FloatPlane {
             width,
@@ -3555,6 +3686,28 @@ mod tests {
             ..p
         };
         assert_eq!(p.max_value(), u32::MAX);
+    }
+
+    #[test]
+    fn quantize_worker_count_never_changes_a_sample() {
+        // Threading partitions samples; it must not move a single bit. A
+        // ragged fill of over-clamped, negative and non-finite samples
+        // exercises every branch of the mapping against the serial run.
+        let samples: Vec<f32> = (0..10_000)
+            .map(|i| match i % 7 {
+                0 => -1.0,
+                1 => 2.0,
+                2 => f32::NAN,
+                3 => f32::INFINITY,
+                4 => f32::NEG_INFINITY,
+                _ => f32::from(u16::try_from(i % 1000).unwrap_or(0)) / 1000.0,
+            })
+            .collect();
+        let serial = quantize_plane_with_workers(&samples, 255.0, 1);
+        for workers in [2, 3, 8, 64] {
+            let threaded = quantize_plane_with_workers(&samples, 255.0, workers);
+            assert_eq!(threaded, serial, "workers {workers}");
+        }
     }
 
     #[test]

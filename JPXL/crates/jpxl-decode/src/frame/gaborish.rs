@@ -131,6 +131,55 @@ pub fn sample_mirrored(plane: &[f32], dims: PlaneDims, x: i64, y: i64) -> f32 {
         .unwrap_or(0.0)
 }
 
+/// Reads `plane` at `(x, y)` without mirroring.
+///
+/// The caller guarantees the coordinate is in bounds — the interior fast
+/// paths prove this per filter — so this skips both `mirror1d` folds. An
+/// out-of-bounds coordinate reads 0.0 rather than trapping, matching
+/// [`sample_mirrored`]'s totality; debug builds assert the contract.
+#[must_use]
+pub fn sample_direct(plane: &[f32], dims: PlaneDims, x: i64, y: i64) -> f32 {
+    debug_assert!(
+        x >= 0 && y >= 0 && x < as_i64(dims.width) && y < as_i64(dims.height),
+        "interior reads are in bounds by construction"
+    );
+    let x = usize::try_from(x).unwrap_or(usize::MAX);
+    let y = usize::try_from(y).unwrap_or(usize::MAX);
+    plane
+        .get(y.saturating_mul(dims.width).saturating_add(x))
+        .copied()
+        .unwrap_or(0.0)
+}
+
+/// Whether every read within `margin` samples of `(x, y)` lands in bounds.
+///
+/// A filter whose taps never reach further than `margin` from the reference
+/// pixel can read interior pixels with [`sample_direct`]: the mirror would
+/// be the identity on every tap. `margin` is per-filter (J.3: 1; J.4: 1–3
+/// by step) and each filter's test proves its margin against its read
+/// pattern.
+pub(crate) fn interior_pixel(x: usize, y: usize, dims: PlaneDims, margin: usize) -> bool {
+    x >= margin
+        && y >= margin
+        && x < dims.width.saturating_sub(margin)
+        && y < dims.height.saturating_sub(margin)
+}
+
+/// The interior rectangle for `margin`: rows and columns whose every pixel
+/// satisfies [`interior_pixel`].
+///
+/// Either range may be empty (a plane narrower than `2 * margin` has no
+/// interior); both are empty-safe to iterate. The set equality with the
+/// predicate is pinned by `interior_rect_matches_the_predicate`.
+pub(crate) fn interior_rect(
+    dims: PlaneDims,
+    margin: usize,
+) -> (std::ops::Range<usize>, std::ops::Range<usize>) {
+    let cols = margin..dims.width.saturating_sub(margin);
+    let rows = margin..dims.height.saturating_sub(margin);
+    (rows, cols)
+}
+
 /// The normalized J.3 kernel for one channel.
 ///
 /// Constructed by [`GaborKernel::new`], which applies the clause's uniform
@@ -194,6 +243,10 @@ impl GaborKernel {
 /// `input` and `output` must both hold `dims.len()` samples. The transform is
 /// not in-place: every output sample reads the *unfiltered* neighbourhood.
 ///
+/// The rows are filtered in bands on a `std::thread::scope` pool. Each output
+/// sample is written exactly once from the read-only input, so the threaded
+/// run is bit-identical to the serial one.
+///
 /// # Errors
 ///
 /// [`FrameError::FieldOutOfRange`] if either slice's length disagrees with
@@ -204,26 +257,379 @@ pub fn gaborish_into(
     dims: PlaneDims,
     kernel: &GaborKernel,
 ) -> Result<()> {
+    gaborish_into_with_workers(
+        input,
+        output,
+        dims,
+        kernel,
+        crate::parallel::worker_count(dims.height, crate::parallel::MIN_ROWS_PER_WORKER),
+    )
+}
+
+/// [`gaborish_into`] with an explicit worker count.
+///
+/// `1` runs the serial loop inline; anything larger bands the rows. The
+/// parameter exists so tests can prove worker-count independence; callers
+/// want [`gaborish_into`].
+///
+/// # Errors
+///
+/// As [`gaborish_into`].
+pub(crate) fn gaborish_into_with_workers(
+    input: &[f32],
+    output: &mut [f32],
+    dims: PlaneDims,
+    kernel: &GaborKernel,
+    workers: usize,
+) -> Result<()> {
     dims.check(input, "gaborish input plane length", "J.3")?;
     dims.check(output, "gaborish output plane length", "J.3")?;
 
-    for y in 0..dims.height {
-        let yi = as_i64(y);
-        for x in 0..dims.width {
-            let xi = as_i64(x);
-            let mut acc = 0.0f32;
-            for dy in -1i64..=1 {
-                for dx in -1i64..=1 {
-                    let w = kernel.weight_at(dx, dy);
-                    acc = w.mul_add(sample_mirrored(input, dims, xi + dx, yi + dy), acc);
-                }
+    let row_bands = crate::parallel::bands(dims.height, workers);
+    // A zero-width plane takes the serial path: its bands hold zero cells
+    // and `chunks_mut(0)` would panic.
+    let band_len = row_bands.first().map_or(0, |band| band.len());
+    let band_cells = band_len.saturating_mul(dims.width);
+    if row_bands.len() <= 1 || band_cells == 0 {
+        gaborish_rows(input, output, dims, kernel, 0..dims.height);
+        return Ok(());
+    }
+    std::thread::scope(|scope| {
+        let chunks = output.chunks_mut(band_cells);
+        debug_assert_eq!(
+            chunks.len(),
+            row_bands.len(),
+            "bands tile the plane exactly (see parallel::bands_match_chunks_mut)"
+        );
+        for (band, rows) in chunks.zip(row_bands) {
+            scope.spawn(move || {
+                gaborish_rows(input, band, dims, kernel, rows);
+            });
+        }
+    });
+    Ok(())
+}
+
+/// Filters one band of rows into the band's slice.
+///
+/// Reads use absolute frame coordinates; `output` holds exactly this band's
+/// rows, so writes index relative to the band start (`rel_y`).
+fn gaborish_rows(
+    input: &[f32],
+    output: &mut [f32],
+    dims: PlaneDims,
+    kernel: &GaborKernel,
+    band: std::ops::Range<usize>,
+) {
+    // J.3's taps reach exactly one sample from the reference pixel. The band
+    // splits into the interior rect (direct reads, AVX2-dispatched) and the
+    // border (mirrored reads); the two cover the band exactly once.
+    let (rect_rows, rect_cols) = interior_rect(dims, 1);
+    let inner = rect_rows.start.max(band.start)..rect_rows.end.min(band.end);
+    // The clamps keep every range inside the band even for degenerate
+    // geometries (empty interior, single-row bands); `y - band.start` below
+    // can never underflow because every loop range starts at or above it.
+    for y in band.start..inner.start.min(band.end) {
+        gaborish_mirrored_row(input, output, dims, kernel, band.start, y);
+    }
+    if rect_cols.is_empty() {
+        for y in inner.clone() {
+            gaborish_mirrored_row(input, output, dims, kernel, band.start, y);
+        }
+    } else {
+        for y in inner.clone() {
+            let rel_y = y - band.start;
+            for x in 0..rect_cols.start {
+                store_mirrored_pixel(input, output, dims, kernel, x, y, rel_y);
             }
-            if let Some(slot) = output.get_mut(y.saturating_mul(dims.width).saturating_add(x)) {
-                *slot = acc;
+            for x in rect_cols.end..dims.width {
+                store_mirrored_pixel(input, output, dims, kernel, x, y, rel_y);
+            }
+        }
+        let rel_start = inner.start.saturating_sub(band.start);
+        let rel_end = inner.end.saturating_sub(band.start);
+        gaborish_interior_rect(
+            input,
+            output,
+            dims,
+            kernel,
+            band.start,
+            rel_start..rel_end,
+            rect_cols,
+        );
+    }
+    for y in inner.end.max(band.start)..band.end {
+        gaborish_mirrored_row(input, output, dims, kernel, band.start, y);
+    }
+}
+
+/// One J.3 pixel through the mirror, for border pixels.
+fn gaborish_mirrored_pixel(
+    input: &[f32],
+    dims: PlaneDims,
+    kernel: &GaborKernel,
+    x: usize,
+    y: usize,
+) -> f32 {
+    let (xi, yi) = (as_i64(x), as_i64(y));
+    let mut acc = 0.0f32;
+    for dy in -1i64..=1 {
+        for dx in -1i64..=1 {
+            let w = kernel.weight_at(dx, dy);
+            acc = w.mul_add(sample_mirrored(input, dims, xi + dx, yi + dy), acc);
+        }
+    }
+    acc
+}
+
+/// Filters one band row through the mirror into the band's slice.
+///
+/// `y` is absolute; `band_start` translates it to the band slice.
+fn gaborish_mirrored_row(
+    input: &[f32],
+    output: &mut [f32],
+    dims: PlaneDims,
+    kernel: &GaborKernel,
+    band_start: usize,
+    y: usize,
+) {
+    let rel_y = y - band_start;
+    for x in 0..dims.width {
+        store_mirrored_pixel(input, output, dims, kernel, x, y, rel_y);
+    }
+}
+
+/// Filters one border pixel through the mirror into the band's slice.
+fn store_mirrored_pixel(
+    input: &[f32],
+    output: &mut [f32],
+    dims: PlaneDims,
+    kernel: &GaborKernel,
+    x: usize,
+    y: usize,
+    rel_y: usize,
+) {
+    let v = gaborish_mirrored_pixel(input, dims, kernel, x, y);
+    if let Some(slot) = output.get_mut(rel_y.saturating_mul(dims.width).saturating_add(x)) {
+        *slot = v;
+    }
+}
+
+/// Filters an interior rectangle with direct reads.
+///
+/// `rel_rows` is relative to the band slice `output`; `cols` is absolute.
+/// Every tap of every covered pixel lands in bounds (see
+/// `margin_one_covers_all_nine_j3_taps`), so the reads skip the mirror.
+/// Dispatched to an AVX2+FMA build where the host supports it; the builds
+/// are bit-identical — same IEEE operations in the same lane order, and
+/// `mul_add` is a single rounding whether the hardware fuses it or the
+/// baseline's `fmaf` libcall emulates it — and
+/// `interior_rect_avx2_matches_scalar_bitwise` pins that.
+fn gaborish_interior_rect(
+    input: &[f32],
+    output: &mut [f32],
+    dims: PlaneDims,
+    kernel: &GaborKernel,
+    band_start: usize,
+    rel_rows: std::ops::Range<usize>,
+    cols: std::ops::Range<usize>,
+) {
+    #[cfg(target_arch = "x86_64")]
+    if jpxl_core::cpu::has_fma() {
+        // SAFETY: `gaborish_interior_rect_avx2` only requires AVX2+FMA,
+        // which `has_fma` has just confirmed.
+        #[allow(unsafe_code)]
+        unsafe {
+            gaborish_interior_rect_avx2(input, output, dims, kernel, band_start, rel_rows, cols);
+        }
+        return;
+    }
+    gaborish_interior_rect_impl(input, output, dims, kernel, band_start, rel_rows, cols);
+}
+
+/// [`gaborish_interior_rect`] for AVX2+FMA hosts: eight pixels per step.
+///
+/// Each lane computes the scalar tap order exactly (`vfmaddps` is one
+/// rounding per lane, like `mul_add`), so lanes match the scalar impl bit
+/// for bit; the tail (columns past the last full group of eight) runs the
+/// shared scalar stencil. Auto-vectorization was tried first and refused —
+/// the bounds-checked loads do not version — so this spells the eight-wide
+/// loop explicitly.
+///
+/// # Safety
+///
+/// The caller must guarantee all of the following, which
+/// [`gaborish_rows`] establishes through [`interior_rect`] (see
+/// `interior_rect_matches_the_predicate` and
+/// `margin_one_covers_all_nine_j3_taps`):
+///
+/// - the host supports AVX2+FMA (see [`jpxl_core::cpu::has_fma`]);
+/// - `cols` holds interior columns only, so `x - 1` and `x + 7` are valid
+///   row offsets for every eight-wide step starting in `cols`;
+/// - `band_start + rel_y` is an interior row for every `rel_y` in
+///   `rel_rows`, so the rows above and below exist;
+/// - `output` is the band slice, so `rel_y * width + x + 7` is in bounds
+///   for every step.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2,fma")]
+#[allow(
+    unsafe_code,
+    reason = "intrinsics and pointer loads; see the Safety section"
+)]
+unsafe fn gaborish_interior_rect_avx2(
+    input: &[f32],
+    output: &mut [f32],
+    dims: PlaneDims,
+    kernel: &GaborKernel,
+    band_start: usize,
+    rel_rows: std::ops::Range<usize>,
+    cols: std::ops::Range<usize>,
+) {
+    use core::arch::x86_64::{_mm256_fmadd_ps, _mm256_loadu_ps, _mm256_set1_ps, _mm256_storeu_ps};
+
+    let w = dims.width;
+    let centre = _mm256_set1_ps(kernel.centre);
+    let edge = _mm256_set1_ps(kernel.edge);
+    let corner = _mm256_set1_ps(kernel.corner);
+    let zero = _mm256_set1_ps(0.0);
+    // Last start column with a full eight-wide group inside `cols`; the
+    // max() folds the fewer-than-eight case into an empty vector loop.
+    let end8 = cols.end.saturating_sub(8).max(cols.start);
+    for rel_y in rel_rows {
+        let y = band_start + rel_y;
+        // SAFETY: interior rows by the contract; the arithmetic stays inside
+        // `input` exactly as the scalar row windows do.
+        #[allow(unsafe_code, reason = "proven in-bounds by the Safety contract")]
+        let (r0, r1, r2) = unsafe {
+            (
+                input.as_ptr().add((y - 1) * w),
+                input.as_ptr().add(y * w),
+                input.as_ptr().add((y + 1) * w),
+            )
+        };
+        let mut x = cols.start;
+        while x < end8 {
+            // SAFETY: `x - 1` through `x + 7` are valid row offsets and
+            // `rel_y * w + x` a valid output slot, by the contract.
+            #[allow(unsafe_code, reason = "proven in-bounds by the Safety contract")]
+            unsafe {
+                let t00 = _mm256_loadu_ps(r0.add(x - 1));
+                let t01 = _mm256_loadu_ps(r0.add(x));
+                let t02 = _mm256_loadu_ps(r0.add(x + 1));
+                let t10 = _mm256_loadu_ps(r1.add(x - 1));
+                let t11 = _mm256_loadu_ps(r1.add(x));
+                let t12 = _mm256_loadu_ps(r1.add(x + 1));
+                let t20 = _mm256_loadu_ps(r2.add(x - 1));
+                let t21 = _mm256_loadu_ps(r2.add(x));
+                let t22 = _mm256_loadu_ps(r2.add(x + 1));
+                // The scalar tap order, tap for tap.
+                let mut acc = _mm256_fmadd_ps(corner, t00, zero);
+                acc = _mm256_fmadd_ps(edge, t01, acc);
+                acc = _mm256_fmadd_ps(corner, t02, acc);
+                acc = _mm256_fmadd_ps(edge, t10, acc);
+                acc = _mm256_fmadd_ps(centre, t11, acc);
+                acc = _mm256_fmadd_ps(edge, t12, acc);
+                acc = _mm256_fmadd_ps(corner, t20, acc);
+                acc = _mm256_fmadd_ps(edge, t21, acc);
+                acc = _mm256_fmadd_ps(corner, t22, acc);
+                _mm256_storeu_ps(output.as_mut_ptr().add(rel_y * w + x), acc);
+            }
+            x += 8;
+        }
+        // Tail columns past the last full group: the shared scalar stencil.
+        if x < cols.end {
+            let (Some(r0s), Some(r1s), Some(r2s)) = (
+                input.get((y - 1) * w..y * w),
+                input.get(y * w..(y + 1) * w),
+                input.get((y + 1) * w..(y + 2) * w),
+            ) else {
+                continue;
+            };
+            for x in x..cols.end {
+                let v = gaborish_stencil_1d(
+                    r0s,
+                    r1s,
+                    r2s,
+                    x,
+                    kernel.centre,
+                    kernel.edge,
+                    kernel.corner,
+                );
+                if let Some(slot) = output.get_mut(rel_y * w + x) {
+                    *slot = v;
+                }
             }
         }
     }
-    Ok(())
+}
+
+/// One J.3 pixel from three tap rows, in the scalar tap order.
+///
+/// Shared by the scalar rect impl and the AVX2 tail so the order is defined
+/// once. `x` must be an interior column (the lanes the vector loop covers
+/// and the tail columns both are); out-of-range taps read 0.0 rather than
+/// trapping, matching [`sample_direct`]'s totality.
+fn gaborish_stencil_1d(
+    r0: &[f32],
+    r1: &[f32],
+    r2: &[f32],
+    x: usize,
+    centre: f32,
+    edge: f32,
+    corner: f32,
+) -> f32 {
+    let t = |row: &[f32], xx: usize| row.get(xx).copied().unwrap_or(0.0);
+    // Row-major, `dy` outer — the scalar loop's order, tap for tap (see
+    // `gaborish_interior_rect_impl`): reordering float addition changes the
+    // last bit.
+    let mut acc = 0.0f32;
+    acc = corner.mul_add(t(r0, x - 1), acc);
+    acc = edge.mul_add(t(r0, x), acc);
+    acc = corner.mul_add(t(r0, x + 1), acc);
+    acc = edge.mul_add(t(r1, x - 1), acc);
+    acc = centre.mul_add(t(r1, x), acc);
+    acc = edge.mul_add(t(r1, x + 1), acc);
+    acc = corner.mul_add(t(r2, x - 1), acc);
+    acc = edge.mul_add(t(r2, x), acc);
+    acc = corner.mul_add(t(r2, x + 1), acc);
+    acc
+}
+
+/// The interior-rect loop itself: the readable scalar reference and the
+/// lock-step oracle for `gaborish_interior_rect_avx2` (see
+/// `interior_rect_avx2_matches_scalar_bitwise`). Runs wherever the dispatch
+/// falls back: non-x86_64 hosts and hosts without AVX2+FMA.
+fn gaborish_interior_rect_impl(
+    input: &[f32],
+    output: &mut [f32],
+    dims: PlaneDims,
+    kernel: &GaborKernel,
+    band_start: usize,
+    rel_rows: std::ops::Range<usize>,
+    cols: std::ops::Range<usize>,
+) {
+    // One-dimensional index math throughout: the tap rows are sliced once
+    // per output row and the shared stencil reads forward from them. All
+    // indices are in bounds by rect construction
+    // (`margin_one_covers_all_nine_j3_taps`); the `.get()` chains only make
+    // that total.
+    let w = dims.width;
+    for rel_y in rel_rows {
+        let y = band_start + rel_y;
+        let (Some(r0), Some(r1), Some(r2)) = (
+            input.get((y - 1) * w..y * w),
+            input.get(y * w..(y + 1) * w),
+            input.get((y + 1) * w..(y + 2) * w),
+        ) else {
+            continue;
+        };
+        for x in cols.clone() {
+            let v = gaborish_stencil_1d(r0, r1, r2, x, kernel.centre, kernel.edge, kernel.corner);
+            if let Some(slot) = output.get_mut(rel_y * w + x) {
+                *slot = v;
+            }
+        }
+    }
 }
 
 /// Applies J.3 to one channel, returning a fresh plane.
@@ -363,6 +769,153 @@ mod tests {
         ];
         for (i, (got, want)) in out.iter().zip(expected.iter()).enumerate() {
             assert!((got - want).abs() < 1e-6, "sample {i}: {got} != {want}");
+        }
+    }
+
+    #[test]
+    fn direct_matches_mirrored_on_interior_coords() {
+        // The lemma the interior fast paths rest on: where the mirror is
+        // the identity, skipping it reads the same sample. Distinct values
+        // per sample so any index slip shows up.
+        for width in 1..9usize {
+            for height in 1..9usize {
+                let dims = PlaneDims::new(width, height);
+                let plane: Vec<f32> = (0..dims.len())
+                    .map(|i| f32::from(u16::try_from(i % 1000).unwrap_or(0)))
+                    .collect();
+                for y in 0..height {
+                    for x in 0..width {
+                        let (xi, yi) = (as_i64(x), as_i64(y));
+                        let (direct, mirrored) = (
+                            sample_direct(&plane, dims, xi, yi),
+                            sample_mirrored(&plane, dims, xi, yi),
+                        );
+                        assert_eq!(
+                            direct.to_bits(),
+                            mirrored.to_bits(),
+                            "{width}x{height} at ({x},{y})"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn margin_one_covers_all_nine_j3_taps() {
+        // J.3's interior predicate with margin 1: every interior pixel's
+        // nine taps land in bounds, on every plane shape including the
+        // degenerate ones (where the interior is empty and the loop below
+        // checks nothing — the `checked` count proves the larger planes
+        // actually exercise it).
+        let mut checked = 0;
+        for width in 1..12usize {
+            for height in 1..12usize {
+                let dims = PlaneDims::new(width, height);
+                for y in 0..height {
+                    for x in 0..width {
+                        if !interior_pixel(x, y, dims, 1) {
+                            continue;
+                        }
+                        checked += 1;
+                        for dy in -1i64..=1 {
+                            for dx in -1i64..=1 {
+                                let (rx, ry) = (as_i64(x) + dx, as_i64(y) + dy);
+                                assert!(
+                                    rx >= 0 && ry >= 0,
+                                    "tap ({dx},{dy}) of ({x},{y}) escapes {width}x{height}"
+                                );
+                                assert!(
+                                    rx < as_i64(width) && ry < as_i64(height),
+                                    "tap ({dx},{dy}) of ({x},{y}) escapes {width}x{height}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(checked > 0, "no interior pixel was ever checked");
+    }
+
+    #[test]
+    fn interior_rect_matches_the_predicate() {
+        // The rectangle and the predicate name the same set: every rect
+        // pixel satisfies `interior_pixel` and every pixel outside it does
+        // not. Margins 0–3 cover J.3 (1) and every J.4 step (1–3).
+        for width in 1..12usize {
+            for height in 1..12usize {
+                let dims = PlaneDims::new(width, height);
+                for margin in 0..4usize {
+                    let (rows, cols) = interior_rect(dims, margin);
+                    for y in 0..height {
+                        for x in 0..width {
+                            let in_rect = rows.contains(&y) && cols.contains(&x);
+                            assert_eq!(
+                                in_rect,
+                                interior_pixel(x, y, dims, margin),
+                                "{width}x{height} margin {margin} at ({x},{y})"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn interior_rect_avx2_matches_scalar_bitwise() {
+        // The dispatched rect build returns the scalar impl's bytes exactly,
+        // on widths that are and are not multiples of the vector width.
+        // (On a host without AVX2 both sides run the scalar impl and the
+        // test is vacuous — it proves the dispatch, which only an AVX2 host
+        // exercises.)
+        let k = GaborKernel::new(0.115_169_525, 0.061_248_592).expect("valid");
+        for width in [1, 2, 3, 7, 8, 9, 15, 16, 17, 31, 64, 130] {
+            for height in [1, 2, 3, 7, 8, 9, 33, 70] {
+                let dims = PlaneDims::new(width, height);
+                let input: Vec<f32> = (0..dims.len())
+                    .map(|i| f32::from(u16::try_from(i % 1000).unwrap_or(0)) / 1000.0 - 0.2)
+                    .collect();
+                let (rows, cols) = interior_rect(dims, 1);
+                let mut dispatched = vec![0.0f32; dims.len()];
+                let mut scalar = vec![0.0f32; dims.len()];
+                gaborish_interior_rect(
+                    &input,
+                    &mut dispatched,
+                    dims,
+                    &k,
+                    0,
+                    rows.clone(),
+                    cols.clone(),
+                );
+                gaborish_interior_rect_impl(&input, &mut scalar, dims, &k, 0, rows, cols);
+                for (i, (a, b)) in dispatched.iter().zip(scalar.iter()).enumerate() {
+                    assert_eq!(a.to_bits(), b.to_bits(), "{width}x{height} sample {i}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn worker_count_never_changes_a_sample() {
+        // Threading partitions rows; it must not move a single bit. A ragged
+        // 200x70 ramp exercises band edges (70 rows over 8 workers is
+        // 9+9+9+9+9+9+9+7) against the serial run.
+        let dims = PlaneDims::new(200, 70);
+        let input: Vec<f32> = (0..dims.len())
+            .map(|i| f32::from(u16::try_from(i % 1000).unwrap_or(0)) / 1000.0)
+            .collect();
+        let k = GaborKernel::new(0.115_169_525, 0.061_248_592).expect("valid");
+        let mut serial = vec![0.0f32; dims.len()];
+        gaborish_into_with_workers(&input, &mut serial, dims, &k, 1).expect("valid");
+        for workers in [2, 3, 8, 64] {
+            let mut threaded = vec![0.0f32; dims.len()];
+            gaborish_into_with_workers(&input, &mut threaded, dims, &k, workers).expect("valid");
+            assert_eq!(serial.len(), threaded.len(), "workers {workers}");
+            for (i, (x, y)) in serial.iter().zip(threaded.iter()).enumerate() {
+                assert_eq!(x.to_bits(), y.to_bits(), "workers {workers} sample {i}");
+            }
         }
     }
 

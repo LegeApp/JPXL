@@ -26,6 +26,22 @@ from day one: bit-position tracing before the first field is parsed, typed
 stage boundaries, and limits on attacker-controlled sizes. Those are not
 optimizations; they are the things that make later optimization possible.
 
+**Phase two: measured performance, same readability bar.** The decoder is
+conformant, so its hotspots may now parallelize and vectorize — but only
+behind proof, and scalar-first still governs all new code: no path
+parallelizes or vectorizes before its scalar form is conformant and reviewed.
+`std::thread::scope` is the default threading tool (no new dependency); rayon
+is allowed where work-sharing earns it, subject to §6's dependency decision —
+regular row-band and map-scatter loops do not need it. SIMD is allowed
+in-crate with runtime dispatch after the `jpxl-perceptual` precedent, subject
+to three rules: the scalar path stays as the readable reference and the
+lock-step oracle; the vectorized path is bit-identical to it (lane-mapped
+work only — no reordered reductions, no fast-math, per the float policy in
+`PLAN.md`); and every claim carries a before/after measurement on a pinned
+fixture. Threading that only partitions independent samples is bit-identical
+by construction and needs no tolerance argument; anything that reorders float
+operations needs a Part 3 peak-error grade instead.
+
 ## 2. Clean-room rules
 
 **The old AGPL tree is off limits.** A previous `jxl-encoder` project was

@@ -76,6 +76,7 @@ pub mod frame;
 pub mod headers;
 pub mod icc;
 pub mod modular;
+pub(crate) mod parallel;
 pub mod signature;
 pub mod vardct;
 

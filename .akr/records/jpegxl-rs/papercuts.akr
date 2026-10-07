@@ -118,6 +118,45 @@ record jpegxl-rs.papercut.akr-mcp-install-setup-akr-mcp-sh-cp-fails-with/1 : pap
     created_at 2026-08-06
 }
 
+record jpegxl-rs.papercut.akr-propose-accepted-an-observation-whose/1 : papercut {
+    title "akr propose accepted an observation whose observed_at was a well-formed…"
+    state superseded
+    statement """
+        akr propose accepted an observation whose observed_at was a well-formed 40-hex string that is not a commit in this repository; it landed and only akr build would have caught it (if at all). `akr evidence add --observed-at` documents that the value 'must be a full 40-hex commit in the repository', but the propose path appears to validate only the shape. An agent that guesses or mistypes a hash silently gets an unfalsifiable freshness anchor. Caught by re-reading my own record, not by the tool.
+        """
+    observed_at git:1e2004aa0672259279cc24a52d4b8e264f675b77
+    about "akr"
+    author "opus"
+    created_at 2026-09-08
+}
+
+record jpegxl-rs.papercut.akr-propose-accepted-an-observation-whose/2 : papercut {
+    title "akr propose accepted an observation whose observed_at was a well-formed…"
+    state verified
+    statement """
+        `akr propose` accepted an observation whose observed_at was a well-formed
+        40-hex string that is not a commit in this repository, and wrote it without
+        complaint. `akr evidence add` rejects the identical value immediately with
+        AKR-G011. That asymmetry is the defect: two write paths for the same slot
+        type, one validating existence and one validating shape only, so the mistake
+        lands silently at the point where it is cheapest to catch and surfaces later
+        as an AKR-G011 error on the next `akr check` ("observed_at git:... is not
+        present in this repository", with help pointing at V-101 and rebase/force-push
+        stranding). Corrected after a sandbox check: this is an ergonomics and
+        consistency defect, NOT a correctness hole. I first wrote it up as producing an
+        unfalsifiable freshness anchor; that is wrong, `akr check` does catch it, and
+        hard under --strict. The cost is only that a bad write survives until the next
+        check and is then attributed to whoever runs it rather than to whoever made it.
+        I hit this myself by fabricating a plausible-looking hash and caught it by
+        re-reading my own record, not because propose objected.
+        """
+    observed_at git:1e2004aa0672259279cc24a52d4b8e264f675b77
+    about "akr"
+    supersedes [ @jpegxl-rs.papercut.akr-propose-accepted-an-observation-whose/1 ]
+    author "opus"
+    created_at 2026-09-08
+}
+
 record jpegxl-rs.papercut.akr-propose-from-rejects-slot-only-bodies/1 : papercut {
     title "akr propose --from rejects slot-only bodies; requires full akr 0.1…"
     state verified
@@ -154,11 +193,23 @@ record jpegxl-rs.papercut.amending-an-akr-generated-commit-message-to/1 : paperc
 
 record jpegxl-rs.papercut.cargo-fmt-all-check-fails-on-code-committed-at/1 : papercut {
     title "`cargo fmt --all --check` fails on code committed at HEAD (25213f6):…"
-    state verified
+    state superseded
     statement """
         `cargo fmt --all --check` fails on code committed at HEAD (25213f6): jpxl-core/src/{color,dct}.rs, jpxl-encode/src/{lib,resources}.rs, jpxl-encode/src/modular/squeeze.rs, jpxl-encode/src/vardct/gaborish.rs and two blocks in jpxl-bitstream/src/writer.rs all carry pre-existing formatting drift. That makes scripts/ci-akr.sh's third gate red independently of any working-tree change, and it means running `cargo fmt` during ordinary work silently rewrites six files nobody touched -- exactly the hazard AGENTS.md section 10 warns about, now with a standing trigger. Separately, AGENTS.md section 5's documented gate `cargo clippy --workspace --all-targets -- -D warnings` cannot pass by construction: the workspace sets unwrap_used, indexing_slicing and cast_possible_truncation to "warn" and there are 100+ live hits, so -D warnings turns the project's own deliberate lint policy into errors.
         """
     observed_at git:cddce2b966a06b03e8ec92c096b3e1695d69ed55
+    author "claude"
+    created_at 2026-08-12
+}
+
+record jpegxl-rs.papercut.cargo-fmt-all-check-fails-on-code-committed-at/2 : papercut {
+    title "`cargo fmt --all --check` fails on code committed at HEAD (25213f6):…"
+    state withdrawn
+    statement """
+        `cargo fmt --all --check` fails on code committed at HEAD (25213f6): jpxl-core/src/{color,dct}.rs, jpxl-encode/src/{lib,resources}.rs, jpxl-encode/src/modular/squeeze.rs, jpxl-encode/src/vardct/gaborish.rs and two blocks in jpxl-bitstream/src/writer.rs all carry pre-existing formatting drift. That makes scripts/ci-akr.sh's third gate red independently of any working-tree change, and it means running `cargo fmt` during ordinary work silently rewrites six files nobody touched -- exactly the hazard AGENTS.md section 10 warns about, now with a standing trigger. Separately, AGENTS.md section 5's documented gate `cargo clippy --workspace --all-targets -- -D warnings` cannot pass by construction: the workspace sets unwrap_used, indexing_slicing and cast_possible_truncation to "warn" and there are 100+ live hits, so -D warnings turns the project's own deliberate lint policy into errors.
+        """
+    observed_at git:cddce2b966a06b03e8ec92c096b3e1695d69ed55
+    supersedes [ @jpegxl-rs.papercut.cargo-fmt-all-check-fails-on-code-committed-at/1 ]
     author "claude"
     created_at 2026-08-12
 }
@@ -412,12 +463,25 @@ record jpegxl-rs.papercut.orienting-on-this-project-through-the-knowledge/1 : pa
 
 record jpegxl-rs.papercut.strict-clippy-ssimulacra2-test-indexing/1 : papercut {
     title "Strict workspace clippy fails on pre-existing jpxl-perceptual test indexing"
-    state verified
+    state superseded
     statement """
         The strict workspace clippy gate (cargo clippy --workspace --all-targets -- -D warnings) has been failing since the 2026-08-31 perceptual round: a jpxl-perceptual unit test indexes planes[c] directly at crates/jpxl-perceptual/src/ssimulacra2.rs:583, which indexing_slicing flags. The failure is pre-existing at 45d9486 and unrelated to the exact base-encoder frontier, so the frontier's workspace-gates evidence records it as isolated rather than fixing it outside the frontier's file ownership. Whoever next owns jpxl-perceptual should bounds-check or document the test indexing so the strict gate passes tree-wide again.
         """
     observed_at git:45d948630dec1bac11bc98e6a9ea727e33c2e2a8
     about "JPXL jpxl-perceptual strict clippy"
+    author "cline"
+    created_at 2026-09-01
+}
+
+record jpegxl-rs.papercut.strict-clippy-ssimulacra2-test-indexing/2 : papercut {
+    title "Strict workspace clippy fails on pre-existing jpxl-perceptual test indexing"
+    state withdrawn
+    statement """
+        The strict workspace clippy gate (cargo clippy --workspace --all-targets -- -D warnings) has been failing since the 2026-08-31 perceptual round: a jpxl-perceptual unit test indexes planes[c] directly at crates/jpxl-perceptual/src/ssimulacra2.rs:583, which indexing_slicing flags. The failure is pre-existing at 45d9486 and unrelated to the exact base-encoder frontier, so the frontier's workspace-gates evidence records it as isolated rather than fixing it outside the frontier's file ownership. Whoever next owns jpxl-perceptual should bounds-check or document the test indexing so the strict gate passes tree-wide again.
+        """
+    observed_at git:45d948630dec1bac11bc98e6a9ea727e33c2e2a8
+    about "JPXL jpxl-perceptual strict clippy"
+    supersedes [ @jpegxl-rs.papercut.strict-clippy-ssimulacra2-test-indexing/1 ]
     author "cline"
     created_at 2026-09-01
 }
@@ -493,11 +557,23 @@ record jpegxl-rs.papercut.the-installed-akr-0-3-1-rejected-four-existing/1 : pap
 
 record jpegxl-rs.papercut.the-mandatory-cargo-clippy-workspace-all/1 : papercut {
     title "The mandatory `cargo clippy --workspace --all-targets -- -D warnings`…"
-    state verified
+    state superseded
     statement """
         The mandatory `cargo clippy --workspace --all-targets -- -D warnings` handoff gate fails on pre-existing test indexing at `jpxl-perceptual/src/ssimulacra2.rs:583` (`planes[c]`, introduced by 767f080). This profiling/AKR-only task did not touch codec source; build, release tests, and fmt remain green.
         """
     observed_at git:45d948630dec1bac11bc98e6a9ea727e33c2e2a8
+    author "codex"
+    created_at 2026-09-01
+}
+
+record jpegxl-rs.papercut.the-mandatory-cargo-clippy-workspace-all/2 : papercut {
+    title "The mandatory `cargo clippy --workspace --all-targets -- -D warnings`…"
+    state withdrawn
+    statement """
+        The mandatory `cargo clippy --workspace --all-targets -- -D warnings` handoff gate fails on pre-existing test indexing at `jpxl-perceptual/src/ssimulacra2.rs:583` (`planes[c]`, introduced by 767f080). This profiling/AKR-only task did not touch codec source; build, release tests, and fmt remain green.
+        """
+    observed_at git:45d948630dec1bac11bc98e6a9ea727e33c2e2a8
+    supersedes [ @jpegxl-rs.papercut.the-mandatory-cargo-clippy-workspace-all/1 ]
     author "codex"
     created_at 2026-09-01
 }
@@ -561,11 +637,23 @@ record jpegxl-rs.papercut.the-standing-quality-track-scripts-hard-coded/1 : pape
 
 record jpegxl-rs.papercut.the-workspace-clippy-gate-that-jpegxl-rs-work/1 : papercut {
     title "The workspace clippy gate that @jpegxl-rs.work.pqc-usable-efforts-cost…"
-    state verified
+    state superseded
     statement """
         The workspace clippy gate that @jpegxl-rs.work.pqc-usable-efforts-cost records as satisfied ("cargo clippy --workspace --all-targets -- -D warnings") has been failing since commit 520289b: one indexing_slicing error at crates/jpxl-perceptual/src/ssimulacra2.rs:583, inside a #[cfg(test)] helper closure. Confirmed pre-existing by stashing all working-tree changes and re-running (rc=101 on both). Anyone using that acceptance check as a green baseline before their own change will misattribute the failure to themselves, as I initially did.
         """
     observed_at git:70626bfc1deec08f10bbd52d24a41061388e2657
+    author "claude"
+    created_at 2026-08-31
+}
+
+record jpegxl-rs.papercut.the-workspace-clippy-gate-that-jpegxl-rs-work/2 : papercut {
+    title "The workspace clippy gate that @jpegxl-rs.work.pqc-usable-efforts-cost…"
+    state withdrawn
+    statement """
+        The workspace clippy gate that @jpegxl-rs.work.pqc-usable-efforts-cost records as satisfied ("cargo clippy --workspace --all-targets -- -D warnings") has been failing since commit 520289b: one indexing_slicing error at crates/jpxl-perceptual/src/ssimulacra2.rs:583, inside a #[cfg(test)] helper closure. Confirmed pre-existing by stashing all working-tree changes and re-running (rc=101 on both). Anyone using that acceptance check as a green baseline before their own change will misattribute the failure to themselves, as I initially did.
+        """
+    observed_at git:70626bfc1deec08f10bbd52d24a41061388e2657
+    supersedes [ @jpegxl-rs.papercut.the-workspace-clippy-gate-that-jpegxl-rs-work/1 ]
     author "claude"
     created_at 2026-08-31
 }

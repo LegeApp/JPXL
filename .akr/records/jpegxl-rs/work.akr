@@ -1103,7 +1103,7 @@ record jpegxl-rs.work.arch-phase25-multi-quantizer-workspace/1 : work {
 
 record jpegxl-rs.work.arch-phase27-finalist-only-entropy/1 : work {
     title "Phase 27: finalist-only entropy refinement"
-    state completed
+    state superseded
     scope [
         path ".agent/scratch/**",
         path "JPXL/crates/jpxl-encode-policy/src/**/tests/**",
@@ -1159,6 +1159,69 @@ record jpegxl-rs.work.arch-phase27-finalist-only-entropy/1 : work {
     depends_on [ @jpegxl-rs.evidence.phase26-rate-multiplicity-2026-08-16/1 ]
     implements [ @jpegxl-rs.policy.optimization-correctness-gates/1 ]
     part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+    source {
+        kind legacy
+    }
+}
+
+record jpegxl-rs.work.arch-phase27-finalist-only-entropy/2 : work {
+    title "Phase 27: finalist-only entropy refinement"
+    state completed
+    scope [
+        path ".agent/scratch/**",
+        path "JPXL/crates/jpxl-encode-policy/src/diagnostics.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/lib.rs",
+        path "JPXL/crates/jpxl-encode-policy/src/rate.rs",
+        path "JPXL/docs/optimize.md"
+    ]
+    intent """
+        Reduce the repeated Quality Full-path entropy candidate work identified by Phase 26. Navigate the refinement ladder with the existing exact Fast entropy model, then run the expensive Full entropy alternatives only for the selected finalist and any bounded exact correction required by the target contract. Keep the final emission exact, wire-valid, and guarded by the in-tree decode/target gate; do not introduce SIMD or approximate codestream sizing in this work.
+        """
+    note """
+        The change is a search-policy optimization, so byte identity with the prior Quality stream is not assumed. The acceptance gate is exact final pricing, never-over target adherence, decode validity, and measured quality/rate comparison on the pinned corpus.
+        """
+    acceptance {
+        check final-exact-price {
+            statement """
+                The selected finalist is emitted from an exact Full entropy plan and its recorded size equals the emitted codestream size.
+                """
+            method command
+            verified_by [
+                @jpegxl-rs.evidence.phase27-finalist-only-entropy-correctness-2026-08-16/2
+            ]
+        }
+        check multiplicity-reduction {
+            statement """
+                Quality reduces Full-path internal Count/census/training multiplicity relative to the Phase 26 screen while retaining a bounded exact correction path.
+                """
+            method command
+            verified_by [
+                @jpegxl-rs.evidence.phase27-finalist-only-entropy-screen-2026-08-16/2
+            ]
+        }
+        check quality-target-screen {
+            statement """
+                The pinned mid and large image screen completes for Quality without target errors, over-target output, or decoder rejection.
+                """
+            method command
+            verified_by [
+                @jpegxl-rs.evidence.phase27-finalist-only-entropy-screen-2026-08-16/2
+            ]
+        }
+        check workspace-validation {
+            statement """
+                The focused policy tests, workspace tests, formatting, and lint gates pass or their pre-existing failures are explicitly recorded.
+                """
+            method command
+            verified_by [
+                @jpegxl-rs.evidence.phase27-finalist-only-entropy-workspace-2026-08-16/1
+            ]
+        }
+    }
+    depends_on [ @jpegxl-rs.evidence.phase26-rate-multiplicity-2026-08-16/1 ]
+    implements [ @jpegxl-rs.policy.optimization-correctness-gates/1 ]
+    part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+    supersedes [ @jpegxl-rs.work.arch-phase27-finalist-only-entropy/1 ]
     source {
         kind legacy
     }
@@ -2334,7 +2397,7 @@ record jpegxl-rs.work.arch-phase4d-lz77-search-align/1 : work {
 
 record jpegxl-rs.work.arch-phase4e-modular-effort-ramp/1 : work {
     title "Phase 4E: lossless modular effort ramp, then reoriented to a lean default (the search above e1 is chaff)"
-    state completed
+    state superseded
     scope [
         path "path \"JPXL/crates/jpxl-cli/**\"",
         path "path \"JPXL/crates/jpxl-encode/**\""
@@ -2362,6 +2425,36 @@ record jpegxl-rs.work.arch-phase4e-modular-effort-ramp/1 : work {
     }
     depends_on [ @jpegxl-rs.work.arch-phase4b-sampled-gather-scoped/1 ]
     part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+}
+
+record jpegxl-rs.work.arch-phase4e-modular-effort-ramp/2 : work {
+    title "Phase 4E: lossless modular effort ramp, then reoriented to a lean default (the search above e1 is chaff)"
+    state completed
+    scope [ path "JPXL/crates/jpxl-cli/**", path "JPXL/crates/jpxl-encode/**" ]
+    intent """
+        Build the lossless modular effort ramp (speed/size dial) per Encoder-plan1.md §12. Reoriented by measurement: the full search is chaff on real photos, earning zero bytes for 16× the wall time. Prune the default path: flip Effort::DEFAULT to the lean level 1, demote the full search to opt-in, keep level 7 as the byte-identical density anchor.
+        """
+    acceptance {
+        check default-byte-identical {
+            statement """
+                The lean default (Effort::DEFAULT = 1) is byte-identical to the pre-change default on the photo corpus, at a fraction of the time.
+                """
+            method command
+            command "pwsh -NoProfile -File .agent/scratch/effort-ramp-2026-08-10/verify_default_flip.ps1"
+            verified_by [ @jpegxl-rs.evidence.modular-effort-ramp-landed-2026-08-10/1 ]
+        }
+        check tests-green {
+            statement """
+                Every effort level reconstructs pixels exactly and round-trips; level 7 reproduces the pre-ramp search field-for-field.
+                """
+            method command
+            command "cargo test -p jpxl-encode --lib"
+            verified_by [ @jpegxl-rs.evidence.modular-effort-ramp-tests-2026-08-10/1 ]
+        }
+    }
+    depends_on [ @jpegxl-rs.work.arch-phase4b-sampled-gather-scoped/1 ]
+    part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
+    supersedes [ @jpegxl-rs.work.arch-phase4e-modular-effort-ramp/1 ]
 }
 
 record jpegxl-rs.work.arch-phase4f-elide-foregone-search/1 : work {
@@ -5835,6 +5928,47 @@ record jpegxl-rs.work.arch-s8-phase-d-prune-wired/1 : work {
     part_of [ @jpegxl-rs.work.arch-s8-full-redesign-scoped ]
 }
 
+record jpegxl-rs.work.assert-perceptual-default-is-codec-free-2026-09-08/1 : work {
+    title "Assert jpxl-perceptual's default feature set stays codec-free, as tests/boundary.rs already does for the other two edges"
+    state proposed
+    intent """
+        jpxl-perceptual's independence from the JPXL codec crates is real and
+        deliberate but is not asserted anywhere. crates/jpxl-perceptual/Cargo.toml sets
+        `default = []` and marks every codec dependency optional: jpxl-core enters only
+        through the `evaluator` feature (with jpxl-encode-policy and jpxl-plan-render),
+        jpxl-encode only through `encode-executor`, and the rust-av ssimulacra2 crate
+        only through the test-only `parity-oracle`. The manifest comment says so and
+        cites jpegxl-rs.policy.perceptual-metric-clean-room. That shape is what lets
+        jp2lam, in Lege-ecosystem/lege-codecs, path-depend on jpxl-perceptual with
+        default-features = false and share the `ssimulacra2-jpxl-1` metric identity
+        without taking the encoder.
+
+        It surfaced 2026-09-08 as a false alarm that cost someone a diagnosis: a
+        `cargo check --workspace` in Lege-ecosystem rewrote its Cargo.lock and dropped
+        jpxl-bitstream and jpxl-core, which looks like a broken dependency until you
+        read jpxl-perceptual's feature table and see it is the intended default
+        resolution. A one-line assertion would have answered that in the time it takes
+        to run a test.
+
+        crates/jpxl-encode-policy/tests/boundary.rs already does exactly this job for
+        the other two edges -- `jpxl_encode_does_not_depend_on_policy` and
+        `policy_does_not_depend_on_the_decoder`, both reading the manifest text through
+        a shared `dependencies_section` helper. The gap is that nothing stops someone
+        adding `evaluator` to jpxl-perceptual's `default` list, which would silently put
+        jpxl-core, jpxl-encode-policy and jpxl-plan-render into every downstream build
+        including jp2lam's.
+
+        The work: a third test in the same file (or in jpxl-perceptual's own tests,
+        which is arguably the better home since it is that crate's invariant) asserting
+        that jpxl-perceptual's `[features] default` is empty and that every JPXL
+        dependency in its manifest carries `optional = true`. Ten or so lines, same
+        manifest-text technique as the two that exist. The decision the next session
+        should make is only where it lives, and whether it should also pin that
+        `parity-oracle` never appears in a default or non-test feature, since that is
+        the arm that would pull a third-party metric into a production build.
+        """
+}
+
 record jpegxl-rs.work.certified-rejection-shadow-2026-09-01/1 : work {
     title "Measure certified early rejection without changing navigation"
     state completed
@@ -7526,6 +7660,40 @@ record jpegxl-rs.work.native-windows-quality-tooling/1 : work {
     part_of [ @jpegxl-rs.track.encoder-optimization/1 ]
 }
 
+record jpegxl-rs.work.normative-layer-still-proposed-2026-09-08/1 : work {
+    title "Decide whether the ledger's normative layer should be active rather than proposed"
+    state proposed
+    intent """
+        Six constraints, seventeen decisions and thirteen policies sit at state
+        `proposed` while plainly governing the code today -- among them
+        constraint.forbid-unsafe-by-default, constraint.no-panic-checked-arith,
+        constraint.no-libjxl-runtime-dep, policy.clean-room-boundary,
+        decision.optimization-determinism-contract and decision.perceptual-quality-contract.
+        AKR treats `proposed` and `active` as both valid initial states for a normative
+        record, so nothing is broken; but a reader cannot tell a rule that is merely
+        drafted from one the crate graph and CI enforce, and that is the whole point of
+        the distinction.
+
+        This pass activated exactly two, where the evidence link was unambiguous and the
+        cross-project licence boundary made it matter:
+        decision.mit-only-licensing (all twelve crates declare MIT via license.workspace,
+        LICENSE and JPXL/LICENSE-MIT agree, and a full dependency-graph scan found no
+        copyleft -- evidence.mit-only-licensing-audit-2026-08-25) and
+        policy.perceptual-metric-clean-room (jpxl-decode appears only in the policy
+        crate's [dev-dependencies], enforced by tests/boundary.rs).
+
+        The rest were left alone deliberately, because activating a decision trips
+        AKR-R031 unless it cites a requirement, policy, constraint or evidence, and
+        guessing those citations one by one is how a ledger acquires fiction. Someone who
+        knows the project should sweep them: for each, either cite what motivated it and
+        move it to `active`, or leave it `proposed` on purpose and say why. A third
+        outcome is also legitimate -- if the project's convention is that `proposed`
+        simply means "recorded", write that down as a ledger-convention decision (there
+        is already a decision.ledger-conventions to revise) and stop treating the gap as
+        a defect.
+        """
+}
+
 record jpegxl-rs.work.opt-benches-and-counters/1 : work {
     title "Add encode benches and multiplicity counters"
     state completed
@@ -7586,7 +7754,7 @@ record jpegxl-rs.work.opt-p-coarse-section-parallel/1 : work {
 
 record jpegxl-rs.work.opt-plan-import/1 : work {
     title "Disposition advisor optimization-plan.akr into the ledger"
-    state proposed
+    state completed
     intent """
         Track migration of JPXL/optimization-plan.akr durable claims into assessment,
         track, decisions, policy, milestones, and work. Complete when every durable
@@ -7601,6 +7769,7 @@ record jpegxl-rs.work.opt-plan-import/1 : work {
                 """
             method command
             command "akr check"
+            verified_by [ @jpegxl-rs.evidence.opt-plan-dispositioned-2026-09-08/1 ]
         }
     }
     part_of [ @jpegxl-rs.track.encoder-optimization ]
@@ -7788,7 +7957,7 @@ record jpegxl-rs.work.optional-semantic-guidance-consumer/1 : work {
 
 record jpegxl-rs.work.pipeline-metadata-seam/1 : work {
     title "EXIF box and colour-space signalling for the archive pipeline"
-    state proposed
+    state completed
     intent """
         Give the archive pipeline the two metadata seams it needs from the
         encoder: a Part 2 Exif container box exposed as Encoder::with_exif
@@ -7802,6 +7971,10 @@ record jpegxl-rs.work.pipeline-metadata-seam/1 : work {
         never an APP1 wrapper.
         """
     implements [ @jpegxl-rs.requirement.general-use-integration-surface ]
+    verified_by [
+        @jpegxl-rs.evidence.pipeline-metadata-seam-2026-08-26/1,
+        @jpegxl-rs.evidence.pipeline-metadata-seam-recheck-2026-09-08/1
+    ]
 }
 
 record jpegxl-rs.work.pqc-one-shot-controller/1 : work {
@@ -10175,6 +10348,58 @@ record jpegxl-rs.work.retire-handoff-ledger/1 : work {
         }
     }
     implements [ @jpegxl-rs.decision.ledger-conventions/1 ]
+}
+
+record jpegxl-rs.work.stale-measurement-backlog-2026-09-08/1 : work {
+    title "Retire or re-measure the 52-record stale measurement backlog in the review queue"
+    state proposed
+    intent """
+        After the 2026-09-08 ledger pass the review queue holds 52 stale records (down
+        from 70) and 36 at risk. What is left is not noise: with one exception every
+        remaining record watches a specific file that really did change, and the
+        concentration says where -- 8 on jpxl-encode-policy/src/lib.rs, 6 on quality.rs,
+        5 on rate.rs, 4 on quantize.rs. These are dated measurements of the encoder's
+        hot policy path taken between 2026-08-10 and 2026-09-03, and the path has been
+        rewritten under them repeatedly (Opt-F..Opt-P, the fused probe-render work, the
+        one-shot controller, the case-table predictor).
+
+        The decision this needs, and that a bookkeeping pass cannot make, is a policy one:
+        what should happen to an empirical record whose subject file has moved on. Three
+        candidate answers, and the project should pick one and apply it uniformly.
+        (a) Nothing: a measurement is a fact about a commit, it is true forever, and the
+        right fix is to strip `watches` from measurement observations so they stop
+        entering the queue at all -- which is what this pass did for the 18 spec-reading
+        observations imported at f35cabcf, whose claims were about the ISO text and could
+        never go stale from a code change. (b) Re-measure: run the benchmark again at
+        HEAD and `akr revise` with fresh numbers. This is a dedicated measurement session
+        with a quiet host, not a cleanup task; note
+        jpegxl-rs.observation.measuring-host-cannot-resolve-small-effects-2026-08-31.
+        (c) Retire: mark them superseded by whatever later measurement replaced them,
+        where one exists.
+
+        (a) is almost certainly right for most of them and is nearly free. (b) is right
+        only where a live decision still rests on the number.
+
+        Three records were triaged as genuinely unknown and should be settled first,
+        because a wrong answer in these three could mislead rather than merely age:
+        - observation.pqc-one-shot-gate-fails-on-corpus-coverage-2026-08-24 -- 08859157
+          was explicitly camera-coverage work, the exact gap this record names. Settle by
+          diffing the current class counts in quality_predictor_cases.rs (now a 1203-case
+          table) against the classes the record calls under-represented.
+        - observation.balanced-zero-prediction-reserve-negative -- 23635f68 rewrote the
+          reserve and prediction logic broadly. Settle by reading the current
+          reserve-coupled band code in rate.rs against the measured regression claimed.
+        - observation.ssimulacra2-f32-recursion-ripple-2026-08-22 -- 2425c0b2 touched
+          blur.rs directly (103 lines). Settle by checking whether the Gaussian recursion
+          still runs in f64. Carries review 2026-11-30, so already deprioritised.
+
+        Two over-broad globs also survive and should be narrowed to the files each record
+        actually cites: "JPXL/tools/**" on measuring-host-cannot-resolve-small-effects and
+        three-way-encoder-comparison (a corpus-generation script edit re-stales both), and
+        "JPXL/crates/jpxl-perceptual/src/**" on pqc-wall-attribution-post-s2 and
+        wall-anchors-after-2026-08-31-cuts (a brand-new unrelated file, bands.rs, re-staled
+        both). All 36 at-risk records inherit from this set and clear when it does.
+        """
 }
 
 record jpegxl-rs.work.text-aware-routing/1 : work {
